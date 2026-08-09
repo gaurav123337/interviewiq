@@ -119,17 +119,19 @@ export function App() {
             ))}
           </nav>
           {/* secondary tabs in a hamburger (desktop) */}
-          <button
-            onClick={() => setMenuOpen(o => !o)}
-            aria-label="More"
-            aria-expanded={menuOpen}
-            title="More"
-            className={`hidden h-9 w-9 place-items-center rounded-xl border text-[16px] transition-all md:grid ${menuOpen || moreActive ? "border-acc1/50 bg-acc1/15 text-acctxt" : "border-line/15 bg-wht/10 hover:bg-wht/20"}`}
-          >
-            {menuOpen ? "✕" : "☰"}
-          </button>
-          <div className={`absolute right-4 top-[64px] z-50 hidden w-56 rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl transition-all duration-200 ease-out md:block ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible -translate-y-2 opacity-0"}`}>
-            <MoreMenu current={view} tabs={moreTabs} onPick={go} />
+          <div className="relative hidden md:block">
+            <button
+              onClick={() => setMenuOpen(o => !o)}
+              aria-label="More"
+              aria-expanded={menuOpen}
+              title="More"
+              className={`grid h-9 w-9 place-items-center rounded-xl border text-[16px] transition-all ${menuOpen || moreActive ? "border-acc1/50 bg-acc1/15 text-acctxt" : "border-line/15 bg-wht/10 hover:bg-wht/20"}`}
+            >
+              {menuOpen ? "✕" : "☰"}
+            </button>
+            <div className={`absolute right-0 top-full z-50 mt-2 w-56 rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl transition-all duration-200 ease-out ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible -translate-y-2 opacity-0"}`}>
+              <MoreMenu current={view} tabs={moreTabs} onPick={go} />
+            </div>
           </div>
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
