@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getDeepDive, hasDeepDive } from "../data/deepDive";
+import { deepDiveCards, getDeepDive, hasDeepDive } from "../data/deepDive";
 
 describe("topic deep-dive knowledge base", () => {
   it("resolves core topics to authored content with all sections", () => {
@@ -62,5 +62,16 @@ describe("topic deep-dive knowledge base", () => {
     const language = getDeepDive("language basics");
     expect(language.concepts.some(c => c.name.toLowerCase().includes("scope"))).toBe(true);
     expect(language.qa[0].a.length).toBeGreaterThan(80);
+  });
+
+  it("feeds Drill mode with deduped, authored cards", () => {
+    const cards = deepDiveCards();
+    expect(cards.length).toBeGreaterThan(25);
+    const texts = cards.map(c => c.q);
+    expect(new Set(texts).size).toBe(texts.length); // no duplicates
+    for (const c of cards) {
+      expect(c.a.length).toBeGreaterThan(40);
+      expect(c.kp.length).toBeGreaterThan(0);
+    }
   });
 });

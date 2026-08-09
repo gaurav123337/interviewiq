@@ -3,7 +3,11 @@ import type { ReactNode } from "react";
 import type { LevelId } from "../types";
 import { FIELDS, LEVELS } from "../data";
 import { getCloudState, subscribeCloud } from "../services/cloud";
+import { aiAvailable } from "../ai";
 import { getAdminState, subscribeAdmin } from "../services/admin";
+import { cleanTextToQuestions } from "../services/cleaner";
+import { parseQuestionBatch } from "../services/import";
+import { extractFileText } from "../services/pdf";
 import {
   adminListUsers, adminMetrics, createAnnouncement, createQuestion, deleteAnnouncement,
   deleteQuestion, grantAdmin, listAdmins, revokeAdmin, saveRemoteConfig, setAnnouncementPublished,
@@ -13,13 +17,14 @@ import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteCo
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "config";
+type Section = "overview" | "users" | "announcements" | "questions" | "import" | "config";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
   { id: "users", label: "Users", icon: "👥" },
   { id: "announcements", label: "Announcements", icon: "📣" },
   { id: "questions", label: "Question bank", icon: "📚" },
+  { id: "import", label: "Auto-fill", icon: "⚡" },
   { id: "config", label: "Product config", icon: "🎛️" }
 ];
 
@@ -111,6 +116,9 @@ export function Admin() {
         )}
         {section === "questions" && (
           <Questions list={questions} busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
+        )}
+        {section === "import" && (
+          <AutoFill busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
         )}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
       </div>
@@ -414,6 +422,166 @@ function Questions({ list, busy, setBusy, onChanged }: {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Auto-fill — PDF / bulk import / AI cleaning pipeline                */
+/* ------------------------------------------------------------------ */
+
+function AutoFill({ busy, setBusy, onChanged }: {
+  busy: boolean; setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
+}) {
+  const [fileName, setFileName] = useState("");
+  const [rawText, setRawText] = useState("");
+  const [candidates, setCandidates] = useState<ReturnType<typeof parseQuestionBatch>["ok"]>([]);
+  const [batchText, setBatchText] = useState("");
+  const [batchResult, setBatchResult] = useState<ReturnType<typeof parseQuestionBatch> | null>(null);
+  const [busy2, setBusy2] = useState(false);
+
+  const onFile = async (f: File | null) => {
+    if (!f) return;
+    setFileName(f.name);
+    setBusy2(true);
+    try {
+      const text = await extractFileText(f);
+      setRawText(text);
+      setCandidates([]);
+      toast(`📄 Extracted ${text.length.toLocaleString()} chars from ${f.name}`);
+    } catch (e) {
+      toast("✗ Couldn't read file: " + ((e as Error).message || "unsupported"));
+    } finally { setBusy2(false); }
+  };
+
+  const clean = async () => {
+    if (!rawText.trim()) { toast("Import a file first"); return; }
+    if (!aiAvailable()) { toast("Add an AI key in Settings — AI cleaning needs one"); return; }
+    setBusy2(true);
+    try {
+      const out = await cleanTextToQuestions(rawText);
+      setCandidates(out);
+      toast(`✨ AI extracted ${out.length} candidate question(s) — review below`);
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "AI cleaning failed"));
+    } finally { setBusy2(false); }
+  };
+
+  const importCandidates = async () => {
+    if (!candidates.length) return;
+    setBusy(true);
+    try {
+      for (const c of candidates) {
+        await createQuestion({ fieldId: c.fieldId, level: c.level, question: c.question, answer: c.answer, keyPoints: c.keyPoints, published: false });
+      }
+      toast(`📚 Saved ${candidates.length} draft(s) — review in Question bank`);
+      setCandidates([]);
+      setRawText(""); setFileName("");
+      await onChanged();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Import failed")); }
+    finally { setBusy(false); }
+  };
+
+  const runBatch = async () => {
+    const res = parseQuestionBatch(batchText);
+    setBatchResult(res);
+    if (!res.ok.length) { toast("No valid questions parsed — check the format"); return; }
+    setBusy(true);
+    try {
+      for (const q of res.ok) {
+        await createQuestion({ fieldId: q.fieldId, level: q.level, question: q.question, answer: q.answer, keyPoints: q.keyPoints, published: false });
+      }
+      toast(`📚 Imported ${res.ok.length} draft(s) — review in Question bank`);
+      setBatchText(""); setBatchResult(null);
+      await onChanged();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Import failed")); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* PDF / text import */}
+      <div className={`${cardCls} p-5`}>
+        <h2 className="text-[16px] font-extrabold">📄 Import a document (PDF or TXT)</h2>
+        <p className="mb-3 text-[12.5px] text-mut">
+          Extract the text on-device (nothing is uploaded), then let the AI agent turn it into structured
+          question drafts for your review.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className={`${btnGhost} cursor-pointer`}>
+            📂 {fileName || "Choose PDF / TXT…"}
+            <input type="file" accept=".pdf,.txt,text/plain,application/pdf" className="hidden" onChange={e => void onFile(e.target.files?.[0] ?? null)} />
+          </label>
+          {rawText && <button className={btnPrimary + btnSm} onClick={clean} disabled={busy || busy2}>✨ Clean with AI</button>}
+          {rawText && <span className="text-[12px] text-mut">{rawText.length.toLocaleString()} chars</span>}
+        </div>
+        {rawText && (
+          <div className="mt-3 rounded-lg border border-line/10 bg-deep/40 p-3">
+            <div className="mb-1 text-[11.5px] font-bold uppercase tracking-wider text-mut">Extracted preview</div>
+            <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-mut line-clamp-4">{rawText.slice(0, 900)}</p>
+          </div>
+        )}
+        {candidates.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-2 text-[12px] font-bold uppercase tracking-wider text-acc3">AI candidates ({candidates.length})</div>
+            <div className="space-y-2">
+              {candidates.map((c, i) => (
+                <div key={i} className="rounded-lg border border-line/10 bg-wht/5 p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+                    <Chip tone="lvl">{c.level}</Chip>
+                    <Chip tone="cat">{FIELDS.find(f => f.id === c.fieldId)?.name ?? c.fieldId}</Chip>
+                  </div>
+                  <div className="mt-1 text-[13px] font-bold">{c.question}</div>
+                  {c.answer && <p className="mt-1 text-[12.5px] text-mut line-clamp-2">{c.answer}</p>}
+                </div>
+              ))}
+            </div>
+            <button className={`${btnPrimary + btnSm} mt-3`} onClick={importCandidates} disabled={busy}>
+              📚 Save {candidates.length} as drafts
+            </button>
+          </div>
+        )}
+        {!aiAvailable() && (
+          <p className="mt-3 text-[12.5px] text-warn">⚠️ AI cleaning needs an API key — add one in Settings to use the ✨ agent. You can still paste raw text below.</p>
+        )}
+      </div>
+
+      {/* Bulk paste import */}
+      <div className={`${cardCls} p-5`}>
+        <h2 className="text-[16px] font-extrabold">⚡ Bulk import (paste)</h2>
+        <p className="mb-3 text-[12.5px] text-mut">
+          Paste JSON <code className="rounded bg-wht/10 px-1">{'[{ fieldId, level, question, answer, keyPoints }]'}</code> or
+          pipe-separated lines <code className="rounded bg-wht/10 px-1">field|level|question|answer|keyPoints</code>. Saved as drafts.
+        </p>
+        <textarea
+          value={batchText}
+          onChange={e => setBatchText(e.target.value)}
+          rows={7}
+          placeholder={`frontend|senior|How do you handle state at scale?|Keep state as close to the UI as it needs to be…|state management, trade-offs\nbackend|mid|Design a rate limiter|…`}
+          className="inp w-full resize-y font-mono text-[12.5px]"
+        />
+        {batchResult && (
+          <div className="mt-2 text-[12.5px]">
+            <span className="font-bold text-ok">{batchResult.ok.length} valid</span>
+            {batchResult.skipped.length > 0 && (
+              <span className="text-warn"> · {batchResult.skipped.length} skipped ({batchResult.skipped.slice(0, 3).map(s => s.reason).join("; ")})</span>
+            )}
+          </div>
+        )}
+        <button className={`${btnPrimary + btnSm} mt-3`} onClick={runBatch} disabled={busy || !batchText.trim()}>
+          📚 Parse & save as drafts
+        </button>
+      </div>
+
+      {/* Weekly scraper note */}
+      <div className={`${cardCls} p-5`}>
+        <h2 className="text-[16px] font-extrabold">🕷️ Weekly scraper</h2>
+        <p className="text-[12.5px] text-mut">
+          The repo ships a scheduled scraper (<span className="font-mono">.github/workflows/scrape-weekly.yml</span>) that runs
+          every Monday. Configure sources in <span className="font-mono">content/sources.json</span> (URL, type, field/level,
+          enabled) — every item lands here as a DRAFT for review. Run it anytime from the repo's Actions tab.
+        </p>
+      </div>
     </div>
   );
 }

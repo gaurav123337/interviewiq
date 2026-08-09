@@ -139,3 +139,71 @@ begin
   ) into out;
   return out;
 end $$;
+
+/* ------------------------------------------------------------------ */
+/* Automation: RAG foundation + scraper dedupe                         */
+/* ------------------------------------------------------------------ */
+
+/* The weekly scraper upserts by question text — enforce uniqueness. */
+create unique index if not exists published_questions_question_key
+  on public.published_questions (question);
+
+/* Documents ingested by the PDF pipeline (text + optional embeddings).
+   The in-app PDF import currently cleans documents into question drafts via
+   the AI agent; enabling RAG (grounded tutor answers) is a second phase:
+   generate embeddings with an embeddings API key and store them here, then
+   query with match_pdf_chunks. */
+create table if not exists public.pdf_documents (
+  id bigint generated always as identity primary key,
+  title text not null,
+  source text not null default '',
+  char_count integer not null default 0,
+  chunk_count integer not null default 0,
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users (id) on delete set null
+);
+
+create table if not exists public.pdf_chunks (
+  id bigint generated always as identity primary key,
+  document_id bigint not null references public.pdf_documents (id) on delete cascade,
+  chunk_index integer not null,
+  content text not null,
+  token_count integer not null default 0,
+  embedding vector(1536)
+);
+
+create index if not exists pdf_chunks_document_id_idx on public.pdf_chunks (document_id);
+
+alter table public.pdf_documents enable row level security;
+alter table public.pdf_chunks enable row level security;
+
+/* idempotent policy creation (Postgres has no CREATE POLICY IF NOT EXISTS) */
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'pdf_documents' and policyname = 'pdf docs public read') then
+    create policy "pdf docs public read" on public.pdf_documents for select using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'pdf_chunks' and policyname = 'pdf chunks public read') then
+    create policy "pdf chunks public read" on public.pdf_chunks for select using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'pdf_documents' and policyname = 'pdf docs admin write') then
+    create policy "pdf docs admin write" on public.pdf_documents for all using (public.is_admin()) with check (public.is_admin());
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'pdf_chunks' and policyname = 'pdf chunks admin write') then
+    create policy "pdf chunks admin write" on public.pdf_chunks for all using (public.is_admin()) with check (public.is_admin());
+  end if;
+end $$;
+
+/* Vector search used once embeddings are populated. Requires pgvector
+   (enable it in Supabase: Database → Extensions → vector). */
+create or replace function public.match_pdf_chunks(
+  query_embedding vector(1536),
+  match_count integer default 5
+)
+returns table (document_id bigint, content text, similarity double precision)
+language sql stable security definer set search_path = public as $$
+  select p.document_id, p.content, 1 - (p.embedding <=> query_embedding) as similarity
+  from public.pdf_chunks p
+  where p.embedding is not null
+  order by p.embedding <=> query_embedding
+  limit match_count;
+$$;

@@ -1,0 +1,27 @@
+name: Scrape question sources
+
+# Weekly automation that feeds the question bank with new knowledge.
+# Frequency is customizable: edit the cron below (UTC).
+#  ┌─ minute  ┌─ hour  ┌─ day of month  ┌─ month  ┌─ day of week (0=Sunday)
+#  │           │        │                │          │
+on:
+  schedule:
+    - cron: "0 3 * * 1" # every Monday 03:00 UTC
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scrape sources → Supabase (drafts)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: node scripts/scrape-sources.js

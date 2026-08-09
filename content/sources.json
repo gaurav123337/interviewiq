@@ -1,0 +1,24 @@
+{
+  "_comment": "Weekly question-bank scraper sources. Enable a source by setting \"enabled\": true. The workflow runs every Monday 03:00 UTC (edit .github/workflows/scrape-weekly.yml for frequency). Everything scraped lands as DRAFT in the Admin → Question bank → review & publish. Types: \"json\" (array or {questions|items|data: [...]}), \"html\", \"markdown\" (both use question-marker heuristics).",
+  "sources": [
+    {
+      "id": "example-json-questions",
+      "enabled": false,
+      "url": "https://example.com/api/questions.json",
+      "type": "json",
+      "fieldId": "frontend",
+      "level": "senior",
+      "maxItems": 20,
+      "note": "Items may override fieldId/level; otherwise these defaults apply."
+    },
+    {
+      "id": "example-html-page",
+      "enabled": false,
+      "url": "https://example.com/blog/common-interview-questions",
+      "type": "html",
+      "fieldId": "backend",
+      "level": "mid",
+      "maxItems": 15
+    }
+  ]
+}

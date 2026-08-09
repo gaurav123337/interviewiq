@@ -2,7 +2,10 @@
    Offline-first: every topic label resolves to structured study material —
    concepts, key points to mention, common traps, interview Q&A and related
    topics — without any network call. This is the "selling point" of the
-   Learn panel: real, interview-focused content for every topic. */
+   Learn panel: real, interview-focused content for every topic.
+   The same content also feeds Drill mode automatically (deepDiveCards). */
+
+import type { LevelId } from "../types";
 
 export interface DeepDiveConcept {
   name: string;
@@ -528,6 +531,24 @@ export function getDeepDive(label: string): DeepDive {
   if (BEHAVIORAL_RE.test(key)) return BEHAVIORAL;
   if (LEADERSHIP_RE.test(key)) return LEADERSHIP;
   return synthesize(label);
+}
+
+/** Drill cards derived from the authored knowledge base (QA pairs become
+    flashcards, key points become recall prompts). No filler: only authored
+    entries, deduped by question text. Levels are tagged mid so they show up
+    in the default "all" filter and every mid+ selection. */
+export function deepDiveCards(): { q: string; a: string; kp: string[]; lvl: LevelId }[] {
+  const out: { q: string; a: string; kp: string[]; lvl: LevelId }[] = [];
+  const seen = new Set<string>();
+  const entries = [...Object.values(DEEP_DIVE), BEHAVIORAL, LEADERSHIP];
+  for (const dd of entries) {
+    for (const item of dd.qa) {
+      if (seen.has(item.q)) continue;
+      seen.add(item.q);
+      out.push({ q: item.q, a: item.a, kp: dd.points.slice(0, 3), lvl: "mid" });
+    }
+  }
+  return out;
 }
 
 /** True when the label resolves to an authored deep-dive (not the fallback). */

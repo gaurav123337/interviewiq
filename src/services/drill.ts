@@ -1,4 +1,5 @@
 import type { LevelId } from "../types";
+import { deepDiveCards } from "../data/deepDive";
 import { bankItems, shuffle } from "../engine";
 import { storageGet, storageSet } from "./storage";
 
@@ -65,7 +66,16 @@ export function makeDeck(fieldSel: string, lvlSel: LevelId | "all", count = 10):
   const srs = getSrs();
   const now = Date.now();
   const { items } = bankItems(fieldSel, "");
-  const pool = items.filter(i => (lvlSel === "all" || i.lvl === lvlSel) && isDue(i.q, srs, now));
+  /* auto-feed the deck from the curated deep-dive knowledge base (QA pairs
+     become flashcards) — new topics added there flow into Drill for free */
+  const bankQ = new Set(items.map(i => i.q));
+  const dd = deepDiveCards()
+    .filter(c => !bankQ.has(c.q))
+    .map(c => ({ ...c, lvl: (lvlSel === "all" ? "mid" : lvlSel) as LevelId }));
+  const pool = [
+    ...items.filter(i => (lvlSel === "all" || i.lvl === lvlSel) && isDue(i.q, srs, now)),
+    ...dd.filter(c => (lvlSel === "all" || c.lvl === lvlSel) && isDue(c.q, srs, now))
+  ];
   const overdue = pool.filter(i => srs[i.q]).sort((a, b) => srs[a.q].due - srs[b.q].due);
   const fresh = shuffle(pool.filter(i => !srs[i.q]));
   const ordered = [...overdue, ...fresh];
