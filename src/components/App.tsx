@@ -11,6 +11,7 @@ import { Drill } from "./Drill";
 import { Bank } from "./Bank";
 import { History } from "./History";
 import { Settings } from "./Settings";
+import { checkReminder } from "../services/notifications";
 
 const TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
@@ -27,6 +28,21 @@ export function App() {
   const { state, nav } = useApp();
   const [installEvt, setInstallEvt] = useState<BIP | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
+
+  /* daily practice reminder — checks on load, on focus, and every minute while open.
+     checkReminder is idempotent (fires at most once per day) and needs no backend. */
+  useEffect(() => {
+    if (!("Notification" in window)) return;
+    const check = () => checkReminder({ sessions: state.sessions });
+    check();
+    const id = setInterval(check, 60_000);
+    const onVis = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [state.sessions]);
 
   useEffect(() => {
     const onBip = (e: Event) => { e.preventDefault(); setInstallEvt(e as BIP); };

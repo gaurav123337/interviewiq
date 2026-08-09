@@ -8,6 +8,8 @@ import {
 } from "./services/session";
 import { analyzeJd, type JdResult } from "./services/jd";
 import { recordSession } from "./services/entitlements";
+import { notifyStreak } from "./services/notifications";
+import { streaks } from "./services/progress";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
 
 /* ------------------------------------------------------------------ */
@@ -148,12 +150,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     /* Saves the session to history exactly when it completes (last question or manual end).
        Runs once per user action — safe from StrictMode double-effects since it's an event handler. */
     const saveOnCompletion = (answers: Answer[]) => {
-      const { session, idx, config } = state;
+      const { session, idx, config, sessions } = state;
       if (session && idx + 1 >= session.questions.length && answers.length) {
         const s = makeSavedSession(session.meta, config, answers);
         if (s) {
           dispatch({ type: "ADD_SESSION", s });
           recordSession(); /* usage metering for the freemium quota */
+          notifyStreak(streaks([s, ...sessions], new Date()).current); /* streak milestone alerts */
         }
       }
     };

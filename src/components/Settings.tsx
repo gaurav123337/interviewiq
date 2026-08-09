@@ -4,6 +4,7 @@ import type { Config } from "../types";
 import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import { getTier } from "../services/entitlements";
+import { fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
@@ -18,6 +19,29 @@ export function Settings() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [proKey, setProKey] = useState("");
   const [pro, setPro] = useState(getTier() === "pro");
+  const [prefs, setPrefs] = useState(getPrefs());
+  const [perm, setPerm] = useState(getPermission());
+
+  const toggleReminder = async (v: boolean) => {
+    if (v && getPermission() !== "granted") {
+      const p = await requestPermission();
+      setPerm(p);
+      if (p !== "granted") { toast("🔕 Notifications blocked — allow them in your browser settings"); return; }
+    }
+    savePrefs({ ...getPrefs(), enabled: v });
+    setPrefs(getPrefs());
+    toast(v ? "🔔 Daily reminder on" : "Daily reminder off");
+  };
+
+  const setReminderTime = (time: string) => {
+    savePrefs({ ...getPrefs(), time });
+    setPrefs(getPrefs());
+  };
+
+  const testNotification = async () => {
+    const ok = await fire("🔔 InterviewIQ", "This is how your practice reminder will look.");
+    toast(ok ? "✅ Notification sent" : "🔕 Enable notifications first");
+  };
 
   const saveKey = () => {
     saveSettings({ key, base, model });
@@ -123,6 +147,32 @@ export function Settings() {
                 {testing ? <><span className="spinner" />Testing…</> : "Test connection"}
               </button>
               <button className={btnGhost + btnSm} onClick={() => { clearKey(); setKey(""); toast("AI key removed — offline engine still active"); }}>Remove key</button>
+            </div>
+          </div>
+        </section>
+
+        {/* reminders */}
+        <section className={`${cardCls} p-6`}>
+          <div className="mb-1 flex items-center gap-2">
+            <h2 className="text-[16px] font-extrabold">🔔 Daily reminder & streaks</h2>
+            <Chip tone={perm === "granted" ? "ok" : perm === "denied" ? "bad" : "default"}>
+              {isSupported() ? (perm === "granted" ? "ON" : perm === "denied" ? "BLOCKED" : "ASK") : "UNSUPPORTED"}
+            </Chip>
+          </div>
+          <p className="mb-4 text-[13px] text-mut">
+            A gentle nudge when you haven't practiced yet — and a streak alert when your run hits a milestone. Works best on an installed app; fires while the app is open or when you return to it.
+          </p>
+          <div className="space-y-3">
+            <OptRow title="Daily practice reminder" sub="Pings once a day if you haven't practiced yet">
+              <Switch checked={prefs.enabled} onChange={toggleReminder} />
+            </OptRow>
+            {prefs.enabled && (
+              <OptRow title="Reminder time" sub="Local time for the daily nudge">
+                <input type="time" value={prefs.time} onChange={e => setReminderTime(e.target.value)} className="select-cls" />
+              </OptRow>
+            )}
+            <div className="flex flex-wrap gap-2.5 pt-1">
+              <button className={btnGhost + btnSm} onClick={testNotification}>🔔 Test notification</button>
             </div>
           </div>
         </section>
