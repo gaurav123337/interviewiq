@@ -78,29 +78,26 @@ scripts/
 
 ## Cloud sync (optional — cross-device backup)
 
-The app is local-first: everything runs offline in your browser. If you want your sessions, streaks and drill progress to follow you across devices, enable the optional Supabase sync:
+The app is local-first: everything runs offline in your browser. If you want your sessions, streaks and drill progress to follow you across devices, enable the optional Supabase sync.
 
-1. Create a free project at [supabase.com](https://supabase.com).
-2. In the **SQL editor**, run:
+### Automatic setup (recommended)
 
-```sql
-create table public.user_sync (
-  user_id uuid not null references auth.users(id) on delete cascade,
-  key text not null,
-  value jsonb not null,
-  updated_at bigint not null,
-  primary key (user_id, key)
-);
+1. Create a **personal access token** at supabase.com/dashboard/account/tokens.
+2. Find your **org id** in the dashboard URL (`supabase.com/dashboard/org/<ORG_ID>/...`).
+3. Run the bootstrap script — it creates the project, runs `supabase/schema.sql`, sets the auth redirect allow-list, and prints the exact `config.ts` block:
 
-alter table public.user_sync enable row level security;
-
-create policy "read own rows"  on public.user_sync for select using (auth.uid() = user_id);
-create policy "insert own rows" on public.user_sync for insert with check (auth.uid() = user_id);
-create policy "update own rows" on public.user_sync for update using (auth.uid() = user_id);
-create policy "delete own rows" on public.user_sync for delete using (auth.uid() = user_id);
+```bash
+SUPABASE_ACCESS_TOKEN=sb_secret_... SUPABASE_ORG_ID=<org-id> node scripts/setup-supabase.js
 ```
 
-3. In Supabase → **Settings → API**, copy the **Project URL** and **anon public key**, then paste them into `src/config.ts`:
+4. **OAuth providers** (two manual steps — there is no API for them): create a GitHub **OAuth App** (github.com/settings/developers) and a Google **OAuth client (Web)** (console.cloud.google.com). In both, set the authorization callback URL the script prints (`https://<ref>.supabase.co/auth/v1/callback`), then paste each Client ID + Secret into Dashboard → **Authentication → Providers → GitHub / Google** and enable them.
+
+### Manual setup
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Run `supabase/schema.sql` in the **SQL editor**.
+3. Dashboard → **Authentication → URL Configuration** → add `https://gaurav123337.github.io/interviewiq/**` to the redirect allow-list.
+4. Copy the **Project URL** + **anon public key** (Settings → API) into `src/config.ts`:
 
 ```ts
 export const CONFIG = {
@@ -109,9 +106,9 @@ export const CONFIG = {
 };
 ```
 
-4. Restart the app → **Settings → ☁️ Cloud sync** → create an account or sign in.
+5. Restart the app → **Settings → ☁️ Cloud sync** → create an account or sign in.
 
-How it works: local `localStorage` stays the source of truth while offline; the engine syncs through a single storage seam (`services/storage.ts` → `services/sync.ts`). Sessions and drill SRS **merge** across devices; scalars (settings, onboarding) are last-write-wins; your API key, usage metering and notification preferences never leave the device. Email + password auth works out of the box; add OAuth providers (Google/GitHub) in the Supabase dashboard without code changes.
+How it works: local `localStorage` stays the source of truth while offline; the engine syncs through a single storage seam (`services/storage.ts` → `services/sync.ts`). Sessions and drill SRS **merge** across devices; scalars (settings, onboarding) are last-write-wins; your API key, usage metering and notification preferences never leave the device. Email + password auth works out of the box; OAuth buttons appear automatically once a provider is enabled.
 
 ## Privacy
 
