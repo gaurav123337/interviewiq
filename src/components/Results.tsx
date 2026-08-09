@@ -5,6 +5,7 @@ import { useApp } from "../store";
 import { toast } from "../toast";
 import { exportMd } from "../services/report";
 import { btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, KpNeutral, ScoreBadge } from "./ui";
+import { DiagnosticResults } from "./DiagnosticResults";
 
 export function Results() {
   const { state, retry, newSession, practiceWeakTopics } = useApp();
@@ -12,6 +13,9 @@ export function Results() {
 
   /* Completion is persisted by the store facade when the session ends, so this view is a pure presenter. */
   if (!session || !answers.length) return null;
+
+  /* skill-gap diagnostic sessions render their own results */
+  if (session.meta.mode === "diagnostic") return <DiagnosticResults />;
 
   const agg = aggregate(answers);
   const topics = topicSuggestions(answers);

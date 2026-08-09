@@ -15,6 +15,27 @@ export function tokenize(text: string): string[] {
 
 const kpTokens = (kp: string): string[] => tokenize(kp).filter(w => w.length > 2);
 
+/* light suffix stemming so "database"/"databases" and "cache"/"caching" match */
+const stem = (w: string) =>
+  w.length > 6 && w.endsWith("ing") ? w.slice(0, -3)
+  : w.length > 5 && w.endsWith("ed") ? w.slice(0, -2)
+  : w.length > 4 && w.endsWith("ies") ? w.slice(0, -3) + "y"
+  : w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1)
+  : w;
+
+/** True when a stemmed token of `skill` appears in any of `texts` (question text, key points…).
+    Used to map questions → skills for per-skill coverage. */
+export function relatesToSkill(skill: string, ...texts: string[]): boolean {
+  const st = new Set(tokenize(skill).map(stem).filter(w => w.length > 3));
+  if (!st.size) return false;
+  for (const t of texts) {
+    for (const w of tokenize(t).map(stem)) {
+      if (w.length > 3 && st.has(w)) return true;
+    }
+  }
+  return false;
+}
+
 export interface ScoreResult {
   score: number;
   pct: number;

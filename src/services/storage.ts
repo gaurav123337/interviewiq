@@ -20,7 +20,9 @@ export const STORAGE_KEYS = {
   notifPrefs: "iq.notifPrefs",
   notifLast: "iq.notifLast",
   drillSrs: "iq.drillSrs",
-  syncMeta: "iq.syncMeta"
+  syncMeta: "iq.syncMeta",
+  goal: "iq.goal",
+  skills: "iq.skills"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {

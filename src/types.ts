@@ -1,6 +1,6 @@
 export type LevelId = "junior" | "mid" | "senior" | "staff" | "principal" | "cto" | "ceo";
 
-export type View = "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner";
+export type View = "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner" | "roadmap";
 
 export interface Level {
   id: LevelId;
@@ -83,7 +83,7 @@ export interface Answer {
 
 export interface Config {
   count: number;
-  mode: "standard" | "journey" | "mock";
+  mode: "standard" | "journey" | "mock" | "diagnostic";
   timing: "none" | "relaxed" | "strict";
   voice: boolean;
 }
@@ -104,6 +104,42 @@ export interface SavedSession {
   config: Config;
   agg: { score: number; pct: number; grade: string };
   answers: SavedAnswer[];
+}
+
+/* ---------------- Career roadmap (target role + skill gap) ---------------- */
+
+/** Where the user is, where they're going, and by when — drives the roadmap. */
+export interface CareerGoal {
+  currentLevel: LevelId;
+  targetLevel: LevelId;
+  fieldId: string;
+  companyId: string; // "general" when none
+  targetDate: string; // yyyy-mm-dd
+  hoursPerWeek: number;
+  createdAt: number;
+}
+
+/** One skill with the self-assessed level (0-5) and optional diagnostic measurement (0-5). */
+export interface SkillRating {
+  skill: string;
+  self: number; // 0-5 (novice → strong)
+  measured?: number; // 0-5 from the diagnostic, when taken
+}
+
+/** Outcome of the optional skill-gap diagnostic quiz. */
+export interface DiagnosticResult {
+  date: number;
+  level: LevelId; // measured level (highest level averaged ≥ 60%)
+  pct: number; // overall coverage
+  perSkill: Record<string, number>; // skill → coverage 0..1
+}
+
+/** Persisted skill assessment: self-report always, diagnostic optional. */
+export interface SkillProfile {
+  goal: CareerGoal;
+  skills: SkillRating[];
+  diagnostic?: DiagnosticResult;
+  skippedAt?: number; // set when the user skipped the diagnostic
 }
 
 export interface CatStat {

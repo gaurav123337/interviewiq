@@ -7,6 +7,7 @@ import {
   buildWeakTopicSession, makeSavedSession, type OnboardingSelection
 } from "./services/session";
 import { analyzeJd, type JdResult } from "./services/jd";
+import { composeDiagnostic, persistDiagnostic } from "./services/diagnostic";
 import { recordSession } from "./services/entitlements";
 import { notifyStreak } from "./services/notifications";
 import { streaks } from "./services/progress";
@@ -118,6 +119,7 @@ interface AppApi {
   selectCompany: (id: string) => void;
   setStep: (n: number) => void;
   startSession: (config: Config) => void;
+  startDiagnostic: (fieldId: string, targetLevel: LevelId) => void;
   startPlannedSession: (sel: OnboardingSelection, config: Config, keywords?: string[]) => void;
   startWeakSession: (fieldId: string, levelId: LevelId, topics: string[], config: Config) => void;
   applyJd: (r: JdResult & { text: string }) => void;
@@ -148,10 +150,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const api = useMemo<AppApi>(() => {
     /* Saves the session to history exactly when it completes (last question or manual end).
-       Runs once per user action — safe from StrictMode double-effects since it's an event handler. */
+       Runs once per user action — safe from StrictMode double-effects since it's an event handler.
+       Diagnostic sessions are NOT saved to history: they persist the skill-gap result instead. */
     const saveOnCompletion = (answers: Answer[]) => {
       const { session, idx, config, sessions } = state;
       if (session && idx + 1 >= session.questions.length && answers.length) {
+        if (config.mode === "diagnostic") {
+          persistDiagnostic(answers, session.meta.fieldId);
+          return;
+        }
         const s = makeSavedSession(session.meta, config, answers);
         if (s) {
           dispatch({ type: "ADD_SESSION", s });
@@ -189,6 +196,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : buildInterviewSession(state.ob, config);
         dispatch({ type: "SET_SESSION", session, config });
       },
+      startDiagnostic: (fieldId, targetLevel) => {
+        const session = composeDiagnostic(fieldId, targetLevel);
+        dispatch({ type: "SET_SESSION", session, config: { ...state.config, count: session.questions.length, mode: "diagnostic", timing: "none" } });
+      },
       practiceWeakTopics: () => {
         const { session, answers, config } = state;
         if (!session) return;
@@ -223,8 +234,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       exitToResults: () => {
         const { session, answers, config } = state;
         if (session && answers.length) {
-          const s = makeSavedSession(session.meta, config, answers);
-          if (s) dispatch({ type: "ADD_SESSION", s });
+          if (config.mode === "diagnostic") {
+            persistDiagnostic(answers, session.meta.fieldId);
+          } else {
+            const s = makeSavedSession(session.meta, config, answers);
+            if (s) dispatch({ type: "ADD_SESSION", s });
+          }
         }
         dispatch({ type: "NAV", view: "results" });
       },

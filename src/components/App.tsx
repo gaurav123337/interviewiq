@@ -7,6 +7,7 @@ import { Onboarding } from "./Onboarding";
 import { Interview } from "./Interview";
 import { Results } from "./Results";
 import { Planner } from "./Planner";
+import { Roadmap } from "./Roadmap";
 import { Drill } from "./Drill";
 import { Bank } from "./Bank";
 import { History } from "./History";
@@ -16,6 +17,7 @@ import { checkReminder } from "../services/notifications";
 const TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
   { id: "planner", label: "Planner", icon: "🗓️" },
+  { id: "roadmap", label: "Roadmap", icon: "🧭" },
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
   { id: "history", label: "History", icon: "🗂️" },
@@ -100,6 +102,7 @@ export function App() {
         {view === "interview" && <Interview />}
         {view === "results" && <Results />}
         {view === "planner" && <Planner />}
+        {view === "roadmap" && <Roadmap />}
         {view === "drill" && <Drill />}
         {view === "bank" && <Bank />}
         {view === "history" && <History />}
