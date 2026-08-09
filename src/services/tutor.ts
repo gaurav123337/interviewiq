@@ -5,11 +5,42 @@ import { chat } from "../ai";
 import type { CareerGoal } from "../types";
 import { fieldById, levelById } from "../data";
 import { aiCallsLeft, isPaywallEnabled, recordAiCall } from "./entitlements";
+import { embed } from "./embeddings";
+import { getSupabaseClient, getCloudState } from "./cloud";
+import { searchPdfChunks } from "./admin";
 
 async function guard(): Promise<void> {
   if (isPaywallEnabled() && aiCallsLeft() <= 0) {
     throw new Error("You've used your free AI coaching for today — upgrade to Pro for unlimited.");
   }
+}
+
+/** Retrieves the most relevant chunks of the RAG knowledge base for a query.
+    Best-effort: any failure (no key, not signed in, empty index) returns "". */
+async function ragContext(query: string): Promise<string> {
+  try {
+    const client = await getSupabaseClient();
+    if (!client || !getCloudState().user) return "";
+    const qv = await embed([query]);
+    if (!qv[0]?.length) return "";
+    const hits = await searchPdfChunks(qv[0], 4);
+    if (!hits.length) return "";
+    return hits.map(h => h.content).join("\n\n---\n\n").slice(0, 6000);
+  } catch {
+    return ""; /* grounding must never break the tutor */
+  }
+}
+
+/** Appends the grounded context instructions to a system prompt when retrieved. */
+async function withGrounding(sys: string, query: string): Promise<string> {
+  const ctx = await ragContext(query);
+  if (!ctx) return sys;
+  return (
+    sys +
+    "\n\nReference material from the product knowledge base (use it only when it helps; " +
+    "answer from your own knowledge otherwise, and never claim the reference says what it doesn't):\n" +
+    ctx
+  );
 }
 
 /** Plain-language explanation of a roadmap topic for the user's target level. */
@@ -27,7 +58,8 @@ export async function explainTopic(topic: string, goal: CareerGoal): Promise<str
     `3) The 3 most common traps or misunderstandings.\n` +
     `4) A model-answer skeleton they could use in an interview.\n` +
     `Keep it under ~220 words.`;
-  const out = await chat([{ role: "system", content: sys }, { role: "user", content: usr }], { maxTokens: 650 });
+  const sysGrounded = await withGrounding(sys, topic);
+  const out = await chat([{ role: "system", content: sysGrounded }, { role: "user", content: usr }], { maxTokens: 650 });
   recordAiCall();
   return out;
 }
@@ -47,8 +79,10 @@ export async function tutorChat(topic: string, goal: CareerGoal, history: TutorM
     `Answer the user's questions about this topic concisely and plainly. Tie answers back to how they'd ` +
     `speak about it in an interview at ${lvl.name} level. If they ask something off-topic, gently steer back. ` +
     `Under ~180 words per reply.`;
+  const lastUser = [...history].reverse().find(m => m.role === "user")?.content ?? "";
+  const sysGrounded = await withGrounding(sys, lastUser || topic);
   const msgs: { role: "system" | "user" | "assistant"; content: string }[] = [
-    { role: "system", content: sys },
+    { role: "system", content: sysGrounded },
     ...history.map(m => ({ role: m.role, content: m.content }))
   ];
   const out = await chat(msgs, { maxTokens: 500 });

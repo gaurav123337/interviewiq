@@ -1,24 +1,45 @@
 {
-  "_comment": "Weekly question-bank scraper sources. Enable a source by setting \"enabled\": true. The workflow runs every Monday 03:00 UTC (edit .github/workflows/scrape-weekly.yml for frequency). Everything scraped lands as DRAFT in the Admin → Question bank → review & publish. Types: \"json\" (array or {questions|items|data: [...]}), \"html\", \"markdown\" (both use question-marker heuristics).",
+  "_comment": "Weekly question-bank scraper sources. Enable a source by setting \"enabled\": true. The workflow runs every Monday 03:00 UTC (edit .github/workflows/scrape-weekly.yml for frequency). Everything scraped lands as DRAFT in the Admin → Question bank → review & publish. Types: \"json\" (array or {questions|items|data: [...]}), \"html\", \"markdown\" (marker-based: `N. ### Q` + answer body, `#### Topic` + question sentence, or line-based `?` fallback).",
   "sources": [
     {
-      "id": "example-json-questions",
-      "enabled": false,
-      "url": "https://example.com/api/questions.json",
-      "type": "json",
-      "fieldId": "frontend",
+      "id": "backend-arialdo-questions",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/arialdomartini/Back-End-Developer-Interview-Questions/master/README.md",
+      "type": "markdown",
+      "fieldId": "backend",
       "level": "senior",
-      "maxItems": 20,
-      "note": "Items may override fieldId/level; otherwise these defaults apply."
+      "maxItems": 30,
+      "note": "Design-pattern, architecture and language questions for backend engineers. Question = `#### Topic` heading + question sentence."
     },
     {
-      "id": "example-html-page",
-      "enabled": false,
-      "url": "https://example.com/blog/common-interview-questions",
-      "type": "html",
-      "fieldId": "backend",
+      "id": "frontend-js-sudheerj",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/sudheerj/javascript-interview-questions/master/README.md",
+      "type": "markdown",
+      "fieldId": "frontend",
       "level": "mid",
-      "maxItems": 15
+      "maxItems": 25,
+      "note": "Curated JavaScript Q&A bank (`1. ### Question` + model-answer body)."
+    },
+    {
+      "id": "frontend-react-sudheerj",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/sudheerj/reactjs-interview-questions/master/README.md",
+      "type": "markdown",
+      "fieldId": "frontend",
+      "level": "mid",
+      "maxItems": 20,
+      "note": "Curated React Q&A bank (`1. ### Question` + model-answer body)."
+    },
+    {
+      "id": "data-theory-questions",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/alexeygrigorev/data-science-interviews/master/theory.md",
+      "type": "markdown",
+      "fieldId": "data",
+      "level": "mid",
+      "maxItems": 25,
+      "note": "Data-science theory questions (ML, stats, validation). Line-based `?` extraction; difficulty emoji stripped."
     }
   ]
 }

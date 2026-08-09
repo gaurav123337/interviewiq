@@ -49,11 +49,98 @@ export function extractFromHtml(html, source) {
   return items.filter(Boolean);
 }
 
+/* difficulty emoji the data-science theory list appends to questions
+   (👶 ⭐️ 🚀 — including ZWJ + variation selectors) */
+const TRAILING_EMOJI = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{200D}\u{FE0F}]+$/gu;
+
+/** Cleans a raw markdown source into plain text lines (tags, links, emphasis stripped). */
+export function cleanMarkdown(md) {
+  return String(md)
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") /* links keep their text */
+    .replace(/\*\*|__|`/g, "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+const NUMBERED_Q = /^\d+\.\s*#+\s+(.+)$/;
+const BARE_Q = /^#{4,6}\s+(.+)$/;
+const INLINE_Q = /^\*{1,2}Q[:.)]\s*(.+)$|^Q[:.)]\s*(.+)$/;
+
+/** Extracts question blocks from markdown. Supports two real-world styles:
+    - `N. ### Question` followed by an answer body (sudheerj question banks)
+    - `#### Topic` followed by a question sentence (backend-question lists)
+    Falls back to line-based `?` scanning when no marker style is found. */
+export function extractFromMarkdown(md, source) {
+  const lines = cleanMarkdown(md);
+  /* If the document uses numbered questions, bare headings inside answers
+     (e.g. sudheerj's `#### call`) are answer content — not questions. */
+  const numberedMode = lines.some((l) => NUMBERED_Q.test(l));
+  const items = [];
+  let cur = null; /* { numbered, heading, body: [] } */
+
+  const flush = () => {
+    if (!cur) return;
+    let question = cur.heading;
+    let answer = "";
+    const body = cur.body.join(" ")
+      .replace(/\(\s*\)/g, "")
+      .replace(/\b(Resources|References)\b/g, " ")
+      .replace(/\s+/g, " ").trim();
+    if (cur.numbered) {
+      /* heading is the full question; the body is the model answer */
+      answer = body;
+    } else if (body) {
+      /* `#### Topic` + body: the body is the actual question text */
+      question = question + ": " + body;
+    }
+    question = question.replace(/:\s*$/, "").trim();
+    if (question.length >= 12) {
+      items.push(normalizeItem({ question, answer: answer || "" }, source));
+    }
+    cur = null;
+  };
+
+  for (const line of lines) {
+    const m = numberedMode
+      ? line.match(NUMBERED_Q)
+      : line.match(BARE_Q) || line.match(INLINE_Q);
+    if (m) {
+      flush();
+      cur = {
+        numbered: numberedMode,
+        heading: (m[1] || m[2] || "").trim(),
+        body: []
+      };
+      continue;
+    }
+    /* section headers / TOC — skip entirely in bare mode; keep in numbered
+       mode only as answer body (it belongs to the current question) */
+    if (!numberedMode && (/^#{2,6}\s+/.test(line) || line === "Table of Contents")) continue;
+    if (cur) cur.body.push(line);
+  }
+  flush();
+
+  /* fallback: bullet/list-style questions (e.g. "**What is X? 👶**") */
+  if (!items.length) {
+    for (const line of lines) {
+      const q = line.replace(/^[\d.)\-\*\u2022\s]+/, "").replace(TRAILING_EMOJI, "").trim();
+      if (!q.includes("?") || q.length < 15) continue;
+      items.push(normalizeItem({ question: q, answer: "" }, source));
+    }
+  }
+  return items.filter(Boolean);
+}
+
 /** Generic entry point: picks the extractor by source.type. */
 export function extractItems(body, source) {
   const type = source.type ?? "json";
   if (type === "json") return extractFromJson(body, source);
-  if (type === "html" || type === "markdown") return extractFromHtml(String(body), source);
+  if (type === "markdown") return extractFromMarkdown(String(body), source);
+  if (type === "html") return extractFromHtml(String(body), source);
   return [];
 }
 

@@ -9,21 +9,25 @@ import { cleanTextToQuestions } from "../services/cleaner";
 import { parseQuestionBatch } from "../services/import";
 import { extractFileText } from "../services/pdf";
 import {
-  adminListUsers, adminMetrics, createAnnouncement, createQuestion, deleteAnnouncement,
-  deleteQuestion, grantAdmin, listAdmins, revokeAdmin, saveRemoteConfig, setAnnouncementPublished,
-  setQuestionPublished, type AdminMetrics, type AdminUserRow
+  adminListUsers, adminMetrics, batchDeleteQuestions, batchSetQuestionsPublished,
+  createAnnouncement, createPdfDocument, createQuestion, deleteAnnouncement, deletePdfDocument,
+  deleteQuestion, grantAdmin, insertPdfChunks, listAdmins, listPdfDocuments, revokeAdmin,
+  saveRemoteConfig, setAnnouncementPublished, setPdfChunkCount, setQuestionPublished,
+  updateQuestion, type AdminMetrics, type AdminUserRow, type PdfDocumentRow
 } from "../services/admin";
+import { chunkText, embed } from "../services/embeddings";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "import" | "config";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "config";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
   { id: "users", label: "Users", icon: "👥" },
   { id: "announcements", label: "Announcements", icon: "📣" },
   { id: "questions", label: "Question bank", icon: "📚" },
+  { id: "review", label: "Review inbox", icon: "🛂" },
   { id: "import", label: "Auto-fill", icon: "⚡" },
   { id: "config", label: "Product config", icon: "🎛️" }
 ];
@@ -116,6 +120,9 @@ export function Admin() {
         )}
         {section === "questions" && (
           <Questions list={questions} busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
+        )}
+        {section === "review" && (
+          <ReviewInbox list={questions} busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
         )}
         {section === "import" && (
           <AutoFill busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
@@ -427,6 +434,177 @@ function Questions({ list, busy, setBusy, onChanged }: {
 }
 
 /* ------------------------------------------------------------------ */
+/* Review inbox — batch review of scraped/imported drafts              */
+/* ------------------------------------------------------------------ */
+
+interface DraftEdit {
+  fieldId: string;
+  level: LevelId;
+  question: string;
+  answer: string;
+  keyPoints: string[];
+}
+
+function ReviewInbox({ list, busy, setBusy, onChanged }: {
+  list: ReturnType<typeof getPublishedQuestions>; busy: boolean;
+  setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
+}) {
+  const drafts = list.filter(q => !q.published);
+  const [edits, setEdits] = useState<Record<number, DraftEdit>>({});
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  /* re-seed the editors whenever the list refreshes (post-save, section re-entry) */
+  useEffect(() => {
+    setEdits(Object.fromEntries(drafts.map(q => [q.id, {
+      fieldId: q.fieldId, level: q.level, question: q.question, answer: q.answer, keyPoints: q.keyPoints
+    }])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list]);
+
+  const edit = (id: number, patch: Partial<DraftEdit>) =>
+    setEdits({ ...edits, [id]: { ...(edits[id] ?? {}), ...patch } });
+
+  const toggle = (id: number) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelected(next);
+  };
+
+  const toggleAll = () =>
+    setSelected(selected.size === drafts.length ? new Set() : new Set(drafts.map(d => d.id)));
+
+  const saveOne = async (id: number) => {
+    const e = edits[id];
+    if (!e || !e.question.trim()) { toast("Question is required"); return; }
+    setBusy(true);
+    try {
+      await updateQuestion(id, {
+        fieldId: e.fieldId, level: e.level, question: e.question.trim(),
+        answer: e.answer.trim(), keyPoints: e.keyPoints.filter(k => k.trim())
+      });
+      toast("Saved");
+      await onChanged();
+    } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const publishOne = async (id: number) => {
+    setBusy(true);
+    try { await setQuestionPublished(id, true); toast("Published — live for all users"); await onChanged(); }
+    catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const deleteOne = async (id: number) => {
+    setBusy(true);
+    try { await deleteQuestion(id); toast("Deleted"); await onChanged(); }
+    catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const publishSelected = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBusy(true);
+    try {
+      await batchSetQuestionsPublished(ids, true);
+      toast(`🚀 Published ${ids.length} question(s) — live for all users`);
+      setSelected(new Set());
+      await onChanged();
+    } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const deleteSelected = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBusy(true);
+    try {
+      await batchDeleteQuestions(ids);
+      toast(`Deleted ${ids.length} question(s)`);
+      setSelected(new Set());
+      await onChanged();
+    } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className={`${cardCls} p-5`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex-1">
+            <h2 className="text-[16px] font-extrabold">🛂 Review inbox ({drafts.length})</h2>
+            <p className="text-[12.5px] text-mut">
+              Drafts from the weekly scraper, bulk import and PDF/AI cleaning. Edit inline, then
+              publish in one click — published questions go live for every user on next sync.
+            </p>
+          </div>
+          {drafts.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button className={btnGhost + btnSm} onClick={toggleAll} disabled={busy}>
+                {selected.size === drafts.length && drafts.length > 0 ? "Deselect all" : `Select all (${drafts.length})`}
+              </button>
+              <button className={btnPrimary + btnSm} onClick={publishSelected} disabled={busy || selected.size === 0}>
+                🚀 Publish {selected.size || ""}
+              </button>
+              <button className={btnDanger + btnSm} onClick={deleteSelected} disabled={busy || selected.size === 0}>
+                🗑 Delete {selected.size || ""}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {drafts.length === 0 && (
+        <div className={`${cardCls} p-10 text-center`}>
+          <div className="text-[30px]">✅</div>
+          <p className="mt-2 text-[14px] font-bold">Nothing to review</p>
+          <p className="mx-auto mt-1 max-w-[420px] text-[12.5px] text-mut">
+            Drafts appear here when the weekly scraper runs, or when you import via Auto-fill.
+          </p>
+        </div>
+      )}
+
+      {drafts.map(d => {
+        const e = edits[d.id];
+        if (!e) return null;
+        const sel = selected.has(d.id);
+        return (
+          <div key={d.id} className={`${cardCls} p-5 ${sel ? "ring-2 ring-acc1/60" : ""}`}>
+            <div className="mb-3 flex items-start gap-3">
+              <input type="checkbox" checked={sel} onChange={() => toggle(d.id)} className="mt-1 h-4 w-4 accent-acc1" />
+              <div className="flex-1 space-y-2.5">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <select value={e.fieldId} onChange={ev => edit(d.id, { fieldId: ev.target.value })} className="inp">
+                    {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
+                  </select>
+                  <select value={e.level} onChange={ev => edit(d.id, { level: ev.target.value as LevelId })} className="inp">
+                    {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
+                  </select>
+                </div>
+                <textarea value={e.question} onChange={ev => edit(d.id, { question: ev.target.value })} rows={2} className="inp w-full resize-y text-[13.5px] font-bold" />
+                <textarea value={e.answer} onChange={ev => edit(d.id, { answer: ev.target.value })} rows={3} placeholder="Model answer…" className="inp w-full resize-y" />
+                <input
+                  value={e.keyPoints.join(", ")}
+                  onChange={ev => edit(d.id, { keyPoints: ev.target.value.split(",").map(k => k.trim()).filter(Boolean) })}
+                  placeholder="Key points, comma-separated"
+                  className="inp w-full"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button className={btnGhost + btnSm} onClick={() => saveOne(d.id)} disabled={busy}>💾 Save</button>
+              <button className={btnPrimary + btnSm} onClick={() => publishOne(d.id)} disabled={busy}>🚀 Publish</button>
+              <button className={btnDanger + btnSm} onClick={() => deleteOne(d.id)} disabled={busy}>Delete</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Auto-fill — PDF / bulk import / AI cleaning pipeline                */
 /* ------------------------------------------------------------------ */
 
@@ -439,6 +617,44 @@ function AutoFill({ busy, setBusy, onChanged }: {
   const [batchText, setBatchText] = useState("");
   const [batchResult, setBatchResult] = useState<ReturnType<typeof parseQuestionBatch> | null>(null);
   const [busy2, setBusy2] = useState(false);
+  const [docs, setDocs] = useState<PdfDocumentRow[]>([]);
+  const [ragBusy, setRagBusy] = useState(false);
+
+  useEffect(() => {
+    void listPdfDocuments().then(setDocs).catch(() => {});
+  }, []);
+
+  const reloadDocs = async () => {
+    try { setDocs(await listPdfDocuments()); } catch { /* ignore */ }
+  };
+
+  const indexRag = async () => {
+    if (!rawText.trim()) { toast("Import a file first"); return; }
+    if (!aiAvailable()) { toast("Add an AI key in Settings — indexing needs one"); return; }
+    setRagBusy(true);
+    try {
+      const chunks = chunkText(rawText);
+      if (!chunks.length) { toast("Nothing to index — the extracted text is empty"); return; }
+      toast(`🧠 Embedding ${chunks.length} chunk(s)…`);
+      const vectors = await embed(chunks.map(c => c.content));
+      const docId = await createPdfDocument({ title: fileName || "Imported document", source: "pdf-import", charCount: rawText.length });
+      await insertPdfChunks(chunks.map((c, i) => ({
+        documentId: docId, index: c.index, content: c.content, tokens: c.tokens, embedding: vectors[i]
+      })));
+      await setPdfChunkCount(docId, chunks.length);
+      await reloadDocs();
+      toast(`🧠 Indexed ${chunks.length} chunk(s) — the AI tutor is now grounded in this document`);
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Indexing failed"));
+    } finally { setRagBusy(false); }
+  };
+
+  const removeDoc = async (id: number) => {
+    setRagBusy(true);
+    try { await deletePdfDocument(id); await reloadDocs(); toast("Document removed from the knowledge base"); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setRagBusy(false); }
+  };
 
   const onFile = async (f: File | null) => {
     if (!f) return;
@@ -541,9 +757,40 @@ function AutoFill({ busy, setBusy, onChanged }: {
             </button>
           </div>
         )}
-        {!aiAvailable() && (
-          <p className="mt-3 text-[12.5px] text-warn">⚠️ AI cleaning needs an API key — add one in Settings to use the ✨ agent. You can still paste raw text below.</p>
+        {rawText && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line/10 pt-3">
+            <button className={btnPrimary + btnSm} onClick={indexRag} disabled={busy || busy2 || ragBusy}>
+              {ragBusy ? <><span className="spinner" /> Embedding…</> : "🧠 Index for RAG"}
+            </button>
+            <span className="text-[12px] text-mut">Chunks the extracted text into vectors — the AI tutor answers get grounded in this document.</span>
+          </div>
         )}
+        {!aiAvailable() && (
+          <p className="mt-3 text-[12.5px] text-warn">⚠️ AI cleaning + RAG indexing need an API key — add one in Settings to use the ✨ agent. You can still paste raw text below.</p>
+        )}
+      </div>
+
+      {/* RAG knowledge base */}
+      <div className={`${cardCls} p-5`}>
+        <h2 className="text-[16px] font-extrabold">🧠 Knowledge base ({docs.length})</h2>
+        <p className="mb-3 text-[12.5px] text-mut">
+          Indexed documents are public product knowledge — every signed-in user's AI tutor can
+          retrieve and cite them. Delete a document to remove its chunks.
+        </p>
+        {docs.length === 0 && <p className="text-[13px] text-mut">Nothing indexed yet — import a PDF/TXT above and hit “Index for RAG”.</p>}
+        <div className="space-y-2">
+          {docs.map(d => (
+            <div key={d.id} className="flex items-center gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[13.5px] font-bold">📄 {d.title}</div>
+                <div className="text-[11.5px] text-fnt">
+                  {d.chunk_count} chunk(s) · {(d.char_count / 1000).toFixed(1)}k chars · {new Date(d.created_at).toLocaleDateString()}
+                </div>
+              </div>
+              <button className={btnDanger + btnSm} onClick={() => removeDoc(d.id)} disabled={ragBusy}>Delete</button>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Bulk paste import */}
@@ -630,12 +877,16 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           <OptRow title="AI coaching enabled" sub="Master switch for generative feedback, hints and the tutor">
             <Switch checked={config.ai.enabled !== false} onChange={v => setAi("enabled", v)} />
           </OptRow>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <NumField label="Max tokens" value={config.ai.maxTokens ?? 700} onChange={v => setAi("maxTokens", v)} />
             <NumField label="Temperature (0–2)" value={config.ai.temperature ?? 0.6} step={0.1} onChange={v => setAi("temperature", v)} />
             <label className="block">
               <span className="mb-1 block text-[12px] font-bold text-mut">Suggested model</span>
               <input value={config.ai.model ?? ""} onChange={e => setAi("model", e.target.value)} placeholder="gpt-4o-mini" className="inp w-full" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[12px] font-bold text-mut">Embeddings model (RAG)</span>
+              <input value={config.ai.embeddingsModel ?? ""} onChange={e => setAi("embeddingsModel", e.target.value)} placeholder="text-embedding-3-small" className="inp w-full" />
             </label>
           </div>
         </div>

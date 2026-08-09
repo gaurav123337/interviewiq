@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildUpsertSql, extractFromHtml, extractFromJson, sqlStr } from "../../scripts/scrape-lib.js";
+import {
+  buildUpsertSql, extractFromHtml, extractFromJson, extractFromMarkdown, sqlStr
+} from "../../scripts/scrape-lib.js";
 
 const source = { fieldId: "frontend", level: "senior", keyPoints: [] };
 
@@ -28,6 +30,62 @@ describe("scraper extraction", () => {
     );
     expect(items.length).toBeGreaterThanOrEqual(1);
     expect(items[0].question).toContain("URL shortener");
+  });
+
+  it("parses numbered `N. ### Q` + answer-body markdown (sudheerj style)", () => {
+    const md = [
+      "# JS Questions",
+      "",
+      "1. ### What is a prototype chain",
+      "Every object has an internal link to another object, its prototype.",
+      "#### Note",
+      "This subheading belongs to the answer.",
+      "",
+      "2. ### What is JSON",
+      "A lightweight data-interchange format."
+    ].join("\n");
+    const items = extractFromMarkdown(md, source);
+    expect(items).toHaveLength(2);
+    expect(items[0].question).toBe("What is a prototype chain");
+    expect(items[0].answer).toContain("Every object has an internal link");
+    /* answer subheadings must not spawn new questions in numbered mode */
+    expect(items[0].answer).toContain("This subheading");
+    expect(items[1].question).toBe("What is JSON");
+  });
+
+  it("parses `#### Topic` + question sentence markdown (backend style)", () => {
+    const md = [
+      "### <a name='patterns'>Questions about Design Patterns:</a>",
+      "#### Globals Are Evil",
+      "Why are global and static objects evil? Can you show it with a code example?",
+      "",
+      "#### Law of Demeter",
+      "Each unit should only talk to its immediate friends.",
+      "",
+      "## Some Other Section",
+      "Prose that is not a question."
+    ].join("\n");
+    const items = extractFromMarkdown(md, source);
+    expect(items.length).toBeGreaterThanOrEqual(2);
+    expect(items[0].question).toContain("Globals Are Evil");
+    expect(items[0].question).toContain("Why are global and static objects evil");
+    expect(items[0].answer).toBe("");
+    expect(items[1].question).toContain("Law of Demeter");
+    expect(items[1].question).toContain("Each unit should only talk to its immediate friends");
+  });
+
+  it("falls back to line-based `?` questions and strips difficulty emoji", () => {
+    const md = [
+      "## Supervised machine learning",
+      "",
+      "**What is supervised machine learning? 👶**",
+      "**Explain the bias-variance tradeoff? 🚀**",
+      "* Legend: 👶 easy ⭐️ medium"
+    ].join("\n");
+    const items = extractFromMarkdown(md, source);
+    expect(items).toHaveLength(2);
+    expect(items[0].question).toBe("What is supervised machine learning?");
+    expect(items[1].question).toBe("Explain the bias-variance tradeoff?");
   });
 
   it("builds an idempotent upsert keyed on question text", () => {

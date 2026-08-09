@@ -21,6 +21,8 @@ export interface ScrapeSource {
 export function normalizeItem(raw: Record<string, unknown>, source: ScrapeSource): ScrapeItem | null;
 export function extractFromJson(body: unknown, source: ScrapeSource): ScrapeItem[];
 export function extractFromHtml(html: string, source: ScrapeSource): ScrapeItem[];
+export function extractFromMarkdown(md: string, source: ScrapeSource): ScrapeItem[];
+export function cleanMarkdown(md: string): string[];
 export function extractItems(body: unknown, source: ScrapeSource): ScrapeItem[];
 export function sqlStr(v: string | number): string;
 export function buildUpsertSql(rows: ScrapeItem[]): string;

@@ -236,6 +236,119 @@ export async function deleteQuestion(id: number): Promise<void> {
   await refreshAdminData();
 }
 
+/** Edits an existing question (used by the review inbox to clean up drafts). */
+export async function updateQuestion(id: number, patch: {
+  fieldId?: string; level?: LevelId; question?: string; answer?: string; keyPoints?: string[];
+}): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const row: Record<string, unknown> = {};
+  if (patch.fieldId !== undefined) row.field_id = patch.fieldId;
+  if (patch.level !== undefined) row.level = patch.level;
+  if (patch.question !== undefined) row.question = patch.question;
+  if (patch.answer !== undefined) row.answer = patch.answer;
+  if (patch.keyPoints !== undefined) row.key_points = patch.keyPoints;
+  const { error } = await client.from("published_questions").update(row).eq("id", id);
+  if (error) throw new Error(error.message);
+  await refreshAdminData();
+}
+
+/** Batch publish/unpublish for the review inbox (single round-trip). */
+export async function batchSetQuestionsPublished(ids: number[], published: boolean): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("published_questions").update({ published }).in("id", ids);
+  if (error) throw new Error(error.message);
+  await refreshAdminData();
+}
+
+/** Batch delete for the review inbox. */
+export async function batchDeleteQuestions(ids: number[]): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("published_questions").delete().in("id", ids);
+  if (error) throw new Error(error.message);
+  await refreshAdminData();
+}
+
+/* ------------------------------------------------------------------ */
+/* RAG knowledge base — indexed documents + vector search              */
+/* ------------------------------------------------------------------ */
+
+export interface PdfDocumentRow {
+  id: number;
+  title: string;
+  source: string;
+  char_count: number;
+  chunk_count: number;
+  created_at: string;
+}
+
+/** Indexed knowledge-base documents (public read — they feed every user's tutor). */
+export async function listPdfDocuments(): Promise<PdfDocumentRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.from("pdf_documents")
+    .select("id, title, source, char_count, chunk_count, created_at")
+    .order("created_at", { ascending: false });
+  if (error) return [];
+  return (data ?? []) as PdfDocumentRow[];
+}
+
+/** Registers a document and returns its id (chunks are inserted after embedding). */
+export async function createPdfDocument(input: { title: string; source?: string; charCount: number }): Promise<number> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.from("pdf_documents")
+    .insert({ title: input.title, source: input.source ?? "", char_count: input.charCount, chunk_count: 0 })
+    .select("id").single();
+  if (error) throw new Error(error.message);
+  return (data as { id: number }).id;
+}
+
+/** Stores embedded chunks for a document. */
+export async function insertPdfChunks(rows: {
+  documentId: number; index: number; content: string; tokens: number; embedding: number[];
+}[]): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("pdf_chunks").insert(
+    rows.map(r => ({ document_id: r.documentId, chunk_index: r.index, content: r.content, token_count: r.tokens, embedding: r.embedding }))
+  );
+  if (error) throw new Error(error.message);
+}
+
+/** Updates a document's chunk count after indexing. */
+export async function setPdfChunkCount(id: number, count: number): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) return;
+  await client.from("pdf_documents").update({ chunk_count: count }).eq("id", id);
+}
+
+/** Removes a document and its chunks (cascade). */
+export async function deletePdfDocument(id: number): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("pdf_documents").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export interface PdfHit {
+  documentId: number;
+  content: string;
+  similarity: number;
+}
+
+/** Vector search over the knowledge base — the RAG retrieval step. */
+export async function searchPdfChunks(embedding: number[], matchCount = 4): Promise<PdfHit[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.rpc("match_pdf_chunks", { query_embedding: embedding, match_count: matchCount });
+  if (error || !data) return [];
+  return (data as { document_id: number; content: string; similarity: number }[])
+    .map(d => ({ documentId: d.document_id, content: d.content, similarity: d.similarity }));
+}
+
 export async function grantAdmin(email: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");

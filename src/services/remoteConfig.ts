@@ -27,6 +27,8 @@ export interface RemoteConfig {
   ai: {
     enabled?: boolean;
     model?: string;
+    /** Model used for RAG embeddings (must return 1536-dim vectors). */
+    embeddingsModel?: string;
     maxTokens?: number;
     temperature?: number;
   };
@@ -74,9 +76,9 @@ export function getLimits(): { sessionsPerMonth: number; aiPerDay: number } {
 }
 
 /** AI defaults an admin can push instead of the baked-in ones. */
-export function getAiDefaults(): { model?: string; maxTokens?: number; temperature?: number } {
+export function getAiDefaults(): { model?: string; embeddingsModel?: string; maxTokens?: number; temperature?: number } {
   const { ai } = getRemoteConfig();
-  return { model: ai.model, maxTokens: ai.maxTokens, temperature: ai.temperature };
+  return { model: ai.model, embeddingsModel: ai.embeddingsModel, maxTokens: ai.maxTokens, temperature: ai.temperature };
 }
 
 export function aiEnabled(): boolean {
