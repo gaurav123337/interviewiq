@@ -3,7 +3,7 @@ import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, t
 import { buildProgram, runCase, runLocalJavaScript, runTests } from "../services/runner";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { toast } from "../toast";
-import { btnGhost, btnPrimary, btnSm, cardCls, Difficulty, Seg } from "./ui";
+import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Difficulty, Seg } from "./ui";
 
 type CodeCache = Record<string, Partial<Record<LangId, string>>>;
 
@@ -75,13 +75,17 @@ export function Playground() {
 
   const runAll = async () => {
     const program = buildProgram(langMeta, code);
+    const suite = [...problem.tests, ...(problem.hidden ?? [])];
     setBusy(true);
     setRunOut(null);
     try {
-      const results = await runTests(langMeta, program, problem.tests);
+      const results = await runTests(langMeta, program, suite);
       setCases(results);
       const passed = results.filter(r => r.pass).length;
-      toast(passed === results.length ? `✅ All ${results.length} tests passed` : `${passed}/${results.length} tests passed`);
+      const solved = passed === suite.length;
+      toast(solved
+        ? `✅ Solved — all ${suite.length} tests passed (${problem.hidden?.length ?? 0} hidden)`
+        : `${passed}/${suite.length} tests passed (${results.slice(problem.tests.length).filter(r => !r.pass).length} hidden failing)`);
     } catch (e) {
       toast("✗ " + ((e as Error).message || "Could not run"));
     } finally {
@@ -183,8 +187,9 @@ export function Playground() {
               {busy ? <><span className="spinner" />Running…</> : "▶ Run"}
             </button>
             <button className={btnGhost + btnSm} onClick={runAll} disabled={busy}>
-              {busy ? <><span className="spinner" />Testing…</> : `✓ Test (${problem.tests.length})`}
+              {busy ? <><span className="spinner" />Testing…</> : `✓ Test (${problem.tests.length + (problem.hidden?.length ?? 0)})`}
             </button>
+            {(cases && cases.every(c => c.pass)) && <Chip tone="ok">✅ Solved</Chip>}
             <button className={btnGhost + btnSm} onClick={resetCode}>↺ Reset</button>
             <span className="flex-1" />
             {!langMeta.offline && (
@@ -210,7 +215,7 @@ export function Playground() {
             <div className="border-t border-line/10 px-4 py-3">
               {cases ? (
                 <div className="space-y-2">
-                  {cases.map((c, i) => (
+                  {cases.slice(0, problem.tests.length).map((c, i) => (
                     <div key={i} className={`rounded-xl border px-3 py-2 text-[12.5px] ${c.pass ? "border-ok/30 bg-ok/10" : "border-bad/30 bg-bad/10"}`}>
                       <div className="mb-1 font-bold">{c.pass ? "✅ Pass" : "❌ Fail"} — case {i + 1}</div>
                       {!c.pass && (
@@ -222,6 +227,16 @@ export function Playground() {
                       )}
                     </div>
                   ))}
+                  {(problem.hidden?.length ?? 0) > 0 && (
+                    <div className={`rounded-xl border px-3 py-2 text-[12.5px] ${cases.slice(problem.tests.length).every(c => c.pass) ? "border-ok/30 bg-ok/10" : "border-bad/30 bg-bad/10"}`}>
+                      <div className="mb-1 font-bold">
+                        🧪 Hidden: {cases.slice(problem.tests.length).filter(c => c.pass).length}/{problem.hidden!.length} passed
+                      </div>
+                      {!cases.slice(problem.tests.length).every(c => c.pass) && (
+                        <div className="text-mut">The hidden judge cases caught something — find the edge case before calling it solved.</div>
+                      )}
+                    </div>
+                  )}
                   <div className="pt-1 text-[13px] font-extrabold">
                     {cases.filter(c => c.pass).length}/{cases.length} passing
                   </div>

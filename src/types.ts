@@ -1,6 +1,6 @@
 export type LevelId = "junior" | "mid" | "senior" | "staff" | "principal" | "cto" | "ceo";
 
-export type View = "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner" | "roadmap" | "playground" | "admin";
+export type View = "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner" | "roadmap" | "playground" | "admin" | "progress";
 
 export interface Level {
   id: LevelId;
@@ -83,7 +83,7 @@ export interface Answer {
 
 export interface Config {
   count: number;
-  mode: "standard" | "journey" | "mock" | "diagnostic";
+  mode: "standard" | "journey" | "mock" | "diagnostic" | "behavioral";
   timing: "none" | "relaxed" | "strict";
   voice: boolean;
 }

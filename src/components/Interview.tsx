@@ -6,9 +6,14 @@ import { grade } from "../engine";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { fmtTime } from "../util";
-import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Kp, Modal } from "./ui";
+import { getTier, isPaywallEnabled } from "../services/entitlements";
+import { loadVoices, speak, stopSpeaking, ttsSupported } from "../services/voice";
+import { UpgradeModal } from "./Upgrade";
+import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Kp, Modal, Switch } from "./ui";
 
 const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+
+const voicePro = () => isPaywallEnabled() && getTier() !== "pro";
 
 export function Interview() {
   const { state, submitAnswer, skipQuestion, nextQuestion, exitToResults } = useApp();
@@ -19,9 +24,25 @@ export function Interview() {
   const [ai, setAi] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [showExit, setShowExit] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [voiceMode, setVoiceMode] = useState(false);
   const boxRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => { setAnswer(""); setAi(null); setAiLoading(false); }, [idx]);
+
+  /* voice mode: the interviewer reads each question aloud */
+  useEffect(() => { loadVoices(); }, []);
+  useEffect(() => {
+    if (voiceMode && q) speak(q.q);
+    return () => { if (voiceMode) stopSpeaking(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx, voiceMode]);
+  useEffect(() => () => stopSpeaking(), []);
+
+  const toggleVoice = () => {
+    if (voicePro()) { setShowUpgrade(true); return; }
+    setVoiceMode(v => !v);
+  };
 
   if (!session || !q) return null;
 
@@ -59,6 +80,15 @@ export function Interview() {
         <div className="min-w-[220px] flex-1 text-xl font-extrabold tracking-tight">
           {meta.company} · {meta.field} · {meta.level}
         </div>
+        {ttsSupported() && (
+          <label
+            title={voicePro() ? "🔒 Voice mode is a Pro feature" : "The interviewer reads each question aloud"}
+            className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12.5px] font-bold ${voiceMode ? "border-acc1/50 bg-acc1/15 text-acctxt" : "border-line/15 bg-wht/10 text-mut"}`}
+          >
+            🎙️ Voice
+            <Switch checked={voiceMode} onChange={toggleVoice} />
+          </label>
+        )}
         {config.mode === "mock" && <MockCountdown total={45 * 60} onExpire={exitToResults} />}
         <div className="min-w-[170px] flex-none">
           <div className="h-[7px] overflow-hidden rounded-full bg-wht/15">
@@ -125,6 +155,9 @@ export function Interview() {
             <button className={`${btn} border border-bad/40 px-4 py-2 text-sm text-bad hover:bg-bad/10`} onClick={() => { setShowExit(false); exitToResults(); }}>End & see results</button>
           </div>
         </Modal>
+      )}
+      {showUpgrade && (
+        <UpgradeModal onClose={() => setShowUpgrade(false)} reason="🎙️ Voice mode — the interviewer reads questions aloud and you answer by speaking — is a Pro feature." />
       )}
     </div>
   );

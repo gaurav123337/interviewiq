@@ -11,6 +11,7 @@ import { Roadmap } from "./Roadmap";
 import { Drill } from "./Drill";
 import { Bank } from "./Bank";
 import { History } from "./History";
+import { Progress } from "./Progress";
 import { Settings } from "./Settings";
 import { Playground } from "./Playground";
 import { Admin } from "./Admin";
@@ -31,6 +32,7 @@ const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
 const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
+  { id: "progress", label: "Progress", icon: "📈" },
   { id: "history", label: "History", icon: "🗂️" },
   { id: "settings", label: "Settings", icon: "⚙️" }
 ];
@@ -164,6 +166,7 @@ export function App() {
         {view === "drill" && <Drill />}
         {view === "bank" && <Bank />}
         {view === "history" && <History />}
+        {view === "progress" && <Progress />}
         {view === "settings" && <Settings />}
         {view === "playground" && <Playground />}
         {view === "admin" && <Admin />}

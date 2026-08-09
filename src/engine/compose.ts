@@ -38,7 +38,9 @@ export function composeSession({ fieldId, companyId, levelId, count, mode }: Com
   const fieldPool = (lvlId: LevelId) => [...(field?.questions[lvlId] ?? []), ...publishedFor(fieldId ?? "", lvlId)];
   const fieldQ = (lvlId: LevelId, n: number) => pickN(fieldPool(lvlId), n);
 
-  if (levelId === "cto") {
+  if (mode === "behavioral") {
+    pickN(BEHAVIORAL, Math.min(count, BEHAVIORAL.length)).forEach(q => add(q, "behavioral", levelId ?? "mid", "behavioral"));
+  } else if (levelId === "cto") {
     pickN(company.sample, 2).forEach(q => add(q, "company", "cto", "company"));
     pickN(CTO_POOL, 2).forEach(q => add(q, "cto", "cto", "cto"));
     pickN(BEHAVIORAL, 1).forEach(q => add(q, "behavioral", "cto", "behavioral"));

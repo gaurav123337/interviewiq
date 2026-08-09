@@ -43,6 +43,8 @@ export interface CodingProblem {
   /** Starter `solve(lines)` skeleton per language (returns output lines). */
   starters: Record<LangId, string>;
   tests: CodingTest[];
+  /** Hidden judge cases — run with the visible ones but never shown to the user. */
+  hidden?: CodingTest[];
 }
 
 export const codingProblemById = (id: string): CodingProblem | undefined => CODING_PROBLEMS.find(p => p.id === id);
@@ -164,6 +166,11 @@ export const CODING_PROBLEMS: CodingProblem[] = [
       { stdin: "3\n3 2 4\n6\n", expect: "1 2" },
       { stdin: "2\n3 3\n6\n", expect: "0 1" },
       { stdin: "5\n1 5 3 9 2\n11\n", expect: "3 4" }
+    ],
+    hidden: [
+      { stdin: "6\n-3 4 3 90 0 7\n94\n", expect: "3 4" },
+      { stdin: "7\n1 2 3 4 5 6 7\n13\n", expect: "5 6" },
+      { stdin: "10\n0 4 3 0 8 6 9 2 1 5\n0\n", expect: "0 3" }
     ]
   },
   {
@@ -187,6 +194,12 @@ export const CODING_PROBLEMS: CodingProblem[] = [
       { stdin: "([)]", expect: "false" },
       { stdin: "{[]}", expect: "true" },
       { stdin: "", expect: "true" }
+    ],
+    hidden: [
+      { stdin: "((()))", expect: "true" },
+      { stdin: "({[}])", expect: "false" },
+      { stdin: "([{}()])", expect: "true" },
+      { stdin: ")(", expect: "false" }
     ]
   },
   {
@@ -208,6 +221,11 @@ export const CODING_PROBLEMS: CodingProblem[] = [
       { stdin: "1\n-1\n", expect: "-1" },
       { stdin: "5\n5 4 -1 7 8\n", expect: "23" },
       { stdin: "4\n-2 -3 -1 -5\n", expect: "-1" }
+    ],
+    hidden: [
+      { stdin: "8\n-1 2 -1 3 -2 4 -1 2\n", expect: "6" },
+      { stdin: "2\n-2 -1\n", expect: "-1" },
+      { stdin: "11\n8 -19 5 -4 20 2 -9 3 7 -1 4\n", expect: "28" }
     ]
   },
   {
@@ -250,6 +268,11 @@ export const CODING_PROBLEMS: CodingProblem[] = [
       { stdin: "5\n7 6 4 3 1\n", expect: "0" },
       { stdin: "2\n1 2\n", expect: "1" },
       { stdin: "7\n3 2 6 5 0 3 9\n", expect: "9" }
+    ],
+    hidden: [
+      { stdin: "5\n6 4 3 1 7\n", expect: "6" },
+      { stdin: "8\n1 8 2 7 3 6 4 5\n", expect: "7" },
+      { stdin: "3\n5 5 5\n", expect: "0" }
     ]
   },
   {

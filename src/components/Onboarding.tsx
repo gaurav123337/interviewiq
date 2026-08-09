@@ -257,8 +257,12 @@ function ConfigModal({ onClose, onBegin }: { onClose: () => void; onBegin: (cfg:
       <OptRow title="Questions" sub="More questions = deeper assessment">
         <Seg options={[5, 8, 10, 15].map(c => ({ value: String(c), label: String(c) }))} value={String(cfg.count)} onChange={v => set({ count: Number(v) })} />
       </OptRow>
-      <OptRow title="Mode" sub="Journey ramps from junior to your level">
-        <Seg<Config["mode"]> options={[{ value: "standard", label: "Standard" }, { value: "journey", label: "Journey" }]} value={cfg.mode} onChange={v => set({ mode: v })} />
+      <OptRow title="Mode" sub="Journey ramps junior→you · Behavioral runs STAR story questions">
+        <Seg<Config["mode"]> options={[
+          { value: "standard", label: "Standard" },
+          { value: "journey", label: "Journey" },
+          { value: "behavioral", label: "Behavioral" }
+        ]} value={cfg.mode} onChange={v => set({ mode: v })} />
       </OptRow>
       <OptRow title="Timer" sub="Real interview pressure">
         <Seg<Config["timing"]> options={[{ value: "none", label: "Off" }, { value: "relaxed", label: "3 min" }, { value: "strict", label: "90 s" }]} value={cfg.timing} onChange={v => set({ timing: v })} />
