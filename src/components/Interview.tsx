@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { SessionQuestion } from "../types";
 import { companyById, levelById } from "../data";
 import { aiAvailable, getFeedback, getHint } from "../ai";
+import { grade } from "../engine";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { fmtTime } from "../util";
@@ -237,7 +238,7 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
   const pct = fb.pct;
   const ringColor = pct >= 0.8 ? "var(--color-ok)" : pct >= 0.55 ? "var(--color-warn)" : "var(--color-bad)";
   const R = 33, C = 2 * Math.PI * R;
-  const gradeL = pct >= 0.9 ? "A" : pct >= 0.8 ? "B" : pct >= 0.65 ? "C" : pct >= 0.5 ? "D" : "F";
+  const gradeL = grade(pct);
 
   return (
     <div className="anim-view mt-5 overflow-hidden rounded-2xl border border-white/10">

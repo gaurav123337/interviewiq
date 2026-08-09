@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import type { View } from "../store";
+import type { View } from "../types";
 import { useApp } from "../store";
 import { ToastHost } from "../toast";
+import { FeedbackButton } from "./Feedback";
 import { Onboarding } from "./Onboarding";
 import { Interview } from "./Interview";
 import { Results } from "./Results";
@@ -61,6 +62,7 @@ export function App() {
           </nav>
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
+          <span className="hidden sm:inline-flex"><FeedbackButton /></span>
           {installEvt && (
             <button
               onClick={install}

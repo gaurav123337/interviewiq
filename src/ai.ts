@@ -2,32 +2,33 @@
    Works fully offline without a key (curated engine); with a key, adds
    real generative feedback on top. Key stays in localStorage only. */
 
+import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
+
 export interface AISettings {
   key: string;
   base: string;
   model: string;
 }
 
-const KEY = "iq.apiKey";
-const BASE = "iq.apiBase";
-const MODEL = "iq.apiModel";
+const DEFAULT_BASE = "https://api.openai.com/v1";
+const DEFAULT_MODEL = "gpt-4o-mini";
 
 export function getSettings(): AISettings {
   return {
-    key: localStorage.getItem(KEY) || "",
-    base: localStorage.getItem(BASE) || "https://api.openai.com/v1",
-    model: localStorage.getItem(MODEL) || "gpt-4o-mini"
+    key: storageGet(STORAGE_KEYS.apiKey, ""),
+    base: storageGet(STORAGE_KEYS.apiBase, DEFAULT_BASE),
+    model: storageGet(STORAGE_KEYS.apiModel, DEFAULT_MODEL)
   };
 }
 
 export function saveSettings(s: AISettings) {
-  localStorage.setItem(KEY, s.key.trim());
-  localStorage.setItem(BASE, s.base.trim().replace(/\/+$/, ""));
-  localStorage.setItem(MODEL, s.model.trim() || "gpt-4o-mini");
+  storageSet(STORAGE_KEYS.apiKey, s.key.trim());
+  storageSet(STORAGE_KEYS.apiBase, s.base.trim().replace(/\/+$/, ""));
+  storageSet(STORAGE_KEYS.apiModel, s.model.trim() || DEFAULT_MODEL);
 }
 
 export function clearKey() {
-  localStorage.removeItem(KEY);
+  storageRemove(STORAGE_KEYS.apiKey);
 }
 
 export function aiAvailable(): boolean {

@@ -1,5 +1,7 @@
 # InterviewIQ — AI Interview Coach (PWA)
 
+> 🔗 **Live demo:** https://gaurav123337.github.io/interviewiq/
+
 Prepare for technical interviews from **junior developer to CTO and CEO**. Pick a level, a field, and a company — InterviewIQ composes a tailored mock interview with company-fit questions, technical depth, model answers, and scored feedback.
 
 Built as an **offline-first Progressive Web App** with **React 19 + TypeScript + Tailwind CSS 4 + Vite**. No backend; everything runs in the browser and works without an internet connection.
@@ -32,6 +34,12 @@ Production build and preview:
 npm run build      # typechecks + bundles to dist/
 npm run preview    # http://127.0.0.1:8138
 ```
+
+## Deploy
+
+The repo ships a GitHub Actions workflow (`.github/workflows/deploy.yml`) that runs the test suite, builds, and publishes to **GitHub Pages** on every push to `main`. To enable it: repo Settings → Pages → Source → **GitHub Actions**.
+
+For other static hosts, `vite.config.ts` already uses a relative base (`./`), so the built `dist/` folder works from any subpath (Netlify, Vercel, Cloudflare Pages, S3…).
 
 ## Tests
 

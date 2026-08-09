@@ -1,5 +1,7 @@
 export type LevelId = "junior" | "mid" | "senior" | "staff" | "principal" | "cto" | "ceo";
 
+export type View = "onboard" | "interview" | "results" | "bank" | "history" | "settings";
+
 export interface Level {
   id: LevelId;
   name: string;
@@ -55,7 +57,7 @@ export interface SessionMeta {
   companyId: string;
   level: string;
   levelId: LevelId;
-  mode: string;
+  mode: Config["mode"];
 }
 
 export interface Session {

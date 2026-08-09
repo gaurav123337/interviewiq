@@ -1,26 +1,16 @@
-import { useEffect, useRef } from "react";
 import type { CatStat } from "../types";
 import { aggregate, topicSuggestions } from "../engine";
 import { levelById } from "../data";
 import { useApp } from "../store";
 import { toast } from "../toast";
-import { exportMd } from "../util";
+import { exportMd } from "../services/report";
 import { btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, KpNeutral, ScoreBadge } from "./ui";
 
 export function Results() {
-  const { state, saveSession, retry, newSession } = useApp();
-  const { session, answers, viewingHistory } = state;
-  const savedRef = useRef(false);
+  const { state, retry, newSession } = useApp();
+  const { session, answers } = state;
 
-  /* persist once per completed session (not for history replays) */
-  useEffect(() => {
-    if (session && answers.length && !viewingHistory && !savedRef.current) {
-      savedRef.current = true;
-      saveSession();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  /* Completion is persisted by the store facade when the session ends, so this view is a pure presenter. */
   if (!session || !answers.length) return null;
 
   const agg = aggregate(answers);
