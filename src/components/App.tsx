@@ -16,13 +16,17 @@ import { Playground } from "./Playground";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 
-const TABS: { id: View; label: string; icon: string }[] = [
+const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
   { id: "planner", label: "Planner", icon: "🗓️" },
   { id: "roadmap", label: "Roadmap", icon: "🧭" },
+  { id: "playground", label: "Code", icon: "💻" }
+];
+
+/* secondary destinations live behind the ☰ menu so the nav stays to 4 core tabs */
+const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
-  { id: "playground", label: "Code", icon: "💻" },
   { id: "history", label: "History", icon: "🗂️" },
   { id: "settings", label: "Settings", icon: "⚙️" }
 ];
@@ -34,6 +38,7 @@ export function App() {
   const [installEvt, setInstallEvt] = useState<BIP | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const toggleTheme = () => {
     const next: Theme = theme === "light" ? "dark" : "light";
@@ -80,6 +85,8 @@ export function App() {
   };
 
   const view = state.view;
+  const go = (id: View) => { setMenuOpen(false); nav(id); };
+  const moreActive = MORE_TABS.some(t => t.id === view);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -91,10 +98,25 @@ export function App() {
             <span className="text-[17px] font-extrabold tracking-tight">Interview<span className="grad-text">IQ</span></span>
           </button>
           <nav className="ml-4 hidden items-center gap-1 md:flex">
-            {TABS.map(t => (
-              <TabBtn key={t.id} icon={t.icon} label={t.label} active={view === t.id} onClick={() => nav(t.id)} />
+            {PRIMARY_TABS.map(t => (
+              <TabBtn key={t.id} icon={t.icon} label={t.label} active={view === t.id} onClick={() => go(t.id)} />
             ))}
           </nav>
+          {/* secondary tabs in a hamburger (desktop) */}
+          <button
+            onClick={() => setMenuOpen(o => !o)}
+            aria-label="More"
+            aria-expanded={menuOpen}
+            title="More"
+            className={`hidden h-9 w-9 place-items-center rounded-xl border text-[16px] transition-all md:grid ${menuOpen || moreActive ? "border-acc1/50 bg-acc1/15 text-acctxt" : "border-line/15 bg-wht/10 hover:bg-wht/20"}`}
+          >
+            {menuOpen ? "✕" : "☰"}
+          </button>
+          {menuOpen && (
+            <div className="absolute right-4 top-[64px] z-50 hidden w-56 rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl md:block">
+              <MoreMenu current={view} onPick={go} />
+            </div>
+          )}
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
           <button
@@ -130,23 +152,65 @@ export function App() {
         {view === "playground" && <Playground />}
       </main>
 
-      {/* bottom nav (mobile) */}
+      {/* tap-outside backdrop for the ☰ menu */}
+      {menuOpen && (
+        <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} aria-hidden />
+      )}
+
+      {/* bottom nav (mobile) — 4 core tabs + ☰ for the rest */}
       <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
+        {menuOpen && (
+          <div className="absolute inset-x-0 bottom-full mb-2 px-3">
+            <div className="rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.5)]">
+              <MoreMenu current={view} onPick={go} />
+            </div>
+          </div>
+        )}
         <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {TABS.map(t => (
+          {PRIMARY_TABS.map(t => (
             <button
               key={t.id}
-              onClick={() => nav(t.id)}
+              onClick={() => go(t.id)}
               className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-bold ${view === t.id ? "text-acc3" : "text-fnt"}`}
             >
               <span className={`grid h-7 w-7 place-items-center rounded-lg text-[16px] ${view === t.id ? "bg-acc1/20" : ""}`}>{t.icon}</span>
               {t.label}
             </button>
           ))}
+          <button
+            onClick={() => setMenuOpen(o => !o)}
+            aria-label="More"
+            aria-expanded={menuOpen}
+            className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-bold ${menuOpen || moreActive ? "text-acc3" : "text-fnt"}`}
+          >
+            <span className={`grid h-7 w-7 place-items-center rounded-lg text-[16px] ${menuOpen || moreActive ? "bg-acc1/20" : ""}`}>{menuOpen ? "✕" : "☰"}</span>
+            More
+          </button>
         </div>
       </nav>
 
       <ToastHost />
+    </div>
+  );
+}
+
+function MoreMenu({ current, onPick }: { current: View; onPick: (id: View) => void }) {
+  return (
+    <div className="grid gap-0.5 p-1">
+      {MORE_TABS.map(t => {
+        const active = current === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => onPick(t.id)}
+            className={`flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 text-[13.5px] font-bold transition-all ${active ? "grad-bg-soft border border-acc1/40 text-acctxt" : "text-fnt hover:bg-wht/10 hover:text-ink"}`}
+          >
+            <span className="text-[15px]">{t.icon}</span>
+            <span className="flex-1 text-left">{t.label}</span>
+            {active && <span className="text-[10px] font-extrabold text-acc3">●</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }

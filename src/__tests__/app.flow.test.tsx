@@ -9,6 +9,11 @@ const clickBtn = (name: RegExp) => {
   fireEvent.click(btns[0]);
 };
 
+/* secondary tabs live behind the ☰ menu — open it first */
+const openMenu = () => {
+  fireEvent.click(screen.getAllByRole("button", { name: /More/ })[0]);
+};
+
 function renderApp() {
   return render(
     <AppProvider>
@@ -69,7 +74,8 @@ describe("full interview flow", () => {
     expect(saved[0].answers.length).toBeGreaterThanOrEqual(5);
     expect(saved[0].meta.company).toBe("Stripe");
 
-    /* bank view: search filters */
+    /* bank view: search filters (secondary tab — via ☰ menu) */
+    openMenu();
     clickBtn(/Bank/);
     expect(screen.getByPlaceholderText(/Search questions/)).toBeTruthy();
     const search = screen.getByPlaceholderText(/Search questions/) as HTMLInputElement;
@@ -78,7 +84,8 @@ describe("full interview flow", () => {
     fireEvent.change(search, { target: { value: "" } });
     expect(screen.getAllByText(/Model answer/).length).toBeGreaterThan(0);
 
-    /* history view shows saved session; review replays it */
+    /* history view shows saved session; review replays it (secondary tab — via ☰ menu) */
+    openMenu();
     clickBtn(/History/);
     expect(screen.getByText(/Stripe · Security Engineer/)).toBeTruthy();
     clickBtn(/Review/);
@@ -86,7 +93,8 @@ describe("full interview flow", () => {
     /* the replayed session shows the saved answers */
     expect(screen.getAllByText(/I would approach this by analyzing/).length).toBeGreaterThan(0);
 
-    /* settings view */
+    /* settings view (secondary tab — via ☰ menu) */
+    openMenu();
     clickBtn(/Settings/);
     expect(screen.getByText(/AI feedback \(optional\)/)).toBeTruthy();
     expect(screen.getByPlaceholderText("sk-…")).toBeTruthy();
@@ -97,6 +105,7 @@ describe("full interview flow", () => {
 describe("practice from bank", () => {
   it("starts a single-question session from the question bank", () => {
     renderApp();
+    openMenu();
     clickBtn(/Bank/);
     const details = document.querySelector("details") as HTMLDetailsElement;
     fireEvent.click(details.querySelector("summary") as HTMLElement);
@@ -127,6 +136,7 @@ describe("job-description tailoring", () => {
 describe("settings persistence", () => {
   it("saves interview defaults to localStorage", () => {
     renderApp();
+    openMenu();
     clickBtn(/Settings/);
     fireEvent.click(screen.getByRole("button", { name: "10" }));
     const saved = JSON.parse(localStorage.getItem("iq.settings") || "{}");
