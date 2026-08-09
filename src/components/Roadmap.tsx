@@ -3,9 +3,14 @@ import type { ReactNode } from "react";
 import type { CareerGoal, LevelId, SkillRating } from "../types";
 import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, LEVEL_INDEX, companyById, fieldById, levelById } from "../data";
 import { aiAvailable } from "../ai";
-import { explainTopic } from "../services/tutor";
-import { clearGoal, getGoal, getProfile, markDiagnosticSkipped, saveGoal, saveProfile } from "../services/goal";
-import { buildRoadmap, type RoadmapTopic } from "../services/roadmap";
+import { explainTopic, tutorChat, type TutorMsg } from "../services/tutor";
+import { analyzeJd } from "../services/jd";
+import { getTier, isPaywallEnabled } from "../services/entitlements";
+import {
+  clearGoal, getGoal, getProfile, getProgress, markDiagnosticSkipped,
+  saveGoal, saveProfile, toggleTopicProgress, type RoadmapProgress
+} from "../services/goal";
+import { applyProgress, buildRoadmap, type Roadmap, type RoadmapTopic } from "../services/roadmap";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal, Seg } from "./ui";
@@ -70,20 +75,33 @@ function buildSkillList(g: CareerGoal, existing: SkillRating[] = []): SkillRatin
 }
 
 export function Roadmap() {
-  const { state, startDiagnostic, startPlannedSession, practice } = useApp();
+  const { state, nav, startDiagnostic, startPlannedSession, practice } = useApp();
   const [goal, setGoal] = useState<CareerGoal | null>(() => getGoal());
   const [profile, setProfile] = useState(() => getProfile());
   const [step, setStep] = useState<"goal" | "skills" | "assess" | "done">(() => (getGoal() ? "done" : "goal"));
   const [draft, setDraft] = useState<CareerGoal>(() => getGoal() ?? defaultGoal());
   const [skills, setSkills] = useState<SkillRating[]>(() => getProfile()?.skills ?? []);
+  const [progress, setProgress] = useState<RoadmapProgress>(() => getProgress());
   const [learn, setLearn] = useState<RoadmapTopic | null>(null);
-  const [ai, setAi] = useState<string | null>(null);
+  const [, setAi] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [chat, setChat] = useState<Map<string, TutorMsg[]>>(new Map());
+  const [chatBusy, setChatBusy] = useState(false);
+  const [jdMode, setJdMode] = useState(false);
+  const [jdText, setJdText] = useState("");
+  const proGated = isPaywallEnabled() && getTier() !== "pro";
 
   const roadmap = useMemo(
     () => (goal && profile ? buildRoadmap(goal, profile, state.sessions) : null),
     [goal, profile, state.sessions]
   );
+
+  /* apply progress on a defensive copy (applyProgress mutates in place) */
+  const adapted = useMemo(() => {
+    if (!roadmap) return null;
+    const copy: Roadmap = { ...roadmap, weeks: roadmap.weeks.map(w => ({ ...w, topics: w.topics.map(t => ({ ...t })) })) };
+    return applyProgress(copy, progress);
+  }, [roadmap, progress]);
 
   const saveDraft = () => {
     saveGoal(draft);
@@ -96,12 +114,38 @@ export function Roadmap() {
 
   const onLearn = (t: RoadmapTopic) => { setLearn(t); setAi(null); setAiLoading(false); };
 
+  const appendChat = (id: string, ...msgs: TutorMsg[]) =>
+    setChat(new Map(chat).set(id, [...(chat.get(id) ?? []), ...msgs]));
+
   const onExplain = async () => {
     if (!learn || !goal) return;
     setAiLoading(true);
-    try { setAi(await explainTopic(learn.label, goal)); }
-    catch (e) { toast("✗ " + ((e as Error).message || "AI unavailable — add an API key in Settings")); setAi(null); }
-    finally { setAiLoading(false); }
+    try {
+      const reply = await explainTopic(learn.label, goal);
+      setAi(reply);
+      appendChat(learn.id, { role: "assistant", content: reply });
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "AI unavailable — add an API key in Settings"));
+      setAi(null);
+    } finally { setAiLoading(false); }
+  };
+
+  const onAsk = async (t: RoadmapTopic, text: string) => {
+    if (!goal) return;
+    const history = chat.get(t.id) ?? [];
+    const userMsg: TutorMsg = { role: "user", content: text };
+    appendChat(t.id, userMsg);
+    setChatBusy(true);
+    try {
+      const reply = await tutorChat(t.label, goal, [...history, userMsg]);
+      appendChat(t.id, { role: "assistant", content: reply });
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "AI unavailable — add an API key in Settings"));
+    } finally { setChatBusy(false); }
+  };
+
+  const toggleDone = (t: RoadmapTopic) => {
+    if (goal) setProgress(toggleTopicProgress(goal, t.id));
   };
 
   const practiceTopic = (t: RoadmapTopic) => {
@@ -117,6 +161,32 @@ export function Roadmap() {
     }
   };
 
+  const onCompany = (v: string) => {
+    if (proGated && !draft.jd && v !== "general") {
+      toast("🔒 Company-specific roadmaps are a Pro feature — upgrade in Settings");
+      return;
+    }
+    setDraft({ ...draft, companyId: v });
+  };
+
+  const onAnalyzeJd = () => {
+    if (jdText.trim().length < 20) { toast("Paste the full job description first"); return; }
+    const r = analyzeJd(jdText);
+    setDraft(d => ({
+      ...d,
+      /* the posting is the role you're preparing for — it becomes the target,
+         while "you are now" stays your actual level (0-gap means same-level prep) */
+      targetLevel: r.levelId,
+      fieldId: r.fieldId,
+      companyId: r.companyId ?? d.companyId,
+      jd: jdText,
+      jdKeywords: r.keywords
+    }));
+    setSkills([]);
+    setJdMode(false);
+    toast(`📋 Detected: ${levelById(r.levelId).name} · ${fieldById(r.fieldId)?.name ?? ""}${r.companyId ? " · " + companyById(r.companyId).name : ""}`);
+  };
+
   const editGoal = () => {
     setDraft(goal ?? defaultGoal());
     setSkills(profile?.skills ?? []);
@@ -126,19 +196,41 @@ export function Roadmap() {
   const clearAll = () => {
     clearGoal();
     setGoal(null); setProfile(null);
-    setDraft(defaultGoal()); setSkills([]);
+    setDraft(defaultGoal()); setSkills([]); setProgress(getProgress());
     setStep("goal");
     toast("🧭 Goal cleared");
   };
 
-  /* ---------------- no goal → wizard ---------------- */
-  if (!goal) {
+  /* ---------------- wizard (no goal yet, or editing an existing goal) ---------------- */
+  if (!goal || step !== "done") {
     return (
       <div className="anim-view mx-auto max-w-[860px]">
         <WizardHeader />
         {step === "goal" && (
           <div className={`${cardCls} mt-6 p-6`}>
-            <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <button className={`${jdMode ? btnGhost : btnPrimary} ${btnSm}`} onClick={() => setJdMode(false)}>🎯 Pick a role</button>
+              <button className={`${jdMode ? btnPrimary : btnGhost} ${btnSm}`} onClick={() => setJdMode(true)}>📋 Paste a job description</button>
+            </div>
+
+            {jdMode && (
+              <div className="mb-5 rounded-xl border border-acc1/30 bg-acc1/10 p-4">
+                <label className="mb-1.5 block text-[12.5px] font-bold text-mut">Paste the posting — we'll detect the level, field and company</label>
+                <textarea
+                  value={jdText}
+                  onChange={e => setJdText(e.target.value)}
+                  rows={4}
+                  placeholder="e.g. Senior Backend Engineer at Stripe — Go, PostgreSQL, Kubernetes, distributed systems…"
+                  className="w-full resize-y rounded-xl border border-white/25 bg-[#080c18]/60 p-3 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                />
+                <button className={`${btnOk} ${btnSm} mt-2`} onClick={onAnalyzeJd}>🔍 Analyze & fill</button>
+                {draft.jd && (
+                  <p className="mt-2 text-[12px] text-ok">✓ Tailoring to your posting — {draft.jdKeywords?.length ?? 0} keywords will become P0 topics.</p>
+                )}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="You are now">
                 <select value={draft.currentLevel} onChange={e => setDraft(ensureTarget({ ...draft, currentLevel: e.target.value as LevelId }))} className="select-cls">
                   {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
@@ -154,11 +246,16 @@ export function Roadmap() {
                   {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
                 </select>
               </Field>
-              <Field label="Company (optional)">
-                <select value={draft.companyId} onChange={e => setDraft({ ...draft, companyId: e.target.value })} className="select-cls">
+              <Field label={`Company ${proGated && !draft.jd ? "· 🔒 Pro" : "(optional)"}`}>
+                <select value={draft.companyId} onChange={e => onCompany(e.target.value)} className="select-cls">
                   <option value="general">{GENERAL_COMPANY.icon} {GENERAL_COMPANY.name}</option>
-                  {COMPANIES.map(c => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+                  {COMPANIES.map(c => (
+                    <option key={c.id} value={c.id} disabled={proGated && !draft.jd}>{c.icon} {c.name}{proGated && !draft.jd ? " 🔒" : ""}</option>
+                  ))}
                 </select>
+                {proGated && !draft.jd && (
+                  <p className="mt-1 text-[11.5px] text-fnt">🔒 Company-fit weeks are a Pro feature — <button className="text-acc3 underline" onClick={() => nav("settings")}>upgrade</button> or paste a JD.</p>
+                )}
               </Field>
               <Field label="Target date">
                 <input type="date" value={draft.targetDate} min={addDays(7)} onChange={e => setDraft({ ...draft, targetDate: e.target.value })} className="select-cls" />
@@ -174,6 +271,7 @@ export function Roadmap() {
             <div className="mt-2 flex items-center justify-between gap-3">
               <p className="max-w-[380px] text-[12.5px] leading-snug text-mut">
                 {LEVEL_INDEX[draft.targetLevel] - LEVEL_INDEX[draft.currentLevel]} level gap · from {levelById(draft.currentLevel).name} to {levelById(draft.targetLevel).name}
+                {draft.jdKeywords?.length ? ` · ${draft.jdKeywords.length} JD topics` : ""}
               </p>
               <button className={btnPrimary + btnSm} onClick={() => { setSkills(buildSkillList(draft)); setStep("skills"); }}>Next: your skills →</button>
             </div>
@@ -223,7 +321,6 @@ export function Roadmap() {
             </div>
           </div>
         )}
-
       </div>
     );
   }
@@ -232,13 +329,17 @@ export function Roadmap() {
   return (
     <div className="anim-view mx-auto max-w-[860px]">
       <Dashboard
-        goal={goal} profile={profile} roadmap={roadmap}
-        onEdit={editGoal} onClear={clearAll} onRetake={() => startDiagnostic(goal.fieldId, goal.targetLevel)}
-        onLearn={onLearn} onPractice={practiceTopic}
+        goal={goal} profile={profile} roadmap={adapted}
+        onEdit={editGoal} onClear={clearAll}
+        onRetake={() => startDiagnostic(goal.fieldId, goal.targetLevel)}
+        onLearn={onLearn} onPractice={practiceTopic} onToggle={toggleDone}
+        proGated={proGated} onUpgrade={() => nav("settings")}
       />
       <LearnModal
-        topic={learn} goal={goal} ai={ai} aiLoading={aiLoading}
-        onClose={() => setLearn(null)} onExplain={onExplain}
+        topic={learn} aiLoading={aiLoading}
+        chat={learn ? (chat.get(learn.id) ?? []) : []} chatBusy={chatBusy}
+        proGated={proGated} onUpgrade={() => nav("settings")}
+        onClose={() => setLearn(null)} onExplain={onExplain} onAsk={onAsk}
       />
     </div>
   );
@@ -248,15 +349,18 @@ export function Roadmap() {
 /* Dashboard                                                           */
 /* ------------------------------------------------------------------ */
 
-function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn, onPractice }: {
+function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn, onPractice, onToggle, proGated, onUpgrade }: {
   goal: CareerGoal;
   profile: ReturnType<typeof getProfile>;
-  roadmap: ReturnType<typeof buildRoadmap> | null;
+  roadmap: Roadmap | null;
   onEdit: () => void;
   onClear: () => void;
   onRetake: () => void;
   onLearn: (t: RoadmapTopic) => void;
   onPractice: (t: RoadmapTopic) => void;
+  onToggle: (t: RoadmapTopic) => void;
+  proGated: boolean;
+  onUpgrade: () => void;
 }) {
   const field = fieldById(goal.fieldId);
   const company = companyById(goal.companyId);
@@ -264,9 +368,11 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
   const current = levelById(goal.currentLevel);
 
   const allTopics = roadmap?.weeks.flatMap(w => w.topics) ?? [];
-  const mastered = allTopics.filter(t => t.progress === "mastered").length;
-  const p0 = allTopics.filter(t => t.priority === "P0").length;
-  const currentWeek = roadmap?.weeks.find(w => w.status === "current")?.week ?? 1;
+  const doneCount = allTopics.filter(t => t.done).length;
+  const p0 = allTopics.filter(t => t.priority === "P0" && !t.done).length;
+  const weeksLeft = roadmap?.weeks.filter(w => w.status !== "done" && w.status !== "passed").length ?? 0;
+  const totalWeeks = roadmap?.weeks.length ?? 0;
+  const doneWeeks = roadmap?.weeks.filter(w => w.status === "done").length ?? 0;
 
   return (
     <>
@@ -285,6 +391,7 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
               {field?.icon} {field?.name} · {company.icon} {company.name} · {goal.targetDate} · {goal.hoursPerWeek}h/week
             </div>
             {roadmap && <div className="mt-1 text-[12.5px] font-semibold text-acc3">{roadmap.summary}</div>}
+            {goal.jd && <div className="mt-0.5 text-[11.5px] text-mut">📋 Tailored from a job description ({goal.jdKeywords?.length ?? 0} topics)</div>}
           </div>
           <div className="flex flex-wrap gap-2 no-print">
             <button className={btnGhost + btnSm} onClick={onRetake}>📝 Retake diagnostic</button>
@@ -293,11 +400,16 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 border-t border-white/10 bg-white/[.03] px-6 py-4 sm:grid-cols-4">
-          <Stat label="Weeks" value={roadmap?.weeks.length ?? "—"} />
-          <Stat label="Current week" value={roadmap ? `Week ${currentWeek}` : "—"} />
+          <Stat label="Weeks" value={roadmap ? `${doneWeeks}/${totalWeeks} done` : "—"} />
+          <Stat label="Weeks left" value={weeksLeft || "—"} />
           <Stat label="P0 (must learn)" value={p0 || "—"} />
-          <Stat label="Mastered" value={mastered || "—"} />
+          <Stat label="Topics done" value={doneCount || "—"} />
         </div>
+        {proGated && goal.companyId !== "general" && !goal.jd && (
+          <div className="border-t border-white/10 bg-warn/10 px-6 py-3 text-[12.5px] text-[#fcd34d]">
+            🔒 Company-fit weeks are a Pro feature — <button className="font-bold underline" onClick={onUpgrade}>upgrade to keep them</button>.
+          </div>
+        )}
       </div>
 
       {!roadmap && (
@@ -311,16 +423,17 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
       {roadmap && (
         <div className="mt-6 space-y-4">
           {roadmap.weeks.map(w => (
-            <div key={w.week} className={`${cardCls} px-5 py-4 ${w.status === "passed" ? "opacity-70" : ""}`}>
+            <div key={w.week} className={`${cardCls} px-5 py-4 ${w.status === "passed" || w.status === "done" ? "opacity-70" : ""}`}>
               <div className="flex flex-wrap items-center gap-2.5">
                 <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl text-[15px] font-extrabold ${w.status === "current" ? "grad-bg text-white" : "border border-white/15 bg-white/5 text-mut"}`}>
-                  {w.week}
+                  {w.status === "done" ? "✓" : w.week}
                 </span>
                 <div className="min-w-[200px] flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[15px] font-extrabold">{w.phaseLabel}</span>
                     <Chip tone="lvl">{weekChip(w.status)}</Chip>
                     <Chip>~{w.totalHours}h</Chip>
+                    {w.topics.some(t => t.done) && <Chip tone="ok">{w.topics.filter(t => t.done).length}/{w.topics.length} done</Chip>}
                   </div>
                   <div className="text-[12.5px] text-mut">{w.start} → {w.end}</div>
                 </div>
@@ -328,21 +441,28 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
               <div className="mt-3 text-[12.5px] leading-snug text-fnt">{w.goal}</div>
               <div className="mt-3 space-y-1.5">
                 {w.topics.map(t => (
-                  <div key={t.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#080c18]/50 px-3.5 py-2.5">
+                  <div key={t.id} className={`flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#080c18]/50 px-3.5 py-2.5 ${t.done ? "border-ok/30" : ""}`}>
+                    <button
+                      title={t.done ? "Mark not done" : "Mark done"}
+                      onClick={() => onToggle(t)}
+                      className={`grid h-7 w-7 flex-none place-items-center rounded-lg border text-[13px] font-extrabold transition-all ${t.done ? "border-ok/50 bg-ok/15 text-ok" : "border-white/20 text-fnt hover:bg-white/10"}`}
+                    >
+                      {t.done ? "✓" : ""}
+                    </button>
                     <Chip tone={t.priority === "P0" ? "bad" : t.priority === "P1" ? "warn" : "default"}>{t.priority}</Chip>
-                    <Chip tone={t.progress === "mastered" ? "ok" : t.progress === "learning" ? "warn" : "default"}>
-                      {t.progress === "mastered" ? "✓" : t.progress === "learning" ? "~" : "·"} {t.progress}
+                    <Chip tone={t.done ? "ok" : t.progress === "mastered" ? "ok" : t.progress === "learning" ? "warn" : "default"}>
+                      {t.done ? "done" : t.progress === "mastered" ? "✓" : t.progress === "learning" ? "~" : "·"} {t.done ? "" : t.progress}
                     </Chip>
-                    <span className="min-w-[160px] flex-1 text-[13.5px] font-bold leading-snug">{t.label}</span>
+                    <span className={`min-w-[160px] flex-1 text-[13.5px] font-bold leading-snug ${t.done ? "text-mut line-through" : ""}`}>{t.label}</span>
                     <span className="text-[12px] font-semibold text-fnt">~{t.estHours}h</span>
                     <button className={btnGhost + btnSm} onClick={() => onLearn(t)}>📖 Learn</button>
-                    <button className={btnPrimary + btnSm} onClick={() => onPractice(t)}>▶ Practice</button>
+                    {!t.done && <button className={btnPrimary + btnSm} onClick={() => onPractice(t)}>▶ Practice</button>}
                   </div>
                 ))}
               </div>
-              {w.topics.some(t => t.statusNote) && (
+              {w.topics.some(t => t.statusNote && !t.done) && (
                 <div className="mt-2 space-y-0.5">
-                  {w.topics.filter(t => t.statusNote).map(t => (
+                  {w.topics.filter(t => t.statusNote && !t.done).map(t => (
                     <div key={t.id} className="text-[11.5px] text-acc3">💡 {t.label.slice(0, 60)}{t.label.length > 60 ? "…" : ""} — {t.statusNote}</div>
                   ))}
                 </div>
@@ -350,7 +470,7 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
             </div>
           ))}
           <div className={`${cardCls} px-5 py-3 text-center text-[12.5px] text-mut`}>
-            The roadmap adapts: take the diagnostic or finish sessions anytime, then revisit to see priorities shift.
+            Check topics off as you study — the plan re-balances: finished weeks are marked done and the current week pulls work forward.
           </div>
         </div>
       )}
@@ -362,14 +482,18 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
 /* Learn modal                                                         */
 /* ------------------------------------------------------------------ */
 
-function LearnModal({ topic, goal, ai, aiLoading, onClose, onExplain }: {
+function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExplain, onAsk, onUpgrade }: {
   topic: RoadmapTopic | null;
-  goal: CareerGoal;
-  ai: string | null;
   aiLoading: boolean;
+  chat: TutorMsg[];
+  chatBusy: boolean;
+  proGated: boolean;
   onClose: () => void;
   onExplain: () => void;
+  onAsk: (t: RoadmapTopic, text: string) => void;
+  onUpgrade: () => void;
 }) {
+  const [ask, setAsk] = useState("");
   if (!topic) return null;
   return (
     <Modal onClose={onClose} title={`📖 ${topic.label}`} desc={topic.practice ? `Practice topic · ${topic.priority} priority` : `Learning topic · ${topic.priority} priority`}>
@@ -395,12 +519,52 @@ function LearnModal({ topic, goal, ai, aiLoading, onClose, onExplain }: {
       <div className="rounded-xl border border-white/10 bg-[#080c18]/50 p-4">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[12.5px] font-bold uppercase tracking-wider text-mut">✨ AI tutor</span>
-          {aiAvailable() && <button className={btnGhost + btnSm} onClick={onExplain} disabled={aiLoading}>Explain it to me</button>}
+          {aiAvailable() && (
+            <button className={btnGhost + btnSm} onClick={onExplain} disabled={aiLoading}>Explain it to me</button>
+          )}
         </div>
         {aiLoading && <p className="text-[13.5px] text-[#d9dcf5]"><span className="spinner" />Explaining…</p>}
-        {ai && <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-[#d9dcf5]">{ai}</p>}
-        {!aiLoading && !ai && aiAvailable() && <p className="text-[12.5px] text-fnt">Get a plain-language explanation tuned to {levelById(goal.targetLevel).name} level.</p>}
-        {!aiAvailable() && <p className="text-[12.5px] text-fnt">Add an AI key in Settings for a generative explanation — the primer above works fully offline.</p>}
+
+        {/* conversation thread */}
+        {chat.length > 0 && (
+          <div className="mb-3 max-h-[280px] space-y-2.5 overflow-y-auto pr-1">
+            {chat.map((m, i) => (
+              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-white/10 bg-white/10 text-[#d7ddf0]"}`}>
+                  {m.content}
+                </div>
+              </div>
+            ))}
+            {chatBusy && <p className="text-[12.5px] text-fnt"><span className="spinner" />Thinking…</p>}
+          </div>
+        )}
+
+        {proGated ? (
+          <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2.5 text-[12.5px] text-[#fcd34d]">
+            🔒 The AI tutor chat is a Pro feature — <button className="font-bold underline" onClick={onUpgrade}>upgrade</button> to ask follow-up questions about any topic.
+          </div>
+        ) : aiAvailable() ? (
+          <form
+            className="flex gap-2"
+            onSubmit={e => {
+              e.preventDefault();
+              const text = ask.trim();
+              if (!text || chatBusy) return;
+              onAsk(topic, text);
+              setAsk("");
+            }}
+          >
+            <input
+              value={ask}
+              onChange={e => setAsk(e.target.value)}
+              placeholder="Ask a follow-up about this topic…"
+              className="min-w-0 flex-1 rounded-xl border border-white/25 bg-[#080c18]/60 px-3 py-2 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+            />
+            <button type="submit" className={btnPrimary + btnSm} disabled={chatBusy || !ask.trim()}>Send</button>
+          </form>
+        ) : (
+          <p className="text-[12.5px] text-fnt">Add an AI key in Settings for generative explanations — the primer above works fully offline.</p>
+        )}
       </div>
 
       <div className="mt-5 flex justify-end">
@@ -448,6 +612,7 @@ function weekChip(s: string): string {
   switch (s) {
     case "current": return "🔥 This week";
     case "passed": return "📅 Passed";
+    case "done": return "✅ Done";
     default: return "⏭ Upcoming";
   }
 }

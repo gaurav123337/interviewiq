@@ -9,10 +9,11 @@ import {
 } from "../data";
 import { getTopicInfo, type TopicInfo } from "../data/resources";
 import { relatesToSkill, tokenize } from "../engine/scoring";
+import { goalFingerprint, type RoadmapProgress } from "./goal";
 
 export type Priority = "P0" | "P1" | "P2";
 export type TopicProgress = "new" | "learning" | "mastered";
-export type WeekStatus = "passed" | "current" | "upcoming";
+export type WeekStatus = "passed" | "current" | "upcoming" | "done";
 
 export interface RoadmapTopic {
   id: string;
@@ -25,6 +26,8 @@ export interface RoadmapTopic {
   /** A question to practice (pool-derived topics). */
   practice?: QA;
   statusNote?: string;
+  /** Checked off by the user (progress tracking). */
+  done?: boolean;
 }
 
 export interface RoadmapWeek {
@@ -97,7 +100,7 @@ function buildSignals(goal: CareerGoal, profile: SkillProfile | null, sessions: 
 /* Phases                                                              */
 /* ------------------------------------------------------------------ */
 
-export type PhaseId = "foundations" | "field" | "company" | "sysdesign" | "behavioral" | "exec";
+export type PhaseId = "foundations" | "field" | "jd" | "company" | "sysdesign" | "behavioral" | "exec";
 
 export interface PhaseTopic {
   label: string;
@@ -141,6 +144,16 @@ export function buildPhases(goal: CareerGoal): Phase[] {
     weight: 28,
     topics: (field?.skills ?? []).map(s => ({ label: s }))
   });
+
+  if (goal.jdKeywords?.length) {
+    phases.push({
+      id: "jd",
+      label: "Job description fit",
+      goal: `Tailored to your posting: ${goal.jdKeywords.slice(0, 4).join(" · ")}${goal.jdKeywords.length > 4 ? "…" : ""}`,
+      weight: 14,
+      topics: goal.jdKeywords.slice(0, 10).map(k => ({ label: k }))
+    });
+  }
 
   if (company.id !== GENERAL_COMPANY.id) {
     phases.push({
@@ -258,6 +271,8 @@ export function prioritize(goal: CareerGoal, profile: SkillProfile | null, sessi
       priority = isStack && (self < 3 || (measured !== undefined && measured < 0.6)) ? "P0" : isStack ? "P1" : "P2";
     } else if (phase.id === "foundations") {
       priority = self < 3 ? "P0" : "P1";
+    } else if (phase.id === "jd") {
+      priority = "P0"; // the posting's own requirements are must-know
     } else if (phase.id === "behavioral") {
       priority = "P1";
     } else {
@@ -376,4 +391,52 @@ export function buildRoadmap(goal: CareerGoal, profile: SkillProfile | null, ses
 
 function baseHours(p: Priority): number {
   return p === "P0" ? 3.5 : p === "P1" ? 2.25 : 1.25;
+}
+
+/* ------------------------------------------------------------------ */
+/* Progress tracking                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Applies user progress to a roadmap:
+     - marks checked-off topics as done;
+     - a fully-done current week pulls up to 2 pending topics forward (never idle);
+     - fully-done (or emptied) weeks are marked done. */
+export function applyProgress(roadmap: Roadmap, progress: RoadmapProgress): Roadmap {
+  if (progress.fingerprint !== goalFingerprint(roadmap.goal)) return roadmap; // stale goal
+  const done = new Set(progress.completed);
+  for (const w of roadmap.weeks) {
+    for (const t of w.topics) t.done = done.has(t.id);
+  }
+
+  /* fully-done current week: pull pending topics from later weeks so you're never idle */
+  for (const w of roadmap.weeks) {
+    if (w.status !== "current") continue;
+    if (!w.topics.length || !w.topics.every(t => t.done)) continue;
+    const remaining = roadmap.weeks.flatMap(o => o.topics).filter(t => !t.done);
+    const need = Math.min(2, remaining.length);
+    if (!need) break;
+    const pulled: RoadmapTopic[] = [];
+    for (const o of roadmap.weeks) {
+      if (o.week <= w.week) continue;
+      for (const t of o.topics) {
+        if (!t.done && !pulled.includes(t)) {
+          pulled.push(t);
+          if (pulled.length >= need) break;
+        }
+      }
+      if (pulled.length >= need) break;
+    }
+    for (const t of pulled) {
+      for (const o of roadmap.weeks) if (o !== w) o.topics = o.topics.filter(x => x !== t);
+    }
+    w.topics = [...w.topics, ...pulled];
+    break;
+  }
+
+  /* fully-done or emptied weeks are marked done */
+  for (const w of roadmap.weeks) {
+    if (w.status === "passed") continue;
+    if (!w.topics.length || w.topics.every(t => t.done)) w.status = "done";
+  }
+  return roadmap;
 }

@@ -32,6 +32,30 @@ export async function explainTopic(topic: string, goal: CareerGoal): Promise<str
   return out;
 }
 
+export interface TutorMsg {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** Continues a tutor conversation about one topic — follow-ups keep full context. */
+export async function tutorChat(topic: string, goal: CareerGoal, history: TutorMsg[]): Promise<string> {
+  await guard();
+  const field = fieldById(goal.fieldId);
+  const lvl = levelById(goal.targetLevel);
+  const sys =
+    `You are a patient interview coach helping a ${lvl.name} ${field?.name ?? ""} candidate master "${topic}". ` +
+    `Answer the user's questions about this topic concisely and plainly. Tie answers back to how they'd ` +
+    `speak about it in an interview at ${lvl.name} level. If they ask something off-topic, gently steer back. ` +
+    `Under ~180 words per reply.`;
+  const msgs: { role: "system" | "user" | "assistant"; content: string }[] = [
+    { role: "system", content: sys },
+    ...history.map(m => ({ role: m.role, content: m.content }))
+  ];
+  const out = await chat(msgs, { maxTokens: 500 });
+  recordAiCall();
+  return out;
+}
+
 /** Explains why a specific weak skill matters for the target role (the "gap explainer"). */
 export async function explainGap(skill: string, goal: CareerGoal): Promise<string> {
   await guard();

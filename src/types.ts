@@ -117,6 +117,10 @@ export interface CareerGoal {
   targetDate: string; // yyyy-mm-dd
   hoursPerWeek: number;
   createdAt: number;
+  /** Raw job description when the goal was built from a posting. */
+  jd?: string;
+  /** High-frequency JD terms, added to the roadmap as tailored topics. */
+  jdKeywords?: string[];
 }
 
 /** One skill with the self-assessed level (0-5) and optional diagnostic measurement (0-5). */

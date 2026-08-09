@@ -22,7 +22,8 @@ export const STORAGE_KEYS = {
   drillSrs: "iq.drillSrs",
   syncMeta: "iq.syncMeta",
   goal: "iq.goal",
-  skills: "iq.skills"
+  skills: "iq.skills",
+  roadmapProg: "iq.roadmapProg"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {

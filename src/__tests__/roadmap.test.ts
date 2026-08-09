@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CareerGoal, SavedSession, SessionQuestion, SkillProfile } from "../types";
-import { allocateWeeks, buildPhases, buildRoadmap, prioritize } from "../services/roadmap";
-import { clearGoal, getProfile, saveProfile } from "../services/goal";
+import { allocateWeeks, applyProgress, buildPhases, buildRoadmap, prioritize } from "../services/roadmap";
+import { clearGoal, getProfile, goalFingerprint, saveProfile, toggleTopicProgress } from "../services/goal";
 
 const fmt = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -49,6 +49,18 @@ describe("buildPhases", () => {
 
   it("company phase is omitted for the general company", () => {
     expect(buildPhases(goal({ companyId: "general" })).some(p => p.id === "company")).toBe(false);
+  });
+
+  it("adds a job-description phase from JD keywords and ranks them P0", () => {
+    const g = goal({ jd: "Senior Backend at Stripe", jdKeywords: ["Go", "PostgreSQL", "Kafka", "distributed systems"] });
+    const jd = buildPhases(g).find(p => p.id === "jd");
+    expect(jd).toBeTruthy();
+    expect(jd!.topics.map(t => t.label)).toContain("Go");
+    const { topics } = prioritize(g, null, []);
+    expect(topics.find(t => t.label === "PostgreSQL")?.priority).toBe("P0");
+    expect(topics.find(t => t.label === "Kafka")?.priority).toBe("P0");
+    const r = buildRoadmap(g, null, []);
+    expect(r.weeks.flatMap(w => w.topics).some(t => t.label === "Go")).toBe(true);
   });
 });
 
@@ -158,5 +170,46 @@ describe("goal persistence", () => {
     expect(getProfile()?.goal.fieldId).toBe("backend");
     clearGoal();
     expect(getProfile()).toBeNull();
+  });
+
+  it("toggleTopicProgress toggles and clears with the goal", () => {
+    const g = goal();
+    expect(toggleTopicProgress(g, "field-0").completed).toContain("field-0");
+    expect(toggleTopicProgress(g, "field-0").completed).not.toContain("field-0");
+    clearGoal();
+  });
+});
+
+describe("applyProgress", () => {
+  it("marks completed topics as done", () => {
+    const r = buildRoadmap(goal(), null, []);
+    const applied = applyProgress(r, {
+      fingerprint: goalFingerprint(goal()), completed: ["field-0"], completedAt: {}, updatedAt: 0
+    });
+    expect(applied.weeks.flatMap(w => w.topics).find(t => t.id === "field-0")?.done).toBe(true);
+    expect(applied.weeks.flatMap(w => w.topics).find(t => t.id === "field-1")?.done).toBe(false);
+  });
+
+  it("a fully-done current week pulls work forward and a fully-done upcoming week is marked done", () => {
+    const base = buildRoadmap(goal(), null, []);
+    const firstWeekIds = base.weeks[0].topics.map(t => t.id);
+    const w2 = base.weeks[1];
+    const applied = applyProgress(buildRoadmap(goal(), null, []), {
+      fingerprint: goalFingerprint(goal()),
+      completed: [...firstWeekIds, ...w2.topics.map(t => t.id)],
+      completedAt: {}, updatedAt: 0
+    });
+    /* current week kept its done topics and pulled pending work forward */
+    expect(applied.weeks[0].topics.length).toBeGreaterThan(base.weeks[0].topics.length);
+    expect(applied.weeks[0].topics.some(t => !t.done)).toBe(true);
+    /* the upcoming week with everything done is marked done */
+    expect(applied.weeks.find(w => w.week === 2)?.status).toBe("done");
+  });
+
+  it("ignores progress from a different goal (stale fingerprint)", () => {
+    const applied = applyProgress(buildRoadmap(goal(), null, []), {
+      fingerprint: "other|other|other|other", completed: ["field-0"], completedAt: {}, updatedAt: 0
+    });
+    expect(applied.weeks.flatMap(w => w.topics).find(t => t.id === "field-0")?.done).toBeUndefined();
   });
 });
