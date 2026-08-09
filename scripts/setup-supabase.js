@@ -112,11 +112,11 @@ async function main() {
   await req(`/projects/${ref}/database/query`, { method: "POST", body: JSON.stringify({ query: sql }) });
   console.log(`${green("✓")} Ran supabase/schema.sql (user_sync + RLS).`);
 
-  /* allow the app's URLs as auth redirect targets (best-effort — falls back to a manual note) */
+  /* allow the app's URLs as auth redirect targets (PATCH + comma-separated string per the API) */
   try {
     await req(`/projects/${ref}/config/auth`, {
-      method: "PUT",
-      body: JSON.stringify({ uri_allow_list: [`${APP_URL}/**`, "http://127.0.0.1:8137/**"] })
+      method: "PATCH",
+      body: JSON.stringify({ uri_allow_list: `${APP_URL}/**,http://127.0.0.1:8137/**` })
     });
     console.log(`${green("✓")} Auth redirect allow-list set (${APP_URL}/**).`);
   } catch (e) {
