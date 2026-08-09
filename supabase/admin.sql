@@ -298,3 +298,62 @@ drop trigger if exists question_audit_trg on public.published_questions;
 create trigger question_audit_trg
   after insert or update or delete on public.published_questions
   for each row execute function public.log_question_audit();
+
+/* ------------------------------------------------------------------ */
+/* Scraper configuration (admin-dashboard controlled)                  */
+/* ------------------------------------------------------------------ */
+
+/* Question sources the weekly scraper pulls from. The admin dashboard
+   edits these; the GitHub Actions run reads them from Supabase at run
+   time (falls back to content/sources.json when the table is empty). */
+create table if not exists public.scraper_sources (
+  id text primary key,
+  url text not null,
+  type text not null default 'markdown',
+  field_id text not null,
+  level text not null,
+  max_items integer not null default 20,
+  enabled boolean not null default true,
+  note text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+/* Scraper settings — single row per key (e.g. schedule: {"days": [1]}). */
+create table if not exists public.scraper_config (
+  key text primary key,
+  value jsonb not null,
+  updated_at bigint not null
+);
+
+alter table public.scraper_sources enable row level security;
+alter table public.scraper_config enable row level security;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'scraper_sources' and policyname = 'scraper sources public read') then
+    create policy "scraper sources public read" on public.scraper_sources for select using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'scraper_config' and policyname = 'scraper config public read') then
+    create policy "scraper config public read" on public.scraper_config for select using (true);
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'scraper_sources' and policyname = 'scraper sources admin write') then
+    create policy "scraper sources admin write" on public.scraper_sources for all using (public.is_admin()) with check (public.is_admin());
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'scraper_config' and policyname = 'scraper config admin write') then
+    create policy "scraper config admin write" on public.scraper_config for all using (public.is_admin()) with check (public.is_admin());
+  end if;
+end $$;
+
+/* Seed the dashboard with the same sources the repo ships (idempotent). */
+insert into public.scraper_sources (id, url, type, field_id, level, max_items, enabled, note)
+values
+  ('backend-arialdo-questions', 'https://raw.githubusercontent.com/arialdomartini/Back-End-Developer-Interview-Questions/master/README.md', 'markdown', 'backend', 'senior', 30, true, 'Design-pattern, architecture and language questions.'),
+  ('frontend-js-sudheerj', 'https://raw.githubusercontent.com/sudheerj/javascript-interview-questions/master/README.md', 'markdown', 'frontend', 'mid', 25, true, 'Curated JavaScript Q&A bank.'),
+  ('frontend-react-sudheerj', 'https://raw.githubusercontent.com/sudheerj/reactjs-interview-questions/master/README.md', 'markdown', 'frontend', 'mid', 20, true, 'Curated React Q&A bank.'),
+  ('data-theory-questions', 'https://raw.githubusercontent.com/alexeygrigorev/data-science-interviews/master/theory.md', 'markdown', 'data', 'mid', 25, true, 'Data-science theory questions.')
+on conflict (id) do nothing;
+
+/* Weekly Monday 03:00 UTC default, matching the original cron. */
+insert into public.scraper_config (key, value, updated_at)
+values ('schedule', '{"days": [1], "hour": 3}', 0)
+on conflict (key) do nothing;

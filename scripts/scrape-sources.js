@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-/* Weekly question-bank scraper.
+/* Question-bank scraper. Sources + schedule are configured in the Admin
+ * dashboard (Supabase scraper_sources / scraper_config); the repo's
+ * content/sources.json is only the fallback when the dashboard has none.
  *
- * Reads content/sources.json, fetches each enabled source, extracts question
- * items, and upserts them as DRAFTS into published_questions (deduped by
- * question text). Runs on a schedule via .github/workflows/scrape-weekly.yml
- * and can be triggered manually with workflow_dispatch.
+ * The workflow runs daily (cron "0 3 * * *") and this script skips days that
+ * aren't in the configured schedule — so admins change cadence without
+ * touching the workflow file.
  *
  * Usage (local):
  *   SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<ref> node scripts/scrape-sources.js
@@ -32,23 +33,66 @@ async function runSql(sql) {
   return body;
 }
 
+/* ---------- configuration: dashboard first, repo file as fallback ---------- */
+
+async function loadSources() {
+  try {
+    const rows = await runSql(
+      `select id, url, type, field_id, level, max_items, enabled, note
+       from public.scraper_sources where enabled = true order by id`
+    );
+    if (Array.isArray(rows) && rows.length) {
+      return rows.map((r) => ({
+        id: r.id, url: r.url, type: r.type ?? "markdown",
+        fieldId: r.field_id, level: r.level, maxItems: r.max_items ?? 20, note: r.note ?? ""
+      }));
+    }
+  } catch (e) {
+    console.warn(red(`  (config read failed: ${e.message})`));
+  }
+  const configPath = fileURLToPath(new URL("../content/sources.json", import.meta.url));
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  console.warn("  (no dashboard sources — falling back to content/sources.json)");
+  return (config.sources ?? []).filter((s) => s.enabled);
+}
+
+/* ISO weekday numbers: 1=Mon … 7=Sun (JS getUTCDay: 0=Sun … 6=Sat) */
+function todayIso() {
+  const d = new Date().getUTCDay();
+  return ((d + 6) % 7) + 1;
+}
+
+async function isScheduledDay() {
+  try {
+    const rows = await runSql(`select value from public.scraper_config where key = 'schedule'`);
+    const value = Array.isArray(rows) && rows[0]?.value;
+    const days = Array.isArray(value?.days) ? value.days.map(Number).filter(Boolean) : [];
+    if (!days.length) return true; /* no schedule configured → always run */
+    return days.includes(todayIso());
+  } catch {
+    return true; /* never let a config hiccup block a scheduled run */
+  }
+}
+
 async function main() {
   if (!token || !projectRef) {
     console.error(red("Missing SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_REF."));
     process.exit(1);
   }
 
-  const configPath = fileURLToPath(new URL("../content/sources.json", import.meta.url));
-  const config = JSON.parse(readFileSync(configPath, "utf8"));
-  const sources = (config.sources ?? []).filter((s) => s.enabled);
+  if (!(await isScheduledDay())) {
+    console.log(`Today (ISO day ${todayIso()}) isn't in the configured schedule — skipping.`);
+    process.exit(0);
+  }
 
+  const sources = await loadSources();
   console.log(`Scraping ${sources.length} enabled source(s) → ${projectRef} (drafts)...`);
 
   const all = [];
   let errors = 0;
   for (const source of sources) {
     try {
-      console.log(`  ↳ ${source.id} — ${source.url}`);
+      console.log(`  ↳ ${source.id ?? source.url} — ${source.url}`);
       const res = await fetch(source.url, { headers: { "User-Agent": "interviewiq-scraper/1.0 (+github.com/gaurav123337/interviewiq)" } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = source.type === "json" ? await res.json() : await res.text();
@@ -57,7 +101,7 @@ async function main() {
       all.push(...items);
     } catch (e) {
       errors++;
-      console.error(red(`  ✗ ${source.id}: ${e.message}`));
+      console.error(red(`  ✗ ${source.id ?? source.url}: ${e.message}`));
     }
   }
 
@@ -83,7 +127,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(green(`\n✓ Upserted ${rows.length} new draft question(s). Review them in Admin → Question bank.`));
+  console.log(green(`\n✓ Upserted ${rows.length} new draft question(s). Review them in Admin → Review inbox.`));
   if (errors) process.exit(1);
 }
 

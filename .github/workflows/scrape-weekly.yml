@@ -1,12 +1,13 @@
 name: Scrape question sources
 
-# Weekly automation that feeds the question bank with new knowledge.
-# Frequency is customizable: edit the cron below (UTC).
+# Runs daily; the scraper script itself checks the admin-configured schedule
+# (Supabase scraper_config → days) and skips days that aren't selected — so
+# cadence is configurable from the Admin dashboard without editing this file.
 #  ┌─ minute  ┌─ hour  ┌─ day of month  ┌─ month  ┌─ day of week (0=Sunday)
 #  │           │        │                │          │
 on:
   schedule:
-    - cron: "0 3 * * 1" # every Monday 03:00 UTC
+    - cron: "0 3 * * *" # every day 03:00 UTC — script enforces the schedule
   workflow_dispatch: {} # allow manual runs from the Actions tab
 
 permissions:
