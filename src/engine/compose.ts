@@ -99,10 +99,12 @@ export interface RelevantArgs {
   /** Keywords (e.g. job-description terms or missed key points) to prioritize. */
   keywords: string[];
   count: number;
+  /** Session mode tag (defaults to standard). */
+  mode?: Config["mode"];
 }
 
 /** Same shape as {@link composeSession}, but picks field questions most relevant to `keywords`. */
-export function composeRelevantSession({ fieldId, companyId, levelId, keywords, count }: RelevantArgs): Session {
+export function composeRelevantSession({ fieldId, companyId, levelId, keywords, count, mode = "standard" }: RelevantArgs): Session {
   const field = fieldById(fieldId);
   const company = companyById(companyId);
   const lvl = levelById(levelId);
@@ -136,7 +138,7 @@ export function composeRelevantSession({ fieldId, companyId, levelId, keywords, 
     meta: {
       field: field?.name ?? "General", fieldId: field?.id ?? "general",
       company: company.name, companyId: company.id,
-      level: lvl.name, levelId: lvl.id, mode: "standard"
+      level: lvl.name, levelId: lvl.id, mode
     }
   };
 }

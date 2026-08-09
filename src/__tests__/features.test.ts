@@ -66,6 +66,12 @@ describe("keyword-driven sessions", () => {
     expect(s.meta.company).toBe("Netflix");
   });
 
+  it("preserves mock mode through the JD path", () => {
+    const jd = analyzeJd("Staff Backend Engineer at Stripe. Distributed systems, PostgreSQL, Kafka, 8+ years.");
+    const s = buildJdSession(jd, { ...CFG, mode: "mock" });
+    expect(s.meta.mode).toBe("mock");
+  });
+
   it("builds a weak-topic follow-up session tagged as such", () => {
     const s = buildWeakTopicSession("backend", "senior", ["indexing", "connection pool", "cache"], { ...CFG, count: 6 });
     expect(s.meta.company).toBe("Weak Topics");

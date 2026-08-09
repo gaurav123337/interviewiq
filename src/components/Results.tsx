@@ -70,6 +70,8 @@ export function Results() {
         </div>
       </div>
 
+      {session.meta.mode === "mock" && <RoundBreakdown cats={agg.cats} />}
+
       {/* breakdown grid */}
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className={`${cardCls} p-5`}>
@@ -148,6 +150,41 @@ export function Results() {
 }
 
 /* ---------- bits ---------- */
+const ROUND_TIPS: Record<string, string> = {
+  "Company Fit": "Anchor answers in their product, culture, and how you'd work there.",
+  "Technical": "Lead with tradeoffs — depth and judgment matter more than perfect recall.",
+  "System Design": "Structure it: requirements → scale → components → tradeoffs.",
+  "Behavioral": "Use STAR (situation, task, action, result) and keep stories concise.",
+  "Leadership": "Frame around org impact, leverage, and the people who execute.",
+  "Business": "Tie every answer back to strategy, markets, and outcomes."
+};
+
+function RoundBreakdown({ cats }: { cats: CatStat[] }) {
+  return (
+    <div className={`${cardCls} mt-5 p-5`}>
+      <h3 className="text-[16px] font-extrabold">🎯 Round breakdown</h3>
+      <p className="mb-4 text-[13px] text-mut">How you performed in each interview round.</p>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {cats.map(c => {
+          const tone = c.pct >= 0.75 ? "ok" : c.pct >= 0.55 ? "warn" : "bad";
+          return (
+            <div key={c.label} className="rounded-xl border border-white/10 bg-[#080c18]/50 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[13.5px] font-extrabold">{c.label}</span>
+                <Chip tone={tone as "ok"}>{c.score.toFixed(1)}/5</Chip>
+              </div>
+              <div className="mb-2 h-[6px] overflow-hidden rounded-full bg-white/10">
+                <div className={`h-full rounded-full ${tone === "ok" ? "bg-ok" : tone === "warn" ? "bg-warn" : "bg-bad"}`} style={{ width: `${Math.max(3, c.pct * 100)}%` }} />
+              </div>
+              <p className="text-[12px] leading-snug text-fnt">{ROUND_TIPS[c.label] ?? "Review the missed key points for this round."}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function VerdictBanner({ agg }: { agg: ReturnType<typeof aggregate> }) {
   const v = verdict(agg);
   const tone = v.tone === "hire"

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 import type { ReactNode } from "react";
 import type { Answer, Config, LevelId, QA, SavedSession, Session, View } from "./types";
-import { buildFeedback } from "./engine";
+import { buildFeedback, composeRelevantSession } from "./engine";
 import {
   buildInterviewSession, buildJdSession, buildPracticeSession, buildReplaySession,
   buildWeakTopicSession, makeSavedSession, type OnboardingSelection
@@ -116,6 +116,7 @@ interface AppApi {
   selectCompany: (id: string) => void;
   setStep: (n: number) => void;
   startSession: (config: Config) => void;
+  startPlannedSession: (sel: OnboardingSelection, config: Config, keywords?: string[]) => void;
   applyJd: (r: JdResult & { text: string }) => void;
   practiceWeakTopics: () => void;
   submitAnswer: (user: string) => void;
@@ -168,6 +169,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         patch: { level: r.levelId, field: r.fieldId, company: r.companyId ?? "general", jd: r.text },
         step: 4
       }),
+      startPlannedSession: (sel, config, keywords) => {
+        const session = keywords?.length
+          ? composeRelevantSession({ fieldId: sel.field, companyId: sel.company, levelId: sel.level, keywords, count: config.count, mode: config.mode })
+          : buildInterviewSession(sel, config);
+        dispatch({ type: "SET_SESSION", session, config });
+      },
       startSession: config => {
         const session = state.ob.jd
           ? buildJdSession(analyzeJd(state.ob.jd), config)

@@ -9,7 +9,8 @@ export const STORAGE_KEYS = {
   apiBase: "iq.apiBase",
   apiModel: "iq.apiModel",
   tier: "iq.tier",
-  usage: "iq.usage"
+  usage: "iq.usage",
+  licenseKey: "iq.licenseKey"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {

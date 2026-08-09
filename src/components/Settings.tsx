@@ -2,9 +2,11 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import type { Config } from "../types";
 import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
+import { activatePro, deactivatePro, getStoredKey } from "../services/license";
+import { getTier } from "../services/entitlements";
 import { useApp } from "../store";
 import { toast } from "../toast";
-import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Modal, Seg, Switch } from "./ui";
+import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
 export function Settings() {
   const { state, updateConfig, clearHistory, resetAll } = useApp();
@@ -14,6 +16,8 @@ export function Settings() {
   const [model, setModel] = useState(getSettings().model);
   const [testing, setTesting] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [proKey, setProKey] = useState("");
+  const [pro, setPro] = useState(getTier() === "pro");
 
   const saveKey = () => {
     saveSettings({ key, base, model });
@@ -42,6 +46,43 @@ export function Settings() {
       </div>
 
       <div className="mt-7 space-y-5">
+        {/* Pro section */}
+        <section className={`${cardCls} p-6`}>
+          <div className="mb-1 flex items-center gap-2">
+            <h2 className="text-[16px] font-extrabold">✨ InterviewIQ Pro</h2>
+            {pro && <Chip tone="ok">ACTIVE</Chip>}
+          </div>
+          <p className="mb-4 text-[13px] text-mut">
+            {pro
+              ? `Pro is active on this device (${getStoredKey()}). Unlimited sessions and AI coaching.`
+              : "Unlock unlimited sessions, all companies, and unlimited AI coaching. Enter your license key to activate."}
+          </p>
+          {pro ? (
+            <button className={btnDanger + btnSm} onClick={() => { deactivatePro(); setPro(false); toast("Pro deactivated"); }}>
+              Deactivate Pro
+            </button>
+          ) : (
+            <div className="flex flex-wrap gap-2.5">
+              <input
+                value={proKey}
+                onChange={e => setProKey(e.target.value)}
+                placeholder="IQPRO-XXXX-XXXX-XXXX"
+                className="min-w-[240px] flex-1 rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+              />
+              <button
+                className={btnPrimary + btnSm}
+                onClick={() => {
+                  const r = activatePro(proKey);
+                  if (r.ok) { setPro(true); setProKey(""); toast("🎉 Pro activated!"); }
+                  else toast("✗ " + (r.error ?? "Invalid key"));
+                }}
+              >
+                Activate
+              </button>
+            </div>
+          )}
+        </section>
+
         {/* AI section */}
         <section className={`${cardCls} p-6`}>
           <div className="mb-1 flex items-center gap-2">

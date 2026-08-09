@@ -41,7 +41,8 @@ export function buildJdSession(jd: JdResult, config: Config): Session {
     companyId: jd.companyId,
     levelId: jd.levelId,
     keywords: jd.keywords,
-    count: config.count
+    count: config.count,
+    mode: config.mode
   });
 }
 
