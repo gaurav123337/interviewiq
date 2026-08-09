@@ -37,6 +37,24 @@ export function aggregate(answers: Answer[]): Aggregate {
   return { score: +(pct * 5).toFixed(2), pct, grade: grade(pct), cats };
 }
 
+export interface Verdict {
+  label: string;
+  tone: "hire" | "lean" | "no";
+  note: string;
+}
+
+/** Maps an aggregate score to a mock-interview hiring verdict. */
+export function verdict(agg: Aggregate): Verdict {
+  const pct = agg.pct;
+  if (pct >= 0.75) {
+    return { label: "HIRE", tone: "hire", note: "Strong, consistent performance across rounds — you'd advance to the next stage." };
+  }
+  if (pct >= 0.55) {
+    return { label: "LEAN HIRE", tone: "lean", note: "Solid fundamentals with a few gaps to close — review the study topics below before the real thing." };
+  }
+  return { label: "NO HIRE", tone: "no", note: "Not there yet — but every miss below is a fixable topic. Drill the study list and retake this mock." };
+}
+
 /** Ranks the key points missed most often across a session as study topics. */
 export function topicSuggestions(answers: Answer[]): string[] {
   const counts = new Map<string, number>();

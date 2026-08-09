@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { analyzeJd } from "../services/jd";
 import { buildJdSession, buildWeakTopicSession } from "../services/session";
-import { composeRelevantSession, pickRelevant } from "../engine";
-import { getLearned, makeDeck, markLearned, resetLearned } from "../services/drill";
+import { composeRelevantSession, composeSession, pickRelevant, verdict } from "../engine";
+import { getSrs, isDue, learnedCount, makeDeck, rate, resetSrs } from "../services/drill";
+import { aiCallsLeft, recordAiCall, recordSession, sessionsLeft, setTier } from "../services/entitlements";
 import type { Config } from "../types";
 
 const CFG: Config = { count: 8, mode: "standard", timing: "none", voice: false };
@@ -73,24 +74,73 @@ describe("keyword-driven sessions", () => {
   });
 });
 
-describe("drill decks", () => {
-  it("builds a deck and persists learned questions", () => {
-    resetLearned();
-    const deck = makeDeck("frontend", "all", new Set(), 5);
-    expect(deck.length).toBeGreaterThan(0);
-    expect(deck.length).toBeLessThanOrEqual(5);
-    const first = deck[0].q;
-    markLearned(first);
-    expect(getLearned().has(first)).toBe(true);
-    const deck2 = makeDeck("frontend", "all", getLearned(), 5);
-    expect(deck2.some(c => c.q === first)).toBe(false);
-    resetLearned();
+describe("mock-interview mode", () => {
+  it("composes a longer session and tags meta as mock", () => {
+    const s = composeSession({ fieldId: "frontend", companyId: "google", levelId: "senior", count: 10, mode: "mock" });
+    expect(s.questions.length).toBeGreaterThanOrEqual(8);
+    expect(s.meta.mode).toBe("mock");
   });
 
-  it("honors the level filter", () => {
-    resetLearned();
-    const deck = makeDeck("frontend", "junior", new Set(), 50);
-    expect(deck.length).toBeGreaterThan(0);
-    expect(deck.every(c => c.lvl === "junior")).toBe(true);
+  it("produces hire / lean-hire / no-hire verdicts by score", () => {
+    expect(verdict({ score: 4.5, pct: 0.9, grade: "A", cats: [] }).label).toBe("HIRE");
+    expect(verdict({ score: 3.2, pct: 0.64, grade: "C", cats: [] }).label).toBe("LEAN HIRE");
+    expect(verdict({ score: 1.8, pct: 0.36, grade: "F", cats: [] }).label).toBe("NO HIRE");
   });
 });
+
+describe("drill spaced repetition", () => {
+  it("schedules cards by rating and excludes future-due cards from decks", () => {
+    resetSrs();
+    const t0 = Date.now();
+    const deck = makeDeck("frontend", "all", 5);
+    expect(deck.length).toBeGreaterThan(0);
+    const q = deck[0].q;
+
+    rate(q, "good", t0);
+    expect(isDue(q, getSrs(), t0 + 1000)).toBe(false);
+    expect(getSrs()[q].due).toBe(t0 + DAY_LONG); /* first "good" schedules +1 day */
+
+    const deck2 = makeDeck("frontend", "all", 50);
+    expect(deck2.some(c => c.q === q)).toBe(false);
+  });
+
+  it("keeps 'again' cards due almost immediately", () => {
+    resetSrs();
+    const t0 = Date.now();
+    rate("q1", "again", t0);
+    const srs = getSrs();
+    expect(isDue("q1", srs, t0 + 30_000)).toBe(false); /* due at +1min */
+    expect(isDue("q1", srs, t0 + 61_000)).toBe(true);
+  });
+
+  it("counts cards as learned after repeated good ratings", () => {
+    resetSrs();
+    const t0 = Date.now();
+    rate("q2", "good", t0);
+    rate("q2", "good", t0 + 1000);
+    rate("q2", "good", t0 + 2000);
+    expect(learnedCount(getSrs())).toBe(1);
+    resetSrs();
+  });
+});
+
+describe("entitlements (dormant paywall)", () => {
+  it("meters sessions and AI calls with monthly/daily rollover", () => {
+    setTier("free");
+    recordSession();
+    recordSession();
+    expect(sessionsLeft()).toBe(1); /* 3 per month limit */
+    recordAiCall();
+    recordAiCall();
+    recordAiCall();
+    recordAiCall();
+    recordAiCall();
+    expect(aiCallsLeft()).toBe(0); /* 5 per day limit */
+    setTier("pro");
+    expect(sessionsLeft()).toBe(Infinity);
+    expect(aiCallsLeft()).toBe(Infinity);
+    setTier("free");
+  });
+});
+
+const DAY_LONG = 86_400_000;

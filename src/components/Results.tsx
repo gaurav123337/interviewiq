@@ -1,5 +1,5 @@
 import type { CatStat } from "../types";
-import { aggregate, topicSuggestions } from "../engine";
+import { aggregate, topicSuggestions, verdict } from "../engine";
 import { levelById } from "../data";
 import { useApp } from "../store";
 import { toast } from "../toast";
@@ -54,6 +54,7 @@ export function Results() {
           gradeTone === "ok" ? "border-ok/40 bg-ok/10 text-ok" : gradeTone === "warn" ? "border-warn/40 bg-warn/10 text-warn" : "border-bad/40 bg-bad/10 text-bad"
         }`}>Grade {agg.grade}</div>
         <p className="mt-3 text-sm text-mut">{meta.company} · {meta.field} · {meta.level}</p>
+        {session.meta.mode === "mock" && <VerdictBanner agg={agg} />}
         <div className="mx-auto mt-5 grid max-w-[560px] grid-cols-2 gap-3 sm:grid-cols-4">
           <StatPill num={answers.length} label="Questions" />
           <StatPill num={agg.score.toFixed(1)} label="Avg / 5" />
@@ -147,6 +148,21 @@ export function Results() {
 }
 
 /* ---------- bits ---------- */
+function VerdictBanner({ agg }: { agg: ReturnType<typeof aggregate> }) {
+  const v = verdict(agg);
+  const tone = v.tone === "hire"
+    ? "border-ok/40 bg-ok/10 text-ok"
+    : v.tone === "lean"
+      ? "border-warn/40 bg-warn/10 text-warn"
+      : "border-bad/40 bg-bad/10 text-bad";
+  return (
+    <div className={`mx-auto mt-4 w-fit rounded-2xl border px-6 py-3 ${tone}`}>
+      <div className="text-[16px] font-extrabold uppercase tracking-[.16em]">{v.label}</div>
+      <div className="mx-auto mt-1 max-w-[380px] text-[12.5px] leading-snug text-mut">{v.note}</div>
+    </div>
+  );
+}
+
 function StatPill({ num, label }: { num: string | number; label: string }) {
   return (
     <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">

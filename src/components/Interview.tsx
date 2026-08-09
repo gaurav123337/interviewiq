@@ -38,7 +38,7 @@ export function Interview() {
         question: q.q, userAnswer: answer,
         levelName: levelById(q.level).name, fieldName: meta.field, companyName: meta.company
       }).then(t => { setAi(t); setAiLoading(false); })
-        .catch(() => { setAi(null); setAiLoading(false); toast("AI feedback unavailable — offline feedback still applies."); });
+        .catch((e: Error) => { setAi(null); setAiLoading(false); toast(e?.message || "AI feedback unavailable — offline feedback still applies."); });
     }
   };
 
@@ -59,6 +59,7 @@ export function Interview() {
         <div className="min-w-[220px] flex-1 text-xl font-extrabold tracking-tight">
           {meta.company} · {meta.field} · {meta.level}
         </div>
+        {config.mode === "mock" && <MockCountdown total={45 * 60} onExpire={exitToResults} />}
         <div className="min-w-[170px] flex-none">
           <div className="h-[7px] overflow-hidden rounded-full bg-white/15">
             <div className="h-full rounded-full grad-bg transition-all duration-500" style={{ width: prog + "%" }} />
@@ -143,6 +144,39 @@ function Typewriter({ text }: { text: string }) {
     return () => window.clearInterval(iv);
   }, [text]);
   return <span>{shown}{shown.length < text.length && <span className="caret" />}</span>;
+}
+
+/* ---------- mock-interview global countdown ---------- */
+function MockCountdown({ total, onExpire }: { total: number; onExpire: () => void }) {
+  const [left, setLeft] = useState(total);
+  const fired = useRef(false);
+  useEffect(() => {
+    setLeft(total);
+    fired.current = false;
+    const iv = window.setInterval(() => {
+      setLeft(l => {
+        const next = l - 1;
+        if (next <= 0 && !fired.current) {
+          fired.current = true;
+          window.clearInterval(iv);
+          onExpire();
+        }
+        return Math.max(0, next);
+      });
+    }, 1000);
+    return () => window.clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total]);
+
+  const low = left <= 5 * 60;
+  return (
+    <span
+      title="Total mock interview time"
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-extrabold tabular-nums ${low ? "border-bad/50 bg-bad/10 text-bad" : "border-warn/40 bg-warn/10 text-warn"}`}
+    >
+      🎬 {fmtTime(left)}
+    </span>
+  );
 }
 
 /* ---------- timer ---------- */

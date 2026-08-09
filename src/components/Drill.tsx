@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { LevelId } from "../types";
 import { FIELDS, LEVELS, levelById } from "../data";
-import { getLearned, makeDeck, markLearned, resetLearned, type DrillCard } from "../services/drill";
+import { getSrs, learnedCount, makeDeck, rate, resetSrs, type DrillCard, type Rating } from "../services/drill";
 import { toast } from "../toast";
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, KpNeutral } from "./ui";
+import { btnGhost, btnPrimary, btnSoft, btnSm, cardCls, Chip, KpNeutral } from "./ui";
 
 export function Drill() {
   const [fieldSel, setFieldSel] = useState(FIELDS[0].id);
@@ -12,42 +12,41 @@ export function Drill() {
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
   const [doneCount, setDoneCount] = useState(0);
-  const [learnedCount, setLearnedCount] = useState(getLearned().size);
+  const [learned, setLearned] = useState(learnedCount(getSrs()));
 
   const build = () => {
-    const d = makeDeck(fieldSel, lvlSel, getLearned(), 10);
+    const d = makeDeck(fieldSel, lvlSel, 10);
     if (!d.length) {
-      toast("Nothing to drill — all questions are marked as learned. Reset to start over.");
+      toast("Nothing due right now — all questions are scheduled for later. Reset to start over.");
       return;
     }
     setDeck(d);
     setIdx(0);
     setFlipped(false);
     setDoneCount(0);
-    setLearnedCount(getLearned().size);
+    setLearned(learnedCount(getSrs()));
   };
 
-  const again = () => {
-    /* keep the card in the deck: move it to the back */
+  const rateCard = (r: Rating) => {
     if (!deck) return;
-    setDeck(d => {
-      const rest = d ?? [];
-      return [...rest.slice(1), rest[0]];
-    });
+    const card = deck[idx];
+    rate(card.q, r);
+    if (r === "again") {
+      /* keep in this session: move to the back */
+      setDeck(d => {
+        const rest = d ?? [];
+        return [...rest.slice(1), rest[0]];
+      });
+    } else {
+      setDeck(d => {
+        const rest = d ?? [];
+        return rest.slice(0, idx).concat(rest.slice(idx + 1));
+      });
+      setLearned(learnedCount(getSrs()));
+    }
     setIdx(0);
     setFlipped(false);
     setDoneCount(c => c + 1);
-  };
-
-  const gotIt = () => {
-    if (!deck) return;
-    markLearned(deck[idx].q);
-    const rest = deck.slice(0, idx).concat(deck.slice(idx + 1));
-    setDeck(rest);
-    setIdx(0);
-    setFlipped(false);
-    setDoneCount(c => c + 1);
-    setLearnedCount(c => c + 1);
   };
 
   const card = deck?.[idx];
@@ -58,7 +57,7 @@ export function Drill() {
         <span className="eyebrow text-[12.5px] font-bold uppercase tracking-[.14em] text-acc3">🎴 Drill Mode</span>
         <h1 className="mt-1 text-[clamp(26px,4vw,38px)] font-extrabold tracking-tight">Flashcard <span className="grad-text">reps</span>.</h1>
         <p className="mx-auto mt-2 max-w-[520px] text-[14.5px] text-mut">
-          Flip through questions, rate yourself, and build recall. Questions you mark as learned drop out of future decks.
+          Flip through questions and rate your recall. Spaced repetition reschedules cards so you review what you're about to forget.
         </p>
       </div>
 
@@ -80,9 +79,9 @@ export function Drill() {
           {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
         </select>
         <button className={btnPrimary + btnSm} onClick={build}>Build deck</button>
-        {learnedCount > 0 && (
-          <button className={btnGhost + btnSm} onClick={() => { resetLearned(); setLearnedCount(0); toast("Learned questions reset"); }}>
-            Reset learned ({learnedCount})
+        {learned > 0 && (
+          <button className={btnGhost + btnSm} onClick={() => { resetSrs(); setLearned(0); toast("Spaced-repetition schedule reset"); }}>
+            Reset ({learned} learned)
           </button>
         )}
       </div>
@@ -91,7 +90,7 @@ export function Drill() {
         <div className={`${cardCls} mt-6 flex flex-col items-center px-5 py-14 text-center`}>
           <div className="mb-3 text-[42px]">🎴</div>
           <h3 className="mb-1 text-lg font-bold">Pick a field and hit “Build deck”</h3>
-          <p className="text-sm text-mut">{learnedCount} question{learnedCount === 1 ? "" : "s"} already learned.</p>
+          <p className="text-sm text-mut">{learned} question{learned === 1 ? "" : "s"} learned.</p>
         </div>
       )}
 
@@ -99,7 +98,7 @@ export function Drill() {
         <div className="mt-6">
           <div className="mb-3 flex items-center justify-between text-[13px] font-semibold text-mut">
             <span>Card {Math.min(idx + 1, deck!.length)} of {deck!.length}</span>
-            <span>{doneCount} rated · {learnedCount} learned</span>
+            <span>{doneCount} rated · {learned} learned</span>
           </div>
 
           {/* flashcard */}
@@ -130,13 +129,15 @@ export function Drill() {
             )}
           </button>
 
-          <div className="mt-4 flex flex-wrap justify-center gap-3">
+          <div className="mt-4 flex flex-wrap justify-center gap-2.5">
             {!flipped ? (
               <button className={btnGhost} onClick={() => setFlipped(true)}>👁 Reveal answer</button>
             ) : (
               <>
-                <button className={btnGhost} onClick={again}>🔄 Again</button>
-                <button className={btnPrimary} onClick={gotIt} autoFocus>✅ Got it</button>
+                <button className={btnGhost + btnSm} onClick={() => rateCard("again")} title="Review again soon">🔄 Again</button>
+                <button className={btnGhost + btnSm} onClick={() => rateCard("hard")} title="Review again tomorrow">😓 Hard</button>
+                <button className={btnSoft + btnSm} onClick={() => rateCard("good")} title="Review again in 3 days">🙂 Good</button>
+                <button className={btnPrimary + btnSm} onClick={() => rateCard("easy")} autoFocus title="Review again in a week">✅ Easy</button>
               </>
             )}
           </div>

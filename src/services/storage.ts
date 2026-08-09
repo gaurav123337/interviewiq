@@ -7,7 +7,9 @@ export const STORAGE_KEYS = {
   sessions: "iq.sessions",
   apiKey: "iq.apiKey",
   apiBase: "iq.apiBase",
-  apiModel: "iq.apiModel"
+  apiModel: "iq.apiModel",
+  tier: "iq.tier",
+  usage: "iq.usage"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {

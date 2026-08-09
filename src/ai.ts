@@ -3,6 +3,7 @@
    real generative feedback on top. Key stays in localStorage only. */
 
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
+import { aiCallsLeft, isPaywallEnabled, recordAiCall } from "./services/entitlements";
 
 export interface AISettings {
   key: string;
@@ -72,6 +73,9 @@ export interface FeedbackContext {
 }
 
 export async function getFeedback(ctx: FeedbackContext): Promise<string> {
+  if (isPaywallEnabled() && aiCallsLeft() <= 0) {
+    throw new Error("You've used your free AI feedback for today — upgrade to Pro for unlimited coaching.");
+  }
   const sys =
     "You are a senior technical interviewer at " + (ctx.companyName || "a top tech company") +
     " conducting an interview for a " + ctx.levelName + " role in " + ctx.fieldName + ". " +
@@ -83,11 +87,18 @@ export async function getFeedback(ctx: FeedbackContext): Promise<string> {
     "Evaluate: (1) Overall quality score /10 and why, (2) the strongest parts, " +
     "(3) the most important gaps for this level, (4) one concrete tip to improve. " +
     "If the answer is empty or off-topic, say so directly and coach them on how to approach it.";
-  return chat([{ role: "system", content: sys }, { role: "user", content: usr }], { maxTokens: 500 });
+  const out = await chat([{ role: "system", content: sys }, { role: "user", content: usr }], { maxTokens: 500 });
+  recordAiCall();
+  return out;
 }
 
 export async function getHint(question: string, levelName: string): Promise<string> {
+  if (isPaywallEnabled() && aiCallsLeft() <= 0) {
+    throw new Error("You've used your free AI hints for today — upgrade to Pro for unlimited coaching.");
+  }
   const sys = "You are a helpful interview coach. Give ONE short hint (under 60 words) to help a " +
     levelName + " candidate start answering this interview question. Do not give the full answer.";
-  return chat([{ role: "system", content: sys }, { role: "user", content: "Question: " + question }], { maxTokens: 120, temperature: 0.8 });
+  const out = await chat([{ role: "system", content: sys }, { role: "user", content: "Question: " + question }], { maxTokens: 120, temperature: 0.8 });
+  recordAiCall();
+  return out;
 }

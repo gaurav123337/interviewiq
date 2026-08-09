@@ -83,7 +83,7 @@ export interface Answer {
 
 export interface Config {
   count: number;
-  mode: "standard" | "journey";
+  mode: "standard" | "journey" | "mock";
   timing: "none" | "relaxed" | "strict";
   voice: boolean;
 }

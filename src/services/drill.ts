@@ -9,28 +9,65 @@ export interface DrillCard {
   lvl: LevelId;
 }
 
-const LEARNED_KEY = "iq.drillLearned";
+export type Rating = "again" | "hard" | "good" | "easy";
 
-/* ---------- learned tracking (lightweight SRS: learned cards drop out of future decks) ---------- */
-
-export function getLearned(): Set<string> {
-  return new Set(storageGet<string[]>(LEARNED_KEY, []));
+interface SrsEntry {
+  /** epoch ms when the card is next due */
+  due: number;
+  /** 0..5 — interval ladder index */
+  lvl: number;
 }
 
-export function markLearned(q: string): void {
-  const s = getLearned();
-  s.add(q);
-  storageSet(LEARNED_KEY, [...s]);
+const SRS_KEY = "iq.drillSrs";
+const MINUTE = 60_000;
+const DAY = 86_400_000;
+/* review intervals per ladder index: again → 1min, then 1d / 3d / 7d / 14d / 30d */
+const INTERVALS = [MINUTE, DAY, 3 * DAY, 7 * DAY, 14 * DAY, 30 * DAY];
+/* cards at or above this ladder level count as "learned" */
+const LEARNED_LVL = 3;
+
+/* ---------- SRS state ---------- */
+
+export function getSrs(): Record<string, SrsEntry> {
+  return storageGet<Record<string, SrsEntry>>(SRS_KEY, {});
 }
 
-export function resetLearned(): void {
-  storageSet(LEARNED_KEY, []);
+export function rate(q: string, rating: Rating, now = Date.now()): void {
+  const srs = getSrs();
+  const cur = srs[q]?.lvl ?? 0;
+  const lvl = rating === "again"
+    ? 0
+    : rating === "hard"
+      ? Math.min(LEARNED_LVL + 1, cur + 1)
+      : rating === "good"
+        ? Math.min(LEARNED_LVL + 2, cur + 1)
+        : Math.min(5, cur + 2);
+  srs[q] = { due: now + INTERVALS[lvl], lvl };
+  storageSet(SRS_KEY, srs);
+}
+
+export function isDue(q: string, srs: Record<string, SrsEntry>, now = Date.now()): boolean {
+  return !srs[q] || srs[q].due <= now;
+}
+
+export function learnedCount(srs: Record<string, SrsEntry>): number {
+  return Object.values(srs).filter(e => e.lvl >= LEARNED_LVL).length;
+}
+
+export function resetSrs(): void {
+  storageSet(SRS_KEY, {});
 }
 
 /* ---------- deck building ---------- */
 
-export function makeDeck(fieldSel: string, lvlSel: LevelId | "all", learned: Set<string>, count = 10): DrillCard[] {
+/** Builds a deck of due/new cards, overdue first, then shuffled fresh cards. */
+export function makeDeck(fieldSel: string, lvlSel: LevelId | "all", count = 10): DrillCard[] {
+  const srs = getSrs();
+  const now = Date.now();
   const { items } = bankItems(fieldSel, "");
-  const pool = items.filter(i => (lvlSel === "all" || i.lvl === lvlSel) && !learned.has(i.q));
-  return shuffle(pool).slice(0, Math.min(count, pool.length)).map(i => ({ q: i.q, a: i.a, kp: i.kp, lvl: i.lvl }));
+  const pool = items.filter(i => (lvlSel === "all" || i.lvl === lvlSel) && isDue(i.q, srs, now));
+  const overdue = pool.filter(i => srs[i.q]).sort((a, b) => srs[a.q].due - srs[b.q].due);
+  const fresh = shuffle(pool.filter(i => !srs[i.q]));
+  const ordered = [...overdue, ...fresh];
+  return ordered.slice(0, Math.min(count, ordered.length)).map(i => ({ q: i.q, a: i.a, kp: i.kp, lvl: i.lvl }));
 }

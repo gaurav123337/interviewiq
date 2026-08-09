@@ -7,6 +7,7 @@ import {
   buildWeakTopicSession, makeSavedSession, type OnboardingSelection
 } from "./services/session";
 import { analyzeJd, type JdResult } from "./services/jd";
+import { recordSession } from "./services/entitlements";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
 
 /* ------------------------------------------------------------------ */
@@ -148,7 +149,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { session, idx, config } = state;
       if (session && idx + 1 >= session.questions.length && answers.length) {
         const s = makeSavedSession(session.meta, config, answers);
-        if (s) dispatch({ type: "ADD_SESSION", s });
+        if (s) {
+          dispatch({ type: "ADD_SESSION", s });
+          recordSession(); /* usage metering for the freemium quota */
+        }
       }
     };
 

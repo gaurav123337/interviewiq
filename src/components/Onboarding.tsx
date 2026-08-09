@@ -4,13 +4,25 @@ import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, companyById, levelById } fr
 import type { Config } from "../types";
 import { useApp } from "../store";
 import { analyzeJd } from "../services/jd";
+import { isPaywallEnabled, sessionsLeft } from "../services/entitlements";
+import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnLg, btnPrimary, cardCls, Difficulty, Modal, Seg, Switch } from "./ui";
 
 export function Onboarding() {
-  const { state, selectLevel, selectField, selectCompany, setStep } = useApp();
+  const { state, selectLevel, selectField, selectCompany, setStep, startSession } = useApp();
   const { ob, step } = state;
   const [showConfig, setShowConfig] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
   const [jdMode, setJdMode] = useState(false);
+
+  /* paywall gate: dormant until CONFIG.features.paywall flips on */
+  const begin = (cfg: Config) => {
+    if (isPaywallEnabled() && sessionsLeft() <= 0) {
+      setShowUpgrade(true);
+      return;
+    }
+    startSession(cfg);
+  };
 
   const steps = ["Level", "Field", "Company", "Confirm"];
   const maxStep = ob.level ? (ob.field ? (ob.company ? 4 : 3) : 2) : 1;
@@ -118,11 +130,24 @@ export function Onboarding() {
             <button className={`${btnPrimary} ${btnLg}`} disabled={!ob.level || !ob.field || !ob.company} onClick={() => setShowConfig(true)}>
               Start Interview →
             </button>
+            <button
+              className="rounded-2xl border border-warn/40 bg-warn/10 px-8 py-4 text-[17px] font-bold text-warn transition-all hover:bg-warn/20"
+              disabled={!ob.level || !ob.field || !ob.company}
+              onClick={() => begin({ ...state.config, count: 10, mode: "mock", timing: "strict" })}
+            >
+              🎬 Full mock interview · 45 min
+            </button>
           </div>
         </section>
       )}
 
-      {showConfig && <ConfigModal onClose={() => setShowConfig(false)} />}
+      {showConfig && <ConfigModal onClose={() => setShowConfig(false)} onBegin={begin} />}
+      {showUpgrade && (
+        <UpgradeModal
+          onClose={() => setShowUpgrade(false)}
+          reason="You've used your free interviews for this month — Pro unlocks unlimited sessions."
+        />
+      )}
     </div>
   );
 }
@@ -220,8 +245,8 @@ function SumRow({ ico, label, value }: { ico: string; label: string; value: stri
 }
 
 /* ---------- config modal ---------- */
-function ConfigModal({ onClose }: { onClose: () => void }) {
-  const { state, startSession } = useApp();
+function ConfigModal({ onClose, onBegin }: { onClose: () => void; onBegin: (cfg: Config) => void }) {
+  const { state } = useApp();
   const [cfg, setCfg] = useState<Config>({ ...state.config });
   const company = companyById(state.ob.company);
   const field = FIELDS.find(f => f.id === state.ob.field);
@@ -243,7 +268,7 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
       </OptRow>
       <div className="mt-5 flex gap-3">
         <button className={btnGhost} onClick={onClose}>Cancel</button>
-        <button className={`${btnPrimary} ${btnLg} flex-1`} onClick={() => { onClose(); startSession(cfg); }}>Begin interview 🎙</button>
+        <button className={`${btnPrimary} ${btnLg} flex-1`} onClick={() => { onClose(); onBegin(cfg); }}>Begin interview 🎙</button>
       </div>
     </Modal>
   );
