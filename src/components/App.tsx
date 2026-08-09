@@ -112,11 +112,9 @@ export function App() {
           >
             {menuOpen ? "✕" : "☰"}
           </button>
-          {menuOpen && (
-            <div className="absolute right-4 top-[64px] z-50 hidden w-56 rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl md:block">
-              <MoreMenu current={view} onPick={go} />
-            </div>
-          )}
+          <div className={`absolute right-4 top-[64px] z-50 hidden w-56 rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl transition-all duration-200 ease-out md:block ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible -translate-y-2 opacity-0"}`}>
+            <MoreMenu current={view} onPick={go} />
+          </div>
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
           <button
@@ -152,20 +150,20 @@ export function App() {
         {view === "playground" && <Playground />}
       </main>
 
-      {/* tap-outside backdrop for the ☰ menu */}
-      {menuOpen && (
-        <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setMenuOpen(false)} aria-hidden />
-      )}
+      {/* tap-outside backdrop for the ☰ menu (fades in/out) */}
+      <div
+        className={`fixed inset-0 z-40 bg-black/30 transition-opacity duration-200 ${menuOpen ? "opacity-100" : "pointer-events-none invisible opacity-0"}`}
+        onClick={() => setMenuOpen(false)}
+        aria-hidden
+      />
 
       {/* bottom nav (mobile) — 4 core tabs + ☰ for the rest */}
       <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
-        {menuOpen && (
-          <div className="absolute inset-x-0 bottom-full mb-2 px-3">
-            <div className="rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.5)]">
-              <MoreMenu current={view} onPick={go} />
-            </div>
+        <div className={`absolute inset-x-0 bottom-full mb-2 px-3 transition-all duration-200 ease-out ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible translate-y-3 opacity-0"}`}>
+          <div className="rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.5)]">
+            <MoreMenu current={view} onPick={go} />
           </div>
-        )}
+        </div>
         <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
           {PRIMARY_TABS.map(t => (
             <button
