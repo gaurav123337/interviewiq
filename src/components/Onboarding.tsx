@@ -1,0 +1,206 @@
+import { useState } from "react";
+import type { ReactNode } from "react";
+import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, companyById, levelById } from "../data";
+import type { Config } from "../types";
+import { useApp } from "../store";
+import { btnGhost, btnLg, btnPrimary, cardCls, Difficulty, Modal, Seg, Switch } from "./ui";
+
+export function Onboarding() {
+  const { state, selectLevel, selectField, selectCompany, setStep } = useApp();
+  const { ob, step } = state;
+  const [showConfig, setShowConfig] = useState(false);
+
+  const steps = ["Level", "Field", "Company", "Confirm"];
+  const maxStep = ob.level ? (ob.field ? (ob.company ? 4 : 3) : 2) : 1;
+
+  return (
+    <div className="anim-view">
+      <Hero />
+      {/* stepper */}
+      <div className="mb-2 mt-6 flex flex-wrap items-center justify-center gap-0">
+        {steps.map((s, i) => {
+          const n = i + 1;
+          const cls = n === step ? "text-ink" : n < step ? "text-mut" : "text-fnt";
+          const clickable = n <= maxStep;
+          return (
+            <span key={s} className="flex items-center">
+              <button
+                type="button"
+                disabled={!clickable}
+                onClick={() => setStep(n)}
+                className={`flex items-center gap-2 rounded-full px-2.5 py-1.5 text-[12.5px] font-bold ${cls} ${clickable ? "cursor-pointer" : "cursor-default"}`}
+              >
+                <span className={`grid h-[22px] w-[22px] place-items-center rounded-full text-[11px] ${n === step ? "grad-bg text-white shadow-[0_4px_14px_rgba(99,102,241,.5)]" : n < step ? "border border-ok/40 bg-ok/20 text-ok" : "border border-white/30 bg-white/10"}`}>
+                  {n < step ? "✓" : n}
+                </span>
+                {s}
+              </button>
+              {n < 4 && <span className="h-px w-9 bg-white/20 max-sm:w-4" />}
+            </span>
+          );
+        })}
+      </div>
+
+      {step === 1 && (
+        <section className="mt-8">
+          <h2 className="mb-1 text-2xl font-extrabold tracking-tight">What level are you interviewing for?</h2>
+          <p className="mb-5 text-[14.5px] text-mut">From first job to the corner office — questions scale with each level.</p>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
+            {LEVELS.map(l => (
+              <PickCard key={l.id} emoji={l.icon} name={l.name} meta={l.years} blurb={l.blurb} sel={ob.level === l.id} onPick={() => selectLevel(l.id)} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {step === 2 && (
+        <section className="mt-8">
+          <h2 className="mb-1 text-2xl font-extrabold tracking-tight">Pick your field</h2>
+          <p className="mb-5 text-[14.5px] text-mut">{ob.level ? `${levelById(ob.level).icon} ${levelById(ob.level).name} interview` : "Choose your focus area first."}</p>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3.5">
+            {FIELDS.map(f => (
+              <PickCard key={f.id} emoji={f.icon} name={f.name} meta={f.skills.slice(0, 2).join(" · ")} blurb={f.blurb} sel={ob.field === f.id} onPick={() => selectField(f.id)} tags={f.skills.slice(0, 4)} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {step === 3 && (
+        <section className="mt-8">
+          <h2 className="mb-1 text-2xl font-extrabold tracking-tight">Which company?</h2>
+          <p className="mb-5 text-[14.5px] text-mut">Questions get tailored to each company's stack, culture and interview style.</p>
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(230px,1fr))] gap-3.5">
+            <PickCard emoji={GENERAL_COMPANY.icon} name={GENERAL_COMPANY.name} meta="Balanced questions" blurb="No specific company — a well-rounded mix." sel={ob.company === "general"} onPick={() => selectCompany("general")} small />
+            {COMPANIES.map(c => (
+              <PickCard
+                key={c.id} emoji={c.icon} name={c.name} blurb={c.tagline}
+                meta={<span className="flex items-center gap-1.5">{c.hq} · <Difficulty level={c.difficulty} /></span>}
+                sel={ob.company === c.id} onPick={() => selectCompany(c.id)} small
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {step === 4 && (
+        <section className="mt-8">
+          <h2 className="mb-1 text-2xl font-extrabold tracking-tight">Ready to be interviewed?</h2>
+          <p className="mb-5 text-[14.5px] text-mut">Here's your session profile — you can change anything by going back.</p>
+          <div className={`${cardCls} mx-auto max-w-[640px] p-6`}>
+            <SumRow ico="🎯" label="Level" value={ob.level ? `${levelById(ob.level).icon} ${levelById(ob.level).name}` : "—"} />
+            <SumRow ico="💻" label="Field" value={ob.field ? `${FIELDS.find(f => f.id === ob.field)?.icon ?? ""} ${FIELDS.find(f => f.id === ob.field)?.name ?? ""}` : "—"} />
+            <SumRow ico="🏢" label="Company" value={`${companyById(ob.company).icon} ${companyById(ob.company).name}`} />
+            <SumRow ico="🎙️" label="Interviewer" value={`Alex — Senior Interviewer${ob.company && ob.company !== "general" ? `, ${companyById(ob.company).name}` : ""}`} />
+          </div>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <button className={btnGhost} onClick={() => setStep(3)}>← Back</button>
+            <button className={`${btnPrimary} ${btnLg}`} disabled={!ob.level || !ob.field || !ob.company} onClick={() => setShowConfig(true)}>
+              Start Interview →
+            </button>
+          </div>
+        </section>
+      )}
+
+      {showConfig && <ConfigModal onClose={() => setShowConfig(false)} />}
+    </div>
+  );
+}
+
+function Hero() {
+  return (
+    <div className="pt-7 text-center">
+      <span className="mb-5 inline-flex items-center gap-2 rounded-full border border-acc3/30 bg-acc3/10 px-4 py-1.5 text-[13px] font-bold uppercase tracking-[.12em] text-acc3">
+        🎯 AI Interview Coach · PWA · Works offline
+      </span>
+      <h1 className="text-[clamp(30px,5vw,46px)] font-extrabold leading-[1.15] tracking-tight">
+        Walk into your interview <span className="grad-text">fully prepared</span>.
+      </h1>
+      <p className="mx-auto mt-4 max-w-[640px] text-base text-mut">
+        Pick a level, a field, and a company — InterviewIQ builds a tailored session: company-fit questions, technical depth, and model answers, from junior developer to CEO.
+      </p>
+      <p className="mx-auto mt-2 max-w-[640px] text-sm text-fnt">Every answer gets scored with feedback. Add an API key in Settings for generative AI coaching.</p>
+    </div>
+  );
+}
+
+function PickCard({ emoji, name, meta, blurb, sel, onPick, tags, small }: {
+  emoji: string; name: string; meta?: ReactNode; blurb: string; sel: boolean; onPick: () => void; tags?: string[]; small?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className={`relative overflow-hidden rounded-xl border p-4 text-left transition-all hover:-translate-y-0.5 ${
+        sel
+          ? "border-acc1/80 bg-gradient-to-b from-acc1/15 to-acc2/10 shadow-[0_0_0_1px_rgba(99,102,241,.5),0_14px_34px_rgba(99,102,241,.18)]"
+          : "border-white/10 bg-gradient-to-b from-panel to-panel2 hover:border-white/30 hover:shadow-[0_14px_34px_rgba(2,6,23,.5)]"
+      }`}
+    >
+      <span className={`absolute right-3 top-3 grid h-[22px] w-[22px] place-items-center rounded-full text-xs ${sel ? "grad-bg text-white" : "border border-white/30 text-transparent"}`}>✓</span>
+      <span className="mb-2 flex items-center gap-2.5">
+        <span className={`grid h-[42px] w-[42px] flex-none place-items-center rounded-xl text-[22px] ${sel ? "grad-bg shadow-[0_6px_16px_rgba(99,102,241,.45)]" : "grad-bg-soft border border-white/10"}`}>{emoji}</span>
+        <span className="min-w-0">
+          <span className="block text-[15.5px] font-extrabold leading-tight">{name}</span>
+          {meta && <span className="block text-xs font-semibold text-fnt">{meta}</span>}
+        </span>
+      </span>
+      <span className="block text-[13px] leading-snug text-mut">{blurb}</span>
+      {!small && tags && (
+        <span className="mt-2.5 flex flex-wrap gap-1.5">
+          {tags.map(t => <span key={t} className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-mut">{t}</span>)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function SumRow({ ico, label, value }: { ico: string; label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-dashed border-white/10 px-1 py-3 last:border-0">
+      <span className="flex items-center gap-2 text-[13.5px] font-semibold text-mut">{ico} {label}</span>
+      <span className="text-right text-[14.5px] font-extrabold">{value}</span>
+    </div>
+  );
+}
+
+/* ---------- config modal ---------- */
+function ConfigModal({ onClose }: { onClose: () => void }) {
+  const { state, startSession } = useApp();
+  const [cfg, setCfg] = useState<Config>({ ...state.config });
+  const company = companyById(state.ob.company);
+  const field = FIELDS.find(f => f.id === state.ob.field);
+  const set = (patch: Partial<Config>) => setCfg(c => ({ ...c, ...patch }));
+
+  return (
+    <Modal onClose={onClose} title="Configure your interview" desc={`Tailored to ${company.name} · ${field?.name ?? ""} · ${levelById(state.ob.level).name}`}>
+      <OptRow title="Questions" sub="More questions = deeper assessment">
+        <Seg options={[5, 8, 10, 15].map(c => ({ value: String(c), label: String(c) }))} value={String(cfg.count)} onChange={v => set({ count: Number(v) })} />
+      </OptRow>
+      <OptRow title="Mode" sub="Journey ramps from junior to your level">
+        <Seg<Config["mode"]> options={[{ value: "standard", label: "Standard" }, { value: "journey", label: "Journey" }]} value={cfg.mode} onChange={v => set({ mode: v })} />
+      </OptRow>
+      <OptRow title="Timer" sub="Real interview pressure">
+        <Seg<Config["timing"]> options={[{ value: "none", label: "Off" }, { value: "relaxed", label: "3 min" }, { value: "strict", label: "90 s" }]} value={cfg.timing} onChange={v => set({ timing: v })} />
+      </OptRow>
+      <OptRow title="Voice answers" sub="Dictate with your microphone">
+        <Switch checked={cfg.voice} onChange={v => set({ voice: v })} />
+      </OptRow>
+      <div className="mt-5 flex gap-3">
+        <button className={btnGhost} onClick={onClose}>Cancel</button>
+        <button className={`${btnPrimary} ${btnLg} flex-1`} onClick={() => { onClose(); startSession(cfg); }}>Begin interview 🎙</button>
+      </div>
+    </Modal>
+  );
+}
+
+function OptRow({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-white/10 py-3.5 last:border-0">
+      <div>
+        <div className="text-[15px] font-bold">{title}</div>
+        <div className="text-[12.5px] text-fnt">{sub}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
