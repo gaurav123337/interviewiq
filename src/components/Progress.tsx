@@ -128,16 +128,27 @@ function Stat({ label, value, icon, sub }: { label: string; value: string | numb
 /* SVG radar for category mastery */
 function Radar({ data }: { data: { label: string; pct: number }[] }) {
   const n = data.length;
-  const R = 70;
-  const cx = 95, cy = 90;
+  /* generous viewBox so axis labels never clip at the edges */
+  const W = 220, H = 224;
+  const cx = W / 2, cy = H / 2;
+  const R = 58;
   const pt = (i: number, r: number) => {
     const a = -Math.PI / 2 + (i * 2 * Math.PI) / n;
     return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
   };
   const poly = (r: number) => data.map((_, i) => pt(i, r).join(",")).join(" ");
   const shape = data.map((d, i) => pt(i, Math.max(8, R * d.pct)).join(",")).join(" ");
+  /* wrap long labels onto two lines instead of mid-word truncation */
+  const linesFor = (label: string) => {
+    const words = label.split(" ");
+    if (words.length > 1 && label.length > 10) {
+      const mid = Math.ceil(words.length / 2);
+      return [words.slice(0, mid).join(" "), words.slice(mid).join(" ")];
+    }
+    return label.length > 16 ? [label.slice(0, 15) + "…"] : [label];
+  };
   return (
-    <svg viewBox="0 0 190 180" className="mx-auto w-full max-w-[300px]">
+    <svg viewBox={`0 0 ${W} ${H}`} className="mx-auto w-full max-w-[320px]">
       {[0.33, 0.66, 1].map(k => (
         <polygon key={k} points={poly(R * k)} fill="none" stroke="rgba(148,163,184,.25)" strokeWidth="1" />
       ))}
@@ -147,10 +158,13 @@ function Radar({ data }: { data: { label: string; pct: number }[] }) {
         return <circle key={d.label} cx={x} cy={y} r="3" fill="#a5b4fc" />;
       })}
       {data.map((d, i) => {
-        const [x, y] = pt(i, R + 17);
+        const [x, y] = pt(i, R + 28);
+        const lines = linesFor(d.label);
         return (
-          <text key={d.label} x={x} y={y} textAnchor="middle" fontSize="8.5" fontWeight="700" fill="var(--color-mut)" dominantBaseline="middle">
-            {d.label.length > 12 ? d.label.slice(0, 11) + "…" : d.label}
+          <text key={d.label} x={x} y={y} textAnchor="middle" fontSize="9.5" fontWeight="700" fill="var(--color-mut)">
+            {lines.map((ln, li) => (
+              <tspan key={li} x={x} dy={li === 0 ? 0 : 10.5}>{ln}</tspan>
+            ))}
           </text>
         );
       })}
@@ -193,10 +207,12 @@ function Calendar({ activeDays }: { activeDays: Set<string> }) {
   }
   const weeks: { d: Date; active: boolean }[][] = [];
   for (let w = 0; w < 8; w++) weeks.push(days.slice(w * 7, w * 7 + 7));
+  const DOW = ["S", "M", "T", "W", "T", "F", "S"];
   return (
     <div className="space-y-1">
       {weeks.map((week, wi) => (
-        <div key={wi} className="flex gap-1">
+        <div key={wi} className="flex items-center gap-1.5">
+          <span className="w-3 shrink-0 text-right text-[10px] font-extrabold text-mut">{DOW[week[0].d.getDay()]}</span>
           {week.map(({ d, active }) => {
             const isToday = d.getTime() === today.getTime();
             return (
