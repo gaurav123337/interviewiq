@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { CareerGoal, LevelId, SkillRating } from "../types";
 import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, LEVEL_INDEX, companyById, fieldById, levelById } from "../data";
+import { getDeepDive } from "../data/deepDive";
 import { aiAvailable } from "../ai";
 import { explainTopic, tutorChat, type TutorMsg } from "../services/tutor";
 import { analyzeJd } from "../services/jd";
@@ -13,7 +14,7 @@ import {
 import { applyProgress, buildRoadmap, downloadRoadmapMarkdown, exportRoadmapMarkdown, type Roadmap, type RoadmapTopic } from "../services/roadmap";
 import { useApp } from "../store";
 import { toast } from "../toast";
-import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal, Seg } from "./ui";
+import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Drawer, Seg } from "./ui";
 
 const fmt = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -352,6 +353,7 @@ export function Roadmap() {
         chat={learn ? (chat.get(learn.id) ?? []) : []} chatBusy={chatBusy}
         proGated={proGated} onUpgrade={() => nav("settings")}
         onClose={() => setLearn(null)} onExplain={onExplain} onAsk={onAsk}
+        topics={(adapted?.weeks ?? []).flatMap(w => w.topics)} onRelated={onLearn}
       />
     </div>
   );
@@ -514,7 +516,7 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
 /* Learn modal                                                         */
 /* ------------------------------------------------------------------ */
 
-function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExplain, onAsk, onUpgrade }: {
+function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExplain, onAsk, onUpgrade, topics, onRelated }: {
   topic: RoadmapTopic | null;
   aiLoading: boolean;
   chat: TutorMsg[];
@@ -524,12 +526,82 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
   onExplain: () => void;
   onAsk: (t: RoadmapTopic, text: string) => void;
   onUpgrade: () => void;
+  topics: RoadmapTopic[];
+  onRelated: (t: RoadmapTopic) => void;
 }) {
   const [ask, setAsk] = useState("");
   if (!topic) return null;
+  const dd = getDeepDive(topic.label);
+  const related = (dd.related ?? [])
+    .map(label => topics.find(t => t.label.toLowerCase() === label.toLowerCase()))
+    .filter((t): t is RoadmapTopic => !!t);
   return (
-    <Modal onClose={onClose} title={`📖 ${topic.label}`} desc={topic.practice ? `Practice topic · ${topic.priority} priority` : `Learning topic · ${topic.priority} priority`}>
+    <Drawer onClose={onClose} title={`📖 ${topic.label}`} desc={topic.practice ? `Practice topic · ${topic.priority} priority` : `Learning topic · ${topic.priority} priority`}>
       <p className="mb-4 whitespace-pre-wrap text-[14px] leading-relaxed text-ink">{topic.info.primer}</p>
+
+      {/* curated concepts */}
+      {dd.concepts.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-1.5 text-[12px] font-bold uppercase tracking-wider text-acc3">Core concepts</div>
+          <div className="space-y-1.5">
+            {dd.concepts.map(c => (
+              <div key={c.name} className="rounded-lg border border-line/10 bg-wht/5 px-3 py-2">
+                <div className="text-[13px] font-bold">{c.name}</div>
+                <div className="text-[12.5px] leading-relaxed text-mut">{c.blurb}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* key points to mention */}
+      {dd.points.length > 0 && (
+        <div className="mb-4 rounded-xl border border-ok/25 bg-ok/10 p-4">
+          <div className="mb-1.5 text-[12px] font-bold uppercase tracking-wider text-ok">✅ Say this in your answer</div>
+          <ul className="space-y-1.5 text-[13px] leading-relaxed">
+            {dd.points.map(p => <li key={p} className="flex gap-2"><span className="flex-none text-ok">✓</span><span>{p}</span></li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* common traps */}
+      {dd.traps.length > 0 && (
+        <div className="mb-4 rounded-xl border border-warn/25 bg-warn/10 p-4">
+          <div className="mb-1.5 text-[12px] font-bold uppercase tracking-wider text-warn">⚠️ Common traps</div>
+          <ul className="space-y-1.5 text-[13px] leading-relaxed">
+            {dd.traps.map(t => <li key={t} className="flex gap-2"><span className="flex-none text-warn">⚠</span><span>{t}</span></li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* interview Q&A */}
+      {dd.qa.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-1.5 text-[12px] font-bold uppercase tracking-wider text-acc3">🎯 Interview Q&A</div>
+          <div className="space-y-2">
+            {dd.qa.map((qa, i) => (
+              <details key={i} className="group rounded-lg border border-line/15 bg-wht/5">
+                <summary className="cursor-pointer px-3 py-2 text-[13px] font-bold text-acctxt">Q{i + 1}. {qa.q}</summary>
+                <div className="border-t border-line/10 px-3 py-2 text-[12.5px] leading-relaxed text-mut">{qa.a}</div>
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* related topics */}
+      {related.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-1.5 text-[12px] font-bold uppercase tracking-wider text-mut">🔗 Related topics</div>
+          <div className="flex flex-wrap gap-2">
+            {related.map(t => (
+              <button key={t.id} onClick={() => onRelated(t)} className="rounded-full border border-acc1/40 bg-acc1/15 px-3 py-1 text-[12.5px] font-bold text-acctxt transition-colors hover:bg-acc1/30">
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {topic.practice && (
         <div className="mb-4 rounded-xl border border-acc1/25 bg-acc1/10 p-4">
@@ -599,10 +671,10 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
         )}
       </div>
 
-      <div className="mt-5 flex justify-end">
+      <div className="flex justify-end pt-2">
         <button className={btnGhost} onClick={onClose}>Close</button>
       </div>
-    </Modal>
+    </Drawer>
   );
 }
 
