@@ -13,6 +13,7 @@ import { notifyStreak } from "./services/notifications";
 import { streaks } from "./services/progress";
 import { applySessionToProgress } from "./services/roadmap";
 import { getGoal } from "./services/goal";
+import { queueEvent, recordProfileSession } from "./services/events";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
 
 /* ------------------------------------------------------------------ */
@@ -165,6 +166,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (s) {
           dispatch({ type: "ADD_SESSION", s });
           recordSession(); /* usage metering for the freemium quota */
+          recordProfileSession(); /* admin dashboard counter */
+          void queueEvent("session", { pct: s.agg.pct, level: s.meta.levelId, field: s.meta.fieldId, mode: s.config.mode });
           notifyStreak(streaks([s, ...sessions], new Date()).current); /* streak milestone alerts */
           /* roadmap feedback loop: strong answers mark matching topics done */
           const goal = getGoal();

@@ -4,6 +4,7 @@ import "./index.css";
 import { AppProvider } from "./store";
 import { App } from "./components/App";
 import { initCloud } from "./services/cloud";
+import { initAdmin } from "./services/admin";
 import { initTheme } from "./services/theme";
 
 /* apply the saved theme before first paint to avoid a flash */
@@ -24,4 +25,4 @@ if ("serviceWorker" in navigator) {
 }
 
 /* restore a saved cloud session and start syncing (no-op until Supabase is configured) */
-void initCloud();
+void initCloud().then(() => initAdmin());

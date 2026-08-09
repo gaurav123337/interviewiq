@@ -13,8 +13,12 @@ import { Bank } from "./Bank";
 import { History } from "./History";
 import { Settings } from "./Settings";
 import { Playground } from "./Playground";
+import { Admin } from "./Admin";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
+import { getAdminState, subscribeAdmin, type AdminState } from "../services/admin";
+import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
+import { Chip } from "./ui";
 
 const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
@@ -39,6 +43,8 @@ export function App() {
   const [online, setOnline] = useState(navigator.onLine);
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
   const [menuOpen, setMenuOpen] = useState(false);
+  const [admin, setAdmin] = useState<AdminState>(() => getAdminState());
+  const [banner, setBanner] = useState<Announcement | null>(() => nextUnseenAnnouncement());
 
   const toggleTheme = () => {
     const next: Theme = theme === "light" ? "dark" : "light";
@@ -86,7 +92,17 @@ export function App() {
 
   const view = state.view;
   const go = (id: View) => { setMenuOpen(false); nav(id); };
-  const moreActive = MORE_TABS.some(t => t.id === view);
+  /* feature flags + admin role shape the nav */
+  const flagForTab = (id: string): "roadmap" | "playground" | null =>
+    id === "roadmap" ? "roadmap" : id === "playground" ? "playground" : null;
+  const primaryTabs = PRIMARY_TABS.filter(t => { const f = flagForTab(t.id); return f ? featureOn(f) : true; });
+  const moreTabs = [
+    ...MORE_TABS.filter(t => t.id !== "drill" || featureOn("drill")),
+    ...(admin.isAdmin ? [{ id: "admin" as View, label: "Admin", icon: "🛡️" }] : [])
+  ];
+  const moreActive = moreTabs.some(t => t.id === view);
+
+  useEffect(() => subscribeAdmin(s => { setAdmin(s); setBanner(nextUnseenAnnouncement()); }), []);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -98,7 +114,7 @@ export function App() {
             <span className="text-[17px] font-extrabold tracking-tight">Interview<span className="grad-text">IQ</span></span>
           </button>
           <nav className="ml-4 hidden items-center gap-1 md:flex">
-            {PRIMARY_TABS.map(t => (
+            {primaryTabs.map(t => (
               <TabBtn key={t.id} icon={t.icon} label={t.label} active={view === t.id} onClick={() => go(t.id)} />
             ))}
           </nav>
@@ -113,7 +129,7 @@ export function App() {
             {menuOpen ? "✕" : "☰"}
           </button>
           <div className={`absolute right-4 top-[64px] z-50 hidden w-56 rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl transition-all duration-200 ease-out md:block ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible -translate-y-2 opacity-0"}`}>
-            <MoreMenu current={view} onPick={go} />
+            <MoreMenu current={view} tabs={moreTabs} onPick={go} />
           </div>
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
@@ -148,7 +164,28 @@ export function App() {
         {view === "history" && <History />}
         {view === "settings" && <Settings />}
         {view === "playground" && <Playground />}
+        {view === "admin" && <Admin />}
       </main>
+
+      {/* product announcement banner */}
+      {banner && (
+        <div className="no-print fixed inset-x-0 top-[60px] z-40 px-3">
+          <div className="mx-auto flex max-w-[1200px] items-center gap-3 rounded-xl border border-acc1/40 bg-panel/95 px-4 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,.35)] backdrop-blur-xl">
+            <span className="grid h-8 w-8 flex-none place-items-center rounded-lg grad-bg text-[15px]">📣</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[13.5px] font-extrabold">{banner.badge && <Chip tone="co">{banner.badge}</Chip>} {banner.title}</span>
+              </div>
+              <p className="truncate text-[12.5px] text-mut">{banner.body}</p>
+            </div>
+            <button
+              className="grid h-8 w-8 flex-none place-items-center rounded-lg border border-line/15 bg-wht/10 text-[13px] font-bold text-mut transition-all hover:bg-wht/20 hover:text-ink"
+              onClick={() => { markAnnouncementSeen(banner.id); setBanner(null); }}
+              aria-label="Dismiss announcement"
+            >✕</button>
+          </div>
+        </div>
+      )}
 
       {/* tap-outside backdrop for the ☰ menu (fades in/out) */}
       <div
@@ -161,11 +198,11 @@ export function App() {
       <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
         <div className={`absolute inset-x-0 bottom-full mb-2 px-3 transition-all duration-200 ease-out ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible translate-y-3 opacity-0"}`}>
           <div className="rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.5)]">
-            <MoreMenu current={view} onPick={go} />
+            <MoreMenu current={view} tabs={moreTabs} onPick={go} />
           </div>
         </div>
         <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {PRIMARY_TABS.map(t => (
+          {primaryTabs.map(t => (
             <button
               key={t.id}
               onClick={() => go(t.id)}
@@ -192,10 +229,10 @@ export function App() {
   );
 }
 
-function MoreMenu({ current, onPick }: { current: View; onPick: (id: View) => void }) {
+function MoreMenu({ current, tabs, onPick }: { current: View; tabs: { id: View; label: string; icon: string }[]; onPick: (id: View) => void }) {
   return (
     <div className="grid gap-0.5 p-1">
-      {MORE_TABS.map(t => {
+      {tabs.map(t => {
         const active = current === t.id;
         return (
           <button

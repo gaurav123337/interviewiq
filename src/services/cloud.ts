@@ -86,6 +86,11 @@ async function resolveClient(): Promise<SupabaseClient | null> {
   return getClient();
 }
 
+/** Public accessor for the Supabase client (used by admin + analytics services). */
+export function getSupabaseClient(): Promise<SupabaseClient | null> {
+  return resolveClient();
+}
+
 /** Starts the sync engine for the signed-in user (idempotent). */
 async function startEngine(client: SupabaseClient): Promise<void> {
   if (!engine) engine = new SyncEngine();

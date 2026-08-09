@@ -4,6 +4,8 @@
 
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
 import { aiCallsLeft, isPaywallEnabled, recordAiCall } from "./services/entitlements";
+import { aiEnabled, getAiDefaults } from "./services/remoteConfig";
+import { queueEvent } from "./services/events";
 
 export interface AISettings {
   key: string;
@@ -14,11 +16,16 @@ export interface AISettings {
 const DEFAULT_BASE = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-4o-mini";
 
+/** The product team can push a suggested model remotely (used until the user picks one). */
+export function aiDefaultModel(): string {
+  return getAiDefaults().model || DEFAULT_MODEL;
+}
+
 export function getSettings(): AISettings {
   return {
     key: storageGet(STORAGE_KEYS.apiKey, ""),
     base: storageGet(STORAGE_KEYS.apiBase, DEFAULT_BASE),
-    model: storageGet(STORAGE_KEYS.apiModel, DEFAULT_MODEL)
+    model: storageGet(STORAGE_KEYS.apiModel, aiDefaultModel())
   };
 }
 
@@ -51,8 +58,8 @@ export async function chat(messages: ChatMessage[], opts: { temperature?: number
     body: JSON.stringify({
       model: s.model,
       messages,
-      temperature: opts.temperature ?? 0.6,
-      max_tokens: opts.maxTokens ?? 700
+      temperature: opts.temperature ?? getAiDefaults().temperature ?? 0.6,
+      max_tokens: opts.maxTokens ?? getAiDefaults().maxTokens ?? 700
     })
   });
   if (!res.ok) {
@@ -73,6 +80,9 @@ export interface FeedbackContext {
 }
 
 export async function getFeedback(ctx: FeedbackContext): Promise<string> {
+  if (!aiEnabled()) {
+    throw new Error("AI coaching is temporarily disabled — the offline engine still scores your answers.");
+  }
   if (isPaywallEnabled() && aiCallsLeft() <= 0) {
     throw new Error("You've used your free AI feedback for today — upgrade to Pro for unlimited coaching.");
   }
@@ -89,10 +99,14 @@ export async function getFeedback(ctx: FeedbackContext): Promise<string> {
     "If the answer is empty or off-topic, say so directly and coach them on how to approach it.";
   const out = await chat([{ role: "system", content: sys }, { role: "user", content: usr }], { maxTokens: 500 });
   recordAiCall();
+  void queueEvent("ai_call", { pct: ctx.userAnswer.length });
   return out;
 }
 
 export async function getHint(question: string, levelName: string): Promise<string> {
+  if (!aiEnabled()) {
+    throw new Error("AI coaching is temporarily disabled.");
+  }
   if (isPaywallEnabled() && aiCallsLeft() <= 0) {
     throw new Error("You've used your free AI hints for today — upgrade to Pro for unlimited coaching.");
   }
@@ -100,5 +114,6 @@ export async function getHint(question: string, levelName: string): Promise<stri
     levelName + " candidate start answering this interview question. Do not give the full answer.";
   const out = await chat([{ role: "system", content: sys }, { role: "user", content: "Question: " + question }], { maxTokens: 120, temperature: 0.8 });
   recordAiCall();
+  void queueEvent("ai_call", { hint: true });
   return out;
 }

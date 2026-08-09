@@ -2,6 +2,7 @@ import type { Cat, Config, LevelId, QA, Session, SessionQuestion } from "../type
 import { SYSTEM_DESIGN, BEHAVIORAL, CTO_POOL, CEO_POOL, fieldById, companyById, levelById, LEVELS, LEVEL_INDEX } from "../data";
 import { shuffle, pickN } from "./random";
 import { pickRelevant } from "./relevance";
+import { publishedFor } from "../services/remoteConfig";
 
 const CAT: Record<Cat, { label: string; color: string }> = {
   company: { label: "Company Fit", color: "#6366f1" },
@@ -33,7 +34,9 @@ export function composeSession({ fieldId, companyId, levelId, count, mode }: Com
     seen.add(q.q);
     list.push({ ...q, cat, catLabel: CAT[cat].label, catColor: CAT[cat].color, level: qlevel, src });
   };
-  const fieldQ = (lvlId: LevelId, n: number) => pickN(field?.questions[lvlId] ?? [], n);
+  /* field pool = bundled questions + admin-published updates for this field+level */
+  const fieldPool = (lvlId: LevelId) => [...(field?.questions[lvlId] ?? []), ...publishedFor(fieldId ?? "", lvlId)];
+  const fieldQ = (lvlId: LevelId, n: number) => pickN(fieldPool(lvlId), n);
 
   if (levelId === "cto") {
     pickN(company.sample, 2).forEach(q => add(q, "company", "cto", "company"));
@@ -116,7 +119,8 @@ export function composeRelevantSession({ fieldId, companyId, levelId, keywords, 
     seen.add(q.q);
     list.push({ ...q, cat, catLabel: CAT[cat].label, catColor: CAT[cat].color, level: qlevel, src });
   };
-  const fieldQ = (lvlId: LevelId, n: number) => pickRelevant(field?.questions[lvlId] ?? [], keywords, n);
+  const fieldQ = (lvlId: LevelId, n: number) =>
+    pickRelevant([...(field?.questions[lvlId] ?? []), ...publishedFor(fieldId ?? "", lvlId)], keywords, n);
 
   const nCompany = company.sample.length ? Math.max(1, Math.round(count * 0.25)) : 0;
   const nField = Math.max(2, count - nCompany - 1);

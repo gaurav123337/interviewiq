@@ -102,6 +102,15 @@ describe("full interview flow", () => {
   });
 });
 
+describe("admin gating", () => {
+  it("does not expose an Admin tab to non-admins", () => {
+    renderApp();
+    openMenu();
+    const adminBtns = screen.queryAllByRole("button", { name: /Admin/ });
+    expect(adminBtns.length).toBe(0);
+  });
+});
+
 describe("practice from bank", () => {
   it("starts a single-question session from the question bank", () => {
     renderApp();

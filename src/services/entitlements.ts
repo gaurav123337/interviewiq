@@ -1,8 +1,8 @@
 /* Freemium entitlements. The paywall is dormant until CONFIG.features.paywall
    flips on; usage is still metered so quotas work the moment it's enabled. */
 
-import { CONFIG } from "../config";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
+import { BASE_LIMITS, getLimits, paywallOn } from "./remoteConfig";
 
 export type Tier = "free" | "pro";
 
@@ -13,10 +13,10 @@ export interface Usage {
   aiToday: number;
 }
 
-export const FREE_LIMITS = { sessionsPerMonth: 3, aiPerDay: 5 };
+export const FREE_LIMITS = { ...BASE_LIMITS };
 
 export function isPaywallEnabled(): boolean {
-  return CONFIG.features.paywall;
+  return paywallOn();
 }
 
 export function getTier(): Tier {
@@ -53,14 +53,14 @@ export function recordAiCall(): void {
   storageSet(STORAGE_KEYS.usage, { month: u.month, sessions: u.sessions, day: u.day, aiToday: u.aiToday + 1 });
 }
 
-/** Free sessions left this month (Infinity for Pro). */
+/** Free sessions left this month (Infinity for Pro). Quotas can be tuned remotely. */
 export function sessionsLeft(): number {
   if (getTier() === "pro") return Infinity;
-  return Math.max(0, FREE_LIMITS.sessionsPerMonth - getUsage().sessions);
+  return Math.max(0, getLimits().sessionsPerMonth - getUsage().sessions);
 }
 
-/** Free AI calls left today (Infinity for Pro). */
+/** Free AI calls left today (Infinity for Pro). Quotas can be tuned remotely. */
 export function aiCallsLeft(): number {
   if (getTier() === "pro") return Infinity;
-  return Math.max(0, FREE_LIMITS.aiPerDay - getUsage().aiToday);
+  return Math.max(0, getLimits().aiPerDay - getUsage().aiToday);
 }

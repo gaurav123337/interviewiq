@@ -4,6 +4,7 @@
 
 import { setTier } from "./entitlements";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./storage";
+import { queueEvent } from "./events";
 
 const KEY_RE = /^IQPRO-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
@@ -39,10 +40,12 @@ export function activatePro(key: string): { ok: boolean; error?: string } {
   }
   storageSet(STORAGE_KEYS.licenseKey, key.trim().toUpperCase());
   setTier("pro");
+  void queueEvent("tier", { tier: "pro" });
   return { ok: true };
 }
 
 export function deactivatePro(): void {
   storageRemove(STORAGE_KEYS.licenseKey);
   setTier("free");
+  void queueEvent("tier", { tier: "free" });
 }

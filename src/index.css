@@ -166,6 +166,22 @@ html.light .card-shadow { box-shadow: 0 12px 32px rgba(15, 23, 42, 0.10); }
   .no-print { display: none !important; }
 }
 
+/* shared input styling (used by Admin and Settings) */
+.inp {
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-line);
+  background: color-mix(in oklab, var(--color-deep) 80%, transparent);
+  padding: 0.5rem 0.9rem;
+  font-size: 13.5px;
+  color: var(--color-ink);
+}
+.inp::placeholder { color: var(--color-fnt); }
+.inp:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.8);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
 /* shared select styling (used by Planner and Drill) */
 .select-cls {
   border-radius: 0.75rem;
