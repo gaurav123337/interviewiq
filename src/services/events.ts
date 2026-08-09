@@ -8,7 +8,7 @@ import { getSupabaseClient } from "./cloud";
 import { getTier } from "./entitlements";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 
-export type EventKind = "app_open" | "session" | "ai_call" | "tier";
+export type EventKind = "app_open" | "session" | "session_answers" | "ai_call" | "tier";
 
 export interface UsageEvent {
   kind: EventKind;

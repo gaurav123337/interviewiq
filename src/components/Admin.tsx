@@ -9,18 +9,18 @@ import { cleanTextToQuestions } from "../services/cleaner";
 import { parseQuestionBatch } from "../services/import";
 import { extractFileText } from "../services/pdf";
 import {
-  adminListUsers, adminMetrics, batchDeleteQuestions, batchSetQuestionsPublished,
+  adminListUsers, adminMetrics, adminMissCandidates, batchDeleteQuestions, batchSetQuestionsPublished,
   createAnnouncement, createPdfDocument, createQuestion, deleteAnnouncement, deletePdfDocument,
-  deleteQuestion, grantAdmin, insertPdfChunks, listAdmins, listPdfDocuments, revokeAdmin,
-  saveRemoteConfig, setAnnouncementPublished, setPdfChunkCount, setQuestionPublished,
-  updateQuestion, type AdminMetrics, type AdminUserRow, type PdfDocumentRow
+  deleteQuestion, grantAdmin, insertPdfChunks, listAdmins, listPdfDocuments, listQuestionAudit,
+  revokeAdmin, saveRemoteConfig, setAnnouncementPublished, setPdfChunkCount, setQuestionPublished,
+  updateQuestion, type AdminMetrics, type AdminUserRow, type AuditEntry, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
 import { chunkText, embed } from "../services/embeddings";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "config";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "config" | "activity";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -29,7 +29,8 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "questions", label: "Question bank", icon: "📚" },
   { id: "review", label: "Review inbox", icon: "🛂" },
   { id: "import", label: "Auto-fill", icon: "⚡" },
-  { id: "config", label: "Product config", icon: "🎛️" }
+  { id: "config", label: "Product config", icon: "🎛️" },
+  { id: "activity", label: "Activity", icon: "🧾" }
 ];
 
 const FEATURE_LABELS: Record<string, string> = {
@@ -128,6 +129,7 @@ export function Admin() {
           <AutoFill busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
         )}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
+        {section === "activity" && <Activity busy={busy} setBusy={setBusy} />}
       </div>
     </div>
   );
@@ -452,6 +454,46 @@ function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const drafts = list.filter(q => !q.published);
   const [edits, setEdits] = useState<Record<number, DraftEdit>>({});
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [candidates, setCandidates] = useState<MissCandidate[]>([]);
+  const [candLoading, setCandLoading] = useState(false);
+  const [addedQ, setAddedQ] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setCandLoading(true);
+    void adminMissCandidates().then(setCandidates).catch(() => setCandidates([])).finally(() => setCandLoading(false));
+  }, []);
+
+  const addCandidate = async (c: MissCandidate) => {
+    setBusy(true);
+    try {
+      await createQuestion({
+        fieldId: c.field_id, level: c.level as LevelId, question: c.question,
+        answer: "", keyPoints: [], published: false
+      });
+      setAddedQ(s => new Set(s).add(c.question));
+      toast(`📚 Added "${c.question.slice(0, 40)}…" to the drafts`);
+      await onChanged();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const addAllCandidates = async () => {
+    const pending = candidates.filter(c => !addedQ.has(c.question));
+    if (!pending.length) return;
+    setBusy(true);
+    try {
+      for (const c of pending) {
+        await createQuestion({
+          fieldId: c.field_id, level: c.level as LevelId, question: c.question,
+          answer: "", keyPoints: [], published: false
+        });
+      }
+      setAddedQ(s => new Set([...s, ...pending.map(c => c.question)]));
+      toast(`📚 Added ${pending.length} missed-question draft(s)`);
+      await onChanged();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
 
   /* re-seed the editors whenever the list refreshes (post-save, section re-entry) */
   useEffect(() => {
@@ -530,6 +572,53 @@ function ReviewInbox({ list, busy, setBusy, onChanged }: {
 
   return (
     <div className="space-y-4">
+      {/* harvest candidates — real user misses, one click to draft */}
+      <div className={`${cardCls} p-5`}>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex-1">
+            <h2 className="text-[16px] font-extrabold">📊 Harvest candidates ({candidates.length})</h2>
+            <p className="text-[12.5px] text-mut">
+              Questions real users scored ≤2 on (from session analytics, ≥2 attempts). One click turns a
+              systemic weak spot into a draft you can review below.
+            </p>
+          </div>
+          {candidates.length > 0 && (
+            <button className={btnPrimary + btnSm} onClick={addAllCandidates} disabled={busy || candidates.every(c => addedQ.has(c.question))}>
+              ➕ Add all as drafts
+            </button>
+          )}
+        </div>
+        {candLoading && <p className="mt-3 text-[12.5px] text-fnt"><span className="spinner" /> Aggregating session answers…</p>}
+        {!candLoading && candidates.length === 0 && (
+          <p className="mt-3 text-[13px] text-mut">No candidates yet — they appear once users complete sessions (each answer is scored server-side).</p>
+        )}
+        {candidates.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {candidates.map(c => {
+              const added = addedQ.has(c.question);
+              return (
+                <div key={c.question} className="flex items-start gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Chip tone="lvl">{LEVELS.find(l => l.id === c.level)?.icon} {LEVELS.find(l => l.id === c.level)?.name ?? c.level}</Chip>
+                      <Chip tone="cat">{FIELDS.find(f => f.id === c.field_id)?.name ?? c.field_id}</Chip>
+                      <Chip tone="bad">{c.misses} missed</Chip>
+                      <Chip>{c.miss_rate}% miss rate</Chip>
+                      <Chip tone="warn">avg {c.avg_score}/5</Chip>
+                    </div>
+                    <div className="mt-1.5 text-[13.5px] font-bold">{c.question}</div>
+                    <div className="text-[11.5px] text-fnt">{c.attempts} attempt(s)</div>
+                  </div>
+                  <button className={btnGhost + btnSm} onClick={() => addCandidate(c)} disabled={busy || added}>
+                    {added ? "✓ Added" : "➕ Draft"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <div className={`${cardCls} p-5`}>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex-1">
@@ -600,6 +689,113 @@ function ReviewInbox({ list, busy, setBusy, onChanged }: {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Activity — question-bank change history + rollback                  */
+/* ------------------------------------------------------------------ */
+
+function Activity({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean) => void }) {
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    setLoading(true);
+    void listQuestionAudit().then(setAudit).catch(() => setAudit([])).finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const restoreUpdate = async (e: AuditEntry) => {
+    const before = e.diff.before;
+    if (!before || e.question_id == null) { toast("Nothing to restore"); return; }
+    setBusy(true);
+    try {
+      await updateQuestion(e.question_id, {
+        fieldId: before.field_id, level: before.level as LevelId,
+        question: before.question, answer: before.answer, keyPoints: before.key_points ?? []
+      });
+      toast("↩ Restored the previous version");
+      load();
+    } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const restoreDelete = async (e: AuditEntry) => {
+    const row = e.diff.row;
+    if (!row || !row.question) { toast("Nothing to restore"); return; }
+    setBusy(true);
+    try {
+      await createQuestion({
+        fieldId: row.field_id ?? "general", level: (row.level ?? "mid") as LevelId,
+        question: row.question, answer: row.answer ?? "", keyPoints: row.key_points ?? [], published: false
+      });
+      toast("↩ Restored as a draft — publish it to bring it back live");
+      load();
+    } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className={`${cardCls} p-5`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1">
+          <h2 className="text-[16px] font-extrabold">🧾 Question-bank activity ({audit.length})</h2>
+          <p className="text-[12.5px] text-mut">
+            Every create, edit, publish and delete — including weekly scraper imports. Restore an edit
+            or bring back a deleted question from here.
+          </p>
+        </div>
+        <button className={btnGhost + btnSm} onClick={load} disabled={busy}>↻ Refresh</button>
+      </div>
+      {loading && <p className="mt-4 text-[12.5px] text-fnt"><span className="spinner" /> Loading…</p>}
+      {!loading && audit.length === 0 && <p className="mt-4 text-[13px] text-mut">No changes logged yet — bank edits appear here as they happen.</p>}
+      {!loading && audit.length > 0 && (
+        <div className="mt-4 space-y-2">
+          {audit.map(e => (
+            <div key={e.id} className="rounded-xl border border-line/10 bg-wht/5 p-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip tone={e.action === "create" ? "ok" : e.action === "update" ? "warn" : "bad"}>
+                  {e.action === "create" ? "＋ create" : e.action === "update" ? "✏️ update" : "🗑 delete"}
+                </Chip>
+                {e.field_id && <Chip tone="cat">{FIELDS.find(f => f.id === e.field_id)?.name ?? e.field_id}</Chip>}
+                {e.level && <Chip tone="lvl">{LEVELS.find(l => l.id === e.level)?.name ?? e.level}</Chip>}
+                <span className="min-w-[160px] flex-1 truncate text-[13px] font-bold">{e.question}</span>
+                <span className="text-[11.5px] text-fnt">{e.actor === "system" ? "🤖 scraper" : e.actor}</span>
+                <span className="text-[11.5px] text-fnt">{new Date(e.created_at).toLocaleString()}</span>
+              </div>
+              {(e.action === "update" || e.action === "delete") && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <details className="min-w-0 flex-1">
+                    <summary className="cursor-pointer text-[11.5px] font-bold text-acc3">
+                      {e.action === "delete" ? "View deleted content" : "View before → after"}
+                    </summary>
+                    <div className="mt-1.5 space-y-1.5 rounded-lg bg-deep/50 p-2.5 text-[12px]">
+                      {e.action === "delete" && e.diff.row && (
+                        <p className="whitespace-pre-wrap text-mut">
+                          <span className="font-bold text-ink">{e.diff.row.question}</span>
+                          {e.diff.row.answer ? `\n${e.diff.row.answer}` : ""}
+                          {e.diff.row.key_points?.length ? `\nKey points: ${e.diff.row.key_points.join(", ")}` : ""}
+                        </p>
+                      )}
+                      {e.action === "update" && e.diff.before && e.diff.after && (
+                        <>
+                          <p className="text-mut"><span className="font-bold text-warn">BEFORE:</span> {e.diff.before.question} — {e.diff.before.answer?.slice(0, 80) ?? ""}</p>
+                          <p className="text-mut"><span className="font-bold text-ok">AFTER:</span> {e.diff.after.question} — {e.diff.after.answer?.slice(0, 80) ?? ""}</p>
+                        </>
+                      )}
+                    </div>
+                  </details>
+                  <button className={btnGhost + btnSm} onClick={() => (e.action === "delete" ? restoreDelete(e) : restoreUpdate(e))} disabled={busy}>
+                    ↩ Restore
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

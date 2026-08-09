@@ -207,3 +207,94 @@ language sql stable security definer set search_path = public as $$
   order by p.embedding <=> query_embedding
   limit match_count;
 $$;
+
+/* ------------------------------------------------------------------ */
+/* Harvesting + audit log                                              */
+/* ------------------------------------------------------------------ */
+
+/* Aggregates per-question performance from session_answers events so the
+   admin review inbox can turn real user misses into new bank questions.
+   A miss = score <= 2 on the app's 0-5 scale. */
+create or replace function public.admin_miss_candidates(min_attempts integer default 2, max_rows integer default 100)
+returns table (question text, field_id text, level text, attempts bigint, misses bigint, miss_rate double precision, avg_score double precision)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  return query
+    with flattened as (
+      select e.meta->>'fieldId' as field_id,
+             e.meta->>'levelId' as level,
+             x.value->>'q' as question,
+             (x.value->>'score')::numeric as score
+      from public.usage_events e
+      cross join lateral jsonb_array_elements(e.meta->'items') as x(value)
+      where e.kind = 'session_answers'
+    )
+    select f.question,
+           f.field_id,
+           f.level,
+           count(*) as attempts,
+           count(*) filter (where f.score is not null and f.score <= 2) as misses,
+           round(100.0 * count(*) filter (where f.score is not null and f.score <= 2) / nullif(count(*), 0), 1) as miss_rate,
+           round(avg(f.score)::numeric, 1) as avg_score
+    from flattened f
+    where f.question is not null and f.question <> ''
+    group by f.question, f.field_id, f.level
+    having count(*) >= min_attempts
+    order by misses desc, miss_rate desc, attempts desc
+    limit max_rows;
+end $$;
+
+/* Publish-history / rollback log for the question bank. Every insert,
+   update and delete (including scraper inserts) is recorded with the actor
+   and a before/after diff. */
+create table if not exists public.question_audit (
+  id bigint generated always as identity primary key,
+  question_id bigint,
+  action text not null,
+  field_id text,
+  level text,
+  question text,
+  actor text not null default '',
+  diff jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+alter table public.question_audit enable row level security;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'question_audit' and policyname = 'question audit admin all') then
+    create policy "question audit admin all" on public.question_audit for all using (public.is_admin()) with check (public.is_admin());
+  end if;
+end $$;
+
+create or replace function public.log_question_audit()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  act text; qid bigint; f text; l text; q text; d jsonb; actor_email text;
+begin
+  actor_email := coalesce(nullif(auth.jwt() ->> 'email', ''), 'system');
+  if tg_op = 'INSERT' then
+    act := 'create'; qid := new.id; f := new.field_id; l := new.level; q := new.question;
+    d := jsonb_build_object('published', new.published);
+  elsif tg_op = 'UPDATE' then
+    act := 'update'; qid := new.id; f := new.field_id; l := new.level; q := new.question;
+    d := jsonb_build_object(
+      'before', jsonb_build_object('field_id', old.field_id, 'level', old.level, 'question', old.question, 'answer', old.answer, 'key_points', old.key_points, 'published', old.published),
+      'after',  jsonb_build_object('field_id', new.field_id, 'level', new.level, 'question', new.question, 'answer', new.answer, 'key_points', new.key_points, 'published', new.published)
+    );
+  else
+    act := 'delete'; qid := old.id; f := old.field_id; l := old.level; q := old.question;
+    d := jsonb_build_object(
+      'row', jsonb_build_object('field_id', old.field_id, 'level', old.level, 'question', old.question, 'answer', old.answer, 'key_points', old.key_points, 'published', old.published)
+    );
+  end if;
+  insert into public.question_audit (question_id, action, field_id, level, question, actor, diff)
+  values (qid, act, f, l, q, actor_email, d);
+  return coalesce(new, old);
+end $$;
+
+drop trigger if exists question_audit_trg on public.published_questions;
+create trigger question_audit_trg
+  after insert or update or delete on public.published_questions
+  for each row execute function public.log_question_audit();

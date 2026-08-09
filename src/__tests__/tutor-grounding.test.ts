@@ -4,12 +4,25 @@ import { tutorChat } from "../services/tutor";
 import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
 
 /* Signed-in user → the tutor attempts RAG retrieval before answering. */
-vi.mock("../services/cloud", () => ({
-  getCloudState: () => ({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] }),
-  getSupabaseClient: vi.fn().mockResolvedValue({
-    auth: { getUser: async () => ({ data: { user: { id: "u1" } } }) }
-  })
-}));
+vi.mock("../services/cloud", () => {
+  const cloudClient = {
+    auth: { getUser: async () => ({ data: { user: { id: "u1" } } }) },
+    from: (t: string) => ({
+      select: () => ({
+        order: async () => ({
+          data: t === "pdf_documents"
+            ? [{ id: 1, title: "Prototypes Guide.pdf", source: "pdf-import", char_count: 100, chunk_count: 2, created_at: "2026-08-01T00:00:00Z" }]
+            : [],
+          error: null
+        })
+      })
+    })
+  };
+  return {
+    getCloudState: () => ({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] }),
+    getSupabaseClient: vi.fn().mockResolvedValue(cloudClient)
+  };
+});
 
 /* Knowledge base has one relevant chunk for the query. */
 vi.mock("../services/admin", async (importOriginal) => {
@@ -50,10 +63,15 @@ describe("grounded tutor (RAG)", () => {
     vi.stubGlobal("fetch", fn);
 
     const reply = await tutorChat("how does prototype chaining work?", goal, []);
-    expect(reply).toBe("grounded reply");
+    expect(reply.text).toBe("grounded reply");
 
     const body = JSON.parse(String(fn.mock.calls[0][1]?.body ?? "")) as { messages: { role: string; content: string }[] };
     expect(body.messages[0].content).toContain("prototype chain links every object");
     expect(body.messages[0].content).toContain("knowledge base");
+
+    /* citations surface back to the UI with the source title */
+    expect(reply.citations).toHaveLength(1);
+    expect(reply.citations[0].title).toBe("Prototypes Guide.pdf");
+    expect(reply.citations[0].content).toContain("prototype chain");
   });
 });

@@ -171,6 +171,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           recordSession(); /* usage metering for the freemium quota */
           recordProfileSession(); /* admin dashboard counter */
           void queueEvent("session", { pct: s.agg.pct, level: s.meta.levelId, field: s.meta.fieldId, mode: s.config.mode });
+          /* harvest feed: per-question scores so admins can spot systemic weak spots */
+          void queueEvent("session_answers", {
+            fieldId: s.meta.fieldId, levelId: s.meta.levelId,
+            items: answers.slice(0, 15).map(a => ({ q: a.q.q, score: a.fb.score, missed: a.fb.missed ?? [] }))
+          });
           notifyStreak(streaks([s, ...sessions], new Date()).current); /* streak milestone alerts */
           /* roadmap feedback loop: strong answers mark matching topics done */
           const goal = getGoal();
@@ -251,7 +256,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
             persistDiagnostic(answers, session.meta.fieldId);
           } else {
             const s = makeSavedSession(session.meta, config, answers);
-            if (s) dispatch({ type: "ADD_SESSION", s });
+            if (s) {
+              dispatch({ type: "ADD_SESSION", s });
+              /* harvest feed for the admin miss-candidate view */
+              void queueEvent("session_answers", {
+                fieldId: s.meta.fieldId, levelId: s.meta.levelId,
+                items: answers.slice(0, 15).map(a => ({ q: a.q.q, score: a.fb.score, missed: a.fb.missed ?? [] }))
+              });
+            }
           }
           dispatch({ type: "NAV", view: "results" });
         } else {

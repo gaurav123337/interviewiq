@@ -363,6 +363,58 @@ export async function revokeAdmin(email: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+/* ------------------------------------------------------------------ */
+/* Harvesting + audit log                                              */
+/* ------------------------------------------------------------------ */
+
+export interface MissCandidate {
+  question: string;
+  field_id: string;
+  level: string;
+  attempts: number;
+  misses: number;
+  miss_rate: number;
+  avg_score: number;
+}
+
+/** Questions real users score poorly on (score ≤ 2), aggregated server-side. */
+export async function adminMissCandidates(): Promise<MissCandidate[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_miss_candidates");
+  if (error) throw new Error(error.message);
+  return (data ?? []) as MissCandidate[];
+}
+
+export interface AuditEntry {
+  id: number;
+  question_id: number | null;
+  action: "create" | "update" | "delete";
+  field_id: string | null;
+  level: string | null;
+  question: string | null;
+  actor: string;
+  diff: {
+    before?: { field_id?: string; level?: string; question?: string; answer?: string; key_points?: string[]; published?: boolean };
+    after?: { field_id?: string; level?: string; question?: string; answer?: string; key_points?: string[]; published?: boolean };
+    row?: { field_id?: string; level?: string; question?: string; answer?: string; key_points?: string[]; published?: boolean };
+    published?: boolean;
+  };
+  created_at: string;
+}
+
+/** Question-bank change history (newest first). */
+export async function listQuestionAudit(limit = 100): Promise<AuditEntry[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.from("question_audit")
+    .select("id, question_id, action, field_id, level, question, actor, diff, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return [];
+  return (data ?? []) as AuditEntry[];
+}
+
 /** Emails currently allowed to see the dashboard (admin-only read). */
 export async function listAdmins(): Promise<string[]> {
   const client = await getSupabaseClient();

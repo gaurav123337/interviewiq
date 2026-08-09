@@ -34,7 +34,8 @@ describe("tutorChat", () => {
       { role: "assistant", content: "First explanation" },
       { role: "user", content: "What about idempotency?" }
     ]);
-    expect(reply).toBe("Follow-up answer");
+    expect(reply.text).toBe("Follow-up answer");
+    expect(reply.citations).toEqual([]); /* no signed-in user → no grounding */
     const body = JSON.parse(String(fn.mock.calls[0][1]?.body)) as { messages: { role: string; content: string }[] };
     expect(body.messages.map(m => m.role)).toEqual(["system", "assistant", "user"]);
     expect(body.messages[0].content).toContain("APIs & services");

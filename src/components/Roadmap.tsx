@@ -139,7 +139,7 @@ export function Roadmap() {
     setChatBusy(true);
     try {
       const reply = await tutorChat(t.label, goal, [...history, userMsg]);
-      appendChat(t.id, { role: "assistant", content: reply });
+      appendChat(t.id, { role: "assistant", content: reply.text, citations: reply.citations });
     } catch (e) {
       toast("✗ " + ((e as Error).message || "AI unavailable — add an API key in Settings"));
     } finally { setChatBusy(false); }
@@ -631,12 +631,19 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
 
         {/* conversation thread */}
         {chat.length > 0 && (
-          <div className="mb-3 max-h-[280px] space-y-2.5 overflow-y-auto pr-1">
+          <div className="mb-3 max-h-[320px] space-y-2.5 overflow-y-auto pr-1">
             {chat.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
                 <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-line/10 bg-wht/10 text-ink"}`}>
                   {m.content}
                 </div>
+                {m.role === "assistant" && (m.citations?.length ?? 0) > 0 && (
+                  <div className="mt-1 max-w-[90%] space-y-1">
+                    {m.citations!.map((c, ci) => (
+                      <CitationChip key={ci} title={c.title} content={c.content} />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {chatBusy && <p className="text-[12.5px] text-fnt"><span className="spinner" />Thinking…</p>}
@@ -681,6 +688,24 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
 /* ------------------------------------------------------------------ */
 /* bits                                                                */
 /* ------------------------------------------------------------------ */
+
+/* A visible citation under a grounded tutor reply — click to expand the source excerpt. */
+function CitationChip({ title, content }: { title: string; content: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <button
+      onClick={() => setOpen(!open)}
+      className={`w-full rounded-lg border px-2.5 py-1.5 text-left transition-colors ${open ? "border-acc1/50 bg-acc1/10" : "border-line/15 bg-deep/60 hover:bg-wht/10"}`}
+      title="Knowledge-base source"
+    >
+      <span className="block text-[11px] font-bold text-acc3">📚 {title}</span>
+      <span className={`block text-[11.5px] leading-snug text-mut ${open ? "" : "line-clamp-1"}`}>
+        {content}
+      </span>
+      <span className="mt-0.5 block text-[10px] font-semibold text-fnt">{open ? "▲ hide" : "▼ show source excerpt"}</span>
+    </button>
+  );
+}
 
 function WizardHeader() {
   return (
