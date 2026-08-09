@@ -102,6 +102,31 @@ describe("full interview flow", () => {
   });
 });
 
+describe("ending with no answers", () => {
+  it("returns to the launch view instead of a blank results screen", () => {
+    renderApp();
+
+    /* walk onboarding and begin a session */
+    clickBtn(/Senior/);
+    clickBtn(/Security Engineer/);
+    clickBtn(/Stripe/);
+    clickBtn(/Start Interview/);
+    clickBtn(/Begin interview/);
+    expect(screen.getByText(/Question 1 of/)).toBeTruthy();
+
+    /* end the interview without answering anything */
+    clickBtn(/← End/);
+    clickBtn(/End & see results/);
+
+    /* must NOT land on a blank results page — back on the launch view */
+    expect(screen.queryByText(/Session complete/)).toBeFalsy();
+    expect(screen.getByText(/Ready to be interviewed/)).toBeTruthy();
+    /* nothing saved to history either */
+    const saved = JSON.parse(localStorage.getItem("iq.sessions") || "[]");
+    expect(saved.length).toBe(0);
+  });
+});
+
 describe("admin gating", () => {
   it("does not expose an Admin tab to non-admins", () => {
     renderApp();

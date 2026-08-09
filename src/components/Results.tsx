@@ -11,8 +11,27 @@ export function Results() {
   const { state, retry, newSession, practiceWeakTopics } = useApp();
   const { session, answers } = state;
 
-  /* Completion is persisted by the store facade when the session ends, so this view is a pure presenter. */
-  if (!session || !answers.length) return null;
+  /* Completion is persisted by the store facade when the session ends, so this view is a pure presenter.
+     If the user somehow lands here with no session/answers (e.g. ended before answering), show a
+     graceful empty state instead of a blank screen. */
+  if (!session || !answers.length) {
+    return (
+      <div className="anim-view mx-auto max-w-[560px]">
+        <div className={`${cardCls} flex flex-col items-center px-6 py-14 text-center`}>
+          <div className="mb-3 text-[40px]">🗒️</div>
+          <h2 className="mb-2 text-lg font-extrabold">Nothing to show yet</h2>
+          <p className="mb-5 max-w-[360px] text-sm text-mut">
+            No answers were recorded for this session. Answer at least one question, then end the
+            interview to see your score, breakdown and feedback.
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {session && <button className={btnPrimary + btnSm} onClick={retry}>Continue interview</button>}
+            <button className={btnGhost + btnSm} onClick={newSession}>New session</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   /* skill-gap diagnostic sessions render their own results */
   if (session.meta.mode === "diagnostic") return <DiagnosticResults />;

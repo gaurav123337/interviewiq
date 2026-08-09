@@ -15,6 +15,7 @@ import { applySessionToProgress } from "./services/roadmap";
 import { getGoal } from "./services/goal";
 import { queueEvent, recordProfileSession } from "./services/events";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
+import { toast } from "./toast";
 
 /* ------------------------------------------------------------------ */
 /* State                                                                 */
@@ -27,6 +28,7 @@ export interface Ob extends OnboardingSelection {
 
 export interface AppState {
   view: View;
+  prevView: View;
   ob: Ob;
   step: number;
   config: Config;
@@ -47,6 +49,7 @@ function initialState(): AppState {
   const ob = initialOb();
   return {
     view: "onboard",
+    prevView: "onboard",
     ob,
     step: initialStep(ob),
     config: { ...DEFAULT_CONFIG, ...storageGet(STORAGE_KEYS.settings, {}) },
@@ -85,7 +88,7 @@ function reducer(state: AppState, a: Action): AppState {
     case "SET_OB": return { ...state, ob: { ...state.ob, ...a.patch }, step: a.step };
     case "SET_STEP": return { ...state, step: a.step };
     case "SET_SESSION":
-      return { ...state, session: a.session, config: a.config, idx: 0, answers: [], feedbackShown: false, viewingHistory: false, view: "interview" };
+      return { ...state, prevView: state.view, session: a.session, config: a.config, idx: 0, answers: [], feedbackShown: false, viewingHistory: false, view: "interview" };
     case "ADD_ANSWER": return { ...state, answers: [...state.answers, a.answer] };
     case "SET_FEEDBACK_SHOWN": return { ...state, feedbackShown: a.v };
     case "NEXT": {
@@ -242,7 +245,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "NEXT" });
       },
       exitToResults: () => {
-        const { session, answers, config } = state;
+        const { session, answers, config, prevView } = state;
         if (session && answers.length) {
           if (config.mode === "diagnostic") {
             persistDiagnostic(answers, session.meta.fieldId);
@@ -250,8 +253,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const s = makeSavedSession(session.meta, config, answers);
             if (s) dispatch({ type: "ADD_SESSION", s });
           }
+          dispatch({ type: "NAV", view: "results" });
+        } else {
+          /* no answers recorded — never land on a blank results screen */
+          toast("No answers recorded — answer at least one question to see results");
+          dispatch({ type: "NAV", view: prevView });
         }
-        dispatch({ type: "NAV", view: "results" });
       },
       practice: (fieldId, q) => {
         const session = buildPracticeSession(fieldId, q);
