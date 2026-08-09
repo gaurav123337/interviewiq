@@ -1,19 +1,22 @@
 #!/usr/bin/env node
 /* Bootstrap the Supabase project for InterviewIQ cloud sync.
  *
- * Usage:
+ * Usage (new project):
  *   SUPABASE_ACCESS_TOKEN=sb_secret_... SUPABASE_ORG_ID=<org-id> node scripts/setup-supabase.js
+ *
+ * Usage (existing project):
+ *   SUPABASE_ACCESS_TOKEN=sb_secret_... SUPABASE_PROJECT_REF=<ref> node scripts/setup-supabase.js
  *
  * Get a personal access token:  supabase.com/dashboard/account/tokens  →  Generate new token
  * Get your org id:              supabase.com/dashboard/org/<ORG_ID>/...  (the URL segment)
+ * Your project ref:             the ID in supabase.com/dashboard/project/<REF>/...
  *
  * What this does:
- *   1. Creates a free project named "interviewiq"
- *   2. Waits until it is healthy
- *   3. Fetches the project URL + anon key
- *   4. Runs supabase/schema.sql (user_sync table + RLS)
- *   5. Adds the app's URLs to the auth redirect allow-list
- *   6. Prints the config.ts block and the exact callback URL you need for
+ *   1. (New project only) Creates a free project named "interviewiq" and waits for health
+ *   2. Fetches the project URL + anon key
+ *   3. Runs supabase/schema.sql (user_sync table + RLS)
+ *   4. Adds the app's URLs to the auth redirect allow-list
+ *   5. Prints the config.ts block and the exact callback URL you need for
  *      the GitHub and Google OAuth apps (those two must be created in your
  *      GitHub / Google Cloud consoles — there is no API for them).
  */
@@ -24,6 +27,7 @@ const REGION = process.env.SUPABASE_REGION || "us-east-1";
 
 const token = process.env.SUPABASE_ACCESS_TOKEN;
 const orgId = process.env.SUPABASE_ORG_ID;
+const projectRef = process.env.SUPABASE_PROJECT_REF;
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
@@ -56,43 +60,49 @@ async function main() {
     process.exit(1);
   }
 
-  /* resolve the org id when omitted and the account has exactly one */
-  let org = orgId;
-  if (!org) {
-    const orgs = await req("/organizations");
-    if (orgs.length === 1) org = orgs[0].id;
-    else {
-      console.error(red("SUPABASE_ORG_ID is required (found multiple organizations):"));
-      for (const o of orgs) console.error(`  ${o.id}  ${o.name}`);
-      process.exit(1);
+  let ref = projectRef;
+  if (ref) {
+    console.log(`\n${green("✓")} Authenticated. Using existing project ${ref}.`);
+  } else {
+    /* resolve the org id when omitted and the account has exactly one */
+    let org = orgId;
+    if (!org) {
+      const orgs = await req("/organizations");
+      if (orgs.length === 1) org = orgs[0].id;
+      else {
+        console.error(red("SUPABASE_ORG_ID is required (found multiple organizations):"));
+        for (const o of orgs) console.error(`  ${o.id}  ${o.name}`);
+        process.exit(1);
+      }
     }
+
+    console.log(`\n${green("✓")} Authenticated. Creating project "interviewiq" in org ${org} (${REGION})…`);
+    const dbPass = process.env.SUPABASE_DB_PASS ||
+      (Array.from({ length: 18 }, () => "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 57)]).join("") + "aA1");
+
+    const project = await req("/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: "interviewiq", organization_id: org, db_pass: dbPass, region: REGION, plan: "free" })
+    });
+    ref = project.id;
+    if (!ref) throw new Error("Project creation returned no id: " + JSON.stringify(project).slice(0, 300));
+    console.log(`${green("✓")} Project created: ${project.name} (${project.region}) — ref ${ref}`);
+
+    console.log(dim("   Waiting for the project to come up (can take a minute)…"));
+    let status = project.status;
+    while (status && !["ACTIVE_HEALTHY", "ACTIVE", "INACTIVE"].includes(status)) {
+      await sleep(10_000);
+      status = (await req(`/projects/${ref}`)).status;
+    }
+    console.log(`${green("✓")} Project is ${status}.`);
   }
-
-  console.log(`\n${green("✓")} Authenticated. Creating project "interviewiq" in org ${org} (${REGION})…`);
-  const dbPass = process.env.SUPABASE_DB_PASS ||
-    (Array.from({ length: 18 }, () => "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 57)]).join("") + "aA1");
-
-  const project = await req("/projects", {
-    method: "POST",
-    body: JSON.stringify({ name: "interviewiq", organization_id: org, db_pass: dbPass, region: REGION, plan: "free" })
-  });
-  const ref = project.id;
-  if (!ref) throw new Error("Project creation returned no id: " + JSON.stringify(project).slice(0, 300));
-  console.log(`${green("✓")} Project created: ${project.name} (${project.region}) — ref ${ref}`);
-
-  console.log(dim("   Waiting for the project to come up (can take a minute)…"));
-  let status = project.status;
-  while (status && !["ACTIVE_HEALTHY", "ACTIVE", "INACTIVE"].includes(status)) {
-    await sleep(10_000);
-    status = (await req(`/projects/${ref}`)).status;
-  }
-  console.log(`${green("✓")} Project is ${status}.`);
 
   const keys = await req(`/projects/${ref}/api-keys`);
   const anon = keys.find((k) => k.name === "anon");
   if (!anon) throw new Error("anon key not found");
   const url = `https://${ref}.supabase.co`;
   console.log(`${green("✓")} URL + anon key fetched.`);
+  console.log(dim(`   Project: ${url}`));
 
   /* run the schema (reads supabase/schema.sql from the repo root) */
   const { readFileSync } = await import("node:fs");
