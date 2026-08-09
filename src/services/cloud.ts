@@ -17,16 +17,20 @@ import { SyncEngine, type RemoteStore, type SyncEntry } from "./sync";
 /* Reactive state (tiny pub/sub — no state library needed)              */
 /* ------------------------------------------------------------------ */
 
+export type OAuthProvider = "google" | "github";
+
 export interface CloudState {
   configured: boolean;
   user: User | null;
   syncing: boolean;
   error: string | null;
+  /** OAuth providers enabled on the Supabase project (from auth settings). */
+  oauth: OAuthProvider[];
 }
 
 type CloudListener = (s: CloudState) => void;
 const listeners = new Set<CloudListener>();
-let state: CloudState = { configured: false, user: null, syncing: false, error: null };
+let state: CloudState = { configured: false, user: null, syncing: false, error: null, oauth: [] };
 
 function setState(patch: Partial<CloudState>): void {
   state = { ...state, ...patch };
@@ -64,6 +68,18 @@ async function getClient(): Promise<SupabaseClient> {
     }));
   }
   return clientPromise;
+}
+
+/** Test seam — injects a fake supabase client so configured paths are testable without credentials. */
+export function setTestClient(c: SupabaseClient | null): void {
+  clientPromise = c ? Promise.resolve(c) : null;
+}
+
+/** Returns the client when cloud sync is available (configured, or a test client is injected). */
+async function resolveClient(): Promise<SupabaseClient | null> {
+  if (clientPromise) return clientPromise;
+  if (!isCloudConfigured()) return null;
+  return getClient();
 }
 
 /** Starts the sync engine for the signed-in user (idempotent). */
@@ -106,9 +122,9 @@ export async function initCloud(): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 export async function cloudSignIn(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
-  if (!isCloudConfigured()) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };
+  const client = await resolveClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };
   try {
-    const client = await getClient();
     const { error } = await client.auth.signInWithPassword({ email, password });
     if (error) return { ok: false, error: error.message };
     await startEngine(client);
@@ -119,9 +135,9 @@ export async function cloudSignIn(email: string, password: string): Promise<{ ok
 }
 
 export async function cloudSignUp(email: string, password: string): Promise<{ ok: boolean; needsConfirmation?: boolean; error?: string }> {
-  if (!isCloudConfigured()) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };
+  const client = await resolveClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };
   try {
-    const client = await getClient();
     const { data, error } = await client.auth.signUp({ email, password });
     if (error) return { ok: false, error: error.message };
     if (data.session?.user) {
@@ -130,6 +146,51 @@ export async function cloudSignUp(email: string, password: string): Promise<{ ok
     }
     /* email confirmation required — the account exists once they confirm */
     return { ok: true, needsConfirmation: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/** Maps a Supabase auth-settings `external` map to the providers this app supports. */
+export function oauthProvidersFromSettings(external: Record<string, boolean> | undefined): OAuthProvider[] {
+  const out: OAuthProvider[] = [];
+  if (external?.google) out.push("google");
+  if (external?.github) out.push("github");
+  return out;
+}
+
+interface ClientWithEndpoints { supabaseUrl?: string; supabaseKey?: string }
+
+/** Refreshes which OAuth providers the project has enabled (gates the buttons).
+    Reads the public GoTrue `settings` endpoint — no SDK method needed, and it
+    works on every supabase-js version. */
+export async function refreshOAuthProviders(): Promise<OAuthProvider[]> {
+  const client = await resolveClient();
+  if (!client) { setState({ oauth: [] }); return []; }
+  try {
+    const c = client as unknown as ClientWithEndpoints;
+    const url = c.supabaseUrl ?? CONFIG.supabase.url;
+    const key = c.supabaseKey ?? CONFIG.supabase.anonKey;
+    const res = await fetch(`${url}/auth/v1/settings`, { headers: { apikey: key } });
+    const j = (await res.json()) as { external?: Record<string, boolean> };
+    const providers = oauthProvidersFromSettings(j?.external);
+    setState({ oauth: providers });
+    return providers;
+  } catch {
+    setState({ oauth: [] });
+    return [];
+  }
+}
+
+/** Starts the OAuth redirect flow; the session is restored by initCloud on return. */
+export async function cloudOAuthSignIn(provider: OAuthProvider): Promise<{ ok: boolean; error?: string }> {
+  const client = await resolveClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };
+  try {
+    const redirectTo = window.location.origin + window.location.pathname;
+    const { error } = await client.auth.signInWithOAuth({ provider, options: { redirectTo } });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

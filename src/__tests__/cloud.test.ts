@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { SupabaseRemoteStore, cloudSignIn, getCloudState, isCloudConfigured } from "../services/cloud";
+import {
+  SupabaseRemoteStore, cloudOAuthSignIn, cloudSignIn, getCloudState, isCloudConfigured,
+  oauthProvidersFromSettings, refreshOAuthProviders, setTestClient
+} from "../services/cloud";
+
+/* the fake-client seam must not leak between tests */
+afterEach(() => setTestClient(null));
 
 interface Calls {
   select?: string;
@@ -81,11 +87,71 @@ describe("SupabaseRemoteStore", () => {
 describe("cloud service (unconfigured)", () => {
   it("reports the unconfigured state", () => {
     expect(isCloudConfigured()).toBe(false);
-    expect(getCloudState()).toMatchObject({ configured: false, user: null });
+    expect(getCloudState()).toMatchObject({ configured: false, user: null, oauth: [] });
   });
 
   it("rejects sign-in before Supabase is configured, without touching the SDK", async () => {
     const r = await cloudSignIn("a@b.com", "secret123");
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("isn't configured");
+  });
+});
+
+describe("OAuth sign-in (gated on provider config)", () => {
+  it("maps auth-settings external flags to enabled providers", () => {
+    expect(oauthProvidersFromSettings({ google: true, github: false })).toEqual(["google"]);
+    expect(oauthProvidersFromSettings({ github: true, email: true })).toEqual(["github"]);
+    expect(oauthProvidersFromSettings({ email: true })).toEqual([]);
+    expect(oauthProvidersFromSettings(undefined)).toEqual([]);
+  });
+
+  it("refreshes the provider list from the project's auth settings endpoint", async () => {
+    const { client } = makeClient([]);
+    (client as Record<string, unknown>).supabaseUrl = "https://demo.supabase.co";
+    (client as Record<string, unknown>).supabaseKey = "anon-key";
+    setTestClient(client as unknown as SupabaseClient);
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ external: { google: true, github: true } }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const providers = await refreshOAuthProviders();
+      expect(providers).toEqual(["google", "github"]);
+      expect(getCloudState().oauth).toEqual(["google", "github"]);
+      expect(fetchMock).toHaveBeenCalledWith("https://demo.supabase.co/auth/v1/settings", { headers: { apikey: "anon-key" } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("hides providers the project has not enabled", async () => {
+    const { client } = makeClient([]);
+    (client as Record<string, unknown>).supabaseUrl = "https://demo.supabase.co";
+    (client as Record<string, unknown>).supabaseKey = "anon-key";
+    setTestClient(client as unknown as SupabaseClient);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ external: { google: false, github: false } }) })));
+    try {
+      expect(await refreshOAuthProviders()).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("starts an OAuth redirect back to the app", async () => {
+    const captured: { provider?: string; redirectTo?: string } = {};
+    const { client } = makeClient([]);
+    (client.auth as Record<string, unknown>).signInWithOAuth = async (opts: { provider: string; options: { redirectTo: string } }) => {
+      captured.provider = opts.provider;
+      captured.redirectTo = opts.options.redirectTo;
+      return { error: null };
+    };
+    setTestClient(client as unknown as SupabaseClient);
+    const r = await cloudOAuthSignIn("google");
+    expect(r.ok).toBe(true);
+    expect(captured.provider).toBe("google");
+    expect(captured.redirectTo).toBe(window.location.origin + window.location.pathname);
+  });
+
+  it("rejects OAuth when cloud sync is not configured", async () => {
+    const r = await cloudOAuthSignIn("github");
     expect(r.ok).toBe(false);
     expect(r.error).toContain("isn't configured");
   });

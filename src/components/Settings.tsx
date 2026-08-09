@@ -5,7 +5,8 @@ import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import { getTier } from "../services/entitlements";
 import { fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
-import { cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, subscribeCloud } from "../services/cloud";
+import { cloudOAuthSignIn, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud } from "../services/cloud";
+import type { OAuthProvider } from "../services/cloud";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
@@ -29,6 +30,20 @@ export function Settings() {
   const [cloudBusy, setCloudBusy] = useState(false);
 
   useEffect(() => subscribeCloud(setCloud), []);
+  useEffect(() => {
+    if (isCloudConfigured()) void refreshOAuthProviders();
+  }, []);
+
+  const doOAuth = async (p: OAuthProvider) => {
+    setCloudBusy(true);
+    try {
+      const r = await cloudOAuthSignIn(p);
+      if (!r.ok) toast("✗ " + (r.error ?? "Sign-in failed"));
+      /* on success the browser redirects to the provider; the session is restored on return */
+    } finally {
+      setCloudBusy(false);
+    }
+  };
 
   const doCloudAuth = async () => {
     if (!cloudEmail || !cloudPass) { toast("Enter your email and password"); return; }
@@ -161,6 +176,25 @@ export function Settings() {
               </p>
               {cloud.configured ? (
                 <div className="space-y-3">
+                  {cloud.oauth.length > 0 && (
+                    <div className="space-y-2">
+                      {cloud.oauth.includes("google") && (
+                        <button className={`${btnGhost} w-full py-2.5`} onClick={() => doOAuth("google")} disabled={cloudBusy}>
+                          <span className="mr-2">G</span>Continue with Google
+                        </button>
+                      )}
+                      {cloud.oauth.includes("github") && (
+                        <button className={`${btnGhost} w-full py-2.5`} onClick={() => doOAuth("github")} disabled={cloudBusy}>
+                          <span className="mr-2">🐙</span>Continue with GitHub
+                        </button>
+                      )}
+                      <div className="flex items-center gap-3 py-1">
+                        <span className="h-px flex-1 bg-white/10" />
+                        <span className="text-[11.5px] font-bold uppercase tracking-wider text-mut">or with email</span>
+                        <span className="h-px flex-1 bg-white/10" />
+                      </div>
+                    </div>
+                  )}
                   <Seg options={[{ value: "in", label: "Sign in" }, { value: "up", label: "Create account" }]} value={cloudMode} onChange={setCloudMode} />
                   <input
                     type="email" value={cloudEmail} onChange={e => setCloudEmail(e.target.value)}
