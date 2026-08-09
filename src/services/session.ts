@@ -70,6 +70,6 @@ export function makeSavedSession(meta: SessionMeta, config: Config, answers: Ans
     meta,
     config,
     agg: { score: +(pct * 5).toFixed(1), pct, grade: grade(pct) },
-    answers: answers.map(a => ({ q: a.q, user: a.user, score: a.fb.score, pct: a.fb.pct }))
+    answers: answers.map(a => ({ q: a.q, user: a.user, score: a.fb.score, pct: a.fb.pct, missed: a.fb.missed }))
   };
 }

@@ -117,6 +117,7 @@ interface AppApi {
   setStep: (n: number) => void;
   startSession: (config: Config) => void;
   startPlannedSession: (sel: OnboardingSelection, config: Config, keywords?: string[]) => void;
+  startWeakSession: (fieldId: string, levelId: LevelId, topics: string[], config: Config) => void;
   applyJd: (r: JdResult & { text: string }) => void;
   practiceWeakTopics: () => void;
   submitAnswer: (user: string) => void;
@@ -174,6 +175,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ? composeRelevantSession({ fieldId: sel.field, companyId: sel.company, levelId: sel.level, keywords, count: config.count, mode: config.mode })
           : buildInterviewSession(sel, config);
         dispatch({ type: "SET_SESSION", session, config });
+      },
+      startWeakSession: (fieldId, levelId, topics, config) => {
+        const s = buildWeakTopicSession(fieldId, levelId, topics, config);
+        dispatch({ type: "SET_SESSION", session: s, config });
       },
       startSession: config => {
         const session = state.ob.jd
@@ -238,7 +243,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             type: "ADD_ANSWER",
             answer: {
               q: a.q, user: a.user,
-              fb: { score: a.score, pct: a.pct, covered: [], missed: [], strengths: ["Replay of a saved session."], gaps: [], words: 0 }
+              fb: { score: a.score, pct: a.pct, covered: [], missed: a.missed ?? [], strengths: ["Replay of a saved session."], gaps: a.missed ?? [], words: 0 }
             }
           });
         }

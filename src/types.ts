@@ -93,6 +93,8 @@ export interface SavedAnswer {
   user: string;
   score: number;
   pct: number;
+  /** Key points the answer missed — powers weak-topic follow-ups and the adaptive planner. */
+  missed?: string[];
 }
 
 export interface SavedSession {
