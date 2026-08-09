@@ -1,6 +1,7 @@
 import type { Cat, Config, LevelId, QA, Session, SessionQuestion } from "../types";
 import { SYSTEM_DESIGN, BEHAVIORAL, CTO_POOL, CEO_POOL, fieldById, companyById, levelById, LEVELS, LEVEL_INDEX } from "../data";
 import { shuffle, pickN } from "./random";
+import { pickRelevant } from "./relevance";
 
 const CAT: Record<Cat, { label: string; color: string }> = {
   company: { label: "Company Fit", color: "#6366f1" },
@@ -83,6 +84,59 @@ export function composeSession({ fieldId, companyId, levelId, count, mode }: Com
       field: field?.name ?? "General", fieldId: field?.id ?? "general",
       company: company.name, companyId: company.id,
       level: lvl.name, levelId: lvl.id, mode
+    }
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Keyword-driven composition (JD tailoring + weak-topic follow-ups)    */
+/* ------------------------------------------------------------------ */
+
+export interface RelevantArgs {
+  fieldId: string | null;
+  companyId: string | null;
+  levelId: LevelId | null;
+  /** Keywords (e.g. job-description terms or missed key points) to prioritize. */
+  keywords: string[];
+  count: number;
+}
+
+/** Same shape as {@link composeSession}, but picks field questions most relevant to `keywords`. */
+export function composeRelevantSession({ fieldId, companyId, levelId, keywords, count }: RelevantArgs): Session {
+  const field = fieldById(fieldId);
+  const company = companyById(companyId);
+  const lvl = levelById(levelId);
+  const li = LEVEL_INDEX[lvl.id];
+  const list: SessionQuestion[] = [];
+  const seen = new Set<string>();
+  const add = (q: QA | undefined, cat: Cat, qlevel: LevelId, src: string) => {
+    if (!q || seen.has(q.q)) return;
+    seen.add(q.q);
+    list.push({ ...q, cat, catLabel: CAT[cat].label, catColor: CAT[cat].color, level: qlevel, src });
+  };
+  const fieldQ = (lvlId: LevelId, n: number) => pickRelevant(field?.questions[lvlId] ?? [], keywords, n);
+
+  const nCompany = company.sample.length ? Math.max(1, Math.round(count * 0.25)) : 0;
+  const nField = Math.max(2, count - nCompany - 1);
+
+  pickN(company.sample, Math.min(nCompany, company.sample.length)).forEach(q => add(q, "company", lvl.id, "company"));
+  fieldQ(lvl.id, nField).forEach(q => add(q, "field", lvl.id, "field"));
+  pickN(BEHAVIORAL, 1).forEach(q => add(q, "behavioral", lvl.id, "behavioral"));
+  if (li >= 1 && li <= 4) {
+    const tier = li === 1 ? "mid" : li === 2 ? "senior" : li === 3 ? "staff" : "principal";
+    pickN(SYSTEM_DESIGN[tier] ?? [], 1).forEach(q => add(q, "sysdesign", lvl.id, "sysdesign"));
+  }
+  if (count >= 8 && li < LEVELS.length - 1) {
+    fieldQ(LEVELS[li + 1].id, 1).forEach(q => add(q, "field", LEVELS[li + 1].id, "field"));
+  }
+
+  const ordered = shuffle(list).sort((a, b) => LEVEL_INDEX[a.level] - LEVEL_INDEX[b.level]);
+  return {
+    questions: ordered.slice(0, count),
+    meta: {
+      field: field?.name ?? "General", fieldId: field?.id ?? "general",
+      company: company.name, companyId: company.id,
+      level: lvl.name, levelId: lvl.id, mode: "standard"
     }
   };
 }

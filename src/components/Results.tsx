@@ -7,7 +7,7 @@ import { exportMd } from "../services/report";
 import { btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, KpNeutral, ScoreBadge } from "./ui";
 
 export function Results() {
-  const { state, retry, newSession } = useApp();
+  const { state, retry, newSession, practiceWeakTopics } = useApp();
   const { session, answers } = state;
 
   /* Completion is persisted by the store facade when the session ends, so this view is a pure presenter. */
@@ -106,6 +106,7 @@ export function Results() {
               <p>Strengths: <strong className="text-ok">{[...new Set(strong)].slice(0, 3).join(", ")}</strong></p>
             )}
           </div>
+          <button className={`${btnPrimary} ${btnSm} mt-5`} onClick={practiceWeakTopics}>🔁 Practice these topics</button>
         </div>
       </div>
 

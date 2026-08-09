@@ -6,12 +6,14 @@ import { FeedbackButton } from "./Feedback";
 import { Onboarding } from "./Onboarding";
 import { Interview } from "./Interview";
 import { Results } from "./Results";
+import { Drill } from "./Drill";
 import { Bank } from "./Bank";
 import { History } from "./History";
 import { Settings } from "./Settings";
 
 const TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
+  { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
   { id: "history", label: "History", icon: "🗂️" },
   { id: "settings", label: "Settings", icon: "⚙️" }
@@ -79,6 +81,7 @@ export function App() {
         {view === "onboard" && <Onboarding />}
         {view === "interview" && <Interview />}
         {view === "results" && <Results />}
+        {view === "drill" && <Drill />}
         {view === "bank" && <Bank />}
         {view === "history" && <History />}
         {view === "settings" && <Settings />}

@@ -18,7 +18,7 @@ function renderApp() {
 }
 
 beforeEach(() => {
-  for (const k of Object.keys(localStorage)) localStorage.removeItem(k);
+  localStorage.clear();
   cleanup();
 });
 
@@ -102,6 +102,25 @@ describe("practice from bank", () => {
     fireEvent.click(details.querySelector("summary") as HTMLElement);
     fireEvent.click(details.querySelector("button") as HTMLElement);
     expect(screen.getByText(/Question 1 of 1/)).toBeTruthy();
+  });
+});
+
+describe("job-description tailoring", () => {
+  it("analyzes a pasted JD and builds a tailored session", () => {
+    renderApp();
+    clickBtn(/I have a job description/);
+    const ta = screen.getByPlaceholderText(/Senior Backend Engineer at Stripe/);
+    fireEvent.change(ta, {
+      target: {
+        value: "Senior Backend Engineer at Stripe. We use Go, PostgreSQL, Kubernetes and AWS. 5+ years experience building distributed systems. Lead design of microservices and APIs with strong reliability and performance requirements."
+      }
+    });
+    clickBtn(/Analyze & continue/);
+    expect(screen.getByText(/Ready to be interviewed/)).toBeTruthy();
+    expect(screen.getByText(/Job description/)).toBeTruthy();
+    clickBtn(/Start Interview/);
+    clickBtn(/Begin interview/);
+    expect(screen.getByText(/Question 1 of/)).toBeTruthy();
   });
 });
 

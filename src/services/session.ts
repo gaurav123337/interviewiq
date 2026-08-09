@@ -1,7 +1,8 @@
 import type { Answer, Config, LevelId, QA, SavedSession, Session, SessionMeta } from "../types";
-import { composeSession, grade } from "../engine";
+import { composeSession, composeRelevantSession, grade } from "../engine";
 import { fieldById, levelById } from "../data";
 import { uid } from "../util";
+import type { JdResult } from "./jd";
 
 export interface OnboardingSelection {
   level: LevelId | null;
@@ -31,6 +32,25 @@ export function buildPracticeSession(fieldId: string, q: QA & { lvl: LevelId }):
       level: levelById(q.lvl).name, levelId: q.lvl, mode: "standard"
     }
   };
+}
+
+/** Builds a session tailored to a parsed job description (keyword-driven). */
+export function buildJdSession(jd: JdResult, config: Config): Session {
+  return composeRelevantSession({
+    fieldId: jd.fieldId,
+    companyId: jd.companyId,
+    levelId: jd.levelId,
+    keywords: jd.keywords,
+    count: config.count
+  });
+}
+
+/** Builds a follow-up session targeting key points missed in a previous session. */
+export function buildWeakTopicSession(fieldId: string, levelId: LevelId, topics: string[], config: Config): Session {
+  const s = composeRelevantSession({
+    fieldId, companyId: null, levelId, keywords: topics, count: config.count
+  });
+  return { ...s, meta: { ...s.meta, company: "Weak Topics", companyId: "weak", mode: config.mode } };
 }
 
 /** Rebuilds a session object from a saved history record (read-only replay). */

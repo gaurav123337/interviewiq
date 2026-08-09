@@ -3,12 +3,14 @@ import type { ReactNode } from "react";
 import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, companyById, levelById } from "../data";
 import type { Config } from "../types";
 import { useApp } from "../store";
+import { analyzeJd } from "../services/jd";
 import { btnGhost, btnLg, btnPrimary, cardCls, Difficulty, Modal, Seg, Switch } from "./ui";
 
 export function Onboarding() {
   const { state, selectLevel, selectField, selectCompany, setStep } = useApp();
   const { ob, step } = state;
   const [showConfig, setShowConfig] = useState(false);
+  const [jdMode, setJdMode] = useState(false);
 
   const steps = ["Level", "Field", "Company", "Confirm"];
   const maxStep = ob.level ? (ob.field ? (ob.company ? 4 : 3) : 2) : 1;
@@ -45,11 +47,29 @@ export function Onboarding() {
         <section className="mt-8">
           <h2 className="mb-1 text-2xl font-extrabold tracking-tight">What level are you interviewing for?</h2>
           <p className="mb-5 text-[14.5px] text-mut">From first job to the corner office — questions scale with each level.</p>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
-            {LEVELS.map(l => (
-              <PickCard key={l.id} emoji={l.icon} name={l.name} meta={l.years} blurb={l.blurb} sel={ob.level === l.id} onPick={() => selectLevel(l.id)} />
-            ))}
-          </div>
+          {!jdMode ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setJdMode(true)}
+                className="mb-5 flex w-full items-center gap-4 rounded-2xl border border-acc1/40 bg-gradient-to-r from-acc1/15 to-acc2/10 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-acc1/70 hover:shadow-[0_14px_34px_rgba(99,102,241,.18)]"
+              >
+                <span className="grid h-12 w-12 flex-none place-items-center rounded-xl grad-bg text-[24px] shadow-[0_6px_16px_rgba(99,102,241,.45)]">📋</span>
+                <span className="min-w-0">
+                  <span className="block text-[15.5px] font-extrabold leading-tight">I have a job description</span>
+                  <span className="block text-[13px] font-semibold text-mut">Paste the posting and we'll detect the level, field, company, and pick the most relevant questions.</span>
+                </span>
+                <span className="ml-auto text-acc3">→</span>
+              </button>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-3.5">
+                {LEVELS.map(l => (
+                  <PickCard key={l.id} emoji={l.icon} name={l.name} meta={l.years} blurb={l.blurb} sel={ob.level === l.id} onPick={() => selectLevel(l.id)} />
+                ))}
+              </div>
+            </>
+          ) : (
+            <JdEditor onBack={() => setJdMode(false)} />
+          )}
         </section>
       )}
 
@@ -87,6 +107,7 @@ export function Onboarding() {
           <h2 className="mb-1 text-2xl font-extrabold tracking-tight">Ready to be interviewed?</h2>
           <p className="mb-5 text-[14.5px] text-mut">Here's your session profile — you can change anything by going back.</p>
           <div className={`${cardCls} mx-auto max-w-[640px] p-6`}>
+            {ob.jd && <SumRow ico="📋" label="Tailored from" value="Job description" />}
             <SumRow ico="🎯" label="Level" value={ob.level ? `${levelById(ob.level).icon} ${levelById(ob.level).name}` : "—"} />
             <SumRow ico="💻" label="Field" value={ob.field ? `${FIELDS.find(f => f.id === ob.field)?.icon ?? ""} ${FIELDS.find(f => f.id === ob.field)?.name ?? ""}` : "—"} />
             <SumRow ico="🏢" label="Company" value={`${companyById(ob.company).icon} ${companyById(ob.company).name}`} />
@@ -151,6 +172,41 @@ function PickCard({ emoji, name, meta, blurb, sel, onPick, tags, small }: {
         </span>
       )}
     </button>
+  );
+}
+
+/* ---------- job-description editor ---------- */
+function JdEditor({ onBack }: { onBack: () => void }) {
+  const { applyJd } = useApp();
+  const [text, setText] = useState("");
+  const ready = text.trim().length >= 40;
+
+  const analyze = () => {
+    if (!ready) return;
+    applyJd({ ...analyzeJd(text), text });
+  };
+
+  return (
+    <div className={`${cardCls} mx-auto max-w-[720px] p-6`}>
+      <label className="mb-1 block text-[15px] font-bold">Paste the job description</label>
+      <p className="mb-3 text-[13px] text-mut">
+        We'll detect the level, field and company, then build a session around the posting's keywords.
+      </p>
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={9}
+        placeholder="Senior Backend Engineer at Stripe… We're looking for someone with experience in Go, PostgreSQL and Kubernetes…"
+        className="w-full resize-y rounded-xl border border-white/15 bg-[#080c18]/70 p-4 text-[14px] leading-relaxed placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+      />
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button className={btnGhost} onClick={onBack}>← Back to levels</button>
+        <span className="flex-1" />
+        <button className={`${btnPrimary} ${btnLg}`} disabled={!ready} onClick={analyze}>
+          Analyze & continue →
+        </button>
+      </div>
+    </div>
   );
 }
 

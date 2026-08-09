@@ -3,16 +3,20 @@ import type { ReactNode } from "react";
 import type { Answer, Config, LevelId, QA, SavedSession, Session, View } from "./types";
 import { buildFeedback } from "./engine";
 import {
-  buildInterviewSession, buildPracticeSession, buildReplaySession, makeSavedSession,
-  type OnboardingSelection
+  buildInterviewSession, buildJdSession, buildPracticeSession, buildReplaySession,
+  buildWeakTopicSession, makeSavedSession, type OnboardingSelection
 } from "./services/session";
+import { analyzeJd, type JdResult } from "./services/jd";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
 
 /* ------------------------------------------------------------------ */
 /* State                                                                 */
 /* ------------------------------------------------------------------ */
 
-export interface Ob extends OnboardingSelection {}
+export interface Ob extends OnboardingSelection {
+  /** Raw job description text when the user tailors by pasting a JD. */
+  jd?: string;
+}
 
 export interface AppState {
   view: View;
@@ -111,6 +115,8 @@ interface AppApi {
   selectCompany: (id: string) => void;
   setStep: (n: number) => void;
   startSession: (config: Config) => void;
+  applyJd: (r: JdResult & { text: string }) => void;
+  practiceWeakTopics: () => void;
   submitAnswer: (user: string) => void;
   skipQuestion: () => void;
   nextQuestion: () => void;
@@ -149,13 +155,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return {
       state,
       nav: view => { window.scrollTo({ top: 0 }); dispatch({ type: "NAV", view }); },
-      selectLevel: id => dispatch({ type: "SET_OB", patch: { level: id }, step: 2 }),
-      selectField: id => dispatch({ type: "SET_OB", patch: { field: id }, step: 3 }),
-      selectCompany: id => dispatch({ type: "SET_OB", patch: { company: id }, step: 4 }),
+      selectLevel: id => dispatch({ type: "SET_OB", patch: { level: id, jd: undefined }, step: 2 }),
+      selectField: id => dispatch({ type: "SET_OB", patch: { field: id, jd: undefined }, step: 3 }),
+      selectCompany: id => dispatch({ type: "SET_OB", patch: { company: id, jd: undefined }, step: 4 }),
       setStep: n => dispatch({ type: "SET_STEP", step: n }),
+      applyJd: r => dispatch({
+        type: "SET_OB",
+        patch: { level: r.levelId, field: r.fieldId, company: r.companyId ?? "general", jd: r.text },
+        step: 4
+      }),
       startSession: config => {
-        const session = buildInterviewSession(state.ob, config);
+        const session = state.ob.jd
+          ? buildJdSession(analyzeJd(state.ob.jd), config)
+          : buildInterviewSession(state.ob, config);
         dispatch({ type: "SET_SESSION", session, config });
+      },
+      practiceWeakTopics: () => {
+        const { session, answers, config } = state;
+        if (!session) return;
+        const topics = [...new Set(answers.flatMap(a => a.fb.missed ?? []))].slice(0, 12);
+        const s = buildWeakTopicSession(session.meta.fieldId, session.meta.levelId, topics, config);
+        dispatch({ type: "SET_SESSION", session: s, config });
       },
       submitAnswer: user => {
         if (!state.session) return;
@@ -194,7 +214,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "SET_SESSION", session, config: { ...state.config, count: 1, timing: "none" } });
       },
       retry: () => { dispatch({ type: "RESET_SESSION" }); dispatch({ type: "NAV", view: "interview" }); },
-      newSession: () => { dispatch({ type: "RESET_SESSION" }); dispatch({ type: "SET_STEP", step: 1 }); dispatch({ type: "NAV", view: "onboard" }); },
+      newSession: () => { dispatch({ type: "RESET_SESSION" }); dispatch({ type: "SET_OB", patch: { jd: undefined }, step: 1 }); dispatch({ type: "NAV", view: "onboard" }); },
       openHistory: id => {
         const s = state.sessions.find(x => x.id === id);
         if (!s) return;

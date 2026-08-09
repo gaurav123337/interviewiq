@@ -4,14 +4,16 @@ const STOP = new Set(
   ("a an the and or but if of to in on at for with from by as is are was were be been being it its this that these those do does did done has have had i you he she we they them their your my our his her not no can could will would should may might must shall than then so such there here what which who whom when where why how all any both each few more most other some only own same very just about into over under up out off above below again once also too").split(" ")
 );
 
-const tokens = (text: string): string[] =>
-  String(text || "")
+/** Splits text into lowercase, stopword-filtered tokens. */
+export function tokenize(text: string): string[] {
+  return String(text || "")
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, " ")
     .split(/[\s-]+/)
     .filter(w => w.length > 1 && !STOP.has(w));
+}
 
-const kpTokens = (kp: string): string[] => tokens(kp).filter(w => w.length > 2);
+const kpTokens = (kp: string): string[] => tokenize(kp).filter(w => w.length > 2);
 
 export interface ScoreResult {
   score: number;
@@ -23,7 +25,7 @@ export interface ScoreResult {
 
 /** Scores an answer by token overlap with the question's key points, plus a length heuristic. */
 export function scoreAnswer(userText: string, question: SessionQuestion): ScoreResult {
-  const words = tokens(userText);
+  const words = tokenize(userText);
   const ansLen = words.length;
   let hit = 0;
   const covered: string[] = [];
