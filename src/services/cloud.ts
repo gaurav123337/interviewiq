@@ -77,8 +77,12 @@ export function setTestClient(c: SupabaseClient | null): void {
 
 /** Returns the client when cloud sync is available (configured, or a test client is injected). */
 async function resolveClient(): Promise<SupabaseClient | null> {
-  if (clientPromise) return clientPromise;
+  if (clientPromise) {
+    setState({ configured: true });
+    return clientPromise;
+  }
   if (!isCloudConfigured()) return null;
+  setState({ configured: true });
   return getClient();
 }
 
@@ -102,6 +106,7 @@ async function stopEngine(): Promise<void> {
 /** Restores a persisted session on app load and reacts to auth changes. */
 export async function initCloud(): Promise<void> {
   if (!isCloudConfigured()) return;
+  setState({ configured: true });
   const client = await getClient();
   const { data } = await client.auth.getSession();
   if (data.session?.user) {

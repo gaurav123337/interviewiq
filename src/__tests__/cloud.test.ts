@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+/* tests must not depend on the deployed credentials in src/config.ts */
+vi.mock("../config", () => ({
+  CONFIG: {
+    productName: "InterviewIQ",
+    features: { paywall: false },
+    supabase: { url: "", anonKey: "" }
+  }
+}));
 import {
   SupabaseRemoteStore, cloudOAuthSignIn, cloudSignIn, getCloudState, isCloudConfigured,
   oauthProvidersFromSettings, refreshOAuthProviders, setTestClient

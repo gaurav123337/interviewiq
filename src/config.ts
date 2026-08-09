@@ -15,7 +15,7 @@ export const CONFIG = {
   /** Optional cross-device sync. Create a free Supabase project, run the SQL in
       the README, and paste the project URL + anon key here. Empty = cloud sync off. */
   supabase: {
-    url: "",
-    anonKey: ""
+    url: "https://ndrusywvceojsoirhkhl.supabase.co",
+    anonKey: "sb_publishable_KL1mXNkhOnu8gYqCgMpf7A_3ue6dabe"
   }
 } as const;
