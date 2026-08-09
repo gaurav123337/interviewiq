@@ -1,0 +1,164 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { InMemoryRemoteStore, SyncEngine, policyFor } from "../services/sync";
+import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
+
+const T0 = Date.parse("2026-08-09T12:00:00Z");
+
+beforeEach(() => {
+  localStorage.clear();
+});
+
+describe("sync policies", () => {
+  it("classifies every key: merge / lww / local", () => {
+    expect(policyFor(STORAGE_KEYS.sessions)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.drillSrs)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.settings)).toBe("lww");
+    expect(policyFor(STORAGE_KEYS.onboard)).toBe("lww");
+    expect(policyFor(STORAGE_KEYS.tier)).toBe("lww");
+    expect(policyFor(STORAGE_KEYS.licenseKey)).toBe("lww");
+    /* device-private keys must never sync */
+    expect(policyFor(STORAGE_KEYS.apiKey)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.apiBase)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.apiModel)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.usage)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.notifPrefs)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.notifLast)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.syncMeta)).toBe("local");
+  });
+
+  it("defaults unknown/future keys to local (nothing leaks by accident)", () => {
+    expect(policyFor("iq.futureKey")).toBe("local");
+  });
+});
+
+describe("sync engine — first sign-in", () => {
+  it("pushes local-only data up", async () => {
+    storageSet(STORAGE_KEYS.settings, { count: 8, mode: "standard" });
+    const remote = new InMemoryRemoteStore();
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const snap = await remote.pull();
+    expect(snap[STORAGE_KEYS.settings]?.value).toEqual({ count: 8, mode: "standard" });
+  });
+
+  it("pulls remote-only data down", async () => {
+    const remote = new InMemoryRemoteStore();
+    await remote.push({ [STORAGE_KEYS.settings]: { value: { count: 15 }, updatedAt: T0 } });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    expect(storageGet(STORAGE_KEYS.settings, {})).toEqual({ count: 15 });
+  });
+
+  it("merges session history by id in both directions", async () => {
+    storageSet(STORAGE_KEYS.sessions, [{ id: "local1", date: 2, meta: {}, config: {}, agg: {}, answers: [] }]);
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.sessions]: { value: [{ id: "remote1", date: 1, meta: {}, config: {}, agg: {}, answers: [] }], updatedAt: T0 }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+
+    const local = storageGet(STORAGE_KEYS.sessions, []) as { id: string }[];
+    expect(local.map(s => s.id).sort()).toEqual(["local1", "remote1"]);
+    const snap = await remote.pull();
+    expect((snap[STORAGE_KEYS.sessions].value as { id: string }[]).map(s => s.id).sort()).toEqual(["local1", "remote1"]);
+  });
+
+  it("merges drill SRS per question, keeping the most recently reviewed entry", async () => {
+    storageSet(STORAGE_KEYS.drillSrs, { q1: { due: 1, lvl: 1 } });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.drillSrs]: { value: { q1: { due: 5, lvl: 2 }, q2: { due: 3, lvl: 0 } }, updatedAt: T0 }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const srs = storageGet(STORAGE_KEYS.drillSrs, {}) as Record<string, { due: number; lvl: number }>;
+    expect(srs.q1).toEqual({ due: 5, lvl: 2 }); /* remote reviewed later */
+    expect(srs.q2).toEqual({ due: 3, lvl: 0 }); /* remote-only */
+  });
+
+  it("resolves scalar conflicts by timestamp — remote newer wins over pre-sync local", async () => {
+    storageSet(STORAGE_KEYS.settings, { count: 8 }); /* written before any account existed (meta 0) */
+    const remote = new InMemoryRemoteStore();
+    await remote.push({ [STORAGE_KEYS.settings]: { value: { count: 15 }, updatedAt: T0 + 5000 } });
+    const engine = new SyncEngine(() => T0 + 6000);
+    await engine.signIn(remote);
+    expect(storageGet(STORAGE_KEYS.settings, {})).toEqual({ count: 15 });
+  });
+});
+
+describe("sync engine — ongoing sync", () => {
+  it("debounces and pushes local writes made after sign-in", async () => {
+    const remote = new InMemoryRemoteStore();
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    vi.useFakeTimers();
+    try {
+      storageSet(STORAGE_KEYS.settings, { count: 8 });
+      let snap = await remote.pull(); /* not yet — debounce pending */
+      expect(snap[STORAGE_KEYS.settings]).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1000);
+      snap = await remote.pull();
+      expect(snap[STORAGE_KEYS.settings]?.value).toEqual({ count: 8 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a local edit made after sign-in over an older remote value on pull", async () => {
+    const remote = new InMemoryRemoteStore();
+    await remote.push({ [STORAGE_KEYS.settings]: { value: { count: 15 }, updatedAt: T0 - 1000 } });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote); /* remote is older than nothing local... local empty → pulled? */
+    expect(storageGet(STORAGE_KEYS.settings, {})).toEqual({ count: 15 });
+
+    /* now edit locally (stamped T0, newer than remote T0-1000) and pull */
+    storageSet(STORAGE_KEYS.settings, { count: 9 });
+    vi.useFakeTimers();
+    try {
+      await vi.advanceTimersByTimeAsync(1000); /* flushed with updatedAt T0 */
+      await engine.pull();
+      expect(storageGet(STORAGE_KEYS.settings, {})).toEqual({ count: 9 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("applies remote-only keys on pull without echoing them back", async () => {
+    const remote = new InMemoryRemoteStore();
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    await remote.push({ [STORAGE_KEYS.settings]: { value: { count: 15 }, updatedAt: T0 + 1000 } });
+    await engine.pull();
+    expect(storageGet(STORAGE_KEYS.settings, {})).toEqual({ count: 15 });
+    /* remote unchanged (no echo) */
+    const snap = await remote.pull();
+    expect(snap[STORAGE_KEYS.settings]?.updatedAt).toBe(T0 + 1000);
+  });
+
+  it("propagates local removals to the remote", async () => {
+    const remote = new InMemoryRemoteStore();
+    const engine = new SyncEngine(() => T0);
+    storageSet(STORAGE_KEYS.settings, { count: 8 });
+    await engine.signIn(remote);
+    vi.useFakeTimers();
+    try {
+      storageRemove(STORAGE_KEYS.settings);
+      await vi.advanceTimersByTimeAsync(1000);
+      const snap = await remote.pull();
+      expect(snap[STORAGE_KEYS.settings]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops syncing after sign-out", async () => {
+    const remote = new InMemoryRemoteStore();
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    await engine.signOut();
+    storageSet(STORAGE_KEYS.settings, { count: 8 });
+    const snap = await remote.pull();
+    expect(snap[STORAGE_KEYS.settings]).toBeUndefined();
+  });
+});

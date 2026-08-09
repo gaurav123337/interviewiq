@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { Config } from "../types";
 import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import { getTier } from "../services/entitlements";
 import { fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
+import { cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, subscribeCloud } from "../services/cloud";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
@@ -21,6 +22,29 @@ export function Settings() {
   const [pro, setPro] = useState(getTier() === "pro");
   const [prefs, setPrefs] = useState(getPrefs());
   const [perm, setPerm] = useState(getPermission());
+  const [cloud, setCloud] = useState(getCloudState());
+  const [cloudMode, setCloudMode] = useState<"in" | "up">("in");
+  const [cloudEmail, setCloudEmail] = useState("");
+  const [cloudPass, setCloudPass] = useState("");
+  const [cloudBusy, setCloudBusy] = useState(false);
+
+  useEffect(() => subscribeCloud(setCloud), []);
+
+  const doCloudAuth = async () => {
+    if (!cloudEmail || !cloudPass) { toast("Enter your email and password"); return; }
+    setCloudBusy(true);
+    try {
+      const r = cloudMode === "in"
+        ? await cloudSignIn(cloudEmail, cloudPass)
+        : await cloudSignUp(cloudEmail, cloudPass);
+      if (!r.ok) { toast("✗ " + (r.error ?? "Something went wrong")); return; }
+      if ("needsConfirmation" in r && r.needsConfirmation) { toast("📬 Check your email to confirm your account"); return; }
+      toast("☁️ Cloud sync on — your progress is backed up");
+      setCloudEmail(""); setCloudPass("");
+    } finally {
+      setCloudBusy(false);
+    }
+  };
 
   const toggleReminder = async (v: boolean) => {
     if (v && getPermission() !== "granted") {
@@ -104,6 +128,60 @@ export function Settings() {
                 Activate
               </button>
             </div>
+          )}
+        </section>
+
+        {/* Cloud sync */}
+        <section className={`${cardCls} p-6`}>
+          <div className="mb-1 flex items-center gap-2">
+            <h2 className="text-[16px] font-extrabold">☁️ Cloud sync</h2>
+            {cloud.user && <Chip tone="ok">SYNCED</Chip>}
+            {!cloud.configured && <Chip>OFF</Chip>}
+          </div>
+          {cloud.user ? (
+            <>
+              <p className="mb-4 text-[13px] text-mut">
+                Signed in as <span className="font-bold text-ink">{cloud.user.email}</span> — your sessions, streaks and drill progress back up to the cloud and restore on any device. Everything still works offline.
+              </p>
+              <div className="flex flex-wrap gap-2.5">
+                <button className={btnGhost + btnSm} onClick={async () => { await cloudSyncNow(); toast("☁️ Synced"); }} disabled={cloud.syncing}>
+                  {cloud.syncing ? <><span className="spinner" />Syncing…</> : "🔄 Sync now"}
+                </button>
+                <button className={btnDanger + btnSm} onClick={async () => { await cloudSignOut(); toast("Signed out — local data kept"); }}>
+                  Sign out
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mb-4 text-[13px] text-mut">
+                {cloud.configured
+                  ? "Sign in to back up your sessions, streaks and drill progress across devices. The cloud is an optional mirror — local use stays fully offline."
+                  : "Back up and restore your progress across devices with optional cloud sync."}
+              </p>
+              {cloud.configured ? (
+                <div className="space-y-3">
+                  <Seg options={[{ value: "in", label: "Sign in" }, { value: "up", label: "Create account" }]} value={cloudMode} onChange={setCloudMode} />
+                  <input
+                    type="email" value={cloudEmail} onChange={e => setCloudEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                  />
+                  <input
+                    type="password" value={cloudPass} onChange={e => setCloudPass(e.target.value)}
+                    placeholder="Password (min 6 characters)"
+                    className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                  />
+                  <button className={btnPrimary + btnSm} onClick={doCloudAuth} disabled={cloudBusy}>
+                    {cloudBusy ? <><span className="spinner" />…</> : cloudMode === "in" ? "Sign in" : "Create account"}
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-[12.5px] text-mut">
+                  💡 To enable: create a free Supabase project → run the SQL in the README → paste your project URL + anon key into <code className="font-mono text-acc1">src/config.ts</code>.
+                </div>
+              )}
+            </>
           )}
         </section>
 

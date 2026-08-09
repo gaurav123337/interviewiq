@@ -60,19 +60,60 @@ public/
   sw.js                service worker (offline-first caching)
   icons/               generated PNG icons + SVG favicon
 src/
-  main.tsx             React entry; registers the service worker
+  main.tsx             React entry; registers the service worker, inits cloud sync
   index.css            Tailwind theme (colors, keyframes, utilities)
   types.ts             shared types (Level, Field, Company, Session, Feedback…)
   store.tsx            React context + reducer; localStorage persistence
-  engine.ts            session composition, scoring, feedback, aggregation
+  engine/              domain layer: compose, scoring, feedback, aggregate, bank, relevance, random
+  services/            application layer: storage, session use-cases, planner, progress,
+                       drill (SRS), entitlements, license, notifications, cloud sync, jd, report
   ai.ts                optional OpenAI-compatible chat integration
-  util.ts              helpers + Markdown export
+  util.ts              generic helpers
   data/                levels, 8 field question banks, companies, pools
-  components/          App shell, Onboarding, Interview, Results, Bank, History, Settings, ui kit
-  __tests__/           smoke + full-flow integration tests
+  components/          App shell, Onboarding, Interview, Results, Bank, History, Settings, Planner, Drill, ui kit
+  __tests__/           smoke, features, growth, notifications, sync + full-flow integration
 scripts/
   gen-icons.js         zero-dependency PNG icon generator (node scripts/gen-icons.js)
 ```
+
+## Cloud sync (optional — cross-device backup)
+
+The app is local-first: everything runs offline in your browser. If you want your sessions, streaks and drill progress to follow you across devices, enable the optional Supabase sync:
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. In the **SQL editor**, run:
+
+```sql
+create table public.user_sync (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  key text not null,
+  value jsonb not null,
+  updated_at bigint not null,
+  primary key (user_id, key)
+);
+
+alter table public.user_sync enable row level security;
+
+create policy "read own rows"  on public.user_sync for select using (auth.uid() = user_id);
+create policy "insert own rows" on public.user_sync for insert with check (auth.uid() = user_id);
+create policy "update own rows" on public.user_sync for update using (auth.uid() = user_id);
+create policy "delete own rows" on public.user_sync for delete using (auth.uid() = user_id);
+```
+
+3. In Supabase → **Settings → API**, copy the **Project URL** and **anon public key**, then paste them into `src/config.ts`:
+
+```ts
+export const CONFIG = {
+  // …
+  supabase: { url: "https://YOURPROJECT.supabase.co", anonKey: "eyJ…" }
+};
+```
+
+4. Restart the app → **Settings → ☁️ Cloud sync** → create an account or sign in.
+
+How it works: local `localStorage` stays the source of truth while offline; the engine syncs through a single storage seam (`services/storage.ts` → `services/sync.ts`). Sessions and drill SRS **merge** across devices; scalars (settings, onboarding) are last-write-wins; your API key, usage metering and notification preferences never leave the device. Email + password auth works out of the box; add OAuth providers (Google/GitHub) in the Supabase dashboard without code changes.
+
+## Privacy
 
 ## How scoring works (offline mode)
 
