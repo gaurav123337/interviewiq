@@ -61,7 +61,7 @@ export function Interview() {
         </div>
         {config.mode === "mock" && <MockCountdown total={45 * 60} onExpire={exitToResults} />}
         <div className="min-w-[170px] flex-none">
-          <div className="h-[7px] overflow-hidden rounded-full bg-white/15">
+          <div className="h-[7px] overflow-hidden rounded-full bg-wht/15">
             <div className="h-full rounded-full grad-bg transition-all duration-500" style={{ width: prog + "%" }} />
           </div>
           <div className="mt-1 flex justify-between text-xs font-semibold text-mut">
@@ -101,7 +101,7 @@ export function Interview() {
               disabled={feedbackShown}
               readOnly={feedbackShown}
               placeholder="Type your answer… (or use the mic). Try to structure it: approach → reasoning → tradeoffs."
-              className="min-h-[150px] w-full resize-y rounded-xl border border-white/25 bg-[#080c18]/60 p-4 text-[15px] leading-relaxed placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20 disabled:opacity-80"
+              className="min-h-[150px] w-full resize-y rounded-xl border border-line/25 bg-deep/60 p-4 text-[15px] leading-relaxed placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20 disabled:opacity-80"
             />
           </div>
 
@@ -203,7 +203,7 @@ function Timer({ total, onExpire }: { total: number; onExpire: () => void }) {
 
   const low = left <= 30;
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-extrabold tabular-nums ${low ? "border-bad/50 bg-bad/10 text-bad" : "border-white/10 bg-white/10 text-mut"}`}>
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[13px] font-extrabold tabular-nums ${low ? "border-bad/50 bg-bad/10 text-bad" : "border-line/10 bg-wht/10 text-mut"}`}>
       <svg viewBox="0 0 16 16" width="14" height="14" className="h-3.5 w-3.5">
         <circle cx="8" cy="8" r="6.5" fill="none" stroke="rgba(148,163,184,.3)" strokeWidth="2.5" />
         <circle
@@ -252,7 +252,7 @@ function MicButton({ answer, setAnswer, disabled }: { answer: string; setAnswer:
         type="button"
         onClick={toggle}
         title={listening ? "Stop listening" : "Speak your answer"}
-        className={`grid h-[42px] w-[42px] place-items-center rounded-xl border text-lg transition-all ${listening ? "border-bad/60 bg-bad/15 text-bad" : "border-white/25 bg-white/10 text-mut hover:bg-white/20"}`}
+        className={`grid h-[42px] w-[42px] place-items-center rounded-xl border text-lg transition-all ${listening ? "border-bad/60 bg-bad/15 text-bad" : "border-line/25 bg-wht/10 text-mut hover:bg-wht/20"}`}
       >
         🎤
       </button>
@@ -275,8 +275,8 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
   const gradeL = grade(pct);
 
   return (
-    <div className="anim-view mt-5 overflow-hidden rounded-2xl border border-white/10">
-      <div className="flex flex-wrap items-center gap-4 border-b border-white/10 bg-gradient-to-b from-panel3 to-panel2 px-6 py-4">
+    <div className="anim-view mt-5 overflow-hidden rounded-2xl border border-line/10">
+      <div className="flex flex-wrap items-center gap-4 border-b border-line/10 bg-gradient-to-b from-panel3 to-panel2 px-6 py-4">
         <div className="relative h-[74px] w-[74px] flex-none">
           <svg viewBox="0 0 76 76" width="74" height="74">
             <circle cx="38" cy="38" r={R} fill="none" stroke="rgba(148,163,184,.2)" strokeWidth="6" />
@@ -293,16 +293,16 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
 
       <div className="bg-gradient-to-b from-panel to-panel2 px-6 py-5">
         <div className="mb-5 grid grid-cols-1 gap-3.5 md:grid-cols-2">
-          <div className="rounded-xl border border-white/10 bg-[#080c18]/50 p-4">
+          <div className="rounded-xl border border-line/10 bg-deep/50 p-4">
             <h4 className="mb-2 flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-wider text-ok">✓ What went well</h4>
             <ul className="space-y-1">
-              {fb.strengths.map((s, i) => <li key={i} className="relative pl-4 text-[13.5px] leading-snug text-[#b9e9d6] before:absolute before:left-0 before:top-0 before:text-ok before:content-['✓']">{s}</li>)}
+              {fb.strengths.map((s, i) => <li key={i} className="relative pl-4 text-[13.5px] leading-snug text-ok before:absolute before:left-0 before:top-0 before:text-ok before:content-['✓']">{s}</li>)}
             </ul>
           </div>
-          <div className="rounded-xl border border-white/10 bg-[#080c18]/50 p-4">
+          <div className="rounded-xl border border-line/10 bg-deep/50 p-4">
             <h4 className="mb-2 flex items-center gap-1.5 text-[13px] font-bold uppercase tracking-wider text-warn">▲ Watch out</h4>
             <ul className="space-y-1">
-              {fb.gaps.map((g, i) => <li key={i} className="relative pl-4 text-[13.5px] leading-snug text-[#f0d9a8] before:absolute before:left-0 before:top-0 before:text-warn before:content-['▲']">{g}</li>)}
+              {fb.gaps.map((g, i) => <li key={i} className="relative pl-4 text-[13.5px] leading-snug text-warn before:absolute before:left-0 before:top-0 before:text-warn before:content-['▲']">{g}</li>)}
             </ul>
           </div>
         </div>
@@ -310,9 +310,9 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
         {aiAvailable() && (
           <div className="mb-5 rounded-xl border border-acc1/30 bg-gradient-to-b from-acc1/10 to-acc2/5 p-4">
             {aiLoading ? (
-              <p className="text-[14.5px] text-[#d9dcf5]"><span className="spinner" />Generating AI feedback…</p>
+              <p className="text-[14.5px] text-ink"><span className="spinner" />Generating AI feedback…</p>
             ) : ai ? (
-              <p className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-[#d9dcf5]">{ai}</p>
+              <p className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-ink">{ai}</p>
             ) : (
               <p className="text-[14.5px] text-fnt">AI feedback unavailable — the offline feedback above still stands.</p>
             )}
@@ -321,7 +321,7 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
 
         <div className="mb-5">
           <h4 className="mb-2 text-[13px] font-bold uppercase tracking-wider text-mut">📖 Model answer</h4>
-          <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7] text-[#d7ddf0]">{q.a}</p>
+          <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7] text-ink">{q.a}</p>
         </div>
 
         <div className="mb-5 flex flex-wrap gap-2">

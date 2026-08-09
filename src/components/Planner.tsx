@@ -119,7 +119,7 @@ export function Planner() {
           <div className="space-y-2.5">
             {plan.map(d => (
               <div key={d.day} className={`${cardCls} flex flex-wrap items-center gap-3 px-5 py-4 ${d.status === "skipped" && !d.weak ? "opacity-60" : ""}`}>
-                <span className={`grid h-11 w-11 flex-none place-items-center rounded-xl text-[15px] font-extrabold ${d.kind === "mock" || d.weak ? "grad-bg text-white" : "border border-white/15 bg-white/5 text-mut"}`}>
+                <span className={`grid h-11 w-11 flex-none place-items-center rounded-xl text-[15px] font-extrabold ${d.kind === "mock" || d.weak ? "grad-bg text-white" : "border border-line/15 bg-wht/5 text-mut"}`}>
                   {d.day}
                 </span>
                 <div className="min-w-[220px] flex-1">

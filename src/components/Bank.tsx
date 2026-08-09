@@ -31,13 +31,13 @@ export function Bank() {
             value={q}
             onChange={e => setQ(e.target.value)}
             placeholder="Search questions, topics, keywords…"
-            className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 py-2.5 pl-10 pr-4 text-[14px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+            className="w-full rounded-xl border border-line/15 bg-deep/80 py-2.5 pl-10 pr-4 text-[14px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
           />
         </div>
         <select
           value={fieldSel}
           onChange={e => { setFieldSel(e.target.value); setLvlSel("all"); }}
-          className="rounded-xl border border-white/15 bg-[#0b1120]/80 px-3.5 py-2.5 text-[14px] font-semibold focus:border-acc1/80 focus:outline-none"
+          className="rounded-xl border border-line/15 bg-deep/80 px-3.5 py-2.5 text-[14px] font-semibold focus:border-acc1/80 focus:outline-none"
         >
           {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
         </select>
@@ -64,10 +64,10 @@ export function Bank() {
                 <span className="min-w-[140px] flex-1 text-[14.5px] font-bold leading-snug">{i.q}</span>
                 <span className="text-mut transition-transform group-open:rotate-90">▸</span>
               </summary>
-              <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+              <div className="mt-4 space-y-3 border-t border-line/10 pt-4">
                 <div className="rounded-xl border border-acc1/25 bg-acc1/10 p-4">
                   <div className="mb-1 text-[12.5px] font-bold uppercase tracking-wider text-acc3">Model answer</div>
-                  <p className="whitespace-pre-wrap text-[14px] leading-[1.7] text-[#d7ddf0]">{i.a}</p>
+                  <p className="whitespace-pre-wrap text-[14px] leading-[1.7] text-ink">{i.a}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {(i.kp || []).map(k => <KpNeutral key={k}>{k}</KpNeutral>)}
@@ -93,7 +93,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full border px-3 py-1 text-[12.5px] font-bold transition-all ${active ? "grad-bg border-transparent text-white shadow-[0_4px_12px_rgba(99,102,241,.4)]" : "border-white/15 bg-white/5 text-mut hover:bg-white/10 hover:text-ink"}`}
+      className={`rounded-full border px-3 py-1 text-[12.5px] font-bold transition-all ${active ? "grad-bg border-transparent text-white shadow-[0_4px_12px_rgba(99,102,241,.4)]" : "border-line/15 bg-wht/5 text-mut hover:bg-wht/10 hover:text-ink"}`}
     >
       {children}
     </button>

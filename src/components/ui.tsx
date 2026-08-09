@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 export const btn =
   "inline-flex items-center justify-center gap-2 rounded-xl font-bold transition-all duration-150 active:scale-[.99] disabled:opacity-45 disabled:cursor-not-allowed";
 export const btnPrimary = btn + " grad-bg px-6 py-3 text-white shadow-[0_10px_26px_rgba(99,102,241,.35)] hover:-translate-y-px hover:brightness-110";
-export const btnGhost = btn + " border border-white/20 px-4 py-2 text-sm text-mut hover:bg-white/10 hover:text-ink";
-export const btnSoft = btn + " grad-bg-soft border border-acc1/50 px-4 py-2 text-sm text-[#d7dbff] hover:bg-acc1/40";
+export const btnGhost = btn + " border border-line/20 px-4 py-2 text-sm text-mut hover:bg-wht/10 hover:text-ink";
+export const btnSoft = btn + " grad-bg-soft border border-acc1/50 px-4 py-2 text-sm text-acctxt hover:bg-acc1/40";
 export const btnOk = btn + " bg-gradient-to-br from-emerald-600 to-emerald-500 px-6 py-3 text-white shadow-[0_10px_26px_rgba(16,185,129,.3)] hover:-translate-y-px hover:brightness-110";
 export const btnDanger = btn + " border border-bad/40 px-4 py-2 text-sm text-bad hover:bg-bad/10";
 export const btnLg = " px-8 py-4 text-[17px] rounded-2xl";
@@ -13,17 +13,17 @@ export const btnSm = " px-3.5 py-1.5 text-[13px] rounded-lg";
 
 /* ---------- card ---------- */
 export const cardCls =
-  "rounded-2xl border border-white/10 bg-gradient-to-b from-panel to-panel2 shadow-[0_18px_50px_rgba(2,6,23,.55)]";
+  "rounded-2xl border border-line/10 bg-gradient-to-b from-panel to-panel2 card-shadow";
 
 /* ---------- chip ---------- */
 const tones: Record<string, string> = {
-  default: "bg-white/10 text-mut border-white/10",
-  cat: "bg-acc3/10 text-[#7ee7f7] border-acc3/30",
-  lvl: "bg-acc2/10 text-[#d8b4fe] border-acc2/35",
-  co: "bg-acc1/10 text-[#c7caff] border-acc1/35",
-  ok: "bg-ok/10 text-[#6ee7b7] border-ok/30",
-  warn: "bg-warn/10 text-[#fcd34d] border-warn/30",
-  bad: "bg-bad/10 text-[#fda4af] border-bad/35"
+  default: "bg-wht/10 text-mut border-line/10",
+  cat: "bg-acc3/10 text-acc3 border-acc3/30",
+  lvl: "bg-acc2/10 text-acc2 border-acc2/35",
+  co: "bg-acc1/10 text-acctxt border-acc1/35",
+  ok: "bg-ok/10 text-ok border-ok/30",
+  warn: "bg-warn/10 text-warn border-warn/30",
+  bad: "bg-bad/10 text-bad border-bad/35"
 };
 
 export function Chip({ tone = "default", children }: { tone?: keyof typeof tones; children: ReactNode }) {
@@ -36,7 +36,7 @@ export function Chip({ tone = "default", children }: { tone?: keyof typeof tones
 
 export function Kp({ children, hit }: { children: ReactNode; hit?: boolean }) {
   return (
-    <span className={`rounded-lg border px-2.5 py-1 text-[12.5px] font-semibold ${hit ? "border-ok/40 bg-ok/10 text-[#6ee7b7]" : "border-bad/40 bg-bad/10 text-[#fda4af]"}`}>
+    <span className={`rounded-lg border px-2.5 py-1 text-[12.5px] font-semibold ${hit ? "border-ok/40 bg-ok/10 text-ok" : "border-bad/40 bg-bad/10 text-bad"}`}>
       {children}
     </span>
   );
@@ -44,7 +44,7 @@ export function Kp({ children, hit }: { children: ReactNode; hit?: boolean }) {
 
 export function KpNeutral({ children }: { children: ReactNode }) {
   return (
-    <span className="rounded-lg border border-white/10 bg-white/10 px-2.5 py-1 text-[12.5px] font-semibold text-mut">
+    <span className="rounded-lg border border-line/10 bg-wht/10 px-2.5 py-1 text-[12.5px] font-semibold text-mut">
       {children}
     </span>
   );
@@ -57,7 +57,7 @@ export function Seg<T extends string>({ options, value, onChange }: {
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex gap-0.5 rounded-xl bg-white/10 p-1">
+    <div className="flex gap-0.5 rounded-xl bg-wht/10 p-1">
       {options.map(o => (
         <button
           key={o.value}
@@ -77,7 +77,7 @@ export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: 
   return (
     <label className="relative inline-block h-[26px] w-[46px] flex-none cursor-pointer">
       <input type="checkbox" className="peer sr-only" checked={checked} onChange={e => onChange(e.target.checked)} />
-      <span className="absolute inset-0 rounded-full bg-white/20 transition-colors peer-checked:grad-bg" />
+      <span className="absolute inset-0 rounded-full bg-wht/20 transition-colors peer-checked:grad-bg" />
       <span className="absolute left-[3px] top-[3px] h-5 w-5 rounded-full bg-white transition-transform peer-checked:translate-x-5" />
     </label>
   );
@@ -91,9 +91,9 @@ export function Modal({ onClose, title, desc, children }: {
   children: ReactNode;
 }) {
   return (
-    <div className="anim-fade fixed inset-0 z-[100] grid place-items-center bg-[#040710b8] p-5 backdrop-blur-sm" onClick={onClose}>
+    <div className="anim-fade fixed inset-0 z-[100] grid place-items-center bg-deep/70 p-5 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="anim-pop max-h-[90vh] w-full max-w-[520px] overflow-auto rounded-[20px] border border-white/30 bg-gradient-to-b from-[#141d33] to-[#101830] p-7 shadow-[0_30px_80px_rgba(0,0,0,.6)]"
+        className="anim-pop max-h-[90vh] w-full max-w-[520px] overflow-auto rounded-[20px] border border-line/30 bg-gradient-to-b from-panel to-panel2 p-7 shadow-[0_30px_80px_rgba(0,0,0,.6)]"
         onClick={e => e.stopPropagation()}
       >
         <h3 className="mb-1 text-xl font-extrabold tracking-tight">{title}</h3>
@@ -120,7 +120,7 @@ export function Difficulty({ level }: { level: number }) {
   return (
     <span className="inline-flex items-center gap-1" title={`Difficulty ${level}/5`}>
       {[1, 2, 3, 4, 5].map(i => (
-        <span key={i} className={`h-1 w-3 rounded-[2px] ${i <= level ? "grad-bg" : "bg-white/20"}`} />
+        <span key={i} className={`h-1 w-3 rounded-[2px] ${i <= level ? "grad-bg" : "bg-wht/20"}`} />
       ))}
     </span>
   );
@@ -128,6 +128,6 @@ export function Difficulty({ level }: { level: number }) {
 
 /* ---------- score badge ---------- */
 export function ScoreBadge({ score }: { score: number }) {
-  const cls = score >= 4 ? "border-ok/35 bg-ok/10 text-[#6ee7b7]" : score >= 3 ? "border-warn/35 bg-warn/10 text-[#fcd34d]" : "border-bad/35 bg-bad/10 text-[#fda4af]";
+  const cls = score >= 4 ? "border-ok/35 bg-ok/10 text-ok" : score >= 3 ? "border-warn/35 bg-warn/10 text-warn" : "border-bad/35 bg-bad/10 text-bad";
   return <span className={`rounded-full border px-3 py-1 text-[12.5px] font-extrabold ${cls}`}>{score}/5</span>;
 }

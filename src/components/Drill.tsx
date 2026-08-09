@@ -66,14 +66,14 @@ export function Drill() {
         <select
           value={fieldSel}
           onChange={e => setFieldSel(e.target.value)}
-          className="rounded-xl border border-white/15 bg-[#0b1120]/80 px-3 py-2 text-[13.5px] font-semibold focus:border-acc1/80 focus:outline-none"
+          className="rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[13.5px] font-semibold focus:border-acc1/80 focus:outline-none"
         >
           {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
         </select>
         <select
           value={lvlSel}
           onChange={e => setLvlSel(e.target.value as LevelId | "all")}
-          className="rounded-xl border border-white/15 bg-[#0b1120]/80 px-3 py-2 text-[13.5px] font-semibold focus:border-acc1/80 focus:outline-none"
+          className="rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[13.5px] font-semibold focus:border-acc1/80 focus:outline-none"
         >
           <option value="all">All levels</option>
           {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
@@ -121,7 +121,7 @@ export function Drill() {
                   <Chip tone="cat">Model answer</Chip>
                   <Chip tone="ok">Key points</Chip>
                 </div>
-                <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7] text-[#d7ddf0]">{card.a}</p>
+                <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7] text-ink">{card.a}</p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {(card.kp || []).map(k => <KpNeutral key={k}>{k}</KpNeutral>)}
                 </div>

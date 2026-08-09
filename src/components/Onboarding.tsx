@@ -44,12 +44,12 @@ export function Onboarding() {
                 onClick={() => setStep(n)}
                 className={`flex items-center gap-2 rounded-full px-2.5 py-1.5 text-[12.5px] font-bold ${cls} ${clickable ? "cursor-pointer" : "cursor-default"}`}
               >
-                <span className={`grid h-[22px] w-[22px] place-items-center rounded-full text-[11px] ${n === step ? "grad-bg text-white shadow-[0_4px_14px_rgba(99,102,241,.5)]" : n < step ? "border border-ok/40 bg-ok/20 text-ok" : "border border-white/30 bg-white/10"}`}>
+                <span className={`grid h-[22px] w-[22px] place-items-center rounded-full text-[11px] ${n === step ? "grad-bg text-white shadow-[0_4px_14px_rgba(99,102,241,.5)]" : n < step ? "border border-ok/40 bg-ok/20 text-ok" : "border border-line/30 bg-wht/10"}`}>
                   {n < step ? "✓" : n}
                 </span>
                 {s}
               </button>
-              {n < 4 && <span className="h-px w-9 bg-white/20 max-sm:w-4" />}
+              {n < 4 && <span className="h-px w-9 bg-wht/20 max-sm:w-4" />}
             </span>
           );
         })}
@@ -179,12 +179,12 @@ function PickCard({ emoji, name, meta, blurb, sel, onPick, tags, small }: {
       className={`relative overflow-hidden rounded-xl border p-4 text-left transition-all hover:-translate-y-0.5 ${
         sel
           ? "border-acc1/80 bg-gradient-to-b from-acc1/15 to-acc2/10 shadow-[0_0_0_1px_rgba(99,102,241,.5),0_14px_34px_rgba(99,102,241,.18)]"
-          : "border-white/10 bg-gradient-to-b from-panel to-panel2 hover:border-white/30 hover:shadow-[0_14px_34px_rgba(2,6,23,.5)]"
+          : "border-line/10 bg-gradient-to-b from-panel to-panel2 hover:border-line/30 hover:shadow-[0_14px_34px_rgba(2,6,23,.5)]"
       }`}
     >
-      <span className={`absolute right-3 top-3 grid h-[22px] w-[22px] place-items-center rounded-full text-xs ${sel ? "grad-bg text-white" : "border border-white/30 text-transparent"}`}>✓</span>
+      <span className={`absolute right-3 top-3 grid h-[22px] w-[22px] place-items-center rounded-full text-xs ${sel ? "grad-bg text-white" : "border border-line/30 text-transparent"}`}>✓</span>
       <span className="mb-2 flex items-center gap-2.5">
-        <span className={`grid h-[42px] w-[42px] flex-none place-items-center rounded-xl text-[22px] ${sel ? "grad-bg shadow-[0_6px_16px_rgba(99,102,241,.45)]" : "grad-bg-soft border border-white/10"}`}>{emoji}</span>
+        <span className={`grid h-[42px] w-[42px] flex-none place-items-center rounded-xl text-[22px] ${sel ? "grad-bg shadow-[0_6px_16px_rgba(99,102,241,.45)]" : "grad-bg-soft border border-line/10"}`}>{emoji}</span>
         <span className="min-w-0">
           <span className="block text-[15.5px] font-extrabold leading-tight">{name}</span>
           {meta && <span className="block text-xs font-semibold text-fnt">{meta}</span>}
@@ -193,7 +193,7 @@ function PickCard({ emoji, name, meta, blurb, sel, onPick, tags, small }: {
       <span className="block text-[13px] leading-snug text-mut">{blurb}</span>
       {!small && tags && (
         <span className="mt-2.5 flex flex-wrap gap-1.5">
-          {tags.map(t => <span key={t} className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-mut">{t}</span>)}
+          {tags.map(t => <span key={t} className="rounded-md bg-wht/10 px-2 py-0.5 text-[11px] font-semibold text-mut">{t}</span>)}
         </span>
       )}
     </button>
@@ -222,7 +222,7 @@ function JdEditor({ onBack }: { onBack: () => void }) {
         onChange={e => setText(e.target.value)}
         rows={9}
         placeholder="Senior Backend Engineer at Stripe… We're looking for someone with experience in Go, PostgreSQL and Kubernetes…"
-        className="w-full resize-y rounded-xl border border-white/15 bg-[#080c18]/70 p-4 text-[14px] leading-relaxed placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+        className="w-full resize-y rounded-xl border border-line/15 bg-deep/70 p-4 text-[14px] leading-relaxed placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
       />
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button className={btnGhost} onClick={onBack}>← Back to levels</button>
@@ -237,7 +237,7 @@ function JdEditor({ onBack }: { onBack: () => void }) {
 
 function SumRow({ ico, label, value }: { ico: string; label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-dashed border-white/10 px-1 py-3 last:border-0">
+    <div className="flex items-center justify-between gap-3 border-b border-dashed border-line/10 px-1 py-3 last:border-0">
       <span className="flex items-center gap-2 text-[13.5px] font-semibold text-mut">{ico} {label}</span>
       <span className="text-right text-[14.5px] font-extrabold">{value}</span>
     </div>
@@ -276,7 +276,7 @@ function ConfigModal({ onClose, onBegin }: { onClose: () => void; onBegin: (cfg:
 
 function OptRow({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-white/10 py-3.5 last:border-0">
+    <div className="flex items-center justify-between gap-4 border-b border-line/10 py-3.5 last:border-0">
       <div>
         <div className="text-[15px] font-bold">{title}</div>
         <div className="text-[12.5px] text-fnt">{sub}</div>

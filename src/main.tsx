@@ -4,6 +4,10 @@ import "./index.css";
 import { AppProvider } from "./store";
 import { App } from "./components/App";
 import { initCloud } from "./services/cloud";
+import { initTheme } from "./services/theme";
+
+/* apply the saved theme before first paint to avoid a flash */
+initTheme();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

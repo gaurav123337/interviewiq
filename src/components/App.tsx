@@ -12,7 +12,9 @@ import { Drill } from "./Drill";
 import { Bank } from "./Bank";
 import { History } from "./History";
 import { Settings } from "./Settings";
-import { checkReminder } from "../services/notifications";
+import { Playground } from "./Playground";
+import { checkReminder, checkWeeklyDigest } from "../services/notifications";
+import { getTheme, setTheme, type Theme } from "../services/theme";
 
 const TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
@@ -20,6 +22,7 @@ const TABS: { id: View; label: string; icon: string }[] = [
   { id: "roadmap", label: "Roadmap", icon: "🧭" },
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
+  { id: "playground", label: "Code", icon: "💻" },
   { id: "history", label: "History", icon: "🗂️" },
   { id: "settings", label: "Settings", icon: "⚙️" }
 ];
@@ -30,12 +33,22 @@ export function App() {
   const { state, nav } = useApp();
   const [installEvt, setInstallEvt] = useState<BIP | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
+  const [theme, setThemeState] = useState<Theme>(() => getTheme());
+
+  const toggleTheme = () => {
+    const next: Theme = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    setThemeState(next);
+  };
 
   /* daily practice reminder — checks on load, on focus, and every minute while open.
      checkReminder is idempotent (fires at most once per day) and needs no backend. */
   useEffect(() => {
     if (!("Notification" in window)) return;
-    const check = () => checkReminder({ sessions: state.sessions });
+    const check = () => {
+      checkReminder({ sessions: state.sessions });
+      checkWeeklyDigest({ sessions: state.sessions });
+    };
     check();
     const id = setInterval(check, 60_000);
     const onVis = () => { if (document.visibilityState === "visible") check(); };
@@ -71,7 +84,7 @@ export function App() {
   return (
     <div className="flex min-h-screen flex-col">
       {/* header */}
-      <header className="no-print sticky top-0 z-50 border-b border-white/10 bg-[#0a0e1a]/85 backdrop-blur-xl">
+      <header className="no-print sticky top-0 z-50 border-b border-line/10 bg-night/85 backdrop-blur-xl">
         <div className="mx-auto flex h-[60px] max-w-[1200px] items-center gap-3 px-4">
           <button className="flex items-center gap-2.5" onClick={() => nav("onboard")}>
             <span className="grid h-9 w-9 place-items-center rounded-xl grad-bg text-[18px] shadow-[0_6px_18px_rgba(99,102,241,.45)]">🎙️</span>
@@ -84,11 +97,18 @@ export function App() {
           </nav>
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
+          <button
+            onClick={toggleTheme}
+            title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+            className="grid h-9 w-9 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[16px] transition-all hover:bg-wht/20"
+          >
+            {theme === "light" ? "🌙" : "☀️"}
+          </button>
           <span className="hidden sm:inline-flex"><FeedbackButton /></span>
           {installEvt && (
             <button
               onClick={install}
-              className="hidden rounded-xl border border-acc1/50 bg-acc1/15 px-3.5 py-1.5 text-[13px] font-bold text-[#c7caff] transition-all hover:bg-acc1/30 sm:inline-flex"
+              className="hidden rounded-xl border border-acc1/50 bg-acc1/15 px-3.5 py-1.5 text-[13px] font-bold text-acctxt transition-all hover:bg-acc1/30 sm:inline-flex"
             >
               ⬇ Install app
             </button>
@@ -107,10 +127,11 @@ export function App() {
         {view === "bank" && <Bank />}
         {view === "history" && <History />}
         {view === "settings" && <Settings />}
+        {view === "playground" && <Playground />}
       </main>
 
       {/* bottom nav (mobile) */}
-      <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-white/10 bg-[#0b1020]/95 backdrop-blur-xl md:hidden">
+      <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
         <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
           {TABS.map(t => (
             <button
@@ -134,7 +155,7 @@ function TabBtn({ icon, label, active, onClick }: { icon: string; label: string;
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-[13.5px] font-bold transition-all ${active ? "grad-bg-soft border border-acc1/40 text-[#d7dbff]" : "text-mut hover:bg-white/10 hover:text-ink"}`}
+      className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-[13.5px] font-bold transition-all ${active ? "grad-bg-soft border border-acc1/40 text-acctxt" : "text-mut hover:bg-wht/10 hover:text-ink"}`}
     >
       <span>{icon}</span>{label}
     </button>

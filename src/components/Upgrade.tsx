@@ -31,7 +31,7 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
     <Modal onClose={onClose} title="✨ InterviewIQ Pro" desc={reason}>
       <ul className="mb-5 space-y-2">
         {BENEFITS.map(b => (
-          <li key={b} className="flex items-center gap-2 text-[14px] text-[#d7ddf0] before:content-['✓'] before:text-ok">
+          <li key={b} className="flex items-center gap-2 text-[14px] text-ink before:content-['✓'] before:text-ok">
             {b}
           </li>
         ))}

@@ -11,6 +11,8 @@ import { composeDiagnostic, persistDiagnostic } from "./services/diagnostic";
 import { recordSession } from "./services/entitlements";
 import { notifyStreak } from "./services/notifications";
 import { streaks } from "./services/progress";
+import { applySessionToProgress } from "./services/roadmap";
+import { getGoal } from "./services/goal";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
 
 /* ------------------------------------------------------------------ */
@@ -164,6 +166,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           dispatch({ type: "ADD_SESSION", s });
           recordSession(); /* usage metering for the freemium quota */
           notifyStreak(streaks([s, ...sessions], new Date()).current); /* streak milestone alerts */
+          /* roadmap feedback loop: strong answers mark matching topics done */
+          const goal = getGoal();
+          if (goal) {
+            try { applySessionToProgress(goal, answers.map(a => ({ q: a.q, user: a.user, score: a.fb.score, pct: a.fb.pct, missed: a.fb.missed }))); } catch { /* never break a session save */ }
+          }
         }
       }
     };

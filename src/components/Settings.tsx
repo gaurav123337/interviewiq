@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import type { Config } from "../types";
 import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
-import { getTier } from "../services/entitlements";
+import { getTheme, setTheme, type Theme } from "../services/theme";
+import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
 import { fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
 import { cloudOAuthSignIn, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud } from "../services/cloud";
 import type { OAuthProvider } from "../services/cloud";
@@ -21,6 +22,7 @@ export function Settings() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [proKey, setProKey] = useState("");
   const [pro, setPro] = useState(getTier() === "pro");
+  const [theme, setThemeState] = useState<Theme>(() => getTheme());
   const [prefs, setPrefs] = useState(getPrefs());
   const [perm, setPerm] = useState(getPermission());
   const [cloud, setCloud] = useState(getCloudState());
@@ -77,6 +79,17 @@ export function Settings() {
     setPrefs(getPrefs());
   };
 
+  const toggleWeekly = async (v: boolean) => {
+    if (v && getPermission() !== "granted") {
+      const p = await requestPermission();
+      setPerm(p);
+      if (p !== "granted") { toast("🔕 Notifications blocked — allow them in your browser settings"); return; }
+    }
+    savePrefs({ ...getPrefs(), weekly: v });
+    setPrefs(getPrefs());
+    toast(v ? "📊 Weekly digest on" : "Weekly digest off");
+  };
+
   const testNotification = async () => {
     const ok = await fire("🔔 InterviewIQ", "This is how your practice reminder will look.");
     toast(ok ? "✅ Notification sent" : "🔕 Enable notifications first");
@@ -118,7 +131,7 @@ export function Settings() {
           <p className="mb-4 text-[13px] text-mut">
             {pro
               ? `Pro is active on this device (${getStoredKey()}). Unlimited sessions and AI coaching.`
-              : "Unlock unlimited sessions, all companies, and unlimited AI coaching. Enter your license key to activate."}
+              : `Unlock unlimited sessions, all companies, and unlimited AI coaching. You have ${sessionsLeft()} session${sessionsLeft() === 1 ? "" : "s"} left this month and ${aiCallsLeft()} AI call${aiCallsLeft() === 1 ? "" : "s"} left today. Enter your license key to activate.`}
           </p>
           {pro ? (
             <button className={btnDanger + btnSm} onClick={() => { deactivatePro(); setPro(false); toast("Pro deactivated"); }}>
@@ -130,7 +143,7 @@ export function Settings() {
                 value={proKey}
                 onChange={e => setProKey(e.target.value)}
                 placeholder="IQPRO-XXXX-XXXX-XXXX"
-                className="min-w-[240px] flex-1 rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                className="min-w-[240px] flex-1 rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
               />
               <button
                 className={btnPrimary + btnSm}
@@ -189,9 +202,9 @@ export function Settings() {
                         </button>
                       )}
                       <div className="flex items-center gap-3 py-1">
-                        <span className="h-px flex-1 bg-white/10" />
+                        <span className="h-px flex-1 bg-wht/10" />
                         <span className="text-[11.5px] font-bold uppercase tracking-wider text-mut">or with email</span>
-                        <span className="h-px flex-1 bg-white/10" />
+                        <span className="h-px flex-1 bg-wht/10" />
                       </div>
                     </div>
                   )}
@@ -199,19 +212,19 @@ export function Settings() {
                   <input
                     type="email" value={cloudEmail} onChange={e => setCloudEmail(e.target.value)}
                     placeholder="you@example.com"
-                    className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                    className="w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
                   />
                   <input
                     type="password" value={cloudPass} onChange={e => setCloudPass(e.target.value)}
                     placeholder="Password (min 6 characters)"
-                    className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                    className="w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
                   />
                   <button className={btnPrimary + btnSm} onClick={doCloudAuth} disabled={cloudBusy}>
                     {cloudBusy ? <><span className="spinner" />…</> : cloudMode === "in" ? "Sign in" : "Create account"}
                   </button>
                 </div>
               ) : (
-                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-[12.5px] text-mut">
+                <div className="rounded-xl border border-line/10 bg-wht/5 px-4 py-3 text-[12.5px] text-mut">
                   💡 To enable: create a free Supabase project → run the SQL in the README → paste your project URL + anon key into <code className="font-mono text-acc1">src/config.ts</code>.
                 </div>
               )}
@@ -234,7 +247,7 @@ export function Settings() {
               <input
                 type="password" value={key} onChange={e => setKey(e.target.value)}
                 placeholder="sk-…"
-                className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                className="w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
               />
             </label>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -242,14 +255,14 @@ export function Settings() {
                 <span className="mb-1 block text-[12.5px] font-bold text-mut">Base URL</span>
                 <input
                   value={base} onChange={e => setBase(e.target.value)}
-                  className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+                  className="w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
                 />
               </label>
               <label className="block">
                 <span className="mb-1 block text-[12.5px] font-bold text-mut">Model</span>
                 <input
                   value={model} onChange={e => setModel(e.target.value)}
-                  className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+                  className="w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
                 />
               </label>
             </div>
@@ -261,6 +274,19 @@ export function Settings() {
               <button className={btnGhost + btnSm} onClick={() => { clearKey(); setKey(""); toast("AI key removed — offline engine still active"); }}>Remove key</button>
             </div>
           </div>
+        </section>
+
+        {/* appearance */}
+        <section className={`${cardCls} p-6`}>
+          <h2 className="mb-1 text-[16px] font-extrabold">🎨 Appearance</h2>
+          <p className="mb-3 text-[13px] text-mut">Pick a look — saved on this device and applied instantly.</p>
+          <OptRow title="Theme" sub={theme === "light" ? "Light mode" : "Dark mode"}>
+            <Seg
+              options={[{ value: "dark", label: "🌙 Dark" }, { value: "light", label: "☀️ Light" }]}
+              value={theme}
+              onChange={v => { setTheme(v); setThemeState(v); }}
+            />
+          </OptRow>
         </section>
 
         {/* reminders */}
@@ -283,6 +309,9 @@ export function Settings() {
                 <input type="time" value={prefs.time} onChange={e => setReminderTime(e.target.value)} className="select-cls" />
               </OptRow>
             )}
+            <OptRow title="Sunday digest" sub="A weekly summary: sessions, streak, and what's next on your roadmap">
+              <Switch checked={prefs.weekly} onChange={toggleWeekly} />
+            </OptRow>
             <div className="flex flex-wrap gap-2.5 pt-1">
               <button className={btnGhost + btnSm} onClick={testNotification}>🔔 Test notification</button>
             </div>
@@ -334,7 +363,7 @@ export function Settings() {
 
 function OptRow({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 py-3.5 last:border-0">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 py-3.5 last:border-0">
       <div>
         <div className="text-[14.5px] font-bold">{title}</div>
         <div className="text-[12.5px] text-fnt">{sub}</div>

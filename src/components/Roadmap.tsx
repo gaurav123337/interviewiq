@@ -10,7 +10,7 @@ import {
   clearGoal, getGoal, getProfile, getProgress, markDiagnosticSkipped,
   saveGoal, saveProfile, toggleTopicProgress, type RoadmapProgress
 } from "../services/goal";
-import { applyProgress, buildRoadmap, type Roadmap, type RoadmapTopic } from "../services/roadmap";
+import { applyProgress, buildRoadmap, downloadRoadmapMarkdown, exportRoadmapMarkdown, type Roadmap, type RoadmapTopic } from "../services/roadmap";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal, Seg } from "./ui";
@@ -148,6 +148,18 @@ export function Roadmap() {
     if (goal) setProgress(toggleTopicProgress(goal, t.id));
   };
 
+  const practiceWeek = () => {
+    if (!goal || !adapted) return;
+    const cur = adapted.weeks.find(w => w.status === "current") ?? adapted.weeks[0];
+    const labels = (cur?.topics ?? []).filter(t => !t.done).slice(0, 6).map(t => t.label);
+    if (!labels.length) { toast("✅ Week complete — check the next week"); return; }
+    startPlannedSession(
+      { level: goal.targetLevel, field: goal.fieldId, company: goal.companyId },
+      { count: 6, mode: "standard", timing: "relaxed", voice: state.config.voice },
+      labels
+    );
+  };
+
   const practiceTopic = (t: RoadmapTopic) => {
     if (!goal) return;
     if (t.practice) {
@@ -221,7 +233,7 @@ export function Roadmap() {
                   onChange={e => setJdText(e.target.value)}
                   rows={4}
                   placeholder="e.g. Senior Backend Engineer at Stripe — Go, PostgreSQL, Kubernetes, distributed systems…"
-                  className="w-full resize-y rounded-xl border border-white/25 bg-[#080c18]/60 p-3 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                  className="w-full resize-y rounded-xl border border-line/25 bg-deep/60 p-3 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
                 />
                 <button className={`${btnOk} ${btnSm} mt-2`} onClick={onAnalyzeJd}>🔍 Analyze & fill</button>
                 {draft.jd && (
@@ -284,7 +296,7 @@ export function Roadmap() {
             <p className="mb-4 text-[13px] text-mut">Rough is fine — the optional diagnostic will measure precisely. Unknown skills default to novice.</p>
             <div className="space-y-3">
               {skills.map(s => (
-                <div key={s.skill} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#080c18]/50 px-4 py-3">
+                <div key={s.skill} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line/10 bg-deep/50 px-4 py-3">
                   <span className="min-w-[200px] flex-1 text-[14px] font-bold">{s.skill}</span>
                   <Seg
                     options={SELF_OPTS}
@@ -332,7 +344,7 @@ export function Roadmap() {
         goal={goal} profile={profile} roadmap={adapted}
         onEdit={editGoal} onClear={clearAll}
         onRetake={() => startDiagnostic(goal.fieldId, goal.targetLevel)}
-        onLearn={onLearn} onPractice={practiceTopic} onToggle={toggleDone}
+        onLearn={onLearn} onPractice={practiceTopic} onPracticeWeek={practiceWeek} onToggle={toggleDone}
         proGated={proGated} onUpgrade={() => nav("settings")}
       />
       <LearnModal
@@ -349,7 +361,19 @@ export function Roadmap() {
 /* Dashboard                                                           */
 /* ------------------------------------------------------------------ */
 
-function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn, onPractice, onToggle, proGated, onUpgrade }: {
+function exportRoadmap(roadmap: Roadmap) {
+  try {
+    const md = exportRoadmapMarkdown(roadmap);
+    const p = navigator.clipboard?.writeText(md);
+    if (p) p.catch(() => {});
+    downloadRoadmapMarkdown(roadmap);
+    toast("⬇ Markdown copied & downloaded — paste it anywhere");
+  } catch {
+    toast("✗ Export failed — try the Print button instead");
+  }
+}
+
+function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn, onPractice, onPracticeWeek, onToggle, proGated, onUpgrade }: {
   goal: CareerGoal;
   profile: ReturnType<typeof getProfile>;
   roadmap: Roadmap | null;
@@ -358,6 +382,7 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
   onRetake: () => void;
   onLearn: (t: RoadmapTopic) => void;
   onPractice: (t: RoadmapTopic) => void;
+  onPracticeWeek: () => void;
   onToggle: (t: RoadmapTopic) => void;
   proGated: boolean;
   onUpgrade: () => void;
@@ -394,19 +419,26 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
             {goal.jd && <div className="mt-0.5 text-[11.5px] text-mut">📋 Tailored from a job description ({goal.jdKeywords?.length ?? 0} topics)</div>}
           </div>
           <div className="flex flex-wrap gap-2 no-print">
+            {roadmap && (
+              <>
+                <button className={btnPrimary + btnSm} onClick={onPracticeWeek} title="Launch a session from this week's topics">▶ Practice this week</button>
+                <button className={btnGhost + btnSm} onClick={() => exportRoadmap(roadmap!)} title="Copy markdown + download .md">⬇ Export</button>
+                <button className={btnGhost + btnSm} onClick={() => window.print()} title="Print or save as PDF (paper-friendly)">🖨 Print</button>
+              </>
+            )}
             <button className={btnGhost + btnSm} onClick={onRetake}>📝 Retake diagnostic</button>
             <button className={btnGhost + btnSm} onClick={onEdit}>✏️ Edit goal</button>
-            <button className={`${btn} border border-white/10 px-3 py-1.5 text-[12.5px] text-fnt hover:bg-white/10`} onClick={onClear}>Clear</button>
+            <button className={`${btn} border border-line/10 px-3 py-1.5 text-[12.5px] text-fnt hover:bg-wht/10`} onClick={onClear}>Clear</button>
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 border-t border-white/10 bg-white/[.03] px-6 py-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 border-t border-line/10 bg-wht/[.03] px-6 py-4 sm:grid-cols-4">
           <Stat label="Weeks" value={roadmap ? `${doneWeeks}/${totalWeeks} done` : "—"} />
           <Stat label="Weeks left" value={weeksLeft || "—"} />
           <Stat label="P0 (must learn)" value={p0 || "—"} />
           <Stat label="Topics done" value={doneCount || "—"} />
         </div>
         {proGated && goal.companyId !== "general" && !goal.jd && (
-          <div className="border-t border-white/10 bg-warn/10 px-6 py-3 text-[12.5px] text-[#fcd34d]">
+          <div className="border-t border-line/10 bg-warn/10 px-6 py-3 text-[12.5px] text-warn">
             🔒 Company-fit weeks are a Pro feature — <button className="font-bold underline" onClick={onUpgrade}>upgrade to keep them</button>.
           </div>
         )}
@@ -425,7 +457,7 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
           {roadmap.weeks.map(w => (
             <div key={w.week} className={`${cardCls} px-5 py-4 ${w.status === "passed" || w.status === "done" ? "opacity-70" : ""}`}>
               <div className="flex flex-wrap items-center gap-2.5">
-                <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl text-[15px] font-extrabold ${w.status === "current" ? "grad-bg text-white" : "border border-white/15 bg-white/5 text-mut"}`}>
+                <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl text-[15px] font-extrabold ${w.status === "current" ? "grad-bg text-white" : "border border-line/15 bg-wht/5 text-mut"}`}>
                   {w.status === "done" ? "✓" : w.week}
                 </span>
                 <div className="min-w-[200px] flex-1">
@@ -441,11 +473,11 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
               <div className="mt-3 text-[12.5px] leading-snug text-fnt">{w.goal}</div>
               <div className="mt-3 space-y-1.5">
                 {w.topics.map(t => (
-                  <div key={t.id} className={`flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-[#080c18]/50 px-3.5 py-2.5 ${t.done ? "border-ok/30" : ""}`}>
+                  <div key={t.id} className={`flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/50 px-3.5 py-2.5 ${t.done ? "border-ok/30" : ""}`}>
                     <button
                       title={t.done ? "Mark not done" : "Mark done"}
                       onClick={() => onToggle(t)}
-                      className={`grid h-7 w-7 flex-none place-items-center rounded-lg border text-[13px] font-extrabold transition-all ${t.done ? "border-ok/50 bg-ok/15 text-ok" : "border-white/20 text-fnt hover:bg-white/10"}`}
+                      className={`grid h-7 w-7 flex-none place-items-center rounded-lg border text-[13px] font-extrabold transition-all ${t.done ? "border-ok/50 bg-ok/15 text-ok" : "border-line/20 text-fnt hover:bg-wht/10"}`}
                     >
                       {t.done ? "✓" : ""}
                     </button>
@@ -497,40 +529,40 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
   if (!topic) return null;
   return (
     <Modal onClose={onClose} title={`📖 ${topic.label}`} desc={topic.practice ? `Practice topic · ${topic.priority} priority` : `Learning topic · ${topic.priority} priority`}>
-      <p className="mb-4 whitespace-pre-wrap text-[14px] leading-relaxed text-[#d7ddf0]">{topic.info.primer}</p>
+      <p className="mb-4 whitespace-pre-wrap text-[14px] leading-relaxed text-ink">{topic.info.primer}</p>
 
       {topic.practice && (
         <div className="mb-4 rounded-xl border border-acc1/25 bg-acc1/10 p-4">
           <div className="mb-1 text-[12.5px] font-bold uppercase tracking-wider text-acc3">Practice question</div>
           <p className="mb-2 text-[13.5px] font-bold leading-snug">{topic.practice.q}</p>
           <div className="mb-1 text-[11.5px] font-bold uppercase tracking-wider text-mut">Model answer</div>
-          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#d7ddf0]">{topic.practice.a}</p>
+          <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink">{topic.practice.a}</p>
         </div>
       )}
 
       <div className="mb-4 flex flex-wrap gap-2">
         {topic.info.links.map(l => (
-          <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="rounded-lg border border-acc1/40 bg-acc1/15 px-3 py-1.5 text-[12.5px] font-bold text-[#c7caff] hover:bg-acc1/30">
+          <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="rounded-lg border border-acc1/40 bg-acc1/15 px-3 py-1.5 text-[12.5px] font-bold text-acctxt hover:bg-acc1/30">
             ↗ {l.label}
           </a>
         ))}
       </div>
 
-      <div className="rounded-xl border border-white/10 bg-[#080c18]/50 p-4">
+      <div className="rounded-xl border border-line/10 bg-deep/50 p-4">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[12.5px] font-bold uppercase tracking-wider text-mut">✨ AI tutor</span>
           {aiAvailable() && (
             <button className={btnGhost + btnSm} onClick={onExplain} disabled={aiLoading}>Explain it to me</button>
           )}
         </div>
-        {aiLoading && <p className="text-[13.5px] text-[#d9dcf5]"><span className="spinner" />Explaining…</p>}
+        {aiLoading && <p className="text-[13.5px] text-ink"><span className="spinner" />Explaining…</p>}
 
         {/* conversation thread */}
         {chat.length > 0 && (
           <div className="mb-3 max-h-[280px] space-y-2.5 overflow-y-auto pr-1">
             {chat.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-white/10 bg-white/10 text-[#d7ddf0]"}`}>
+                <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-line/10 bg-wht/10 text-ink"}`}>
                   {m.content}
                 </div>
               </div>
@@ -540,7 +572,7 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
         )}
 
         {proGated ? (
-          <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2.5 text-[12.5px] text-[#fcd34d]">
+          <div className="rounded-lg border border-warn/30 bg-warn/10 px-3 py-2.5 text-[12.5px] text-warn">
             🔒 The AI tutor chat is a Pro feature — <button className="font-bold underline" onClick={onUpgrade}>upgrade</button> to ask follow-up questions about any topic.
           </div>
         ) : aiAvailable() ? (
@@ -558,7 +590,7 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
               value={ask}
               onChange={e => setAsk(e.target.value)}
               placeholder="Ask a follow-up about this topic…"
-              className="min-w-0 flex-1 rounded-xl border border-white/25 bg-[#080c18]/60 px-3 py-2 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+              className="min-w-0 flex-1 rounded-xl border border-line/25 bg-deep/60 px-3 py-2 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
             />
             <button type="submit" className={btnPrimary + btnSm} disabled={chatBusy || !ask.trim()}>Send</button>
           </form>

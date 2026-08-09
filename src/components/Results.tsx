@@ -49,7 +49,7 @@ export function Results() {
   return (
     <div className="anim-view">
       {/* hero */}
-      <div className="overflow-hidden rounded-[22px] border border-white/10 bg-gradient-to-b from-panel to-panel2 p-7 text-center shadow-[0_18px_50px_rgba(2,6,23,.55)] max-sm:p-5">
+      <div className="overflow-hidden rounded-[22px] border border-line/10 bg-gradient-to-b from-panel to-panel2 p-7 text-center card-shadow max-sm:p-5">
         <div className="eyebrow text-[12.5px] font-bold uppercase tracking-[.14em] text-acc3">Session complete 🎉</div>
         <div className="mt-3 text-[64px] font-extrabold leading-none tracking-tight">
           {(pct * 100).toFixed(0)}<span className="text-[.45em] text-mut">%</span>
@@ -89,7 +89,7 @@ export function Results() {
                   <span className="text-mut">{c.label}</span>
                   <span className="text-ink">{c.score.toFixed(1)}/5</span>
                 </div>
-                <div className="h-[7px] overflow-hidden rounded-full bg-white/10">
+                <div className="h-[7px] overflow-hidden rounded-full bg-wht/10">
                   <div className="h-full rounded-full grad-bg transition-all duration-700" style={{ width: `${Math.max(3, c.pct * 100)}%` }} />
                 </div>
               </div>
@@ -129,14 +129,14 @@ export function Results() {
               <span className="min-w-[180px] flex-1 text-[14.5px] font-bold leading-snug">Q{i + 1}. {a.q.q}</span>
               <span className="text-mut transition-transform group-open:rotate-90">▸</span>
             </summary>
-            <div className="mt-4 space-y-3 border-t border-white/10 pt-4 text-[14px]">
-              <div className="rounded-xl bg-[#080c18]/60 p-4">
+            <div className="mt-4 space-y-3 border-t border-line/10 pt-4 text-[14px]">
+              <div className="rounded-xl bg-deep/60 p-4">
                 <div className="mb-1 text-[12.5px] font-bold uppercase tracking-wider text-mut">You</div>
-                <p className="whitespace-pre-wrap leading-relaxed text-[#d7ddf0]">{a.user || "(no answer)"}</p>
+                <p className="whitespace-pre-wrap leading-relaxed text-ink">{a.user || "(no answer)"}</p>
               </div>
               <div className="rounded-xl border border-acc1/25 bg-acc1/10 p-4">
                 <div className="mb-1 text-[12.5px] font-bold uppercase tracking-wider text-acc3">Model answer</div>
-                <p className="whitespace-pre-wrap leading-relaxed text-[#d7ddf0]">{a.q.a}</p>
+                <p className="whitespace-pre-wrap leading-relaxed text-ink">{a.q.a}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {(a.q.kp || []).map(k => <KpNeutral key={k}>{k}</KpNeutral>)}
@@ -172,12 +172,12 @@ function RoundBreakdown({ cats }: { cats: CatStat[] }) {
         {cats.map(c => {
           const tone = c.pct >= 0.75 ? "ok" : c.pct >= 0.55 ? "warn" : "bad";
           return (
-            <div key={c.label} className="rounded-xl border border-white/10 bg-[#080c18]/50 p-4">
+            <div key={c.label} className="rounded-xl border border-line/10 bg-deep/50 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-[13.5px] font-extrabold">{c.label}</span>
                 <Chip tone={tone as "ok"}>{c.score.toFixed(1)}/5</Chip>
               </div>
-              <div className="mb-2 h-[6px] overflow-hidden rounded-full bg-white/10">
+              <div className="mb-2 h-[6px] overflow-hidden rounded-full bg-wht/10">
                 <div className={`h-full rounded-full ${tone === "ok" ? "bg-ok" : tone === "warn" ? "bg-warn" : "bg-bad"}`} style={{ width: `${Math.max(3, c.pct * 100)}%` }} />
               </div>
               <p className="text-[12px] leading-snug text-fnt">{ROUND_TIPS[c.label] ?? "Review the missed key points for this round."}</p>
@@ -206,7 +206,7 @@ function VerdictBanner({ agg }: { agg: ReturnType<typeof aggregate> }) {
 
 function StatPill({ num, label }: { num: string | number; label: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+    <div className="rounded-xl border border-line/10 bg-wht/5 px-3 py-2.5">
       <div className="text-[20px] font-extrabold leading-tight">{num}</div>
       <div className="text-[11.5px] font-semibold text-mut">{label}</div>
     </div>

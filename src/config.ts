@@ -10,7 +10,7 @@ export const CONFIG = {
   proUrl: "",
   features: {
     /** Master switch for the freemium paywall. Off = the app is fully free; flip to true to enforce limits. */
-    paywall: false
+    paywall: true
   },
   /** Optional cross-device sync. Create a free Supabase project, run the SQL in
       the README, and paste the project URL + anon key here. Empty = cloud sync off. */

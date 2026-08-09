@@ -2,14 +2,15 @@
    Turns a target role + duration + skill profile into a phased, priority-ranked,
    week-by-week plan that adapts to the diagnostic result and session history. */
 
-import type { CareerGoal, LevelId, QA, SavedSession, SkillProfile } from "../types";
+import type { CareerGoal, LevelId, QA, SavedAnswer, SavedSession, SkillProfile } from "../types";
 import {
   BEHAVIORAL, CEO_POOL, CTO_POOL, GENERAL_COMPANY, LEVEL_INDEX,
   SYSTEM_DESIGN, companyById, fieldById, levelById
 } from "../data";
 import { getTopicInfo, type TopicInfo } from "../data/resources";
 import { relatesToSkill, tokenize } from "../engine/scoring";
-import { goalFingerprint, type RoadmapProgress } from "./goal";
+import { getProfile, goalFingerprint, getProgress, saveProgress, type RoadmapProgress } from "./goal";
+import { STORAGE_KEYS, storageGet } from "./storage";
 
 export type Priority = "P0" | "P1" | "P2";
 export type TopicProgress = "new" | "learning" | "mastered";
@@ -439,4 +440,113 @@ export function applyProgress(roadmap: Roadmap, progress: RoadmapProgress): Road
     if (!w.topics.length || w.topics.every(t => t.done)) w.status = "done";
   }
   return roadmap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Practice → progress feedback loop                                   */
+/* ------------------------------------------------------------------ */
+
+/** Marks roadmap topics done when the just-finished session answered their
+    questions well (≥70% coverage) — practice feeds progress back so the plan
+    re-balances automatically. No-op when there's no goal or nothing matched. */
+export function applySessionToProgress(goal: CareerGoal, answers: SavedAnswer[]): void {
+  if (!goal || !answers.length) return;
+  const profile = getProfile();
+  if (!profile) return;
+  const sessions = storageGet<SavedSession[]>(STORAGE_KEYS.sessions, []);
+  let roadmap: Roadmap;
+  try {
+    roadmap = buildRoadmap(goal, profile, sessions);
+  } catch {
+    return; // malformed goal/profile — never block a session save
+  }
+  const current = getProgress();
+  const fp = goalFingerprint(goal);
+  const completed = new Set(current.fingerprint === fp ? current.completed : []);
+  let changed = false;
+  for (const w of roadmap.weeks) {
+    for (const t of w.topics) {
+      if (completed.has(t.id)) continue;
+      const hit = answers.some(a => a.pct >= 0.7 && (t.label === a.q.q || relatesToSkill(t.label, a.q.q, a.q.a)));
+      if (hit) { completed.add(t.id); changed = true; }
+    }
+  }
+  if (changed) {
+    saveProgress({
+      fingerprint: fp,
+      completed: [...completed],
+      completedAt: {
+        ...(current.fingerprint === fp ? current.completedAt : {}),
+        ...Object.fromEntries([...completed].filter(id => !(current.fingerprint === fp && id in current.completedAt)).map(id => [id, Date.now()]))
+      },
+      updatedAt: Date.now()
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Export (markdown / print)                                           */
+/* ------------------------------------------------------------------ */
+
+const PRIORITY_ICON: Record<Priority, string> = { P0: "🔴", P1: "🟡", P2: "🟢" };
+
+/** Renders the roadmap as portable markdown (weeks, priorities, resources). */
+export function exportRoadmapMarkdown(roadmap: Roadmap): string {
+  const g = roadmap.goal;
+  const company = companyById(g.companyId);
+  const field = fieldById(g.fieldId);
+  const lines: string[] = [];
+  lines.push(`# 🧭 InterviewIQ Career Roadmap`);
+  lines.push(``);
+  lines.push(`**${levelById(g.currentLevel).name} → ${levelById(g.targetLevel).name}** · ${field?.name ?? ""}${company.id !== GENERAL_COMPANY.id ? ` · ${company.name}` : ""} · target ${g.targetDate} · ${g.hoursPerWeek}h/week`);
+  lines.push(``);
+  lines.push(`> ${roadmap.summary}`);
+  if (g.jdKeywords?.length) lines.push(`> 📋 Tailored from a job description — ${g.jdKeywords.length} keyword topics.`);
+  lines.push(``);
+
+  const all = roadmap.weeks.flatMap(w => w.topics);
+  const done = all.filter(t => t.done).length;
+  const p0 = all.filter(t => t.priority === "P0" && !t.done).length;
+  lines.push(`## Progress`);
+  lines.push(`- ${done}/${all.length} topics done · ${p0} P0 remaining · ${roadmap.weeks.filter(w => w.status === "done").length}/${roadmap.weeks.length} weeks done`);
+  lines.push(``);
+
+  for (const w of roadmap.weeks) {
+    const badge = w.status === "done" ? "✅ " : w.status === "current" ? "🔥 " : "";
+    lines.push(`## ${badge}Week ${w.week} — ${w.phaseLabel} (${w.start} → ${w.end})`);
+    lines.push(`> ${w.goal}`);
+    lines.push(``);
+    for (const t of w.topics) {
+      const mark = t.done ? "- [x]" : "- [ ]";
+      const res = t.info.links.map(l => `[${l.label}](${l.url})`).join(" · ");
+      lines.push(`${mark} ${PRIORITY_ICON[t.priority]} **${t.label}** (~${t.estHours}h)${t.statusNote ? ` — ${t.statusNote}` : ""}`);
+      lines.push(`    ${t.info.primer}`);
+      if (res) lines.push(`    Resources: ${res}`);
+    }
+    lines.push(``);
+  }
+
+  const gp = roadmap.weeks.flatMap(w => w.topics).filter(t => t.practice);
+  if (gp.length) {
+    lines.push(`## Practice questions`);
+    for (const t of gp.slice(0, 12)) {
+      if (t.practice) lines.push(`- **${t.label}** — ${t.practice.q}`);
+    }
+    lines.push(``);
+  }
+  lines.push(`---`);
+  lines.push(`Generated by InterviewIQ · ${new Date().toISOString().slice(0, 10)}`);
+  return lines.join("\n");
+}
+
+/** Downloads the roadmap as a .md file. */
+export function downloadRoadmapMarkdown(roadmap: Roadmap): void {
+  const md = exportRoadmapMarkdown(roadmap);
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `interviewiq-roadmap-${roadmap.goal.targetDate || "plan"}.md`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

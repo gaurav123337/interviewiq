@@ -13,7 +13,7 @@ export function FeedbackButton() {
       <button
         onClick={() => setOpen(true)}
         title="Feedback & early access"
-        className="rounded-xl border border-white/15 bg-white/5 px-3 py-1.5 text-[13px] font-bold text-mut transition-all hover:bg-white/10 hover:text-ink"
+        className="rounded-xl border border-line/15 bg-wht/5 px-3 py-1.5 text-[13px] font-bold text-mut transition-all hover:bg-wht/10 hover:text-ink"
       >
         ✉️ Feedback
       </button>
@@ -61,7 +61,7 @@ function FeedbackModal({ onClose }: { onClose: () => void }) {
           <input
             type="email" value={email} onChange={e => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="w-full rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 text-[14px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+            className="w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 text-[14px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
           />
         </label>
       )}
@@ -70,7 +70,7 @@ function FeedbackModal({ onClose }: { onClose: () => void }) {
         <textarea
           value={message} onChange={e => setMessage(e.target.value)} rows={4}
           placeholder={mode === "early" ? "What level are you preparing for? (optional)" : "Tell us what you'd improve…"}
-          className="w-full resize-y rounded-xl border border-white/15 bg-[#0b1120]/80 px-4 py-2.5 text-[14px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+          className="w-full resize-y rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 text-[14px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
         />
       </label>
       <div className="flex gap-3">
@@ -87,7 +87,7 @@ function ModeTab({ active, onClick, children }: { active: boolean; onClick: () =
   return (
     <button
       type="button" onClick={onClick}
-      className={`rounded-lg px-3 py-1.5 text-[13px] font-bold transition-all ${active ? "grad-bg text-white" : "text-mut hover:bg-white/10 hover:text-ink"}`}
+      className={`rounded-lg px-3 py-1.5 text-[13px] font-bold transition-all ${active ? "grad-bg text-white" : "text-mut hover:bg-wht/10 hover:text-ink"}`}
     >
       {children}
     </button>

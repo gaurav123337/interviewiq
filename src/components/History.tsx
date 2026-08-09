@@ -128,7 +128,7 @@ function Dashboard({ sessions }: { sessions: ReturnType<typeof useApp>["state"][
                   <span className="text-mut">{m.label}</span>
                   <span>{Math.round(m.pct * 100)}%</span>
                 </div>
-                <div className="h-[6px] overflow-hidden rounded-full bg-white/10">
+                <div className="h-[6px] overflow-hidden rounded-full bg-wht/10">
                   <div className="h-full rounded-full grad-bg" style={{ width: `${Math.max(3, m.pct * 100)}%` }} />
                 </div>
               </div>
@@ -142,7 +142,7 @@ function Dashboard({ sessions }: { sessions: ReturnType<typeof useApp>["state"][
 
 function Stat({ num, label, icon }: { num: string | number; label: string; icon: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+    <div className="rounded-xl border border-line/10 bg-wht/5 px-3 py-2.5">
       <div className="text-[20px] font-extrabold leading-tight">{icon} {num}</div>
       <div className="text-[11.5px] font-semibold text-mut">{label}</div>
     </div>

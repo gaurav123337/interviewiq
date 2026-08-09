@@ -4,6 +4,7 @@
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
 
+  /* dark theme (default) */
   --color-night: #0a0e1a;
   --color-night2: #0e1424;
   --color-panel: #111a2e;
@@ -18,6 +19,42 @@
   --color-ok: #34d399;
   --color-warn: #fbbf24;
   --color-bad: #fb7185;
+
+  /* semantic overlays — translucent "white" fills and hairlines that flip
+     to dark-tinted equivalents in light mode (so bg-white/10, border-line/10
+     stay visible on light surfaces) */
+  --color-wht: #ffffff;
+  --color-line: #ffffff;
+  /* darker-than-panel surfaces: code blocks, inputs, modal bodies */
+  --color-deep: #0b1120;
+  /* accent-tinted text (readable on accent-tinted backgrounds) */
+  --color-acctxt: #c7caff;
+}
+
+/* ------------------------------------------------------------------ */
+/* Light theme — same token names, light values. Toggled by adding the
+   "light" class to <html> (see services/theme.ts). Tailwind v4 compiles
+   every utility to var(--color-*), so the whole app re-themes.          */
+/* ------------------------------------------------------------------ */
+html.light {
+  --color-night: #eef1f8;
+  --color-night2: #e6eaf4;
+  --color-panel: #ffffff;
+  --color-panel2: #f4f6fc;
+  --color-panel3: #e9edf7;
+  --color-ink: #0f172a;
+  --color-mut: #475569;
+  --color-fnt: #8b98b4;
+  --color-acc1: #4f46e5;
+  --color-acc2: #9333ea;
+  --color-acc3: #0e7490;
+  --color-ok: #059669;
+  --color-warn: #b45309;
+  --color-bad: #e11d48;
+  --color-wht: #1e293b;
+  --color-line: #1e293b;
+  --color-deep: #f8fafc;
+  --color-acctxt: #4338ca;
 }
 
 html {
@@ -37,6 +74,13 @@ body {
   overflow-x: hidden;
 }
 
+html.light body {
+  background:
+    radial-gradient(1000px 500px at 85% -10%, rgba(99, 102, 241, 0.10), transparent 60%),
+    radial-gradient(800px 420px at -10% 10%, rgba(168, 85, 247, 0.08), transparent 60%),
+    var(--color-night);
+}
+
 ::selection {
   background: rgba(99, 102, 241, 0.45);
 }
@@ -45,6 +89,8 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #26324f; border-radius: 8px; border: 2px solid var(--color-night); }
 ::-webkit-scrollbar-thumb:hover { background: #33426b; }
+html.light ::-webkit-scrollbar-thumb { background: #c3cbe0; border-color: var(--color-night); }
+html.light ::-webkit-scrollbar-thumb:hover { background: #aab4d0; }
 
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(10px); }
@@ -89,6 +135,10 @@ body {
   background: linear-gradient(120deg, rgba(99, 102, 241, 0.16), rgba(168, 85, 247, 0.16));
 }
 
+/* theme-aware card elevation */
+.card-shadow { box-shadow: 0 18px 50px rgba(2, 6, 23, 0.55); }
+html.light .card-shadow { box-shadow: 0 12px 32px rgba(15, 23, 42, 0.10); }
+
 .caret {
   display: inline-block;
   width: 8px;
@@ -119,8 +169,8 @@ body {
 /* shared select styling (used by Planner and Drill) */
 .select-cls {
   border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(11, 17, 32, 0.8);
+  border: 1px solid var(--color-line);
+  background: color-mix(in oklab, var(--color-deep) 80%, transparent);
   padding: 0.5rem 0.75rem;
   font-size: 13.5px;
   font-weight: 600;
@@ -129,4 +179,19 @@ body {
 .select-cls:focus {
   outline: none;
   border-color: rgba(99, 102, 241, 0.8);
+}
+
+/* code editor surface for the playground */
+.editor-surface {
+  background: var(--color-deep);
+  color: var(--color-ink);
+  border: 1px solid var(--color-line);
+  border-radius: 0.9rem;
+  font-family: var(--font-mono);
+  tab-size: 2;
+}
+.editor-surface:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.7);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
 }

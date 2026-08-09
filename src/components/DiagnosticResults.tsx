@@ -46,7 +46,7 @@ export function DiagnosticResults() {
 
   return (
     <div className="anim-view mx-auto max-w-[720px]">
-      <div className="overflow-hidden rounded-[22px] border border-white/10 bg-gradient-to-b from-panel to-panel2 p-7 text-center shadow-[0_18px_50px_rgba(2,6,23,.55)]">
+      <div className="overflow-hidden rounded-[22px] border border-line/10 bg-gradient-to-b from-panel to-panel2 p-7 text-center card-shadow">
         <div className="eyebrow text-[12.5px] font-bold uppercase tracking-[.14em] text-acc3">Skill diagnostic complete 🎯</div>
         <div className="mt-4 text-[40px] font-extrabold leading-none">
           {measured.icon} {measured.name}
@@ -74,7 +74,7 @@ export function DiagnosticResults() {
                   <span className="text-mut">{s.skill}</span>
                   <span className={cov >= 0.6 ? "text-ok" : "text-bad"}>{Math.round(cov * 100)}%{s.self ? <span className="text-fnt"> · self {s.self}/5</span> : null}</span>
                 </div>
-                <div className="h-[7px] overflow-hidden rounded-full bg-white/10">
+                <div className="h-[7px] overflow-hidden rounded-full bg-wht/10">
                   <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.max(3, cov * 100)}%` }} />
                 </div>
                 {cov < 0.6 && aiAvailable() && (
@@ -83,7 +83,7 @@ export function DiagnosticResults() {
                       {aiLoading && aiFor === s.skill ? "…" : "✨"} Why this matters
                     </button>
                     {aiFor === s.skill && ai && (
-                      <p className="mt-2 whitespace-pre-wrap rounded-xl border border-acc1/25 bg-acc1/10 p-3 text-[13px] leading-relaxed text-[#d9dcf5]">{ai}</p>
+                      <p className="mt-2 whitespace-pre-wrap rounded-xl border border-acc1/25 bg-acc1/10 p-3 text-[13px] leading-relaxed text-ink">{ai}</p>
                     )}
                   </div>
                 )}

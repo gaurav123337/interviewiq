@@ -23,7 +23,10 @@ export const STORAGE_KEYS = {
   syncMeta: "iq.syncMeta",
   goal: "iq.goal",
   skills: "iq.skills",
-  roadmapProg: "iq.roadmapProg"
+  roadmapProg: "iq.roadmapProg",
+  theme: "iq.theme",
+  notifLastWeekly: "iq.notifLastWeekly",
+  code: "iq.code"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {

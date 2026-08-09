@@ -29,7 +29,7 @@ export function ToastHost() {
       {items.map(i => (
         <div
           key={i.id}
-          className={`rounded-xl border border-white/25 bg-[#1b2745] px-5 py-3 text-sm font-semibold text-ink shadow-[0_14px_40px_rgba(0,0,0,.5)] ${i.leaving ? "anim-fade opacity-0 transition-opacity duration-300" : "anim-pop"}`}
+          className={`rounded-xl border border-line/25 bg-panel3 px-5 py-3 text-sm font-semibold text-ink shadow-[0_14px_40px_rgba(0,0,0,.5)] ${i.leaving ? "anim-fade opacity-0 transition-opacity duration-300" : "anim-pop"}`}
         >
           {i.msg}
         </div>
