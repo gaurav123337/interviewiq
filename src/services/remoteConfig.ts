@@ -136,6 +136,8 @@ export interface PublishedQuestion {
   answer: string;
   keyPoints: string[];
   published: boolean;
+  /** Last edit/review time (ISO) — drives staleness in the Quality Center. */
+  updatedAt: string | null;
 }
 
 export function getPublishedQuestions(): PublishedQuestion[] {

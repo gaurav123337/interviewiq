@@ -1,10 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { LevelId } from "../types";
 import { FIELDS, LEVELS } from "../data";
 import { getCloudState, subscribeCloud } from "../services/cloud";
 import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../services/teams";
-import { aiAvailable } from "../ai";
+import { chat, aiAvailable } from "../ai";
+import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
+import {
+  adminFeedbackFeed, adminQuestionQuality, mergeQuality, touchQuestion,
+  type FeedbackFeedRow, type QualityRow
+} from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
 import { parseQuestionBatch } from "../services/import";
@@ -23,9 +28,9 @@ import {
 } from "../services/scraper";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import { toast } from "../toast";
-import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
+import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "teams";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "teams";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -37,6 +42,7 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "scraper", label: "Scraper", icon: "🕷️" },
   { id: "config", label: "Product config", icon: "🎛️" },
   { id: "activity", label: "Activity", icon: "🧾" },
+  { id: "quality", label: "Quality", icon: "🔎" },
   { id: "teams", label: "Teams", icon: "🏢" }
 ];
 
@@ -140,6 +146,7 @@ export function Admin() {
         {section === "scraper" && <ScraperSection busy={busy} setBusy={setBusy} />}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
         {section === "activity" && <Activity busy={busy} setBusy={setBusy} />}
+        {section === "quality" && <QualitySection busy={busy} setBusy={setBusy} />}
         {section === "teams" && <AdminTeams teamState={teamState} />}
       </div>
     </div>
@@ -463,6 +470,23 @@ function ReviewInbox({ list, busy, setBusy, onChanged }: {
   setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
 }) {
   const drafts = list.filter(q => !q.published);
+  /* auto-triage: heuristic issues + near-duplicate detection against the whole bank */
+  const triage = useMemo(() => {
+    const bank = list.map(q => q.question);
+    const map: Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }> = {};
+    for (const d of drafts) {
+      const issues = draftIssues(d);
+      const dups = findDuplicates(d.question, bank.filter(q => q !== d.question));
+      map[d.id] = { issues, level: triageLevel(issues), dups };
+    }
+    return map;
+  }, [list, drafts]);
+  const sortedDrafts = [...drafts].sort((a, b) => {
+    const p = { "review-first": 0, "needs-work": 1, ready: 2 };
+    return (p[triage[a.id]?.level ?? "ready"] - p[triage[b.id]?.level ?? "ready"]) || a.id - b.id;
+  });
+  const [aiTriage, setAiTriage] = useState<Record<number, { score: number; note: string }>>({});
+  const [aiBusy, setAiBusy] = useState(false);
   const [edits, setEdits] = useState<Record<number, DraftEdit>>({});
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [candidates, setCandidates] = useState<MissCandidate[]>([]);
@@ -568,6 +592,26 @@ function ReviewInbox({ list, busy, setBusy, onChanged }: {
     finally { setBusy(false); }
   };
 
+  const aiTriageAll = async () => {
+    const pending = sortedDrafts.filter(d => !aiTriage[d.id]);
+    if (!pending.length) return;
+    setAiBusy(true);
+    const out: Record<number, { score: number; note: string }> = {};
+    for (const d of pending) {
+      try {
+        const raw = await chat([
+          { role: "system", content: "You are a senior interview-question editor. Score each draft 0-10 for clarity, answer completeness and key-point quality. Reply with ONLY `N — short reason`." },
+          { role: "user", content: `Question: ${d.question}\nModel answer: ${d.answer || "(missing)"}\nKey points: ${d.keyPoints.join(", ") || "(none)"}` }
+        ], { temperature: 0.2, maxTokens: 60 });
+        const m = raw.trim().match(/^(\d{1,2})\s*[-—:.]\s*(.+)$/s);
+        const score = Math.max(0, Math.min(10, Number(m?.[1] ?? 5)));
+        out[d.id] = { score, note: (m?.[2] ?? raw).slice(0, 160) };
+      } catch { out[d.id] = { score: 5, note: "AI unavailable" }; }
+    }
+    setAiTriage(t => ({ ...t, ...out }));
+    setAiBusy(false);
+  };
+
   const deleteSelected = async () => {
     const ids = [...selected];
     if (!ids.length) return;
@@ -641,6 +685,11 @@ function ReviewInbox({ list, busy, setBusy, onChanged }: {
           </div>
           {drafts.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
+              {aiAvailable() && (
+                <button className={btnSoft + btnSm} onClick={aiTriageAll} disabled={aiBusy || busy}>
+                  {aiBusy ? <><span className="spinner" /> Scoring…</> : `✨ AI-triage (${sortedDrafts.filter(d => !aiTriage[d.id]).length})`}
+                </button>
+              )}
               <button className={btnGhost + btnSm} onClick={toggleAll} disabled={busy}>
                 {selected.size === drafts.length && drafts.length > 0 ? "Deselect all" : `Select all (${drafts.length})`}
               </button>
@@ -665,15 +714,39 @@ function ReviewInbox({ list, busy, setBusy, onChanged }: {
         </div>
       )}
 
-      {drafts.map(d => {
+      {sortedDrafts.map(d => {
         const e = edits[d.id];
         if (!e) return null;
         const sel = selected.has(d.id);
+        const t = triage[d.id];
+        const ai = aiTriage[d.id];
         return (
           <div key={d.id} className={`${cardCls} p-5 ${sel ? "ring-2 ring-acc1/60" : ""}`}>
             <div className="mb-3 flex items-start gap-3">
               <input type="checkbox" checked={sel} onChange={() => toggle(d.id)} className="mt-1 h-4 w-4 accent-acc1" />
               <div className="flex-1 space-y-2.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {t && (
+                    <Chip tone={t.level === "ready" ? "ok" : t.level === "needs-work" ? "warn" : "bad"}>
+                      {t.level === "ready" ? "🟢 ready" : t.level === "needs-work" ? "🟡 needs work" : "🔴 review first"}
+                    </Chip>
+                  )}
+                  {t && t.issues.map((iss, i) => <Chip key={i} tone="warn">{iss}</Chip>)}
+                  {t && t.dups.map((dup, i) => (
+                    <Chip key={"dup" + i} tone="co">🔁 ~{Math.round(dup.sim * 100)}% dup</Chip>
+                  ))}
+                  {ai && (
+                    <Chip tone={ai.score >= 7 ? "ok" : ai.score >= 4 ? "warn" : "bad"}>
+                      ✨ {ai.score}/10
+                    </Chip>
+                  )}
+                </div>
+                {ai?.note && ai.note !== "AI unavailable" && <p className="text-[11.5px] text-fnt">✨ {ai.note}</p>}
+                {t && t.dups.length > 0 && (
+                  <p className="text-[11.5px] text-fnt">
+                    Matches existing: {t.dups[0].text.slice(0, 90)}{t.dups[0].text.length > 90 ? "…" : ""}
+                  </p>
+                )}
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <select value={e.fieldId} onChange={ev => edit(d.id, { fieldId: ev.target.value })} className="inp">
                     {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
@@ -1399,6 +1472,267 @@ function OptRow({ title, sub, children }: { title: string; sub: string; children
         <div className="text-[12px] text-fnt">{sub}</div>
       </div>
       {children}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Quality Center — scoreboard, calibration, staleness, feedback       */
+
+const QUALITY_TABS = [
+  { value: "scoreboard", label: "📊 Scoreboard" },
+  { value: "calibration", label: "🎚️ Calibration" },
+  { value: "staleness", label: "⏳ Staleness" },
+  { value: "feedback", label: "💬 Feedback" }
+] as const;
+
+function QualityBar({ score }: { score: number }) {
+  const color = score >= 80 ? "bg-ok" : score >= 60 ? "bg-warn" : "bg-bad";
+  return (
+    <div className="h-[7px] w-[92px] overflow-hidden rounded-full bg-wht/15" title={`${score}/100`}>
+      <div className={`h-full rounded-full ${color}`} style={{ width: Math.max(4, score) + "%" }} />
+    </div>
+  );
+}
+
+function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean) => void }) {
+  const [rows, setRows] = useState<QualityRow[]>([]);
+  const [feed, setFeed] = useState<FeedbackFeedRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<(typeof QUALITY_TABS)[number]["value"]>("scoreboard");
+  const [cutoff, setCutoff] = useState(90);
+  const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
+
+  const bank = getPublishedQuestions();
+  const merged = useMemo(
+    () => mergeQuality(rows, bank.map(b => ({ question: b.question, updatedAt: b.updatedAt }))),
+    [rows, bank]
+  );
+  const stale = merged
+    .filter(m => m.staleDays != null && m.staleDays > cutoff)
+    .sort((a, b) => (b.staleDays ?? 0) - (a.staleDays ?? 0));
+
+  const load = () => {
+    setLoading(true);
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50)])
+      .then(([q, f]) => { setRows(q); setFeed(f); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const touch = async (question: string) => {
+    const q = bank.find(b => b.question === question);
+    if (!q) return;
+    setBusy(true);
+    try {
+      await touchQuestion(q.id);
+      setRefreshed(s => new Set(s).add(question));
+      toast("✓ Marked reviewed — staleness clock restarted");
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  /* calibration bands — pass rate 0-20 / 20-40 / … / 80-100 */
+  const confident = merged.filter(m => m.attempts >= 5);
+  const tooEasy = confident.filter(m => m.passRate > 90);
+  const tooHard = confident.filter(m => m.passRate < 30);
+  const bins = [0, 20, 40, 60, 80].map(low => {
+    const items = merged.filter(m => m.passRate >= low && m.passRate < low + 20);
+    return { low, count: items.length };
+  });
+  const maxBin = Math.max(1, ...bins.map(b => b.count));
+
+  const bandTone = { healthy: "ok", watch: "warn", fix: "bad" } as const;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1">
+          <h2 className="text-[16px] font-extrabold">🔎 Content quality center</h2>
+          <p className="text-[12.5px] text-mut">
+            Every question that real users answered, scored on performance, difficulty, feedback and freshness.
+            The composite score (0-100) is: avg score · pass-rate band · 👍/👎/🚩 · days since review.
+          </p>
+        </div>
+        <Seg options={[...QUALITY_TABS]} value={tab} onChange={v => setTab(v)} />
+        <button className={btnGhost + btnSm} onClick={load} disabled={busy}>↻ Refresh</button>
+      </div>
+
+      {loading && rows.length === 0 && <p className="text-center text-mut"><span className="spinner inline-block" /> Crunching session data…</p>}
+
+      {tab === "scoreboard" && (
+        <div className={`${cardCls} overflow-hidden`}>
+          <div className="border-b border-line/10 p-5">
+            <h3 className="text-[15px] font-extrabold">📊 Scoreboard ({merged.length} questions with data)</h3>
+            <p className="text-[12.5px] text-mut">Worst first. Low-attempt rows are low-confidence — check before acting.</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[880px] text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-line/10 text-[11.5px] uppercase tracking-wider text-mut">
+                  <th className="px-5 py-3 font-bold">Question</th>
+                  <th className="px-3 py-3 font-bold">Field · level</th>
+                  <th className="px-3 py-3 font-bold">Attempts</th>
+                  <th className="px-3 py-3 font-bold">Avg</th>
+                  <th className="px-3 py-3 font-bold">Miss</th>
+                  <th className="px-3 py-3 font-bold">Pass</th>
+                  <th className="px-3 py-3 font-bold">Feedback</th>
+                  <th className="px-3 py-3 font-bold">Stale</th>
+                  <th className="px-3 py-3 font-bold">Quality</th>
+                  <th className="px-5 py-3 font-bold" />
+                </tr>
+              </thead>
+              <tbody>
+                {merged.length === 0 && (
+                  <tr><td colSpan={10} className="px-5 py-10 text-center text-mut">No scored sessions yet — complete an interview and come back.</td></tr>
+                )}
+                {merged.map(m => (
+                  <tr key={m.question} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
+                    <td className="max-w-[300px] px-5 py-3">
+                      <div className="truncate font-bold">{m.question}</div>
+                      <div className="text-[11.5px] text-fnt">
+                        {m.attempts < 5 ? "⚠️ low confidence" : `last ${m.lastSeen ? new Date(m.lastSeen).toLocaleDateString() : "—"}`}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <Chip tone="cat">{FIELDS.find(f => f.id === m.fieldId)?.name ?? m.fieldId}</Chip>
+                      <span className="ml-1 text-[11.5px] text-fnt">{LEVELS.find(l => l.id === m.level)?.name ?? m.level}</span>
+                    </td>
+                    <td className="px-3 py-3 tabular-nums">{m.attempts}</td>
+                    <td className="px-3 py-3 font-bold tabular-nums">{m.avgScore}/5</td>
+                    <td className="px-3 py-3 tabular-nums text-bad">{m.missRate}%</td>
+                    <td className="px-3 py-3 tabular-nums text-ok">{m.passRate}%</td>
+                    <td className="px-3 py-3 tabular-nums">
+                      <span className="text-ok">👍{m.ups}</span> <span className="text-bad">👎{m.downs}</span> <span className="text-warn">🚩{m.flags}</span>
+                    </td>
+                    <td className="px-3 py-3 tabular-nums">{m.staleDays == null ? "—" : m.staleDays + "d"}</td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <QualityBar score={m.score} />
+                        <Chip tone={bandTone[m.band]}>{m.score}</Chip>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3">
+                      {bank.some(b => b.question === m.question) && !refreshed.has(m.question) ? (
+                        <button className={btnGhost + btnSm} onClick={() => touch(m.question)} disabled={busy}>✓ Reviewed</button>
+                      ) : bank.some(b => b.question === m.question) ? (
+                        <Chip tone="ok">✓ fresh</Chip>
+                      ) : (
+                        <span className="text-[11.5px] text-fnt" title="Curated question shipped in code — versioned with the app">in code</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "calibration" && (
+        <div className="space-y-4">
+          <div className={`${cardCls} p-5`}>
+            <h3 className="text-[15px] font-extrabold">🎚️ Difficulty calibration ({confident.length} questions with ≥5 attempts)</h3>
+            <p className="text-[12.5px] text-mut">
+              Pass rate = % of answers scored ≥3/5. The healthy band is 30-90%: under 30% the question is
+              too hard or badly worded; over 90% it's too easy to be worth the user's time.
+            </p>
+            <div className="mt-4 flex h-[140px] items-end gap-3">
+              {bins.map(b => (
+                <div key={b.low} className="flex flex-1 flex-col items-center gap-1.5">
+                  <div className="text-[11px] font-bold tabular-nums text-fnt">{b.count}</div>
+                  <div
+                    className={`w-full max-w-[80px] rounded-t-lg ${b.low === 40 || b.low === 60 ? "bg-ok/70" : b.low === 20 || b.low === 80 ? "bg-warn/60" : "bg-bad/60"}`}
+                    style={{ height: Math.max(4, (b.count / maxBin) * 100) + "px" }}
+                  />
+                  <div className="text-[10.5px] font-bold text-mut">{b.low}–{b.low + 20}%</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {tooEasy.length > 0 && (
+            <div className={`${cardCls} p-5`}>
+              <h3 className="mb-2 text-[15px] font-extrabold text-ok">✅ Too easy (&gt;90% pass) — consider leveling up or replacing</h3>
+              <ul className="space-y-1.5">
+                {tooEasy.map(m => <li key={m.question} className="text-[13px] text-mut">• {m.question} <span className="text-fnt">({m.passRate}% · {m.attempts} attempts)</span></li>)}
+              </ul>
+            </div>
+          )}
+          {tooHard.length > 0 && (
+            <div className={`${cardCls} p-5`}>
+              <h3 className="mb-2 text-[15px] font-extrabold text-bad">🔴 Too hard or unclear (&lt;30% pass) — review wording & model answer</h3>
+              <ul className="space-y-1.5">
+                {tooHard.map(m => <li key={m.question} className="text-[13px] text-mut">• {m.question} <span className="text-fnt">({m.passRate}% · {m.attempts} attempts)</span></li>)}
+              </ul>
+            </div>
+          )}
+          {confident.length === 0 && <p className="text-center text-mut">Not enough data yet — outliers appear once questions have ≥5 attempts.</p>}
+        </div>
+      )}
+
+      {tab === "staleness" && (
+        <div className={`${cardCls} p-5`}>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1">
+              <h3 className="text-[15px] font-extrabold">⏳ Staleness queue ({stale.length})</h3>
+              <p className="text-[12.5px] text-mut">
+                Questions not edited or marked reviewed for {cutoff}+ days. Interview topics churn — refresh
+                anything the market has moved past. (Curated code questions aren't listed; they ship with the app.)
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-[12.5px] font-bold text-mut">
+              Stale after
+              <select value={cutoff} onChange={e => setCutoff(Number(e.target.value))} className="inp w-[90px]">
+                {[60, 90, 120, 180, 270, 365].map(d => <option key={d} value={d}>{d}d</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="mt-3 space-y-2">
+            {stale.length === 0 && <p className="py-6 text-center text-[13px] text-mut">Nothing stale — the bank is healthy. 🎉</p>}
+            {stale.map(m => (
+              <div key={m.question} className="flex flex-wrap items-center gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-bold">{m.question}</div>
+                  <div className="text-[11.5px] text-fnt">
+                    {m.staleDays}d since last edit · avg {m.avgScore}/5 · {m.attempts} attempts
+                  </div>
+                </div>
+                <Chip tone={(m.staleDays ?? 0) > 270 ? "bad" : (m.staleDays ?? 0) > 180 ? "warn" : "default"}>{(m.staleDays ?? 0)}d</Chip>
+                <button className={btnGhost + btnSm} onClick={() => touch(m.question)} disabled={busy || refreshed.has(m.question)}>
+                  {refreshed.has(m.question) ? "✓ done" : "✓ Reviewed"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "feedback" && (
+        <div className={`${cardCls} p-5`}>
+          <h3 className="text-[15px] font-extrabold">💬 Recent answer feedback ({feed.length})</h3>
+          <p className="mb-3 text-[12.5px] text-mut">👍/👎/🚩 from every user, signed in or not — the most direct quality signal there is.</p>
+          <div className="space-y-2">
+            {feed.length === 0 && <p className="py-6 text-center text-[13px] text-mut">No feedback yet — it appears as users rate answers in the app.</p>}
+            {feed.map((f, i) => (
+              <div key={i} className="flex flex-wrap items-start gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
+                <span className="text-[16px]">{f.kind === "up" ? "👍" : f.kind === "down" ? "👎" : "🚩"}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13.5px] font-bold">{f.question}</div>
+                  {f.reason && <div className="mt-0.5 text-[12.5px] text-warn">“{f.reason}”</div>}
+                  <div className="mt-0.5 text-[11.5px] text-fnt">
+                    {f.fieldId && <>{FIELDS.find(x => x.id === f.fieldId)?.name ?? f.fieldId} · </>}
+                    {f.level && <>{LEVELS.find(l => l.id === f.level)?.name ?? f.level} · </>}
+                    {new Date(f.createdAt).toLocaleString()}
+                  </div>
+                </div>
+                <Chip tone={f.kind === "up" ? "ok" : f.kind === "down" ? "bad" : "warn"}>{f.kind}</Chip>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

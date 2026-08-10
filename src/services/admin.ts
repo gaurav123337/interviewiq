@@ -91,7 +91,7 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
   const [{ data: cfg }, { data: ann }, { data: qs }] = await Promise.all([
     client.from("app_config").select("key, value"),
     client.from("announcements").select("id, title, body, badge, published, created_at").order("created_at", { ascending: false }),
-    client.from("published_questions").select("id, field_id, level, question, answer, key_points, published")
+    client.from("published_questions").select("id, field_id, level, question, answer, key_points, published, updated_at")
   ]);
   if (cfg) {
     const merged: RemoteConfig = { features: {}, ai: {}, limits: {} };
@@ -107,8 +107,8 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
       .map(a => ({ id: a.id, title: a.title, body: a.body, badge: a.badge, published: a.published, createdAt: new Date(a.created_at).getTime() })));
   }
   if (qs) {
-    setPublishedQuestions((qs as unknown as { id: number; field_id: string; level: string; question: string; answer: string; key_points: string[]; published: boolean }[])
-      .map(q => ({ id: q.id, fieldId: q.field_id, level: q.level as LevelId, question: q.question, answer: q.answer, keyPoints: q.key_points ?? [], published: q.published })));
+    setPublishedQuestions((qs as unknown as { id: number; field_id: string; level: string; question: string; answer: string; key_points: string[]; published: boolean; updated_at: string | null }[])
+      .map(q => ({ id: q.id, fieldId: q.field_id, level: q.level as LevelId, question: q.question, answer: q.answer, keyPoints: q.key_points ?? [], published: q.published, updatedAt: q.updated_at ?? null })));
   }
 }
 

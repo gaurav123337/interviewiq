@@ -60,9 +60,9 @@ describe("announcements", () => {
 describe("published questions", () => {
   it("filters by field, level and publish state", () => {
     setPublishedQuestions([
-      { id: 1, fieldId: "backend", level: "senior", question: "Design a queue", answer: "…", keyPoints: ["durability"], published: true },
-      { id: 2, fieldId: "backend", level: "senior", question: "Draft question", answer: "", keyPoints: [], published: false },
-      { id: 3, fieldId: "frontend", level: "senior", question: "CSS question", answer: "…", keyPoints: [], published: true }
+      { id: 1, fieldId: "backend", level: "senior", question: "Design a queue", answer: "…", keyPoints: ["durability"], published: true, updatedAt: null },
+      { id: 2, fieldId: "backend", level: "senior", question: "Draft question", answer: "", keyPoints: [], published: false, updatedAt: null },
+      { id: 3, fieldId: "frontend", level: "senior", question: "CSS question", answer: "…", keyPoints: [], published: true, updatedAt: null }
     ]);
     const out = publishedFor("backend", "senior");
     expect(out.map(q => q.q)).toEqual(["Design a queue"]);
@@ -72,7 +72,7 @@ describe("published questions", () => {
 
   it("appears in the question bank", () => {
     setPublishedQuestions([
-      { id: 1, fieldId: "backend", level: "senior", question: "Admin question", answer: "Model answer", keyPoints: ["k1"], published: true }
+      { id: 1, fieldId: "backend", level: "senior", question: "Admin question", answer: "Model answer", keyPoints: ["k1"], published: true, updatedAt: null }
     ]);
     const { items } = bankItems("backend", "Admin question");
     expect(items.some(i => i.q === "Admin question")).toBe(true);

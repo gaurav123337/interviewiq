@@ -7,6 +7,7 @@ import { useApp } from "../store";
 import { toast } from "../toast";
 import { fmtTime } from "../util";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
+import { hasVoted, sendFeedback, type FeedbackKind } from "../services/feedback";
 import { loadVoices, speak, stopSpeaking, ttsSupported } from "../services/voice";
 import { UpgradeModal } from "./Upgrade";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Kp, Modal, Switch } from "./ui";
@@ -355,6 +356,7 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
         <div className="mb-5">
           <h4 className="mb-2 text-[13px] font-bold uppercase tracking-wider text-mut">📖 Model answer</h4>
           <p className="whitespace-pre-wrap text-[14.5px] leading-[1.7] text-ink">{q.a}</p>
+          <AnswerFeedback question={q.q} />
         </div>
 
         <div className="mb-5 flex flex-wrap gap-2">
@@ -370,6 +372,74 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- 👍/👎/🚩 feedback on the model answer ---------- */
+function AnswerFeedback({ question }: { question: string }) {
+  const { state } = useApp();
+  const [showReason, setShowReason] = useState(false);
+  const [reason, setReason] = useState("");
+  const [sending, setSending] = useState(false);
+  const meta = state.session?.meta;
+
+  const vote = async (kind: FeedbackKind) => {
+    if (hasVoted(question)) { toast("Already rated — thanks!"); return; }
+    if (kind === "flag") { setShowReason(true); return; }
+    setSending(true);
+    const ok = await sendFeedback({
+      question, kind, fieldId: meta?.fieldId, level: meta?.levelId
+    });
+    setSending(false);
+    toast(ok ? (kind === "up" ? "👍 Thanks — great to know!" : "👎 Thanks — we'll review this one.") : "Feedback couldn't sync (offline) — it still counts locally.");
+  };
+
+  const submitFlag = async () => {
+    setSending(true);
+    const ok = await sendFeedback({
+      question, kind: "flag", fieldId: meta?.fieldId, level: meta?.levelId, reason: reason.trim() || undefined
+    });
+    setSending(false);
+    setShowReason(false); setReason("");
+    toast(ok ? "🚩 Flagged — the team will review this answer." : "Flag saved locally — sync when online.");
+  };
+
+  const Btn = ({ kind, label, title }: { kind: FeedbackKind; label: string; title: string }) => {
+    const voted = hasVoted(question, kind);
+    return (
+      <button
+        type="button"
+        title={title}
+        disabled={sending}
+        onClick={() => vote(kind)}
+        className={`rounded-full border px-2.5 py-1 text-[12px] font-bold transition-colors ${voted ? "border-acc1/60 bg-acc1/15 text-acctxt" : "border-line/15 bg-wht/5 text-mut hover:bg-wht/10"}`}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line/10 pt-3">
+      <span className="text-[11.5px] font-bold uppercase tracking-wider text-fnt">Was this answer helpful?</span>
+      <Btn kind="up" label="👍" title="Great answer" />
+      <Btn kind="down" label="👎" title="Needs work" />
+      <Btn kind="flag" label="🚩" title="Report a problem (wrong, outdated, unclear)" />
+      {showReason && (
+        <span className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <input
+            autoFocus
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder="What's wrong? (wrong, outdated, unclear…)"
+            className="min-w-[220px] flex-1 rounded-lg border border-line/20 bg-deep/80 px-3 py-1.5 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+            onKeyDown={e => { if (e.key === "Enter") submitFlag(); }}
+          />
+          <button className="rounded-lg bg-warn/20 px-3 py-1.5 text-[12px] font-bold text-warn hover:bg-warn/30" onClick={submitFlag} disabled={sending}>Submit flag</button>
+          <button className="rounded-lg px-2 py-1.5 text-[12px] font-bold text-mut hover:text-ink" onClick={() => setShowReason(false)}>Cancel</button>
+        </span>
+      )}
     </div>
   );
 }
