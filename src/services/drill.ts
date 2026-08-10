@@ -2,6 +2,7 @@ import type { LevelId } from "../types";
 import { deepDiveCards } from "../data/deepDive";
 import { bankItems, shuffle } from "../engine";
 import { storageGet, storageSet } from "./storage";
+import { codingDrillCards } from "./codingTrack";
 
 export interface DrillCard {
   q: string;
@@ -72,9 +73,14 @@ export function makeDeck(fieldSel: string, lvlSel: LevelId | "all", count = 10):
   const dd = deepDiveCards()
     .filter(c => !bankQ.has(c.q))
     .map(c => ({ ...c, lvl: (lvlSel === "all" ? "mid" : lvlSel) as LevelId }));
+  /* coding problems the user has failed ≥2× join the deck as flashcards */
+  const cd = codingDrillCards()
+    .filter(c => !bankQ.has(c.q))
+    .map(c => ({ ...c, lvl: (lvlSel === "all" ? c.lvl : lvlSel) as LevelId }));
   const pool = [
     ...items.filter(i => (lvlSel === "all" || i.lvl === lvlSel) && isDue(i.q, srs, now)),
-    ...dd.filter(c => (lvlSel === "all" || c.lvl === lvlSel) && isDue(c.q, srs, now))
+    ...dd.filter(c => (lvlSel === "all" || c.lvl === lvlSel) && isDue(c.q, srs, now)),
+    ...cd.filter(c => (lvlSel === "all" || c.lvl === lvlSel) && isDue(c.q, srs, now))
   ];
   const overdue = pool.filter(i => srs[i.q]).sort((a, b) => srs[a.q].due - srs[b.q].due);
   const fresh = shuffle(pool.filter(i => !srs[i.q]));

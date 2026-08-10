@@ -44,6 +44,10 @@ export interface CliProblem {
   tests: CliTest[];
   /** Hidden judge cases — run with the visible ones but never shown to the user. */
   hidden?: CliTest[];
+  /** Short Pro-gated hint. */
+  hint?: string;
+  /** Reference solution (JavaScript) — used for the Pro solution + bank self-test. */
+  reference?: string;
 }
 
 /* Function problem: implement a named function; the judge calls it with typed
@@ -77,108 +81,49 @@ export interface FnProblem {
   hidden?: FnTest[];
   /** Reference implementation — the bank self-test asserts it passes its own tests. */
   reference: string;
+  /** Short Pro-gated hint. */
+  hint?: string;
 }
 
-export type CodingProblem = CliProblem | FnProblem;
+/* UI component problem: build a real component in HTML/CSS/JS. The judge
+   renders it in a sandboxed same-origin iframe and runs DOM assertions
+   (clicks, typing, computed styles) — all client-side and offline. */
+export interface UiAssertion {
+  /** Shown in the results checklist. */
+  label: string;
+  /** JS body evaluated inside the iframe after the app mounts. May await.
+      Returns truthy to pass. `sleep(ms)` is available as a helper. */
+  check: string;
+}
+
+export interface UiProblem {
+  kind: "ui";
+  id: string;
+  title: string;
+  difficulty: 1 | 2 | 3;
+  category: string;
+  prompt: string;
+  /** Starter HTML injected into <body>. */
+  html: string;
+  /** Starter CSS injected into <style>. */
+  css: string;
+  /** Starter JS injected into <script>. */
+  js: string;
+  /** Visible checks shown in the checklist. */
+  assertions: UiAssertion[];
+  /** Hidden checks — run with the visible ones, never shown to the user. */
+  hiddenAssertions?: UiAssertion[];
+  /** Reference implementation — the bank self-test asserts it passes. */
+  reference: { html: string; css: string; js: string };
+  /** Short Pro-gated hint. */
+  hint?: string;
+}
+
+export type CodingProblem = CliProblem | FnProblem | UiProblem;
 
 export const codingProblemById = (id: string): CodingProblem | undefined => CODING_PROBLEMS.find(p => p.id === id);
 
-const PY = (body: string) => `import sys
 
-# Input:
-#   ${body}
-def solve(lines):
-    out = []
-    # your code here — append each output line to out
-    return out
-`;
-
-const JS = (body: string) => `// Input:
-//   ${body}
-// lines = input split by newline (no trailing newlines)
-function solve(lines) {
-  const out = [];
-  // your code here — push each output line onto out
-  return out;
-}
-`;
-
-const TS = (body: string) => `// Input:
-//   ${body}
-function solve(lines: string[]): string[] {
-  const out: string[] = [];
-  // your code here — push each output line onto out
-  return out;
-}
-`;
-
-const CPP = (body: string) => `#include <bits/stdc++.h>
-using namespace std;
-
-// Input:
-//   ${body}
-vector<string> solve(const vector<string>& lines) {
-    vector<string> out;
-    // your code here — push each output line onto out
-    return out;
-}
-
-int main() {
-    vector<string> lines;
-    string l;
-    while (getline(cin, l)) lines.push_back(l);
-    for (const string& o : solve(lines)) cout << o << "\\n";
-    return 0;
-}
-`;
-
-const JAVA = (body: string) => `import java.util.*;
-
-class Main {
-    // Input:
-    //   ${body}
-    static List<String> solve(List<String> lines) {
-        List<String> out = new ArrayList<>();
-        // your code here — add each output line to out
-        return out;
-    }
-
-    public static void main(String[] args) {
-        Scanner s = new Scanner(System.in);
-        List<String> lines = new ArrayList<>();
-        while (s.hasNextLine()) lines.add(s.nextLine());
-        for (String o : solve(lines)) System.out.println(o);
-    }
-}
-`;
-
-const GO = (body: string) => `package main
-
-import (
-    "bufio"
-    "fmt"
-    "os"
-)
-
-// Input:
-//   ${body}
-func solve(lines []string) []string {
-    out := []string{}
-    // your code here — append each output line to out
-    return out
-}
-
-func main() {
-    sc := bufio.NewScanner(os.Stdin)
-    var lines []string
-    for sc.Scan() {
-        lines = append(lines, sc.Text())
-    }
-    for _, o := range solve(lines) {
-        fmt.Println(o)
-    }
-}
-`;
 
 const CLI_PROBLEMS: CliProblem[] = [
   {
@@ -203,10 +148,23 @@ const CLI_PROBLEMS: CliProblem[] = [
       { stdin: "5\n1 5 3 9 2\n11\n", expect: "3 4" }
     ],
     hidden: [
-      { stdin: "6\n-3 4 3 90 0 7\n94\n", expect: "3 4" },
+      { stdin: "6\n-3 4 3 90 0 7\n94\n", expect: "1 3" },
       { stdin: "7\n1 2 3 4 5 6 7\n13\n", expect: "5 6" },
       { stdin: "10\n0 4 3 0 8 6 9 2 1 5\n0\n", expect: "0 3" }
-    ]
+    ],
+    hint: "Hash the numbers you've seen; for each value check whether the complement target - x is already stored.",
+    reference: `function solve(lines) {
+  const n = Number(lines[0]);
+  const arr = lines[1].split(" ").map(Number);
+  const target = Number(lines[2]);
+  const idx = new Map();
+  for (let i = 0; i < n; i++) {
+    const need = target - arr[i];
+    if (idx.has(need)) return [idx.get(need) + " " + i];
+    idx.set(arr[i], i);
+  }
+  return [];
+}`
   },
   {
     kind: "cli",
@@ -236,7 +194,18 @@ const CLI_PROBLEMS: CliProblem[] = [
       { stdin: "({[}])", expect: "false" },
       { stdin: "([{}()])", expect: "true" },
       { stdin: ")(", expect: "false" }
-    ]
+    ],
+    hint: "Push openers onto a stack; a closer must match the top, and the stack must be empty at the end.",
+    reference: `function solve(lines) {
+  const s = lines[0] || "";
+  const stack = [];
+  const match = { ")": "(", "]": "[", "}": "{" };
+  for (const ch of s) {
+    if (ch === "(" || ch === "[" || ch === "{") stack.push(ch);
+    else if (stack.pop() !== match[ch]) return ["false"];
+  }
+  return [String(stack.length === 0)];
+}`
   },
   {
     kind: "cli",
@@ -260,10 +229,17 @@ const CLI_PROBLEMS: CliProblem[] = [
       { stdin: "4\n-2 -3 -1 -5\n", expect: "-1" }
     ],
     hidden: [
-      { stdin: "8\n-1 2 -1 3 -2 4 -1 2\n", expect: "6" },
+      { stdin: "8\n-1 2 -1 3 -2 4 -1 2\n", expect: "7" },
       { stdin: "2\n-2 -1\n", expect: "-1" },
-      { stdin: "11\n8 -19 5 -4 20 2 -9 3 7 -1 4\n", expect: "28" }
-    ]
+      { stdin: "11\n8 -19 5 -4 20 2 -9 3 7 -1 4\n", expect: "27" }
+    ],
+    hint: "Kadane: keep the best sum ending here (max of current or current + previous best) and track the all-time max.",
+    reference: `function solve(lines) {
+  const arr = (lines[1] || "").split(" ").filter(Boolean).map(Number);
+  let best = -Infinity, cur = -Infinity;
+  for (const x of arr) { cur = Math.max(x, cur + x); best = Math.max(best, cur); }
+  return [String(best)];
+}`
   },
   {
     kind: "cli",
@@ -285,7 +261,20 @@ const CLI_PROBLEMS: CliProblem[] = [
       { stdin: "6\n-1 0 3 5 9 12\n2\n", expect: "-1" },
       { stdin: "1\n7\n7\n", expect: "0" },
       { stdin: "5\n1 2 3 4 5\n6\n", expect: "-1" }
-    ]
+    ],
+    hint: "Halve the search space each step: compare the middle element with the target and recurse into one side.",
+    reference: `function solve(lines) {
+  const arr = (lines[1] || "").split(" ").filter(Boolean).map(Number);
+  const target = Number(lines[2]);
+  let lo = 0, hi = arr.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] === target) return [String(mid)];
+    if (arr[mid] < target) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return ["-1"];
+}`
   },
   {
     kind: "cli",
@@ -312,7 +301,14 @@ const CLI_PROBLEMS: CliProblem[] = [
       { stdin: "5\n6 4 3 1 7\n", expect: "6" },
       { stdin: "8\n1 8 2 7 3 6 4 5\n", expect: "7" },
       { stdin: "3\n5 5 5\n", expect: "0" }
-    ]
+    ],
+    hint: "Track the cheapest price seen so far; profit = price - min(price) and keep the max.",
+    reference: `function solve(lines) {
+  const prices = (lines[1] || "").split(" ").filter(Boolean).map(Number);
+  let min = Infinity, best = 0;
+  for (const p of prices) { min = Math.min(min, p); best = Math.max(best, p - min); }
+  return [String(best)];
+}`
   },
   {
     kind: "cli",
@@ -333,11 +329,31 @@ const CLI_PROBLEMS: CliProblem[] = [
       { stdin: "15\n", expect: "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz" },
       { stdin: "5\n", expect: "1\n2\nFizz\n4\nBuzz" },
       { stdin: "1\n", expect: "1" }
-    ]
+    ],
+    hint: "For each i from 1 to n: print FizzBuzz if divisible by 15, Fizz if by 3, Buzz if by 5, else the number.",
+    reference: `function solve(lines) {
+  const n = Number(lines[0] || 0);
+  const out = [];
+  for (let i = 1; i <= n; i++) {
+    out.push(i % 15 === 0 ? "FizzBuzz" : i % 3 === 0 ? "Fizz" : i % 5 === 0 ? "Buzz" : String(i));
+  }
+  return out;
+}`
   }
 ];
 
 /* Function-mode problems (JS, runs offline in the browser). */
 import { JS_FUNCTION_PROBLEMS } from "./codingBank/jsFunctions";
+/* Algorithm CLI problems (all 6 runner languages). */
+import { ALGORITHM_PROBLEMS } from "./codingBank/algorithms";
+/* UI component problems (HTML/CSS/JS, judged in a sandboxed iframe). */
+import { UI_COMPONENT_PROBLEMS } from "./codingBank/uiComponents";
+/* Per-language starter skeletons (own module to avoid an import cycle). */
+import { PY, JS, TS, CPP, JAVA, GO } from "./starters";
 
-export const CODING_PROBLEMS: CodingProblem[] = [...CLI_PROBLEMS, ...JS_FUNCTION_PROBLEMS];
+export const CODING_PROBLEMS: CodingProblem[] = [
+  ...CLI_PROBLEMS,
+  ...ALGORITHM_PROBLEMS,
+  ...JS_FUNCTION_PROBLEMS,
+  ...UI_COMPONENT_PROBLEMS
+];

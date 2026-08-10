@@ -53,6 +53,10 @@ describe("behavioral mode", () => {
 describe("coding judge", () => {
   it("every problem has at least one visible test and hidden cases exist for the main set", () => {
     for (const p of CODING_PROBLEMS) {
+      if (p.kind === "ui") {
+        expect(p.assertions.length).toBeGreaterThan(0);
+        continue;
+      }
       expect(p.tests.length).toBeGreaterThan(0);
       if (p.kind === "cli") {
         expect(p.tests.every(t => typeof t.stdin === "string" && typeof t.expect === "string")).toBe(true);

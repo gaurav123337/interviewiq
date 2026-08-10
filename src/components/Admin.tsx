@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { LevelId } from "../types";
 import { FIELDS, LEVELS } from "../data";
+import { codingProblemById } from "../data/coding";
 import { getCloudState, subscribeCloud } from "../services/cloud";
 import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../services/teams";
 import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
-  adminFeedbackFeed, adminQuestionQuality, mergeQuality, touchQuestion,
-  type FeedbackFeedRow, type QualityRow
+  adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, mergeQuality, touchQuestion,
+  type CodingQualityRow, type FeedbackFeedRow, type QualityRow
 } from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
@@ -1483,7 +1484,8 @@ const QUALITY_TABS = [
   { value: "scoreboard", label: "📊 Scoreboard" },
   { value: "calibration", label: "🎚️ Calibration" },
   { value: "staleness", label: "⏳ Staleness" },
-  { value: "feedback", label: "💬 Feedback" }
+  { value: "feedback", label: "💬 Feedback" },
+  { value: "coding", label: "💻 Coding" }
 ] as const;
 
 function QualityBar({ score }: { score: number }) {
@@ -1498,6 +1500,7 @@ function QualityBar({ score }: { score: number }) {
 function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean) => void }) {
   const [rows, setRows] = useState<QualityRow[]>([]);
   const [feed, setFeed] = useState<FeedbackFeedRow[]>([]);
+  const [coding, setCoding] = useState<CodingQualityRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<(typeof QUALITY_TABS)[number]["value"]>("scoreboard");
   const [cutoff, setCutoff] = useState(90);
@@ -1514,8 +1517,8 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50)])
-      .then(([q, f]) => { setRows(q); setFeed(f); })
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality()])
+      .then(([q, f, c]) => { setRows(q); setFeed(f); setCoding(c); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -1730,6 +1733,58 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
                 <Chip tone={f.kind === "up" ? "ok" : f.kind === "down" ? "bad" : "warn"}>{f.kind}</Chip>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {tab === "coding" && (
+        <div className={`${cardCls} overflow-hidden`}>
+          <div className="border-b border-line/10 p-5">
+            <h3 className="text-[15px] font-extrabold">💻 Coding scoreboard ({coding.length} problems with attempts)</h3>
+            <p className="text-[12.5px] text-mut">
+              Pass rate per playground problem from real full-suite runs. Under 30% pass = too hard or broken prompt;
+              over 90% = too easy. Problems are versioned with the app — a bad one is fixed in the next release.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-line/10 text-[11.5px] uppercase tracking-wider text-mut">
+                  <th className="px-5 py-3 font-bold">Problem</th>
+                  <th className="px-3 py-3 font-bold">Kind</th>
+                  <th className="px-3 py-3 font-bold">Attempts</th>
+                  <th className="px-3 py-3 font-bold">Passed</th>
+                  <th className="px-3 py-3 font-bold">Pass rate</th>
+                  <th className="px-3 py-3 font-bold">Flag</th>
+                  <th className="px-5 py-3 font-bold">Last seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coding.length === 0 && (
+                  <tr><td colSpan={7} className="px-5 py-10 text-center text-mut">No coding attempts yet — users solve problems in the 💻 Playground and the scoreboard fills in.</td></tr>
+                )}
+                {coding
+                  .slice()
+                  .sort((a, b) => a.passRate - b.passRate || b.attempts - a.attempts)
+                  .map(c => {
+                    const p = codingProblemById(c.problemId);
+                    const label = p ? `${p.kind === "fn" ? "🧩" : p.kind === "ui" ? "🎨" : "⚙️"} ${p.title}` : c.problemId;
+                    const tone = c.attempts >= 5 && c.passRate < 30 ? "bad" : c.attempts >= 5 && c.passRate > 90 ? "warn" : "ok";
+                    const note = c.attempts >= 5 && c.passRate < 30 ? "too hard / broken" : c.attempts >= 5 && c.passRate > 90 ? "too easy" : "healthy";
+                    return (
+                      <tr key={c.problemId} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
+                        <td className="px-5 py-3 font-bold">{label}</td>
+                        <td className="px-3 py-3">{p ? (p.kind === "fn" ? "function" : p.kind === "ui" ? "UI component" : "CLI algorithm") : "—"}</td>
+                        <td className="px-3 py-3 tabular-nums">{c.attempts}</td>
+                        <td className="px-3 py-3 tabular-nums">{c.passes}</td>
+                        <td className={`px-3 py-3 font-bold tabular-nums ${c.passRate < 30 ? "text-bad" : c.passRate > 90 ? "text-warn" : "text-ok"}`}>{c.passRate}%</td>
+                        <td className="px-3 py-3"><Chip tone={tone}>{note}</Chip></td>
+                        <td className="px-5 py-3 text-[12.5px] text-fnt">{c.lastSeen ? new Date(c.lastSeen).toLocaleDateString() : "—"}</td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

@@ -15,7 +15,7 @@ describe("coding catalog", () => {
     for (const p of cli) {
       expect(Object.keys(p.starters).sort()).toEqual(RUNNER_LANGS.map(l => l.id).sort());
       expect(p.tests.length).toBeGreaterThanOrEqual(2);
-      for (const t of p.tests) expect(t.expect.trim().length).toBeGreaterThan(0);
+      for (const t of p.tests) expect(typeof t.expect).toBe("string"); /* empty-string outputs are valid (e.g. reverse of "") */
     }
     for (const p of fn) {
       expect(p.starter.trim().length).toBeGreaterThan(0);

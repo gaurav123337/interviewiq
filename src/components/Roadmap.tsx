@@ -17,6 +17,30 @@ import { applyProgress, buildRoadmap, downloadRoadmapMarkdown, exportRoadmapMark
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Drawer, Seg } from "./ui";
+import { CODING_PROBLEMS, type CodingProblem } from "../data/coding";
+
+/* P4 roadmap → coding wiring: match this week's topic labels to playground
+   problems so "solve X problems in category Y" becomes concrete actions.
+   Falls back to the daily pick when nothing matches. */
+function codeFocusFor(topics: RoadmapTopic[]): CodingProblem[] {
+  const text = topics.map(t => t.label.toLowerCase()).join(" ");
+  const match = (re: RegExp): boolean => re.test(text);
+  const picks: CodingProblem[] = [];
+  if (match(/async|promise|timer|event|debounce|throttle/i))
+    picks.push(...CODING_PROBLEMS.filter(p => p.kind === "fn" && /async|timing/i.test(p.category)));
+  if (match(/dom|component|html|css|ui|frontend/i))
+    picks.push(...CODING_PROBLEMS.filter(p => p.kind === "ui"));
+  if (match(/array|string|hash|two.?pointer|sliding|stack|queue|recurs|dp|dynamic|binary|search|sort|graph|tree|linked/i))
+    picks.push(...CODING_PROBLEMS.filter(p => p.kind === "cli" && p.difficulty <= 2));
+  const seen = new Set<string>();
+  const out: CodingProblem[] = [];
+  for (const p of picks) { if (!seen.has(p.id)) { seen.add(p.id); out.push(p); } if (out.length >= 3) break; }
+  if (out.length === 0) {
+    const day = Math.floor(Date.now() / 86_400_000);
+    out.push(CODING_PROBLEMS[day % CODING_PROBLEMS.length]);
+  }
+  return out;
+}
 
 const fmt = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -460,7 +484,7 @@ export function Roadmap() {
         onEdit={editGoal} onClear={clearAll}
         onRetake={() => startDiagnostic(goal.fieldId, goal.targetLevel)}
         onLearn={onLearn} onPractice={practiceTopic} onPracticeWeek={practiceWeek} onToggle={toggleDone}
-        proGated={proGated} onUpgrade={() => nav("settings")}
+        proGated={proGated} onUpgrade={() => nav("settings")} onCode={() => nav("playground")}
       />
       <LearnModal
         topic={learn} aiLoading={aiLoading}
@@ -489,7 +513,7 @@ function exportRoadmap(roadmap: Roadmap) {
   }
 }
 
-function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn, onPractice, onPracticeWeek, onToggle, proGated, onUpgrade }: {
+function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn, onPractice, onPracticeWeek, onToggle, proGated, onUpgrade, onCode }: {
   goal: CareerGoal;
   profile: ReturnType<typeof getProfile>;
   roadmap: Roadmap | null;
@@ -502,6 +526,7 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
   onToggle: (t: RoadmapTopic) => void;
   proGated: boolean;
   onUpgrade: () => void;
+  onCode: () => void;
 }) {
   const field = fieldById(goal.fieldId);
   const company = companyById(goal.companyId);
@@ -617,6 +642,33 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
               )}
             </div>
           ))}
+          {roadmap && (
+            <div className={`${cardCls} px-5 py-4`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[17px]">💻</span>
+                <h4 className="flex-1 text-[14.5px] font-extrabold">Code focus for this week</h4>
+                <button className={btnGhost + btnSm} onClick={onCode}>Open playground →</button>
+              </div>
+              <p className="mb-2 mt-0.5 text-[12.5px] text-mut">
+                Hand-picked from the current week's topics — solving these reinforces what you're studying.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {codeFocusFor((roadmap.weeks.find(w => w.status === "current") ?? roadmap.weeks[0])?.topics ?? []).map(p => (
+                  <button
+                    key={p.id}
+                    onClick={onCode}
+                    className="flex items-center gap-2 rounded-xl border border-line/10 bg-wht/5 px-3 py-2 text-left text-[12.5px] font-bold transition-all hover:border-acc1/40"
+                  >
+                    <span>{p.kind === "fn" ? "🧩" : p.kind === "ui" ? "🎨" : "⚙️"}</span>
+                    {p.title}
+                    <span className={`text-[10.5px] font-extrabold uppercase ${p.difficulty === 1 ? "text-ok" : p.difficulty === 2 ? "text-warn" : "text-bad"}`}>
+                      {["Easy", "Medium", "Hard"][p.difficulty - 1]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className={`${cardCls} px-5 py-3 text-center text-[12.5px] text-mut`}>
             Check topics off as you study — the plan re-balances: finished weeks are marked done and the current week pulls work forward.
           </div>

@@ -174,3 +174,26 @@ begin
           coalesce(nullif(auth.jwt() ->> 'email', ''), 'admin'),
           jsonb_build_object('note', 'reviewed'));
 end $$;
+
+/* Coding scoreboard — pass rate per playground problem from coding_attempt
+   events (queued by src/services/codingTrack.ts on every full-suite run). */
+create or replace function public.admin_coding_quality(max_rows integer default 200)
+returns table (
+  problem_id text, attempts bigint, passes bigint, pass_rate double precision,
+  last_seen timestamptz
+)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  return query
+    select e.meta->>'problemId' as problem_id,
+           count(*) as attempts,
+           count(*) filter (where (e.meta->>'passed')::boolean) as passes,
+           round(100.0 * count(*) filter (where (e.meta->>'passed')::boolean) / nullif(count(*), 0), 1) as pass_rate,
+           max(e.created_at) as last_seen
+    from public.usage_events e
+    where e.kind = 'coding_attempt' and e.meta->>'problemId' is not null
+    group by e.meta->>'problemId'
+    order by attempts desc
+    limit max_rows;
+end $$;

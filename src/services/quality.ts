@@ -116,3 +116,27 @@ export async function touchQuestion(id: number): Promise<void> {
   const { error } = await client.rpc("touch_question", { p_id: id });
   if (error) throw new Error(error.message);
 }
+
+/* ---------- Coding scoreboard (playground problems) ---------- */
+
+export interface CodingQualityRow {
+  problemId: string;
+  attempts: number;
+  passes: number;
+  passRate: number;
+  lastSeen: string | null;
+}
+
+export async function adminCodingQuality(): Promise<CodingQualityRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_coding_quality");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+    problemId: r.problem_id as string,
+    attempts: Number(r.attempts ?? 0),
+    passes: Number(r.passes ?? 0),
+    passRate: Number(r.pass_rate ?? 0),
+    lastSeen: (r.last_seen as string | null) ?? null
+  }));
+}
