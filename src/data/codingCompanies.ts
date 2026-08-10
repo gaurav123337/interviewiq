@@ -211,26 +211,38 @@ const MISSED_TOPIC_HINTS: { re: RegExp; topics: string[] }[] = [
   { re: /data structure|linked|tree|graph|heap|trie/i, topics: ["Arrays & hashing", "Strings & stacks", "Search & sorting"] }
 ];
 
+/** Runs the missed-key-point keyword bridge over arbitrary text. */
+function topicsFromText(text: string, hits: Set<string>): void {
+  for (const h of MISSED_TOPIC_HINTS) {
+    if (h.re.test(text)) h.topics.forEach(t => hits.add(t));
+  }
+}
+
 /** Topics the user has missed across saved interview sessions (key-point level). */
 export function missedSessionTopics(): Set<string> {
   const sessions = storageGet<SavedSession[]>(STORAGE_KEYS.sessions, []);
   const hits = new Set<string>();
   for (const s of sessions) {
     for (const a of s.answers) {
-      for (const m of a.missed ?? []) {
-        for (const h of MISSED_TOPIC_HINTS) {
-          if (h.re.test(m)) h.topics.forEach(t => hits.add(t));
-        }
-      }
+      for (const m of a.missed ?? []) topicsFromText(m, hits);
     }
   }
   return hits;
 }
 
+/** Topics debated in saved coach discussions — the same bridge, so a chat about
+    time complexity feeds the same focus plan as a missed key point. */
+export function coachDiscussionTopics(): Set<string> {
+  const list = storageGet<{ at: number; text: string }[]>(STORAGE_KEYS.coachTopics, []);
+  const hits = new Set<string>();
+  for (const d of list) topicsFromText(d.text, hits);
+  return hits;
+}
+
 /** Personal signals for a problem: how often it was failed in the playground,
-    and whether a weak self/diagnostic skill OR a missed session key point maps
-    to its topic. `weakSrc` says which signal fired. */
-export function focusSignals(p: CodingProblem): { misses: number; weakSkill: boolean; weakSrc: "skill" | "session" | null } {
+    and whether a weak self/diagnostic skill, a missed session key point, or a
+    saved coach discussion maps to its topic. `weakSrc` says which fired. */
+export function focusSignals(p: CodingProblem): { misses: number; weakSkill: boolean; weakSrc: "skill" | "session" | "coach" | null } {
   const misses = getCodingTrack()[p.id]?.fails ?? 0;
   const topic = codingTopicFor(p);
   const profile = getProfile();
@@ -240,6 +252,9 @@ export function focusSignals(p: CodingProblem): { misses: number; weakSkill: boo
   }
   if (missedSessionTopics().has(topic)) {
     return { misses, weakSkill: true, weakSrc: "session" };
+  }
+  if (coachDiscussionTopics().has(topic)) {
+    return { misses, weakSkill: true, weakSrc: "coach" };
   }
   return { misses, weakSkill: false, weakSrc: null };
 }
@@ -251,7 +266,7 @@ export function hasPersonalSignals(): boolean {
   const anyMiss = Object.values(track).some(e => (e?.fails ?? 0) > 0);
   const profile = getProfile();
   const anyWeak = !!profile?.skills.some(s => (s.measured ?? s.self) < 3);
-  return anyMiss || anyWeak || missedSessionTopics().size > 0;
+  return anyMiss || anyWeak || missedSessionTopics().size > 0 || coachDiscussionTopics().size > 0;
 }
 
 export interface FocusRank {
@@ -260,10 +275,10 @@ export interface FocusRank {
   freq: CompanyFreq;
   /** Playground failures for this problem. */
   misses: number;
-  /** True when a weak skill or missed session key point maps to this topic. */
+  /** True when a weak skill, missed session key point, or coach discussion maps here. */
   weakSkill: boolean;
-  /** Which personal signal fired — "skill" or "session". */
-  weakSrc: "skill" | "session" | null;
+  /** Which personal signal fired — "skill", "session" or "coach". */
+  weakSrc: "skill" | "session" | "coach" | null;
   /** Combined score — freq dominates, personal signals add. */
   score: number;
 }

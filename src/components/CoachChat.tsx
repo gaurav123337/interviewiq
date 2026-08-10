@@ -10,8 +10,11 @@
 import { useEffect, useRef, useState } from "react";
 import { aiAvailable, chat, type ChatMessage } from "../ai";
 import { fieldById } from "../data";
+import { deepDiveCards } from "../data/deepDive";
+import { publishedFor } from "../services/remoteConfig";
+import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import type { LevelId } from "../types";
-import { btnPrimary, btnSm, cardCls } from "./ui";
+import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
 import { toast } from "../toast";
 
 interface CoachMsg { role: "user" | "assistant"; text: string }
@@ -40,21 +43,55 @@ function overlap(a: string, b: string): number {
   return n;
 }
 
-function relatedQuestions(ctx: CoachContext, text: string, limit: number): { q: string; a: string }[] {
-  if (!ctx.fieldId) return [];
-  const field = fieldById(ctx.fieldId);
-  if (!field) return [];
-  const levels = ctx.levelId ? [ctx.levelId] : (Object.keys(field.questions) as LevelId[]);
+/** Retrieval pool for the offline tutor — the current field's questions, the
+    curated deep-dive knowledge base, and admin-published bank updates. */
+function retrievalPool(ctx: CoachContext): { q: string; a: string }[] {
   const pool: { q: string; a: string }[] = [];
-  for (const lv of levels) {
-    for (const qa of field.questions[lv] ?? []) pool.push({ q: qa.q, a: qa.a });
+  const seen = new Set<string>();
+  const push = (qa: { q: string; a: string }) => {
+    if (qa.q && !seen.has(qa.q)) { seen.add(qa.q); pool.push(qa); }
+  };
+  if (ctx.fieldId) {
+    const field = fieldById(ctx.fieldId);
+    const levels = ctx.levelId ? [ctx.levelId] : field ? (Object.keys(field.questions) as LevelId[]) : [];
+    for (const lv of levels) {
+      for (const qa of field?.questions[lv] ?? []) push({ q: qa.q, a: qa.a });
+      if (ctx.levelId) for (const qa of publishedFor(ctx.fieldId, ctx.levelId)) push({ q: qa.q, a: qa.a });
+    }
   }
-  return pool
+  for (const c of deepDiveCards()) push({ q: c.q, a: c.a });
+  return pool;
+}
+
+function relatedQuestions(ctx: CoachContext, text: string, limit: number): { q: string; a: string }[] {
+  return retrievalPool(ctx)
     .map(qa => ({ qa, s: overlap(qa.q, text) + overlap(qa.a, text) }))
     .filter(x => x.s > 0)
     .sort((a, b) => b.s - a.s)
     .slice(0, limit)
     .map(x => x.qa);
+}
+
+/* ------------------------------------------------------------------ */
+/* Saving discussions into the weakness profile                        */
+/* ------------------------------------------------------------------ */
+
+interface CoachDiscussion { at: number; text: string }
+
+/** Saved coach discussions — read by codingCompanies to derive weak topics. */
+export function getCoachDiscussions(): CoachDiscussion[] {
+  return storageGet<CoachDiscussion[]>(STORAGE_KEYS.coachTopics, []);
+}
+
+/** Appends a discussion (deduped by content hash, capped at the latest 10). */
+export function saveCoachDiscussion(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const key = t.slice(0, 200);
+  const list = getCoachDiscussions().filter(d => !d.text.startsWith(key));
+  list.unshift({ at: Date.now(), text: t.slice(0, 1200) });
+  storageSet(STORAGE_KEYS.coachTopics, list.slice(0, 10));
+  return true;
 }
 
 /** Deterministic, grounded answer — retrieval over the bank, no network. */
@@ -115,6 +152,15 @@ export function CoachChat(ctx: CoachContext) {
   useEffect(() => {
     boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight });
   }, [msgs, busy, open]);
+
+  const saveDiscussion = () => {
+    const text = msgs.filter(m => m.role === "assistant" || m.role === "user").map(m => m.text).join("\n");
+    if (saveCoachDiscussion(text)) {
+      toast("💾 Discussion saved — topics debated here now influence your focus plan");
+    } else {
+      toast("Nothing to save yet — have a chat first");
+    }
+  };
 
   const send = async () => {
     const text = input.trim();
@@ -197,6 +243,11 @@ export function CoachChat(ctx: CoachContext) {
             />
             <button className={`${btnPrimary} ${btnSm} flex-none`} onClick={send} disabled={busy || !input.trim()}>Send</button>
           </div>
+          {msgs.length >= 2 && (
+            <button type="button" className={`${btnGhost} ${btnSm} mt-2 w-full`} onClick={saveDiscussion}>
+              💾 Save this discussion into my weak-topic profile
+            </button>
+          )}
         </div>
       )}
     </div>

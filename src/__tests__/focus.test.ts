@@ -3,9 +3,9 @@
 
 import { describe, expect, it, beforeEach } from "vitest";
 import { CODING_PROBLEMS } from "../data/coding";
-import { companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, missedSessionTopics, personalFocusForCompany, personalPlan, qaCategoryHeat } from "../data/codingCompanies";
+import { coachDiscussionTopics, companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, missedSessionTopics, personalFocusForCompany, personalPlan, qaCategoryHeat } from "../data/codingCompanies";
 import { codingDrillCards } from "../services/codingTrack";
-import { localCoachReply } from "../components/CoachChat";
+import { getCoachDiscussions, localCoachReply, saveCoachDiscussion } from "../components/CoachChat";
 import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
 
 const sessionWithMissed = (missed: string[]) => ({
@@ -18,6 +18,7 @@ beforeEach(() => {
   storageRemove(STORAGE_KEYS.skills);
   storageRemove(STORAGE_KEYS.remoteConfig);
   storageRemove(STORAGE_KEYS.sessions);
+  storageRemove(STORAGE_KEYS.coachTopics);
 });
 
 describe("remote frequency overrides", () => {
@@ -130,6 +131,33 @@ describe("learning from session answers", () => {
   });
 });
 
+describe("coach discussions feed the weakness profile", () => {
+  it("saved discussions derive the same topics as missed key points", () => {
+    expect(coachDiscussionTopics().size).toBe(0);
+    saveCoachDiscussion("We debated time complexity and edge cases for the two-sum solution");
+    const topics = coachDiscussionTopics();
+    expect(topics.has("Arrays & hashing")).toBe(true);
+    expect(topics.has("Search & sorting")).toBe(true);
+  });
+
+  it("a coach discussion flags matching problems with weakSrc 'coach'", () => {
+    saveCoachDiscussion("I keep missing time complexity analysis");
+    const sig = focusSignals(CODING_PROBLEMS.find(p => p.id === "two-sum")!);
+    expect(sig.weakSkill).toBe(true);
+    expect(sig.weakSrc).toBe("coach");
+    expect(hasPersonalSignals()).toBe(true);
+  });
+
+  it("save dedupes identical discussions and caps the log", () => {
+    const text = "debate about memoization and caching";
+    expect(saveCoachDiscussion(text)).toBe(true);
+    expect(saveCoachDiscussion(text)).toBe(true);
+    expect(getCoachDiscussions().length).toBe(1);
+    for (let i = 0; i < 15; i++) saveCoachDiscussion("discussion number " + i + " about async performance");
+    expect(getCoachDiscussions().length).toBeLessThanOrEqual(10);
+  });
+});
+
 describe("local coach replies", () => {
   const ctx = {
     prompt: "Explain how closures work in JavaScript.",
@@ -162,6 +190,11 @@ describe("local coach replies", () => {
     const r = localCoachReply("hello", ctx);
     expect(r).toContain("Tell me your approach");
     expect(r).toContain("closure");
+  });
+
+  it("retrieves related practice from the deep-dive knowledge base even without a field", () => {
+    const r = localCoachReply("how does debounce actually work", { prompt: ctx.prompt, answer: ctx.answer, kp: ctx.kp, fieldId: null, levelId: null });
+    expect(r).toContain("Related practice");
   });
 });
 

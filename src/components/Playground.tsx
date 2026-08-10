@@ -19,9 +19,11 @@ import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { getTheme, type Theme } from "../services/theme";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { recordCodingAttempt } from "../services/codingTrack";
+import { getGoal } from "../services/goal";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Difficulty, Seg } from "./ui";
 import { UpgradeModal } from "./Upgrade";
+import { CoachChat } from "./CoachChat";
 
 type CodeCache = Record<string, Partial<Record<LangId, string>>>;
 /* UI problems persist three sources per problem id. */
@@ -105,6 +107,7 @@ export function Playground() {
   const dailyId = useMemo(dailyProblemId, []);
   /* company surfacing — the user's target company highlights + filters its tagged problems */
   const { state } = useApp();
+  const goal = getGoal();
   const goalCompanyId = state.ob.company && state.ob.company !== "general" ? state.ob.company : null;
   const goalCompany = goalCompanyId ? companyById(goalCompanyId) : null;
   const [companyFilter, setCompanyFilter] = useState<string | null>(goalCompanyId);
@@ -409,7 +412,7 @@ export function Playground() {
               )}
               <div className="mt-1 flex flex-col gap-1.5">
                 {(focusRanks.length
-                  ? focusRanks.map(r => ({ id: r.problem.id, title: r.problem.title, kind: r.problem.kind, difficulty: r.problem.difficulty, freq: r.freq, tag: r.misses >= 2 ? `missed ×${r.misses}` : r.misses === 1 ? "missed" : r.weakSrc === "skill" ? "weak skill" : r.weakSrc === "session" ? "missed in interviews" : null }))
+                  ? focusRanks.map(r => ({ id: r.problem.id, title: r.problem.title, kind: r.problem.kind, difficulty: r.problem.difficulty, freq: r.freq, tag: r.misses >= 2 ? `missed ×${r.misses}` : r.misses === 1 ? "missed" : r.weakSrc === "skill" ? "weak skill" : r.weakSrc === "session" ? "missed in interviews" : r.weakSrc === "coach" ? "discussed with coach" : null }))
                   : companyPlan.map(p => ({ id: p.id, title: p.title, kind: p.kind, difficulty: p.difficulty, freq: freqForProblem(companyFilter, p.id), tag: null }))
                 ).map(item => (
                   <button
@@ -720,6 +723,22 @@ export function Playground() {
               </div>
             </div>
           )}
+
+          {/* AI coach — discuss your approach on this problem mid-solve */}
+          <div className="border-t border-line/10">
+            <CoachChat
+              prompt={isFn ? `${problem.prompt}\n\nImplement: ${problem.fn.name}(${problem.fn.args}) → ${problem.fn.returns}` : problem.prompt}
+              answer={refSolution ?? problem.hint ?? ""}
+              kp={[
+                `Category: ${catOf(problem)}`,
+                `Difficulty: ${["Easy", "Medium", "Hard"][problem.difficulty - 1]}`,
+                "Hidden tests — verify edge cases before calling it solved",
+                "Analyze time and space complexity"
+              ]}
+              fieldId={goal?.fieldId ?? null}
+              levelId={problem.difficulty === 1 ? "junior" : problem.difficulty === 2 ? "mid" : "senior"}
+            />
+          </div>
         </div>
       </div>
 
