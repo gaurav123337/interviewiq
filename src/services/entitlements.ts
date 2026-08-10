@@ -6,6 +6,18 @@ import { BASE_LIMITS, getLimits, paywallOn } from "./remoteConfig";
 
 export type Tier = "free" | "pro";
 
+/* A team seat (B2B) grants Pro without touching the local license. This flag
+   lives in-memory and is driven by services/teams.ts after each refresh. */
+let teamPro = false;
+
+export function setTeamPro(v: boolean): void {
+  teamPro = v;
+}
+
+export function teamProActive(): boolean {
+  return teamPro;
+}
+
 export interface Usage {
   month: string;
   sessions: number;
@@ -20,6 +32,7 @@ export function isPaywallEnabled(): boolean {
 }
 
 export function getTier(): Tier {
+  if (teamPro) return "pro";
   return storageGet<Tier>(STORAGE_KEYS.tier, "free");
 }
 

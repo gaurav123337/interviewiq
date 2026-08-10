@@ -47,9 +47,11 @@ const initialStep = (ob: Ob): number => (ob.level ? (ob.field ? (ob.company ? 4 
 
 function initialState(): AppState {
   const ob = initialOb();
+  /* first-time visitors land on the marketing page; returning users go straight to practice */
+  const onboarded = !!ob.level;
   return {
-    view: "onboard",
-    prevView: "onboard",
+    view: onboarded ? "onboard" : "landing",
+    prevView: onboarded ? "onboard" : "landing",
     ob,
     step: initialStep(ob),
     config: { ...DEFAULT_CONFIG, ...storageGet(STORAGE_KEYS.settings, {}) },

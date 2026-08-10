@@ -15,10 +15,13 @@ import { Progress } from "./Progress";
 import { Settings } from "./Settings";
 import { Playground } from "./Playground";
 import { Admin } from "./Admin";
+import { Landing } from "./Landing";
+import { Team } from "./Team";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { getAdminState, subscribeAdmin, type AdminState } from "../services/admin";
 import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
+import { isCloudConfigured } from "../services/cloud";
 import { Chip } from "./ui";
 
 const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
@@ -100,6 +103,7 @@ export function App() {
   const primaryTabs = PRIMARY_TABS.filter(t => { const f = flagForTab(t.id); return f ? featureOn(f) : true; });
   const moreTabs = [
     ...MORE_TABS.filter(t => t.id !== "drill" || featureOn("drill")),
+    ...(isCloudConfigured() ? [{ id: "team" as View, label: "Team", icon: "🏢" }] : []),
     ...(admin.isAdmin ? [{ id: "admin" as View, label: "Admin", icon: "🛡️" }] : [])
   ];
   const moreActive = moreTabs.some(t => t.id === view);
@@ -111,7 +115,7 @@ export function App() {
       {/* header */}
       <header className="no-print sticky top-0 z-50 border-b border-line/10 bg-night/85 backdrop-blur-xl">
         <div className="mx-auto flex h-[60px] max-w-[1200px] items-center gap-3 px-4">
-          <button className="flex items-center gap-2.5" onClick={() => nav("onboard")}>
+          <button className="flex items-center gap-2.5" onClick={() => nav("landing")}>
             <span className="grid h-9 w-9 place-items-center rounded-xl grad-bg text-[18px] shadow-[0_6px_18px_rgba(99,102,241,.45)]">🎙️</span>
             <span className="text-[17px] font-extrabold tracking-tight">Interview<span className="grad-text">IQ</span></span>
           </button>
@@ -158,6 +162,7 @@ export function App() {
 
       {/* main */}
       <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pb-24 pt-6 md:pb-12">
+        {view === "landing" && <Landing />}
         {view === "onboard" && <Onboarding />}
         {view === "interview" && <Interview />}
         {view === "results" && <Results />}
@@ -170,6 +175,7 @@ export function App() {
         {view === "settings" && <Settings />}
         {view === "playground" && <Playground />}
         {view === "admin" && <Admin />}
+        {view === "team" && <Team />}
       </main>
 
       {/* product announcement banner */}

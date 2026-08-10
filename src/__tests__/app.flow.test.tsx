@@ -22,6 +22,13 @@ function renderApp() {
   );
 }
 
+/* first-time visitors land on the marketing page — click through to onboarding */
+function startApp() {
+  renderApp();
+  expect(screen.getByText(/junior developer/)).toBeTruthy();
+  clickBtn(/Start practicing free/);
+}
+
 beforeEach(() => {
   localStorage.clear();
   cleanup();
@@ -29,7 +36,7 @@ beforeEach(() => {
 
 describe("full interview flow", () => {
   it("walks onboarding → interview → feedback → results → history → bank → settings", () => {
-    renderApp();
+    startApp();
 
     /* onboarding: fresh state, step 1 (levels) */
     expect(screen.getByText(/What level are you interviewing/)).toBeTruthy();
@@ -104,7 +111,7 @@ describe("full interview flow", () => {
 
 describe("ending with no answers", () => {
   it("returns to the launch view instead of a blank results screen", () => {
-    renderApp();
+    startApp();
 
     /* walk onboarding and begin a session */
     clickBtn(/Senior/);
@@ -129,7 +136,7 @@ describe("ending with no answers", () => {
 
 describe("admin gating", () => {
   it("does not expose an Admin tab to non-admins", () => {
-    renderApp();
+    startApp();
     openMenu();
     const adminBtns = screen.queryAllByRole("button", { name: /Admin/ });
     expect(adminBtns.length).toBe(0);
@@ -138,7 +145,7 @@ describe("admin gating", () => {
 
 describe("practice from bank", () => {
   it("starts a single-question session from the question bank", () => {
-    renderApp();
+    startApp();
     openMenu();
     clickBtn(/Bank/);
     const details = document.querySelector("details") as HTMLDetailsElement;
@@ -150,7 +157,7 @@ describe("practice from bank", () => {
 
 describe("job-description tailoring", () => {
   it("analyzes a pasted JD and builds a tailored session", () => {
-    renderApp();
+    startApp();
     clickBtn(/I have a job description/);
     const ta = screen.getByPlaceholderText(/Senior Backend Engineer at Stripe/);
     fireEvent.change(ta, {
@@ -169,7 +176,7 @@ describe("job-description tailoring", () => {
 
 describe("settings persistence", () => {
   it("saves interview defaults to localStorage", () => {
-    renderApp();
+    startApp();
     openMenu();
     clickBtn(/Settings/);
     fireEvent.click(screen.getByRole("button", { name: "10" }));

@@ -357,3 +357,199 @@ on conflict (id) do nothing;
 insert into public.scraper_config (key, value, updated_at)
 values ('schedule', '{"days": [1], "hour": 3}', 0)
 on conflict (key) do nothing;
+
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Teams (B2B) — orgs, seats, and Pro entitlements                     */
+/* ------------------------------------------------------------------ */
+
+/* An organization. `seats` caps the number of active members. */
+create table if not exists public.teams (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  seats integer not null default 5 check (seats between 1 and 500),
+  created_at timestamptz not null default now()
+);
+
+/* Membership. Invited-but-unregistered people have user_id NULL and an
+   invited_email; they claim the seat by signing in and accepting. */
+create table if not exists public.team_members (
+  id uuid primary key default gen_random_uuid(),
+  team_id uuid not null references public.teams(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete cascade,
+  role text not null default 'member' check (role in ('owner','admin','member')),
+  status text not null default 'active' check (status in ('active','invited')),
+  invited_email text,
+  created_at timestamptz not null default now(),
+  unique (team_id, user_id)
+);
+
+create index if not exists team_members_user_idx on public.team_members (user_id);
+create index if not exists team_members_team_idx on public.team_members (team_id);
+create unique index if not exists team_members_invite_email_idx
+  on public.team_members (team_id, lower(invited_email)) where invited_email is not null;
+
+alter table public.teams enable row level security;
+alter table public.team_members enable row level security;
+
+/* --- helper predicates (security definer so RLS can use them) --- */
+create or replace function public.is_team_admin(tid uuid)
+returns boolean language sql security definer set search_path = public as $$
+  select exists (
+    select 1 from public.team_members
+    where team_id = tid and user_id = auth.uid() and role in ('owner','admin') and status = 'active'
+  )
+$$;
+
+create or replace function public.is_team_member(tid uuid)
+returns boolean language sql security definer set search_path = public as $$
+  select exists (
+    select 1 from public.team_members
+    where team_id = tid and user_id = auth.uid() and status = 'active'
+  )
+$$;
+
+/* Does the signed-in user hold an active team seat? (drives the Pro entitlement) */
+create or replace function public.team_grants_pro()
+returns boolean language sql security definer set search_path = public as $$
+  select exists (
+    select 1 from public.team_members
+    where user_id = auth.uid() and status = 'active'
+  )
+$$;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'teams' and policyname = 'team owner read') then
+    create policy "team owner read" on public.teams for select using (owner_id = auth.uid());
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'teams' and policyname = 'team member read') then
+    create policy "team member read" on public.teams for select using (public.is_team_member(id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'teams' and policyname = 'team owner write') then
+    create policy "team owner write" on public.teams for all using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'team_members' and policyname = 'tm member read') then
+    create policy "tm member read" on public.team_members for select using (public.is_team_member(team_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'team_members' and policyname = 'tm admin write') then
+    create policy "tm admin write" on public.team_members for all using (public.is_team_admin(team_id)) with check (public.is_team_admin(team_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'team_members' and policyname = 'tm own write') then
+    create policy "tm own write" on public.team_members for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+  end if;
+end $$;
+
+/* --- RPCs (all security definer; RLS would block invited users) --- */
+
+create or replace function public.create_team(p_name text, p_seats integer default 5)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare tid uuid;
+begin
+  if auth.uid() is null then raise exception 'not authenticated'; end if;
+  if p_name is null or length(trim(p_name)) = 0 then raise exception 'name required'; end if;
+  insert into public.teams (name, owner_id, seats)
+  values (trim(p_name), auth.uid(), greatest(1, least(500, coalesce(p_seats, 5))))
+  returning id into tid;
+  insert into public.team_members (team_id, user_id, role, status)
+  values (tid, auth.uid(), 'owner', 'active');
+  return tid;
+end $$;
+
+create or replace function public.invite_member(p_team_id uuid, p_email text)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_seats integer; v_members integer; v_email text;
+begin
+  if not public.is_team_admin(p_team_id) then raise exception 'forbidden'; end if;
+  v_email := lower(trim(p_email));
+  if v_email = '' or position('@' in v_email) = 0 then raise exception 'invalid email'; end if;
+  select seats into v_seats from public.teams where id = p_team_id;
+  select count(*) into v_members from public.team_members where team_id = p_team_id and status = 'active';
+  if v_members >= v_seats then raise exception 'no seats left'; end if;
+  insert into public.team_members (team_id, user_id, role, status, invited_email)
+  values (p_team_id, null, 'member', 'invited', v_email)
+  on conflict (team_id, lower(invited_email)) where invited_email is not null
+  do update set status = 'invited', invited_email = excluded.invited_email;
+end $$;
+
+create or replace function public.accept_invite(p_team_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_seats integer; v_members integer;
+begin
+  if auth.uid() is null then raise exception 'not authenticated'; end if;
+  if not exists (
+    select 1 from public.team_members
+    where team_id = p_team_id and status = 'invited'
+      and lower(invited_email) = lower(auth.jwt() ->> 'email')
+  ) then raise exception 'no pending invite'; end if;
+  select seats into v_seats from public.teams where id = p_team_id;
+  select count(*) into v_members from public.team_members where team_id = p_team_id and status = 'active';
+  if v_members >= v_seats then raise exception 'no seats left'; end if;
+  update public.team_members
+  set user_id = auth.uid(), status = 'active', invited_email = null
+  where team_id = p_team_id and status = 'invited'
+    and lower(invited_email) = lower(auth.jwt() ->> 'email');
+end $$;
+
+create or replace function public.remove_member(p_team_id uuid, p_user_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_team_admin(p_team_id) then raise exception 'forbidden'; end if;
+  if exists (select 1 from public.team_members where team_id = p_team_id and user_id = p_user_id and role = 'owner') then
+    raise exception 'cannot remove the owner';
+  end if;
+  delete from public.team_members where team_id = p_team_id and user_id = p_user_id;
+end $$;
+
+create or replace function public.leave_team(p_team_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if exists (select 1 from public.team_members where team_id = p_team_id and user_id = auth.uid() and role = 'owner') then
+    raise exception 'owner cannot leave; delete the team instead';
+  end if;
+  if not exists (select 1 from public.team_members where team_id = p_team_id and user_id = auth.uid() and status = 'active') then
+    raise exception 'not a member';
+  end if;
+  delete from public.team_members where team_id = p_team_id and user_id = auth.uid();
+end $$;
+
+create or replace function public.delete_team(p_team_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from public.teams where id = p_team_id and owner_id = auth.uid()) then
+    raise exception 'forbidden';
+  end if;
+  delete from public.teams where id = p_team_id;
+end $$;
+
+/* --- read helpers (security definer: auth.users emails + invite matching) --- */
+
+create or replace function public.my_teams()
+returns table (team_id uuid, team_name text, role text, seats integer, members bigint)
+language sql security definer set search_path = public as $$
+  select t.id, t.name, m.role, t.seats,
+         (select count(*) from public.team_members x where x.team_id = t.id and x.status = 'active') as members
+  from public.team_members m
+  join public.teams t on t.id = m.team_id
+  where m.user_id = auth.uid() and m.status = 'active'
+  order by t.created_at;
+$$;
+
+create or replace function public.my_pending_invites()
+returns table (team_id uuid, team_name text)
+language sql security definer set search_path = public as $$
+  select m.team_id, t.name
+  from public.team_members m
+  join public.teams t on t.id = m.team_id
+  where m.status = 'invited' and lower(m.invited_email) = lower(auth.jwt() ->> 'email');
+$$;
+
+create or replace function public.team_roster(p_team_id uuid)
+returns table (user_id uuid, email text, role text, status text, invited_email text, created_at timestamptz)
+language sql security definer set search_path = public as $$
+  select m.user_id, u.email, m.role, m.status, m.invited_email, m.created_at
+  from public.team_members m
+  left join auth.users u on u.id = m.user_id
+  where m.team_id = p_team_id and public.is_team_member(p_team_id)
+  order by m.created_at;
+$$;
