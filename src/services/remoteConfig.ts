@@ -37,16 +37,20 @@ export interface RemoteConfig {
     sessionsPerMonth?: number;
     aiPerDay?: number;
   };
+  /** Company question-frequency overrides — admin-tunable; merged over the
+      baked-in COMPANY_FREQ table so rankings can be tuned without a deploy. */
+  companyFreq?: Record<string, Partial<Record<string, 1 | 2 | 3>>>;
 }
 
-export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {} };
+export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {} };
 
 export function getRemoteConfig(): RemoteConfig {
   const c = storageGet<RemoteConfig>(STORAGE_KEYS.remoteConfig, REMOTE_CONFIG_DEFAULTS);
   return {
     features: { ...REMOTE_CONFIG_DEFAULTS.features, ...(c?.features ?? {}) },
     ai: { ...REMOTE_CONFIG_DEFAULTS.ai, ...(c?.ai ?? {}) },
-    limits: { ...REMOTE_CONFIG_DEFAULTS.limits, ...(c?.limits ?? {}) }
+    limits: { ...REMOTE_CONFIG_DEFAULTS.limits, ...(c?.limits ?? {}) },
+    companyFreq: { ...(c?.companyFreq ?? {}) }
   };
 }
 

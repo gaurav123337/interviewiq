@@ -6,6 +6,9 @@
 
 import type { CodingProblem } from "./coding";
 import { CODING_PROBLEMS } from "./coding";
+import { getRemoteConfig } from "../services/remoteConfig";
+import { getCodingTrack } from "../services/codingTrack";
+import { getProfile } from "../services/goal";
 
 export const PROBLEM_COMPANIES: Record<string, string[]> = {
   /* original CLI six */
@@ -95,8 +98,11 @@ export const COMPANY_FREQ: Record<string, Partial<Record<string, CompanyFreq>>> 
   cloudflare: { "fn-deep-clone": 2, "fn-promise-race": 2, "fn-sleep": 2, "fn-map-limit": 2 }
 };
 
-/** Frequency for a problem at a company — explicit entry or the default 1. */
+/** Frequency for a problem at a company. Resolution order: admin-published
+    override (remoteConfig.companyFreq) → baked-in COMPANY_FREQ → default 1. */
 export function freqForProblem(companyId: string, problemId: string): CompanyFreq {
+  const remote = getRemoteConfig().companyFreq?.[companyId]?.[problemId];
+  if (remote === 1 || remote === 2 || remote === 3) return remote;
   return COMPANY_FREQ[companyId]?.[problemId] ?? 1;
 }
 
@@ -173,6 +179,100 @@ export function companyFrequency(companyId: string, problems: CodingProblem[] = 
   }
   const byTopic = [...topicMap.values()].sort((a, b) => b.heat - a.heat || b.count - a.count);
   return { companyId, total: byDifficulty[1].count + byDifficulty[2].count + byDifficulty[3].count, heat, byDifficulty, byTopic };
+}
+
+/* ------------------------------------------------------------------ */
+/* Personalized focus — company heat blended with the user's own gaps   */
+/* ------------------------------------------------------------------ */
+
+/** Weak-skill name hints → coding topics. A weak diagnostic/self rating whose
+    name matches one of these boosts problems in the matching topic. */
+const SKILL_TOPIC_HINTS: { re: RegExp; topics: string[] }[] = [
+  { re: /algorith|data struct|dsa|problem solving/i, topics: ["Arrays & hashing", "Search & sorting", "Dynamic programming", "Strings & stacks", "Language basics"] },
+  { re: /javascript|typescript|(^|\W)js(\W|$)/i, topics: ["collections", "composition", "async", "timing", "classes", "search"] },
+  { re: /react|vue|angular|frontend|css|html|ui\b/i, topics: ["UI components"] },
+  { re: /async|promise|event|node|backend|api|server/i, topics: ["async", "timing"] }
+];
+
+/** Personal signals for a problem: how often it was failed in the playground,
+    and whether a weak self/diagnostic skill maps to its topic. */
+export function focusSignals(p: CodingProblem): { misses: number; weakSkill: boolean } {
+  const misses = getCodingTrack()[p.id]?.fails ?? 0;
+  const profile = getProfile();
+  if (!profile || !profile.skills.length) return { misses, weakSkill: false };
+  const weak = profile.skills.filter(s => (s.measured ?? s.self) < 3).map(s => s.skill.toLowerCase());
+  const topic = codingTopicFor(p);
+  const weakSkill = SKILL_TOPIC_HINTS.some(h => weak.some(w => h.re.test(w)) && h.topics.includes(topic));
+  return { misses, weakSkill };
+}
+
+/** Whether the user has any personalization signal at all (so the UI can show
+    the personalized plan only when it is actually personalized). */
+export function hasPersonalSignals(): boolean {
+  const track = getCodingTrack();
+  const anyMiss = Object.values(track).some(e => (e?.fails ?? 0) > 0);
+  const profile = getProfile();
+  const anyWeak = !!profile?.skills.some(s => (s.measured ?? s.self) < 3);
+  return anyMiss || anyWeak;
+}
+
+export interface FocusRank {
+  problem: CodingProblem;
+  /** Company heat (curated frequency rank). */
+  freq: CompanyFreq;
+  /** Playground failures for this problem. */
+  misses: number;
+  /** True when a weak skill maps to this problem's topic. */
+  weakSkill: boolean;
+  /** Combined score — freq dominates, personal signals add. */
+  score: number;
+}
+
+/** Every company-tagged problem ranked by company heat + the user's own
+    signals (missed in the playground, weak skill topic). Pure + deterministic
+    given the same storage state. */
+export function personalFocusForCompany(companyId: string, problems: CodingProblem[] = CODING_PROBLEMS): FocusRank[] {
+  return problems
+    .filter(p => problemIsForCompany(p, companyId))
+    .map(p => {
+      const freq = freqForProblem(companyId, p.id);
+      const { misses, weakSkill } = focusSignals(p);
+      const score = freq * 3 + (misses >= 2 ? 2 : misses >= 1 ? 1 : 0) + (weakSkill ? 2 : 0);
+      return { problem: p, freq, misses, weakSkill, score };
+    })
+    .sort((a, b) => b.score - a.score || b.freq - a.freq || a.problem.title.localeCompare(b.problem.title));
+}
+
+/** Personalized plan — the top-scoring easy, medium and hard for the company
+    (up to 3). Degenerates to the frequency plan when the user has no signals. */
+export function personalPlan(companyId: string, problems: CodingProblem[] = CODING_PROBLEMS): FocusRank[] {
+  const ranked = personalFocusForCompany(companyId, problems);
+  const out: FocusRank[] = [];
+  for (const d of [1, 2, 3] as const) {
+    const pick = ranked.find(r => r.problem.difficulty === d && !out.some(o => o.problem.id === r.problem.id));
+    if (pick) out.push(pick);
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Session question heat — company weight on mock-interview cards       */
+/* ------------------------------------------------------------------ */
+
+/** Maps an interview question category to the company's coding frequency so
+    session cards can show how much weight the company places on it. Technical
+    questions carry the company's overall heat; System Design carries its
+    hottest topic. Returns null when there's no real company or no data. */
+export function qaCategoryHeat(cat: string, companyId: string | null): { heat: number; focus: string } | null {
+  if (!companyId || companyId === "general" || companyId === "bank" || companyId === "weak") return null;
+  const f = companyFrequency(companyId);
+  if (f.total === 0) return null;
+  if (cat === "Technical") return { heat: f.heat, focus: f.byTopic[0]?.topic ?? "" };
+  if (cat === "System Design") {
+    const top = f.byTopic[0];
+    return top ? { heat: top.heat, focus: top.topic } : null;
+  }
+  return null;
 }
 
 /** Deterministic difficulty-aware practice plan for a company — now frequency-

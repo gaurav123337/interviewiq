@@ -12,7 +12,7 @@ import { html as htmlLang } from "@codemirror/lang-html";
 import { css as cssLang } from "@codemirror/lang-css";
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
 import { companyById } from "../data";
-import { companyFrequency, companyInterviewPlan, freqForProblem, problemIsForCompany } from "../data/codingCompanies";
+import { companyFrequency, companyInterviewPlan, freqForProblem, hasPersonalSignals, personalPlan, problemIsForCompany } from "../data/codingCompanies";
 import { useApp } from "../store";
 import { buildProgram, runCase, runFnTests, runLocalJavaScript, runTests, runUiTests, type FnCaseResult, type UiCaseResult } from "../services/runner";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -112,6 +112,12 @@ export function Playground() {
   const companyPlan = useMemo(
     () => (companyFilter ? companyInterviewPlan(companyFilter) : []),
     [companyFilter]
+  );
+  /* personalized focus — company heat blended with the user's misses + weak skills */
+  const personalSignals = hasPersonalSignals();
+  const focusRanks = useMemo(
+    () => (companyFilter && personalSignals ? personalPlan(companyFilter) : []),
+    [companyFilter, personalSignals]
   );
   /* frequency breakdown by difficulty + topic for the filtered company */
   const companyFreq = useMemo(
@@ -394,20 +400,31 @@ export function Playground() {
                   })}
                 </div>
               )}
-              {/* focus picks — the highest-frequency easy + medium for this company */}
-              <div className="mt-2 text-[10px] font-bold uppercase tracking-wider text-mut">🔥 Focus first</div>
+              {/* focus picks — personalized (company heat + your gaps) or frequency-only */}
+              <div className="mt-2 text-[10px] font-bold uppercase tracking-wider text-mut">
+                {focusRanks.length ? "🎯 Your focus plan — personalized" : "🔥 Focus first"}
+              </div>
+              {!personalSignals && (
+                <div className="mt-0.5 text-[10px] text-mut">Complete sessions and practice to personalize this.</div>
+              )}
               <div className="mt-1 flex flex-col gap-1.5">
-                {companyPlan.map(p => (
+                {(focusRanks.length
+                  ? focusRanks.map(r => ({ id: r.problem.id, title: r.problem.title, kind: r.problem.kind, difficulty: r.problem.difficulty, freq: r.freq, tag: r.misses >= 2 ? `missed ×${r.misses}` : r.misses === 1 ? "missed" : r.weakSkill ? "weak skill" : null }))
+                  : companyPlan.map(p => ({ id: p.id, title: p.title, kind: p.kind, difficulty: p.difficulty, freq: freqForProblem(companyFilter, p.id), tag: null }))
+                ).map(item => (
                   <button
-                    key={p.id}
-                    onClick={() => pickProblem(p.id)}
+                    key={item.id}
+                    onClick={() => pickProblem(item.id)}
                     className="flex items-center gap-2 rounded-xl border border-line/10 bg-deep/60 px-3 py-2 text-left text-[12.5px] font-bold text-ink transition-all hover:border-acc1/40"
                   >
-                    <span>{p.kind === "fn" ? "🧩" : "⚙️"}</span>
-                    <span className="flex-1">{p.title}</span>
-                    <span className="text-[10px] font-bold text-acctxt">🔥{freqForProblem(companyFilter, p.id)}</span>
-                    <span className={`text-[10.5px] font-extrabold uppercase ${DIFF_COLOR[p.difficulty]}`}>
-                      {["Easy", "Medium", "Hard"][p.difficulty - 1]}
+                    <span>{item.kind === "fn" ? "🧩" : "⚙️"}</span>
+                    <span className="flex-1 truncate">{item.title}</span>
+                    {item.tag && (
+                      <span className="rounded-full bg-warn/15 px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase text-warn">🎯 {item.tag}</span>
+                    )}
+                    <span className="text-[10px] font-bold text-acctxt">🔥{item.freq}</span>
+                    <span className={`text-[10.5px] font-extrabold uppercase ${DIFF_COLOR[item.difficulty]}`}>
+                      {["Easy", "Medium", "Hard"][item.difficulty - 1]}
                     </span>
                   </button>
                 ))}

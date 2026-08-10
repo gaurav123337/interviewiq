@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { LevelId } from "../types";
-import { FIELDS, LEVELS } from "../data";
+import { COMPANIES, FIELDS, LEVELS } from "../data";
 import { codingProblemById } from "../data/coding";
+import { COMPANY_FREQ, problemsForCompany } from "../data/codingCompanies";
 import { getCloudState, subscribeCloud } from "../services/cloud";
 import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../services/teams";
 import { chat, aiAvailable } from "../ai";
@@ -1323,11 +1324,25 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, ai: { ...config.ai, [k]: v } });
   const setLimit = (k: keyof NonNullable<RemoteConfig["limits"]>, v: number) =>
     setConfig({ ...config, limits: { ...config.limits, [k]: v } });
+  /* company question-frequency editor */
+  const [freqCo, setFreqCo] = useState<string | null>(null);
+  const freqCompanies = COMPANIES.filter(c => c.id !== "general");
+  const setFreq = (pid: string, v: number) => {
+    if (!freqCo) return;
+    const next = { ...(config.companyFreq ?? {}) };
+    const co = { ...(next[freqCo] ?? {}) };
+    if (v === 0) delete co[pid];
+    else co[pid] = v as 1 | 2 | 3;
+    next[freqCo] = co;
+    setConfig({ ...config, companyFreq: next });
+  };
 
   const publish = async () => {
     setBusy(true);
     try {
-      await saveRemoteConfig({ features: config.features, ai: config.ai, limits: config.limits });
+      await saveRemoteConfig({
+        features: config.features, ai: config.ai, limits: config.limits, companyFreq: config.companyFreq ?? {}
+      });
       toast("🎛️ Config published — clients pick it up on next sync");
     } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
     finally { setBusy(false); }
@@ -1376,6 +1391,49 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           <NumField label="Free sessions / month" value={config.limits.sessionsPerMonth ?? 3} onChange={v => setLimit("sessionsPerMonth", v)} />
           <NumField label="Free AI calls / day" value={config.limits.aiPerDay ?? 5} onChange={v => setLimit("aiPerDay", v)} />
         </div>
+      </div>
+
+      <div className={`${cardCls} p-5`}>
+        <h2 className="mb-1 text-[16px] font-extrabold">🔥 Company question frequency</h2>
+        <p className="mb-3 text-[12.5px] text-mut">Rank how often each company asks a problem (1 occasional · 2 common · 3 very common). Published overrides merge on top of the baked-in table — no deploy needed, clients pick it up on next sync.</p>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {freqCompanies.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setFreqCo(freqCo === c.id ? null : c.id)}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${freqCo === c.id ? "grad-bg text-white" : "border border-line/15 text-mut hover:border-acc1/40"}`}
+            >
+              {c.icon} {c.name}
+            </button>
+          ))}
+        </div>
+        {freqCo && (
+          <div className="max-h-[340px] space-y-1.5 overflow-y-auto pr-1">
+            {problemsForCompany(freqCo).map(p => {
+              const base = COMPANY_FREQ[freqCo]?.[p.id] ?? 1;
+              const cur = config.companyFreq?.[freqCo]?.[p.id];
+              return (
+                <div key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
+                  <span className="flex-1 truncate font-semibold">{p.title}</span>
+                  <span className={`text-[10px] font-extrabold uppercase ${p.difficulty === 1 ? "text-ok" : p.difficulty === 2 ? "text-warn" : "text-bad"}`}>
+                    {["Easy", "Medium", "Hard"][p.difficulty - 1]}
+                  </span>
+                  <span className="text-[10px] font-bold text-mut">base 🔥{base}</span>
+                  <select
+                    value={cur ?? 0}
+                    onChange={e => setFreq(p.id, Number(e.target.value))}
+                    className="rounded-lg border border-line/15 bg-deep px-1.5 py-1 text-[11px] font-bold text-ink outline-none"
+                  >
+                    <option value={0}>Default ({base})</option>
+                    <option value={1}>1 · Occasional</option>
+                    <option value={2}>2 · Common</option>
+                    <option value={3}>3 · Very common</option>
+                  </select>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end">

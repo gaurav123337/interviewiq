@@ -85,6 +85,29 @@ html.light body {
   background: rgba(99, 102, 241, 0.45);
 }
 
+/* Pointer cursor for every actionable element. Tailwind v4's preflight only
+   covers <button>/[role=button] with cursor:pointer, and some browsers still
+   compute default for buttons; clickable rows, chips, selects and toggle
+   labels never get a pointer at all. This restores the affordance globally. */
+button:not(:disabled),
+[role="button"]:not(:disabled),
+[role="menuitem"]:not(:disabled),
+a:not([disabled]),
+select:not(:disabled),
+summary,
+label[for],
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled),
+input[type="range"]:not(:disabled) {
+  cursor: pointer;
+}
+button:disabled,
+[role="button"][aria-disabled="true"],
+select:disabled,
+input:disabled {
+  cursor: not-allowed;
+}
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #26324f; border-radius: 8px; border: 2px solid var(--color-night); }

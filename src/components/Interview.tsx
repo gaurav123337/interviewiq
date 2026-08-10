@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SessionQuestion } from "../types";
 import { companyById, levelById } from "../data";
+import { qaCategoryHeat } from "../data/codingCompanies";
 import { aiAvailable, getFeedback, getHint } from "../ai";
 import { grade } from "../engine";
 import { useApp } from "../store";
@@ -112,6 +113,15 @@ export function Interview() {
           <div className="mb-4 flex flex-wrap gap-2">
             <Chip tone="cat">{q.catLabel}</Chip>
             <Chip tone="lvl">{levelById(q.level).icon} {levelById(q.level).name}</Chip>
+            {(() => {
+              const h = qaCategoryHeat(q.catLabel, meta.companyId);
+              if (!h) return null;
+              return (
+                <span className="inline-flex items-center gap-1 rounded-full bg-acc1/15 px-2.5 py-1 text-[11px] font-bold text-acctxt" title={`${meta.company} weighs this area heavily — focus here`}>
+                  🔥 {meta.company} weight: {h.heat}{h.focus ? ` · focus: ${h.focus}` : ""}
+                </span>
+              );
+            })()}
             {q.src === "company" && <Chip tone="co">Tailored to {meta.company}</Chip>}
           </div>
           <p className="min-h-[56px] text-[19px] font-bold leading-[1.45] tracking-tight">
