@@ -11,6 +11,9 @@ import { go } from "@codemirror/lang-go";
 import { html as htmlLang } from "@codemirror/lang-html";
 import { css as cssLang } from "@codemirror/lang-css";
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
+import { companyById } from "../data";
+import { problemIsForCompany } from "../data/codingCompanies";
+import { useApp } from "../store";
 import { buildProgram, runCase, runFnTests, runLocalJavaScript, runTests, runUiTests, type FnCaseResult, type UiCaseResult } from "../services/runner";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { getTheme, type Theme } from "../services/theme";
@@ -100,6 +103,11 @@ export function Playground() {
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState<CatFilter>("All");
   const dailyId = useMemo(dailyProblemId, []);
+  /* company surfacing — the user's target company highlights + filters its tagged problems */
+  const { state } = useApp();
+  const goalCompanyId = state.ob.company && state.ob.company !== "general" ? state.ob.company : null;
+  const goalCompany = goalCompanyId ? companyById(goalCompanyId) : null;
+  const [companyFilter, setCompanyFilter] = useState<string | null>(goalCompanyId);
   const [online, setOnline] = useState(navigator.onLine);
   const theme = getTheme();
 
@@ -314,9 +322,27 @@ export function Playground() {
                 </button>
               ))}
             </div>
+            {goalCompany && (
+              <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-line/10 pt-2">
+                <span className="text-[10.5px] font-bold uppercase tracking-wider text-fnt">Target:</span>
+                <button
+                  onClick={() => setCompanyFilter(null)}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${companyFilter === null ? "grad-bg text-white" : "border border-line/15 text-mut hover:border-acc1/40"}`}
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => setCompanyFilter(goalCompany.id)}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${companyFilter === goalCompany.id ? "grad-bg text-white" : "border border-line/15 text-mut hover:border-acc1/40"}`}
+                >
+                  {goalCompany.icon} For {goalCompany.name}
+                </button>
+              </div>
+            )}
           </div>
           {CODING_PROBLEMS.filter(p =>
             (cat === "All" || catOf(p) === cat) &&
+            (!companyFilter || problemIsForCompany(p, companyFilter)) &&
             p.title.toLowerCase().includes(search.trim().toLowerCase())
           ).map(p => (
             <button
@@ -330,8 +356,13 @@ export function Playground() {
                   {p.title}
                   {p.id === dailyId && <span className="rounded-full bg-acc2/15 px-1.5 py-0.5 text-[9.5px] font-extrabold uppercase tracking-wide text-acc2">🎯 Daily</span>}
                 </span>
-                <span className={`text-[11px] font-extrabold uppercase ${DIFF_COLOR[p.difficulty]}`}>
-                  {["Easy", "Medium", "Hard"][p.difficulty - 1]}
+                <span className="flex items-center gap-1">
+                  {goalCompany && problemIsForCompany(p, goalCompany.id) && (
+                    <span className="text-[10px]" title={`Asked at ${goalCompany.name}`}>{goalCompany.icon}</span>
+                  )}
+                  <span className={`text-[11px] font-extrabold uppercase ${DIFF_COLOR[p.difficulty]}`}>
+                    {["Easy", "Medium", "Hard"][p.difficulty - 1]}
+                  </span>
                 </span>
               </div>
               <div className="mt-0.5 flex items-center justify-between">
@@ -343,7 +374,7 @@ export function Playground() {
             </button>
           ))}
           <p className="px-1 pt-1 text-[11.5px] leading-relaxed text-fnt">
-            {CODING_PROBLEMS.length} problems · ⚙️ compile on the free Wandbox API · 🧩 functions run locally in your browser · 🎨 UI components are judged on the rendered DOM, fully offline.
+            {CODING_PROBLEMS.length} problems · ⚙️ compile on the free Wandbox API · 🧩 functions run locally in your browser · 🎨 UI components are judged on the rendered DOM, fully offline{goalCompany ? ` · problems tagged ${goalCompany.icon} are asked at ${goalCompany.name}` : ""}.
           </p>
         </div>
 
@@ -416,7 +447,7 @@ export function Playground() {
               <iframe
                 key={previewTick}
                 title="ui-preview"
-                sandbox="allow-scripts allow-same-origin"
+                sandbox="allow-scripts"
                 srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${uiSrc.css}</style></head><body>${uiSrc.html}<script>${uiSrc.js.replace(/<\/script>/gi, "<\\/script>")}</script></body></html>`}
                 className="h-[240px] w-full rounded-xl border border-line/10 bg-white"
               />

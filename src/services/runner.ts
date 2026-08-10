@@ -446,8 +446,12 @@ export async function runUiTests(
   js: string,
   assertions: UiAssertionLike[]
 ): Promise<UiCaseResult[]> {
+  /* Opaque-origin sandbox: `allow-scripts` WITHOUT `allow-same-origin` so user
+     code can never reach the host app (that combination is effectively no
+     sandbox in Chrome). localStorage is unavailable inside — problems that
+     mention persistence guard for it. */
   const iframe = document.createElement("iframe");
-  iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+  iframe.setAttribute("sandbox", "allow-scripts");
   iframe.setAttribute("aria-hidden", "true");
   iframe.style.cssText = "position:absolute;left:-99999px;top:0;width:600px;height:400px;border:0;";
   iframe.srcdoc = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body></body></html>";

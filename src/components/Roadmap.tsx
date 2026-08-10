@@ -17,29 +17,14 @@ import { applyProgress, buildRoadmap, downloadRoadmapMarkdown, exportRoadmapMark
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Drawer, Seg } from "./ui";
-import { CODING_PROBLEMS, type CodingProblem } from "../data/coding";
+import { type CodingProblem } from "../data/coding";
+import { codingForTopicLabels } from "../data/codingMap";
 
 /* P4 roadmap → coding wiring: match this week's topic labels to playground
    problems so "solve X problems in category Y" becomes concrete actions.
-   Falls back to the daily pick when nothing matches. */
+   Curated per-topic links (src/data/codingMap.ts) → keyword fallback → daily pick. */
 function codeFocusFor(topics: RoadmapTopic[]): CodingProblem[] {
-  const text = topics.map(t => t.label.toLowerCase()).join(" ");
-  const match = (re: RegExp): boolean => re.test(text);
-  const picks: CodingProblem[] = [];
-  if (match(/async|promise|timer|event|debounce|throttle/i))
-    picks.push(...CODING_PROBLEMS.filter(p => p.kind === "fn" && /async|timing/i.test(p.category)));
-  if (match(/dom|component|html|css|ui|frontend/i))
-    picks.push(...CODING_PROBLEMS.filter(p => p.kind === "ui"));
-  if (match(/array|string|hash|two.?pointer|sliding|stack|queue|recurs|dp|dynamic|binary|search|sort|graph|tree|linked/i))
-    picks.push(...CODING_PROBLEMS.filter(p => p.kind === "cli" && p.difficulty <= 2));
-  const seen = new Set<string>();
-  const out: CodingProblem[] = [];
-  for (const p of picks) { if (!seen.has(p.id)) { seen.add(p.id); out.push(p); } if (out.length >= 3) break; }
-  if (out.length === 0) {
-    const day = Math.floor(Date.now() / 86_400_000);
-    out.push(CODING_PROBLEMS[day % CODING_PROBLEMS.length]);
-  }
-  return out;
+  return codingForTopicLabels(topics.map(t => t.label));
 }
 
 const fmt = (date: Date) =>

@@ -13,6 +13,7 @@ import { Bank } from "./Bank";
 import { History } from "./History";
 import { Progress } from "./Progress";
 import { Settings } from "./Settings";
+import { Account } from "./Account";
 import { Playground } from "./Playground";
 import { Admin } from "./Admin";
 import { Landing } from "./Landing";
@@ -38,7 +39,8 @@ const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "bank", label: "Bank", icon: "📚" },
   { id: "progress", label: "Progress", icon: "📈" },
   { id: "history", label: "History", icon: "🗂️" },
-  { id: "settings", label: "Settings", icon: "⚙️" }
+  { id: "settings", label: "Settings", icon: "⚙️" },
+  { id: "account", label: "Account", icon: "👤" }
 ];
 
 interface BIP extends Event { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
@@ -184,9 +186,9 @@ export function App() {
         {view === "drill" && <Drill />}
         {view === "bank" && <Bank />}
         {view === "history" && <History />}
-        {view === "progress" && <Progress />}
-        {view === "settings" && <Settings />}
-        {view === "playground" && <Playground />}
+        {view === "progress" && <Progress />}        { view === "settings" && <Settings /> }
+        { view === "account" && <Account /> }
+        { view === "playground" && <Playground /> }
         {view === "admin" && <Admin />}
         {view === "team" && <Team />}
       </main>

@@ -348,6 +348,8 @@ import { JS_FUNCTION_PROBLEMS } from "./codingBank/jsFunctions";
 import { ALGORITHM_PROBLEMS } from "./codingBank/algorithms";
 /* UI component problems (HTML/CSS/JS, judged in a sandboxed iframe). */
 import { UI_COMPONENT_PROBLEMS } from "./codingBank/uiComponents";
+/* Advanced UI components (toast, drag-and-drop, virtualization, …). */
+import { UI_ADVANCED_PROBLEMS } from "./codingBank/uiAdvanced";
 /* Per-language starter skeletons (own module to avoid an import cycle). */
 import { PY, JS, TS, CPP, JAVA, GO } from "./starters";
 
@@ -355,5 +357,6 @@ export const CODING_PROBLEMS: CodingProblem[] = [
   ...CLI_PROBLEMS,
   ...ALGORITHM_PROBLEMS,
   ...JS_FUNCTION_PROBLEMS,
-  ...UI_COMPONENT_PROBLEMS
+  ...UI_COMPONENT_PROBLEMS,
+  ...UI_ADVANCED_PROBLEMS
 ];

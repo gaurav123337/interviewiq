@@ -19,7 +19,10 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>
 );
 
-if ("serviceWorker" in navigator) {
+/* Register the offline service worker in production builds only. In dev, the
+   SW's cache-first asset strategy would serve stale transformed modules and
+   mask every edit — HMR already handles dev reloads. */
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./sw.js").catch(() => { /* offline not critical */ });
   });
