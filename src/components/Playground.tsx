@@ -12,7 +12,7 @@ import { html as htmlLang } from "@codemirror/lang-html";
 import { css as cssLang } from "@codemirror/lang-css";
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
 import { companyById } from "../data";
-import { companyInterviewPlan, problemIsForCompany } from "../data/codingCompanies";
+import { companyFrequency, companyInterviewPlan, freqForProblem, problemIsForCompany } from "../data/codingCompanies";
 import { useApp } from "../store";
 import { buildProgram, runCase, runFnTests, runLocalJavaScript, runTests, runUiTests, type FnCaseResult, type UiCaseResult } from "../services/runner";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -111,6 +111,11 @@ export function Playground() {
   /* difficulty-aware plan for the filtered company — one easy + one medium pick */
   const companyPlan = useMemo(
     () => (companyFilter ? companyInterviewPlan(companyFilter) : []),
+    [companyFilter]
+  );
+  /* frequency breakdown by difficulty + topic for the filtered company */
+  const companyFreq = useMemo(
+    () => (companyFilter ? companyFrequency(companyFilter) : null),
     [companyFilter]
   );
   const [online, setOnline] = useState(navigator.onLine);
@@ -345,10 +350,53 @@ export function Playground() {
               </div>
             )}
           </div>
-          {companyFilter && goalCompany && companyPlan.length > 0 && (
+          {companyFilter && goalCompany && companyPlan.length > 0 && companyFreq && (
             <div className="rounded-2xl border border-acc1/30 bg-acc1/10 p-3">
-              <div className="text-[12px] font-extrabold text-acctxt">🎯 Your {goalCompany.name} plan</div>
-              <div className="mt-1.5 flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[12px] font-extrabold text-acctxt">🎯 Your {goalCompany.name} plan</div>
+                <div className="rounded-full bg-acc1/15 px-2 py-0.5 text-[10.5px] font-bold text-acctxt">
+                  {companyFreq.total} problems · 🔥{companyFreq.heat}
+                </div>
+              </div>
+              {/* frequency by difficulty */}
+              <div className="mt-2 grid grid-cols-3 gap-1.5">
+                {([1, 2, 3] as const).map(d => (
+                  <div key={d} className="rounded-lg border border-line/10 bg-deep/60 px-2 py-1.5">
+                    <div className={`text-[10px] font-extrabold uppercase ${DIFF_COLOR[d]}`}>
+                      {["Easy", "Medium", "Hard"][d - 1]}
+                    </div>
+                    <div className="mt-0.5 flex items-baseline justify-between">
+                      <span className="text-[13px] font-extrabold text-ink">{companyFreq.byDifficulty[d].count}</span>
+                      <span className="text-[10px] font-bold text-acctxt">🔥{companyFreq.byDifficulty[d].heat}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* frequency by topic — sorted by heat; hottest topic is the focus signal */}
+              {companyFreq.byTopic.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-mut">By topic</div>
+                  {companyFreq.byTopic.slice(0, 4).map(t => {
+                    const max = companyFreq.byTopic[0].heat;
+                    return (
+                      <div key={t.topic} className="mt-1 flex items-center gap-2 text-[11px]">
+                        <span className="w-[92px] shrink-0 truncate font-semibold text-ink">{t.topic}</span>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-deep">
+                          <div
+                            className={`h-full rounded-full ${t.hottest && freqForProblem(companyFilter, t.hottest.id) >= 3 ? "grad-bg" : "bg-acc1/60"}`}
+                            style={{ width: `${Math.max(10, Math.round((t.heat / max) * 100))}%` }}
+                          />
+                        </div>
+                        <span className="w-3 text-right font-bold text-mut">{t.count}</span>
+                        <span className="w-7 text-right font-bold text-acctxt">🔥{t.heat}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {/* focus picks — the highest-frequency easy + medium for this company */}
+              <div className="mt-2 text-[10px] font-bold uppercase tracking-wider text-mut">🔥 Focus first</div>
+              <div className="mt-1 flex flex-col gap-1.5">
                 {companyPlan.map(p => (
                   <button
                     key={p.id}
@@ -357,6 +405,7 @@ export function Playground() {
                   >
                     <span>{p.kind === "fn" ? "🧩" : "⚙️"}</span>
                     <span className="flex-1">{p.title}</span>
+                    <span className="text-[10px] font-bold text-acctxt">🔥{freqForProblem(companyFilter, p.id)}</span>
                     <span className={`text-[10.5px] font-extrabold uppercase ${DIFF_COLOR[p.difficulty]}`}>
                       {["Easy", "Medium", "Hard"][p.difficulty - 1]}
                     </span>
