@@ -27,6 +27,18 @@ describe("roadmap → coding mapping", () => {
     expect(got).toContain("ui-theme-toggle");
   });
 
+  it("React/Vue weeks surface framework challenges", () => {
+    const got = codingForTopicLabels(["React · Vue · Angular"], 6).map(p => p.id);
+    expect(got).toContain("ui-react-counter");
+    expect(got).toContain("ui-vue-todo");
+  });
+
+  it("advanced UI problems reach the code-focus card via their topics", () => {
+    expect(codingForTopicLabels(["DOM & browser APIs"], 6).some(p => p.id === "ui-toast")).toBe(true);
+    expect(codingForTopicLabels(["DOM & browser APIs"], 6).some(p => p.id === "ui-drag-drop")).toBe(true);
+    expect(codingForTopicLabels(["Web performance"], 6).some(p => p.id === "ui-virtual-list")).toBe(true);
+  });
+
   it("web performance maps to the virtual list + throttling", () => {
     const got = codingForTopicLabels(["Web performance"], 4).map(p => p.id);
     expect(got).toContain("ui-virtual-list");

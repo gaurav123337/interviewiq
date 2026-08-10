@@ -13,7 +13,7 @@ const TOPIC_MAP: Record<string, string[]> = {
   "javascript / typescript": ["fn-debounce", "fn-throttle", "fn-deep-clone", "fn-promise-all", "fn-event-emitter", "fn-memoize", "fn-curry", "fn-flatten"],
   "language basics": ["reverse-string", "palindrome", "fizzbuzz", "fn-flatten", "fn-uniq", "fn-range"],
   "css & accessibility": ["ui-tooltip", "ui-theme-toggle", "ui-slider", "ui-progress-bar"],
-  "react · vue · angular": ["ui-tabs", "ui-accordion", "ui-dropdown", "ui-autocomplete", "ui-todo", "ui-tags-input"],
+  "react · vue · angular": ["ui-react-counter", "ui-react-todo", "ui-react-tabs", "ui-vue-counter", "ui-vue-todo", "ui-tabs", "ui-accordion", "ui-dropdown", "ui-autocomplete", "ui-todo", "ui-tags-input"],
   "dom & browser apis": ["ui-toast", "ui-modal", "ui-carousel", "ui-drag-drop", "ui-otp-input", "ui-stepper", "ui-countdown"],
   "web performance": ["ui-virtual-list", "fn-debounce", "fn-throttle", "fn-map-limit", "fn-memoize"],
   /* data & algorithms */

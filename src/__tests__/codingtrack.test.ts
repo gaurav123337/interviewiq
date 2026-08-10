@@ -41,6 +41,20 @@ describe("codingDrillCards", () => {
     expect(codingDrillCards()).toEqual([]);
   });
 
+  it("advanced and framework UI problems join the drill deck with their hint", () => {
+    recordCodingAttempt("ui-toast", false);
+    recordCodingAttempt("ui-toast", false);
+    recordCodingAttempt("ui-react-counter", false);
+    recordCodingAttempt("ui-react-counter", false);
+    const cards = codingDrillCards();
+    const toast = cards.find(c => c.q.includes("Toast Notifications"));
+    const react = cards.find(c => c.q.includes("React Counter"));
+    expect(toast).toBeTruthy();
+    expect(react).toBeTruthy();
+    expect(toast!.a.length).toBeGreaterThan(10);
+    expect(react!.a.length).toBeGreaterThan(10);
+  });
+
   it("caps the card count", () => {
     for (let i = 0; i < 8; i++) {
       recordCodingAttempt(CODING_PROBLEMS[i].id, false);

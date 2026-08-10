@@ -12,7 +12,7 @@ import { html as htmlLang } from "@codemirror/lang-html";
 import { css as cssLang } from "@codemirror/lang-css";
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
 import { companyById } from "../data";
-import { problemIsForCompany } from "../data/codingCompanies";
+import { companyInterviewPlan, problemIsForCompany } from "../data/codingCompanies";
 import { useApp } from "../store";
 import { buildProgram, runCase, runFnTests, runLocalJavaScript, runTests, runUiTests, type FnCaseResult, type UiCaseResult } from "../services/runner";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -108,6 +108,11 @@ export function Playground() {
   const goalCompanyId = state.ob.company && state.ob.company !== "general" ? state.ob.company : null;
   const goalCompany = goalCompanyId ? companyById(goalCompanyId) : null;
   const [companyFilter, setCompanyFilter] = useState<string | null>(goalCompanyId);
+  /* difficulty-aware plan for the filtered company — one easy + one medium pick */
+  const companyPlan = useMemo(
+    () => (companyFilter ? companyInterviewPlan(companyFilter) : []),
+    [companyFilter]
+  );
   const [online, setOnline] = useState(navigator.onLine);
   const theme = getTheme();
 
@@ -189,7 +194,7 @@ export function Playground() {
         else toast("✗ Test failed — check expected vs got");
       } else if (problem.kind === "ui") {
         setPreviewTick(t => t + 1);
-        const results = await runUiTests(uiSrc.html, uiSrc.css, uiSrc.js, problem.assertions);
+        const results = await runUiTests(uiSrc.html, uiSrc.css, uiSrc.js, problem.assertions, problem.libs);
         setUiCases(results);
         const passed = results.filter(r => r.pass).length;
         toast(passed === results.length ? "✅ All checks passed" : `${passed}/${results.length} checks passed`);
@@ -227,7 +232,7 @@ export function Playground() {
       } else if (problem.kind === "ui") {
         setPreviewTick(t => t + 1);
         const suite = [...problem.assertions, ...(problem.hiddenAssertions ?? [])];
-        const results = await runUiTests(uiSrc.html, uiSrc.css, uiSrc.js, suite);
+        const results = await runUiTests(uiSrc.html, uiSrc.css, uiSrc.js, suite, problem.libs);
         setUiCases(results);
         const passed = results.filter(r => r.pass).length;
         const solved = passed === suite.length;
@@ -340,6 +345,26 @@ export function Playground() {
               </div>
             )}
           </div>
+          {companyFilter && goalCompany && companyPlan.length > 0 && (
+            <div className="rounded-2xl border border-acc1/30 bg-acc1/10 p-3">
+              <div className="text-[12px] font-extrabold text-acctxt">🎯 Your {goalCompany.name} plan</div>
+              <div className="mt-1.5 flex flex-col gap-1.5">
+                {companyPlan.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => pickProblem(p.id)}
+                    className="flex items-center gap-2 rounded-xl border border-line/10 bg-deep/60 px-3 py-2 text-left text-[12.5px] font-bold text-ink transition-all hover:border-acc1/40"
+                  >
+                    <span>{p.kind === "fn" ? "🧩" : "⚙️"}</span>
+                    <span className="flex-1">{p.title}</span>
+                    <span className={`text-[10.5px] font-extrabold uppercase ${DIFF_COLOR[p.difficulty]}`}>
+                      {["Easy", "Medium", "Hard"][p.difficulty - 1]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {CODING_PROBLEMS.filter(p =>
             (cat === "All" || catOf(p) === cat) &&
             (!companyFilter || problemIsForCompany(p, companyFilter)) &&
@@ -387,7 +412,9 @@ export function Playground() {
             {isFn && <Chip tone="acc">{problem.category}</Chip>}
             <span className="flex-1" />
             {isFn || isUi ? (
-              <span className="text-[12px] text-mut">{isUi ? "HTML · CSS · JS — judged in your browser" : "JavaScript · runs in your browser"}</span>
+              <span className="text-[12px] text-mut">
+                {isUi ? (problem.libs?.length ? `${problem.libs[0].global} · ${problem.libs.length > 1 ? problem.libs[1].global : ""} — loads in the sandbox` : "HTML · CSS · JS — judged in your browser") : "JavaScript · runs in your browser"}
+              </span>
             ) : (
               <Seg
                 options={RUNNER_LANGS.map(l => ({ value: l.id, label: l.label }))}
@@ -448,7 +475,7 @@ export function Playground() {
                 key={previewTick}
                 title="ui-preview"
                 sandbox="allow-scripts"
-                srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"><style>${uiSrc.css}</style></head><body>${uiSrc.html}<script>${uiSrc.js.replace(/<\/script>/gi, "<\\/script>")}</script></body></html>`}
+                srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8">${(problem.libs ?? []).map(l => `<script src="${l.url}"><\/script>`).join("")}<style>${uiSrc.css}</style></head><body>${uiSrc.html}<script>${uiSrc.js.replace(/<\/script>/gi, "<\\/script>")}</script></body></html>`}
                 className="h-[240px] w-full rounded-xl border border-line/10 bg-white"
               />
             </div>

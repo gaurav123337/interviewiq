@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CODING_PROBLEMS } from "../data/coding";
 import { COMPANIES } from "../data/companies";
-import { PROBLEM_COMPANIES, companiesForProblem, problemsForCompany, problemIsForCompany } from "../data/codingCompanies";
+import { PROBLEM_COMPANIES, companiesForProblem, companyInterviewPlan, problemsForCompany, problemIsForCompany, untaggedCodingProblems } from "../data/codingCompanies";
 
 const COMPANY_IDS = new Set(COMPANIES.map(c => c.id));
 const PROBLEM_IDS = new Set(CODING_PROBLEMS.map(p => p.id));
@@ -48,5 +48,27 @@ describe("company tags", () => {
       const p = CODING_PROBLEMS.find(x => x.id === id)!;
       expect(["cli", "fn"].includes(p.kind)).toBe(true);
     }
+  });
+
+  it("every CLI and fn problem carries at least one company tag", () => {
+    const untagged = untaggedCodingProblems();
+    expect(untagged.map(p => p.id)).toEqual([]);
+  });
+
+  it("builds a difficulty-aware plan: one easy + one medium per company", () => {
+    for (const company of ["google", "meta", "amazon", "microsoft", "stripe"]) {
+      const plan = companyInterviewPlan(company);
+      expect(plan.length).toBeGreaterThanOrEqual(1);
+      expect(plan.length).toBeLessThanOrEqual(2);
+      expect(plan.every(p => problemIsForCompany(p, company))).toBe(true);
+      if (plan.length === 2) {
+        expect(plan[0].difficulty).toBe(1);
+        expect(plan[1].difficulty).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("the plan is deterministic", () => {
+    expect(companyInterviewPlan("google").map(p => p.id)).toEqual(companyInterviewPlan("google").map(p => p.id));
   });
 });

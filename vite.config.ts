@@ -14,6 +14,8 @@ export default defineConfig({
   preview: { port: 8138, host: "127.0.0.1" },
   test: {
     environment: "jsdom",
-    setupFiles: ["./src/__tests__/setup.ts"]
+    setupFiles: ["./src/__tests__/setup.ts"],
+    /* hard cap so a hung test (e.g. a network fetch) fails instead of stalling the suite */
+    testTimeout: 30_000
   }
 });

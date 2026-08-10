@@ -14,6 +14,7 @@ export const PROBLEM_COMPANIES: Record<string, string[]> = {
   "max-subarray": ["google", "meta", "amazon", "microsoft", "apple"],
   "binary-search": ["google", "meta", "amazon", "microsoft", "uber", "stripe"],
   "buy-sell": ["google", "meta", "amazon", "apple", "stripe"],
+  "fizzbuzz": ["microsoft", "google", "amazon", "apple"],
   /* algorithm bank */
   "reverse-string": ["google", "microsoft", "apple"],
   "palindrome": ["google", "meta", "amazon", "apple"],
@@ -45,11 +46,19 @@ export const PROBLEM_COMPANIES: Record<string, string[]> = {
   "fn-pipe": ["google", "meta", "stripe"],
   "fn-compose": ["meta", "stripe", "datadog"],
   "fn-curry": ["google", "meta", "stripe", "apple"],
-  "fn-sleep": ["stripe", "cloudflare"],
+  "fn-sleep": ["stripe", "cloudflare", "datadog"],
   "fn-map-limit": ["google", "stripe", "datadog", "cloudflare"],
   "fn-binary-search": ["google", "meta", "amazon", "microsoft", "uber"],
-  "fn-lru-cache": ["google", "meta", "amazon", "microsoft", "apple", "uber", "netflix"]
+  "fn-lru-cache": ["google", "meta", "amazon", "microsoft", "apple", "uber", "netflix"],
+  "fn-range": ["google", "stripe", "datadog"]
 };
+
+/** Every CLI + fn problem should carry at least one company tag so the target
+    filter never empties for a real company. UI problems are intentionally untagged
+    (they are Pro-gated, not company-specific). */
+export function untaggedCodingProblems(problems: CodingProblem[] = CODING_PROBLEMS): CodingProblem[] {
+  return problems.filter(p => (p.kind === "cli" || p.kind === "fn") && !(PROBLEM_COMPANIES[p.id] ?? []).length);
+}
 
 export function companiesForProblem(id: string): string[] {
   return PROBLEM_COMPANIES[id] ?? [];
@@ -62,4 +71,18 @@ export function problemsForCompany(companyId: string): CodingProblem[] {
 /** Problems tagged for the given company, preserving the catalog order. */
 export function problemIsForCompany(p: CodingProblem, companyId: string): boolean {
   return (PROBLEM_COMPANIES[p.id] ?? []).includes(companyId);
+}
+
+/** Deterministic difficulty-aware practice plan for a company: one easy and one
+    medium tagged problem (falls back to hard when no medium exists, and to the
+    easiest remaining when a tier is empty). Never returns more than 2. */
+export function companyInterviewPlan(companyId: string, problems: CodingProblem[] = CODING_PROBLEMS): CodingProblem[] {
+  const tagged = problems.filter(p => problemIsForCompany(p, companyId));
+  const byDiff = (d: number) => tagged.filter(p => p.difficulty === d);
+  const easy = byDiff(1)[0];
+  const medium = byDiff(2)[0] ?? byDiff(3)[0] ?? byDiff(1)[1];
+  const out: CodingProblem[] = [];
+  if (easy) out.push(easy);
+  if (medium && medium.id !== easy?.id) out.push(medium);
+  return out;
 }

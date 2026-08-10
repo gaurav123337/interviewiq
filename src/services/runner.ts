@@ -387,6 +387,22 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/** Loads a framework library (React/Vue UMD from a CDN) into a document. When a
+    script with the matching data-lib marker already exists (tests pre-inject
+    fetched libs), it is skipped. Returns false if loading failed/timed out. */
+export async function ensureUiLib(host: Document, lib: { url: string; global: string }): Promise<boolean> {
+  if (host.querySelector(`script[data-lib="${lib.global}"]`)) return true;
+  return new Promise(resolve => {
+    const s = host.createElement("script");
+    s.dataset.lib = lib.global;
+    s.src = lib.url;
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    host.head.appendChild(s);
+    setTimeout(() => resolve(false), 20_000);
+  });
+}
+
 /** Core UI judging against a given Document (a sandboxed iframe's document in
     production, the test document in unit tests). Injects the user's HTML/CSS/JS,
     runs each assertion, and cleans up. Returns per-assertion results. */
@@ -395,7 +411,8 @@ export async function runUiInDoc(
   html: string,
   css: string,
   js: string,
-  assertions: UiAssertionLike[]
+  assertions: UiAssertionLike[],
+  libs?: { url: string; global: string }[]
 ): Promise<UiCaseResult[]> {
   const root = host.createElement("div");
   root.id = "__ui-judge-root";
@@ -409,6 +426,10 @@ export async function runUiInDoc(
 })();`;
   host.body.appendChild(root);
   host.head.appendChild(style);
+  for (const lib of libs ?? []) {
+    /* loads from CDN in the browser; skips when a test pre-injected the lib */
+    await ensureUiLib(host, lib);
+  }
   host.body.appendChild(script);
   const win = host.defaultView;
   try {
@@ -444,7 +465,8 @@ export async function runUiTests(
   html: string,
   css: string,
   js: string,
-  assertions: UiAssertionLike[]
+  assertions: UiAssertionLike[],
+  libs?: { url: string; global: string }[]
 ): Promise<UiCaseResult[]> {
   /* Opaque-origin sandbox: `allow-scripts` WITHOUT `allow-same-origin` so user
      code can never reach the host app (that combination is effectively no
@@ -464,7 +486,7 @@ export async function runUiTests(
       await new Promise(r => setTimeout(r, 10));
     }
     if (!iframe.contentDocument) throw new Error("Sandbox unavailable");
-    return runUiInDoc(iframe.contentDocument, html, css, js, assertions);
+    return runUiInDoc(iframe.contentDocument, html, css, js, assertions, libs);
   } finally {
     iframe.remove();
   }

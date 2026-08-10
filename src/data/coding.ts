@@ -117,6 +117,10 @@ export interface UiProblem {
   reference: { html: string; css: string; js: string };
   /** Short Pro-gated hint. */
   hint?: string;
+  /** Framework libraries the sandbox must load before the user's code runs
+      (e.g. React or Vue UMD builds from a CDN). `global` is the window global
+      each script provides — used to skip loading when already present (tests). */
+  libs?: { url: string; global: string }[];
 }
 
 export type CodingProblem = CliProblem | FnProblem | UiProblem;
@@ -350,6 +354,8 @@ import { ALGORITHM_PROBLEMS } from "./codingBank/algorithms";
 import { UI_COMPONENT_PROBLEMS } from "./codingBank/uiComponents";
 /* Advanced UI components (toast, drag-and-drop, virtualization, …). */
 import { UI_ADVANCED_PROBLEMS } from "./codingBank/uiAdvanced";
+/* React / Vue component challenges (render with real libs in the sandbox). */
+import { UI_FRAMEWORK_PROBLEMS } from "./codingBank/uiFramework";
 /* Per-language starter skeletons (own module to avoid an import cycle). */
 import { PY, JS, TS, CPP, JAVA, GO } from "./starters";
 
@@ -358,5 +364,6 @@ export const CODING_PROBLEMS: CodingProblem[] = [
   ...ALGORITHM_PROBLEMS,
   ...JS_FUNCTION_PROBLEMS,
   ...UI_COMPONENT_PROBLEMS,
-  ...UI_ADVANCED_PROBLEMS
+  ...UI_ADVANCED_PROBLEMS,
+  ...UI_FRAMEWORK_PROBLEMS
 ];

@@ -23,7 +23,7 @@ import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { getAdminState, subscribeAdmin, type AdminState } from "../services/admin";
 import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
-import { isCloudConfigured } from "../services/cloud";
+import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { Chip } from "./ui";
 
 const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
@@ -53,7 +53,11 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [admin, setAdmin] = useState<AdminState>(() => getAdminState());
   const [banner, setBanner] = useState<Announcement | null>(() => nextUnseenAnnouncement());
+  const [cloud, setCloud] = useState(getCloudState());
   const [sharePayload] = useState<string | null>(() => new URLSearchParams(window.location.search).get("share"));
+
+  /* keep the header avatar in sync with sign-in state */
+  useEffect(() => subscribeCloud(setCloud), []);
 
   const toggleTheme = () => {
     const next: Theme = theme === "light" ? "dark" : "light";
@@ -156,6 +160,15 @@ export function App() {
           </div>
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
+          <button
+            onClick={() => go("account")}
+            title={cloud.user ? `Account — ${cloud.user.email}` : "Account"}
+            aria-label="Account"
+            className="relative grid h-9 w-9 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[13px] font-extrabold transition-all hover:bg-wht/20"
+          >
+            {cloud.user ? (cloud.user.email ?? "?").charAt(0).toUpperCase() : "👤"}
+            {cloud.user && <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border border-deep bg-ok" />}
+          </button>
           <button
             onClick={toggleTheme}
             title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
