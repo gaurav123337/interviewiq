@@ -154,8 +154,14 @@ export function localCoachReply(text: string, ctx: CoachContext): string {
   const hitKp = kp.filter(k => overlap(k, text) > 0);
   const missing = kp.filter(k => overlap(k, text) === 0);
   const wantHint = /hint|stuck|help|how (do|should|can) i|approach/.test(t);
-  const sharing = /i would|my approach|my solution|i think|i did|my answer|what about|this is how/.test(t);
-  const debating = /disagree|but |not sure|isn't|wrong|debate|different|however/.test(t);
+  /* approach detection is intentionally broad — “I'll use a router”, “I can use
+     Next.js”, “I decided to cache” are all approaches even without the words
+     “my approach” */
+  const sharing = /\b(i'?ll|i will|i would|i can|i could|i plan|i'm going|i am going|i decided|i use|i chose|i prefer|my approach|my solution|i think|i did|my answer|what about|this is how|here'?s (my|how))\b/i.test(t);
+  const debating = /disagree|but |not sure|isn't|wrong|debate|different|however|objection/.test(t);
+  /* a substantive message (real content beyond greetings) is always worth
+     stress-testing, not dismissing with an invitation */
+  const hasContent = t.replace(/[^a-z0-9\s]/g, " ").trim().split(/\s+/).filter(w => w.length > 3).length >= 3;
 
   const lines: string[] = [];
 
@@ -163,19 +169,23 @@ export function localCoachReply(text: string, ctx: CoachContext): string {
     lines.push("🧭 Hint — break the question into parts before you answer. A strong reply covers:");
     lines.push("• " + (kp.length ? kp.join("\n• ") : "the core idea, a concrete example, and the tradeoffs"));
     if (answer) lines.push("Work toward the outline: " + answer.slice(0, 220) + (answer.length > 220 ? "…" : ""));
-  }
-
-  if (sharing) {
-    lines.push("✅ That's a real approach — let's stress-test it against what this question is graded on.");
-    if (hitKp.length) lines.push("You're covering: " + hitKp.join(" · "));
-    if (missing.length) lines.push("Don't miss: " + missing.join(" · "));
-    if (answer) lines.push("The model answer reasons through: " + answer.slice(0, 240) + (answer.length > 240 ? "…" : ""));
-  } else if (debating) {
+  } else if (debating && !sharing) {
     lines.push("🤔 Fair challenge. Here's the model answer's position:");
     lines.push(answer.slice(0, 300) || "See the key points below — that's the position interviewers expect.");
     if (kp.length) lines.push("Interviewers at this level are listening for: " + kp.join(" · "));
     lines.push("If you can hit those points with your own structure, that's a stronger debate than the wording — what's your version?");
-  } else if (!wantHint) {
+  } else if (sharing || hasContent) {
+    /* echo the user's own terms back so it feels like the coach actually read
+       the answer, then stress-test against the grading points */
+    const terms = [...new Set(
+      text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
+        .filter(w => w.length > 3 && !/about|your|their|with|have|this|that|will|would|could|there|what|when|from|into|using|just|also|then|than|some|them|they|been|were|should/.test(w))
+    )].slice(0, 4);
+    lines.push("✅ I read that you're thinking about: " + (terms.length ? terms.join(" · ") : "your approach") + ". Let's stress-test it against what this question is graded on.");
+    if (hitKp.length) lines.push("You're covering: " + hitKp.join(" · "));
+    if (missing.length) lines.push("Don't miss: " + missing.join(" · "));
+    if (answer) lines.push("The model answer reasons through: " + answer.slice(0, 240) + (answer.length > 240 ? "…" : ""));
+  } else {
     lines.push("Tell me your approach and I'll compare it with the model answer — or ask for a hint if you're stuck.");
     if (answer) lines.push("Reference outline: " + answer.slice(0, 200) + (answer.length > 200 ? "…" : ""));
   }
@@ -206,6 +216,12 @@ export function CoachChat(ctx: CoachContext) {
   useEffect(() => {
     boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight });
   }, [msgs, busy, open]);
+
+  /* auto-grow the composer so long answers aren't cramped in a single line */
+  const autoGrow = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = Math.min(160, el.scrollHeight) + "px";
+  };
 
   const saveDiscussion = () => {
     const text = msgs.filter(m => m.role === "assistant" || m.role === "user").map(m => m.text).join("\n");
@@ -326,14 +342,17 @@ export function CoachChat(ctx: CoachContext) {
             {busy && <div className="text-[12px] text-mut">…thinking</div>}
           </div>
           <div className="mt-2 flex gap-2">
-            <input
+            <textarea
               value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") send(); }}
-              placeholder="Ask about this question…"
-              className="inp w-full flex-1"
+              rows={1}
+              onChange={e => { setInput(e.target.value); autoGrow(e.target); }}
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              }}
+              placeholder="Ask about this question… (Shift+Enter for a new line)"
+              className="inp w-full flex-1 resize-none overflow-y-auto leading-relaxed"
             />
-            <button className={`${btnPrimary} ${btnSm} flex-none`} onClick={send} disabled={busy || !input.trim()}>Send</button>
+            <button className={`${btnPrimary} ${btnSm} flex-none self-end`} onClick={send} disabled={busy || !input.trim()}>Send</button>
           </div>
           {msgs.length >= 2 && (
             <button type="button" className={`${btnGhost} ${btnSm} mt-2 w-full`} onClick={saveDiscussion}>

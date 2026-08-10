@@ -244,6 +244,19 @@ describe("local coach replies", () => {
     expect(r).toContain("closure");
   });
 
+  it("an approach phrased as 'I'll use X' is detected and stress-tested, not dismissed", () => {
+    const r = localCoachReply("I'll use a router library to handle it", ctx);
+    expect(r).toContain("thinking about");
+    expect(r).toContain("Don't miss: lexical scope");
+    expect(r).not.toContain("Tell me your approach");
+  });
+
+  it("any substantive message is investigated even without approach keywords", () => {
+    const r = localCoachReply("caching responses would speed up the whole system", ctx);
+    expect(r).toContain("thinking about");
+    expect(r).toContain("Don't miss");
+  });
+
   it("retrieves related practice from the deep-dive knowledge base even without a field", () => {
     const r = localCoachReply("how does debounce actually work", { prompt: ctx.prompt, answer: ctx.answer, kp: ctx.kp, fieldId: null, levelId: null });
     expect(r).toContain("Related practice");
