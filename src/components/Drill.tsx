@@ -5,11 +5,14 @@ import { companyById } from "../data";
 import { freqForProblem } from "../data/codingCompanies";
 import { getSrs, learnedCount, makeDeck, rate, resetSrs, type DrillCard, type Rating } from "../services/drill";
 import { getGoal } from "../services/goal";
+import { STORAGE_KEYS, storageSet } from "../services/storage";
+import { useApp } from "../store";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSoft, btnSm, cardCls, Chip, KpNeutral } from "./ui";
 import { CoachChat } from "./CoachChat";
 
 export function Drill() {
+  const { nav } = useApp();
   const [fieldSel, setFieldSel] = useState(FIELDS[0].id);
   /* goal company — coding cards show the company's question weight when set */
   const goal = getGoal();
@@ -141,7 +144,11 @@ export function Drill() {
           </button>
 
           <div className="mt-4">
-            <CoachChat prompt={card.q} answer={card.a} kp={card.kp} fieldId={fieldSel} levelId={card.lvl} />
+            <CoachChat
+              prompt={card.q} answer={card.a} kp={card.kp} fieldId={fieldSel} levelId={card.lvl}
+              companyId={goalCompanyId}
+              onPractice={id => { storageSet(STORAGE_KEYS.playgroundFocus, id); nav("playground"); }}
+            />
           </div>
 
           <div className="mt-4 flex flex-wrap justify-center gap-2.5">

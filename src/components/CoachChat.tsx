@@ -11,7 +11,9 @@ import { useEffect, useRef, useState } from "react";
 import { aiAvailable, chat, type ChatMessage } from "../ai";
 import { fieldById } from "../data";
 import { deepDiveCards } from "../data/deepDive";
+import { codingTopicsFromText, suggestNextProblem } from "../data/codingCompanies";
 import { publishedFor } from "../services/remoteConfig";
+import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import type { LevelId } from "../types";
 import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
@@ -25,6 +27,10 @@ export interface CoachContext {
   kp: string[];
   fieldId?: string | null;
   levelId?: LevelId | null;
+  /** Goal company id — used to rank the next-problem suggestion. */
+  companyId?: string | null;
+  /** Called with a problem id when the candidate accepts a suggestion. */
+  onPractice?: (problemId: string) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -73,24 +79,32 @@ function relatedQuestions(ctx: CoachContext, text: string, limit: number): { q: 
 }
 
 /* ------------------------------------------------------------------ */
-/* Saving discussions into the weakness profile                        */
+/* Saving discussions into the weakness profile + history              */
 /* ------------------------------------------------------------------ */
 
-interface CoachDiscussion { at: number; text: string }
+export interface CoachDiscussion {
+  at: number;
+  prompt: string;
+  mode: "api" | "local";
+  text: string;
+}
 
-/** Saved coach discussions — read by codingCompanies to derive weak topics. */
+/** Saved coach discussions — read by codingCompanies (focus) and History. */
 export function getCoachDiscussions(): CoachDiscussion[] {
   return storageGet<CoachDiscussion[]>(STORAGE_KEYS.coachTopics, []);
 }
 
-/** Appends a discussion (deduped by content hash, capped at the latest 10). */
-export function saveCoachDiscussion(text: string): boolean {
-  const t = text.trim();
+/** Appends a discussion (deduped by content, capped at the latest 50) and
+    queues a coach_discussion event so the admin can aggregate weak topics. */
+export function saveCoachDiscussion(d: { prompt: string; mode: "api" | "local"; text: string }): boolean {
+  const t = d.text.trim();
   if (!t) return false;
   const key = t.slice(0, 200);
-  const list = getCoachDiscussions().filter(d => !d.text.startsWith(key));
-  list.unshift({ at: Date.now(), text: t.slice(0, 1200) });
-  storageSet(STORAGE_KEYS.coachTopics, list.slice(0, 10));
+  const list = getCoachDiscussions().filter(x => !x.text.startsWith(key));
+  list.unshift({ at: Date.now(), prompt: d.prompt, mode: d.mode, text: t.slice(0, 1200) });
+  storageSet(STORAGE_KEYS.coachTopics, list.slice(0, 50));
+  const topics = codingTopicsFromText(t);
+  queueEvent("coach_discussion", { topics, prompt: d.prompt.slice(0, 300), mode: d.mode });
   return true;
 }
 
@@ -147,6 +161,7 @@ export function CoachChat(ctx: CoachContext) {
   const [msgs, setMsgs] = useState<CoachMsg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [suggestion, setSuggestion] = useState<{ id: string; title: string; kind: string } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -155,11 +170,21 @@ export function CoachChat(ctx: CoachContext) {
 
   const saveDiscussion = () => {
     const text = msgs.filter(m => m.role === "assistant" || m.role === "user").map(m => m.text).join("\n");
-    if (saveCoachDiscussion(text)) {
+    if (saveCoachDiscussion({ prompt, mode, text })) {
       toast("💾 Discussion saved — topics debated here now influence your focus plan");
     } else {
       toast("Nothing to save yet — have a chat first");
     }
+  };
+
+  const suggest = () => {
+    const text = msgs.map(m => m.text).join(" ");
+    const p = suggestNextProblem(ctx.companyId ?? null, text);
+    if (!p) {
+      toast("I couldn't pin a topic from this chat — keep discussing, or ask me about complexity, edge cases, or a specific area.");
+      return;
+    }
+    setSuggestion({ id: p.id, title: p.title, kind: p.kind });
   };
 
   const send = async () => {
@@ -247,6 +272,21 @@ export function CoachChat(ctx: CoachContext) {
             <button type="button" className={`${btnGhost} ${btnSm} mt-2 w-full`} onClick={saveDiscussion}>
               💾 Save this discussion into my weak-topic profile
             </button>
+          )}
+          {msgs.length >= 3 && (
+            <button type="button" className={`${btnGhost} ${btnSm} mt-1.5 w-full`} onClick={suggest}>
+              🎯 Suggest next problem from this discussion
+            </button>
+          )}
+          {suggestion && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-acc1/30 bg-acc1/10 px-3 py-2 text-[12.5px]">
+              <span className="font-bold text-acctxt">🎯 Next: {suggestion.kind === "fn" ? "🧩" : suggestion.kind === "ui" ? "🎨" : "⚙️"} {suggestion.title}</span>
+              {ctx.onPractice && (
+                <button className={`${btnPrimary} ${btnSm} ml-auto`} onClick={() => { ctx.onPractice?.(suggestion.id); setSuggestion(null); }}>
+                  ▶ Practice this
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

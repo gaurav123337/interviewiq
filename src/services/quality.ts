@@ -127,6 +127,26 @@ export interface CodingQualityRow {
   lastSeen: string | null;
 }
 
+export interface CoachGapRow {
+  topic: string;
+  discussions: number;
+  users: number;
+  lastSeen: string | null;
+}
+
+export async function adminCoachGaps(maxRows = 50): Promise<CoachGapRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_coach_gaps", { max_rows: maxRows });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+    topic: r.topic as string,
+    discussions: Number(r.discussions ?? 0),
+    users: Number(r.users ?? 0),
+    lastSeen: (r.last_seen as string | null) ?? null
+  }));
+}
+
 export async function adminCodingQuality(): Promise<CodingQualityRow[]> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");

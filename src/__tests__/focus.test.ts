@@ -3,7 +3,7 @@
 
 import { describe, expect, it, beforeEach } from "vitest";
 import { CODING_PROBLEMS } from "../data/coding";
-import { coachDiscussionTopics, companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, missedSessionTopics, personalFocusForCompany, personalPlan, qaCategoryHeat } from "../data/codingCompanies";
+import { coachDiscussionTopics, companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, missedSessionTopics, personalFocusForCompany, personalPlan, qaCategoryHeat, suggestNextProblem } from "../data/codingCompanies";
 import { codingDrillCards } from "../services/codingTrack";
 import { getCoachDiscussions, localCoachReply, saveCoachDiscussion } from "../components/CoachChat";
 import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
@@ -134,27 +134,38 @@ describe("learning from session answers", () => {
 describe("coach discussions feed the weakness profile", () => {
   it("saved discussions derive the same topics as missed key points", () => {
     expect(coachDiscussionTopics().size).toBe(0);
-    saveCoachDiscussion("We debated time complexity and edge cases for the two-sum solution");
+    saveCoachDiscussion({ prompt: "Two Sum", mode: "local", text: "We debated time complexity and edge cases for the two-sum solution" });
     const topics = coachDiscussionTopics();
     expect(topics.has("Arrays & hashing")).toBe(true);
     expect(topics.has("Search & sorting")).toBe(true);
   });
 
   it("a coach discussion flags matching problems with weakSrc 'coach'", () => {
-    saveCoachDiscussion("I keep missing time complexity analysis");
+    saveCoachDiscussion({ prompt: "Two Sum", mode: "local", text: "I keep missing time complexity analysis" });
     const sig = focusSignals(CODING_PROBLEMS.find(p => p.id === "two-sum")!);
     expect(sig.weakSkill).toBe(true);
     expect(sig.weakSrc).toBe("coach");
     expect(hasPersonalSignals()).toBe(true);
   });
 
-  it("save dedupes identical discussions and caps the log", () => {
+  it("save dedupes identical discussions and keeps prompt + mode for history", () => {
     const text = "debate about memoization and caching";
-    expect(saveCoachDiscussion(text)).toBe(true);
-    expect(saveCoachDiscussion(text)).toBe(true);
+    expect(saveCoachDiscussion({ prompt: "Memoize", mode: "api", text })).toBe(true);
+    expect(saveCoachDiscussion({ prompt: "Memoize", mode: "api", text })).toBe(true);
     expect(getCoachDiscussions().length).toBe(1);
-    for (let i = 0; i < 15; i++) saveCoachDiscussion("discussion number " + i + " about async performance");
-    expect(getCoachDiscussions().length).toBeLessThanOrEqual(10);
+    expect(getCoachDiscussions()[0].prompt).toBe("Memoize");
+    expect(getCoachDiscussions()[0].mode).toBe("api");
+    for (let i = 0; i < 60; i++) saveCoachDiscussion({ prompt: "P" + i, mode: "local", text: "discussion number " + i + " about async performance" });
+    expect(getCoachDiscussions().length).toBeLessThanOrEqual(50);
+  });
+
+  it("suggestNextProblem ranks a problem in the discussed topic first, unsolved preferred", () => {
+    storageSet(STORAGE_KEYS.codingTrack, { "fn-range": { fails: 0, solved: true } });
+    const p = suggestNextProblem("google", "we debated time complexity and hash maps for this approach");
+    expect(p).not.toBeNull();
+    /* two-sum: Arrays & hashing, company heat 3, unsolved → top scorer */
+    expect(p!.id).toBe("two-sum");
+    expect(suggestNextProblem("google", "hi there")).toBeNull();
   });
 });
 

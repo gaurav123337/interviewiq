@@ -235,8 +235,34 @@ export function missedSessionTopics(): Set<string> {
 export function coachDiscussionTopics(): Set<string> {
   const list = storageGet<{ at: number; text: string }[]>(STORAGE_KEYS.coachTopics, []);
   const hits = new Set<string>();
-  for (const d of list) topicsFromText(d.text, hits);
+  for (const d of list.slice(0, 10)) topicsFromText(d.text, hits);
   return hits;
+}
+
+/** Coding topics derived from arbitrary text (the same bridge as missed key points). */
+export function codingTopicsFromText(text: string): string[] {
+  const hits = new Set<string>();
+  topicsFromText(text, hits);
+  return [...hits];
+}
+
+/** Suggests the next problem to practice based on the topics raised in a coach
+    discussion: problems in those topics first, company heat second, unsolved
+    preferred. Returns null when no topic was raised. */
+export function suggestNextProblem(companyId: string | null, text: string, problems: CodingProblem[] = CODING_PROBLEMS): CodingProblem | null {
+  const topics = new Set(codingTopicsFromText(text));
+  if (topics.size === 0) return null;
+  const track = getCodingTrack();
+  const scored = problems
+    .map(p => {
+      const match = topics.has(codingTopicFor(p)) ? 10 : 0;
+      const heat = companyId && companyId !== "general" ? freqForProblem(companyId, p.id) : 0;
+      const solved = track[p.id]?.solved ? -3 : 0;
+      return { p, s: match + heat + solved };
+    })
+    .filter(x => x.s > 0)
+    .sort((a, b) => b.s - a.s || a.p.title.localeCompare(b.p.title));
+  return scored[0]?.p ?? null;
 }
 
 /** Personal signals for a problem: how often it was failed in the playground,

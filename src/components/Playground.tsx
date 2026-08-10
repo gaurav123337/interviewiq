@@ -145,6 +145,16 @@ export function Playground() {
     storageSet(STORAGE_KEYS.code, { ...cache, [problemId]: entry });
   }, [code, problemId, effLang]);
 
+  /* jump to a problem suggested by the AI coach from another screen */
+  useEffect(() => {
+    const f = storageGet<string | null>(STORAGE_KEYS.playgroundFocus, null);
+    if (f) {
+      storageSet(STORAGE_KEYS.playgroundFocus, null);
+      pickProblem(f);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* persist UI sources per problem */
   useEffect(() => {
     if (!isUi) return;
@@ -737,6 +747,8 @@ export function Playground() {
               ]}
               fieldId={goal?.fieldId ?? null}
               levelId={problem.difficulty === 1 ? "junior" : problem.difficulty === 2 ? "mid" : "senior"}
+              companyId={goalCompanyId}
+              onPractice={pickProblem}
             />
           </div>
         </div>

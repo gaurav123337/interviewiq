@@ -8,6 +8,7 @@ import { useApp } from "../store";
 import { toast } from "../toast";
 import { fmtTime } from "../util";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
+import { STORAGE_KEYS, storageSet } from "../services/storage";
 import { hasVoted, sendFeedback, type FeedbackKind } from "../services/feedback";
 import { loadVoices, speak, stopSpeaking, ttsSupported } from "../services/voice";
 import { UpgradeModal } from "./Upgrade";
@@ -19,7 +20,7 @@ const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
 const voicePro = () => isPaywallEnabled() && getTier() !== "pro";
 
 export function Interview() {
-  const { state, submitAnswer, skipQuestion, nextQuestion, exitToResults } = useApp();
+  const { state, submitAnswer, skipQuestion, nextQuestion, exitToResults, nav } = useApp();
   const { session, idx, feedbackShown, config, answers } = state;
   const q: SessionQuestion | undefined = session?.questions[idx];
 
@@ -158,7 +159,11 @@ export function Interview() {
         </div>
 
         <div className="mb-4">
-          <CoachChat prompt={q.q} answer={q.a} kp={q.kp} fieldId={meta.fieldId} levelId={q.level} />
+          <CoachChat
+            prompt={q.q} answer={q.a} kp={q.kp} fieldId={meta.fieldId} levelId={q.level}
+            companyId={meta.companyId !== "general" && meta.companyId !== "bank" && meta.companyId !== "weak" ? meta.companyId : null}
+            onPractice={id => { storageSet(STORAGE_KEYS.playgroundFocus, id); nav("playground"); }}
+          />
         </div>
 
         {feedbackShown && <FeedbackPanel ai={ai} aiLoading={aiLoading} onSkip={skipQuestion} onNext={nextQuestion} isLast={idx + 1 >= session.questions.length} />}

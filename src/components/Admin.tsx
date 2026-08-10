@@ -9,8 +9,8 @@ import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../s
 import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
-  adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, mergeQuality, touchQuestion,
-  type CodingQualityRow, type FeedbackFeedRow, type QualityRow
+  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, mergeQuality, touchQuestion,
+  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow
 } from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
@@ -1614,7 +1614,8 @@ const QUALITY_TABS = [
   { value: "calibration", label: "🎚️ Calibration" },
   { value: "staleness", label: "⏳ Staleness" },
   { value: "feedback", label: "💬 Feedback" },
-  { value: "coding", label: "💻 Coding" }
+  { value: "coding", label: "💻 Coding" },
+  { value: "coach", label: "🎯 Coach gaps" }
 ] as const;
 
 function QualityBar({ score }: { score: number }) {
@@ -1634,6 +1635,7 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [tab, setTab] = useState<(typeof QUALITY_TABS)[number]["value"]>("scoreboard");
   const [cutoff, setCutoff] = useState(90);
   const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
+  const [coachGaps, setCoachGaps] = useState<CoachGapRow[]>([]);
 
   const bank = getPublishedQuestions();
   const merged = useMemo(
@@ -1646,8 +1648,8 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality()])
-      .then(([q, f, c]) => { setRows(q); setFeed(f); setCoding(c); })
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps()])
+      .then(([q, f, c, g]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -1912,6 +1914,43 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
                       </tr>
                     );
                   })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "coach" && (
+        <div className={`${cardCls} overflow-hidden`}>
+          <div className="border-b border-line/10 p-5">
+            <h3 className="text-[15px] font-extrabold">🎯 Coach gaps ({coachGaps.length} topics debated)</h3>
+            <p className="text-[12.5px] text-mut">
+              Weak coding topics users saved from AI-coach discussions (queued as coach_discussion events).
+              High discussion + user counts = a gap worth a deep-dive guide or more practice problems.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-[13px]">
+              <thead>
+                <tr className="border-b border-line/10 text-[11.5px] uppercase tracking-wider text-mut">
+                  <th className="px-5 py-3 font-bold">Topic</th>
+                  <th className="px-3 py-3 font-bold">Discussions</th>
+                  <th className="px-3 py-3 font-bold">Users</th>
+                  <th className="px-5 py-3 font-bold">Last seen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coachGaps.length === 0 && (
+                  <tr><td colSpan={4} className="px-5 py-10 text-center text-mut">No coach discussions saved yet — users save chats in the 🤖 AI Coach and the gaps fill in.</td></tr>
+                )}
+                {coachGaps.map(g => (
+                  <tr key={g.topic} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
+                    <td className="px-5 py-3 font-bold">{g.topic}</td>
+                    <td className="px-3 py-3 tabular-nums">{g.discussions}</td>
+                    <td className="px-3 py-3 tabular-nums">{g.users}</td>
+                    <td className="px-5 py-3 text-[12.5px] text-fnt">{g.lastSeen ? new Date(g.lastSeen).toLocaleDateString() : "—"}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

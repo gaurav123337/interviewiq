@@ -2,14 +2,17 @@ import { useState } from "react";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
+import { getCoachDiscussions } from "./CoachChat";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal } from "./ui";
 
 export function History() {
   const { state, openHistory, deleteHistory, clearHistory } = useApp();
   const { sessions } = state;
+  const coach = getCoachDiscussions();
   const [confirmClear, setConfirmClear] = useState(false);
+  const [openCoach, setOpenCoach] = useState<string | null>(null);
 
-  if (!sessions.length) {
+  if (!sessions.length && !coach.length) {
     return (
       <div className="anim-view">
         <EmptyState icon="🗂️" title="No sessions yet">
@@ -32,6 +35,40 @@ export function History() {
       <div className="mt-6 flex justify-end">
         <button className={btnDanger + btnSm} onClick={() => setConfirmClear(true)}>Clear all history</button>
       </div>
+
+      {coach.length > 0 && (
+        <div className="mt-6">
+          <div className="mb-3 flex items-center gap-2">
+            <h2 className="text-[16px] font-extrabold">🤖 Coach discussions</h2>
+            <span className="text-[12px] text-fnt">Saved chats with the AI coach — debates that shaped your focus plan</span>
+          </div>
+          <div className="space-y-3">
+            {coach.map((d, i) => {
+              const open = openCoach === String(i);
+              return (
+                <div key={i} className={`${cardCls} px-5 py-4`}>
+                  <button type="button" className="flex w-full flex-wrap items-center gap-3 text-left" onClick={() => setOpenCoach(open ? null : String(i))}>
+                    <div className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-acc1/15 text-lg">🤖</div>
+                    <div className="min-w-[180px] flex-1">
+                      <div className="text-[14px] font-extrabold leading-tight">{d.prompt}</div>
+                      <div className="mt-0.5 text-[12px] text-mut">
+                        {new Date(d.at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                        {open ? " · tap to hide" : " · tap to read"}
+                      </div>
+                    </div>
+                    <Chip tone={d.mode === "api" ? "co" : "lvl"}>{d.mode === "api" ? "🤖 AI · API key" : "📚 Knowledge · offline"}</Chip>
+                  </button>
+                  {open && (
+                    <div className="mt-3 max-h-[260px] overflow-y-auto whitespace-pre-wrap rounded-xl bg-deep/50 p-3 text-[12.5px] leading-relaxed text-ink">
+                      {d.text}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="mt-3 space-y-3">
         {sessions.map(s => {

@@ -197,3 +197,24 @@ begin
     order by attempts desc
     limit max_rows;
 end $$;
+
+/* Coach gap scoreboard — weak coding topics most debated in saved AI-coach
+   discussions across all users (queued by src/components/CoachChat.tsx as
+   coach_discussion events with meta.topics). */
+create or replace function public.admin_coach_gaps(max_rows integer default 50)
+returns table (topic text, discussions bigint, users bigint, last_seen timestamptz)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  return query
+    select t.topic as topic,
+           count(*) as discussions,
+           count(distinct e.user_id) as users,
+           max(e.created_at) as last_seen
+    from public.usage_events e
+    cross join lateral jsonb_array_elements_text(coalesce(e.meta->'topics', '[]'::jsonb)) as t(topic)
+    where e.kind = 'coach_discussion'
+    group by t.topic
+    order by discussions desc, users desc
+    limit max_rows;
+end $$;
