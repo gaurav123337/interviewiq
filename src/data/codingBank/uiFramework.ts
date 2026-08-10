@@ -16,7 +16,7 @@ import type { UiProblem } from "../coding";
 const JS_SKELETON = `// Wire up the component's behavior here.
 // The judge checks the rendered DOM after real clicks / input events.`;
 
-const REACT_LIBS = [
+export const REACT_LIBS = [
   { url: "https://unpkg.com/react@18.3.1/umd/react.production.min.js", global: "React" },
   { url: "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js", global: "ReactDOM" }
 ];
