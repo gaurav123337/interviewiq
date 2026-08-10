@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
+import { basicSetup } from "codemirror";
+import { EditorView } from "@codemirror/view";
+import { EditorState, type Extension } from "@codemirror/state";
+import { oneDark } from "@codemirror/theme-one-dark";
+import { python } from "@codemirror/lang-python";
+import { javascript } from "@codemirror/lang-javascript";
+import { cpp } from "@codemirror/lang-cpp";
+import { java } from "@codemirror/lang-java";
+import { go } from "@codemirror/lang-go";
+import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type LangId } from "../data/coding";
 import { buildProgram, runCase, runLocalJavaScript, runTests } from "../services/runner";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
+import { getTheme, type Theme } from "../services/theme";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Difficulty, Seg } from "./ui";
 
@@ -12,6 +22,16 @@ const cacheFor = (id: string, lang: LangId): string => loadCache()[id]?.[lang] ?
 
 const DIFF_COLOR: Record<number, string> = { 1: "text-ok", 2: "text-warn", 3: "text-bad" };
 
+/* Language → CodeMirror grammar (TS builds on the JS grammar with types). */
+const LANG_EXT: Record<LangId, () => Extension> = {
+  python: () => python(),
+  javascript: () => javascript(),
+  typescript: () => javascript({ typescript: true }),
+  cpp: () => cpp(),
+  java: () => java(),
+  go: () => go()
+};
+
 export function Playground() {
   const [problemId, setProblemId] = useState(CODING_PROBLEMS[0].id);
   const [lang, setLang] = useState<LangId>("python");
@@ -21,7 +41,7 @@ export function Playground() {
   const [runOut, setRunOut] = useState<{ stdout: string; error?: string; ok: boolean } | null>(null);
   const [cases, setCases] = useState<{ pass: boolean; stdin: string; expect: string; got: string; error?: string }[] | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
-  const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const theme = getTheme();
 
   const problem = useMemo(() => codingProblemById(problemId) ?? CODING_PROBLEMS[0], [problemId]);
   const langMeta = RUNNER_LANGS.find(l => l.id === lang)!;
@@ -44,7 +64,7 @@ export function Playground() {
   const pickProblem = (id: string) => {
     setProblemId(id);
     const cached = cacheFor(id, lang);
-    setCode(cached || problemById(id)?.starters[lang] || "");
+    setCode(cached || codingProblemById(id)?.starters[lang] || "");
     setRunOut(null);
     setCases(null);
   };
@@ -52,7 +72,7 @@ export function Playground() {
   const pickLang = (l: LangId) => {
     setLang(l);
     const cached = cacheFor(problemId, l);
-    setCode(cached || problemById(problemId)?.starters[l] || "");
+    setCode(cached || codingProblemById(problemId)?.starters[l] || "");
     setRunOut(null);
     setCases(null);
   };
@@ -94,22 +114,10 @@ export function Playground() {
   };
 
   const resetCode = () => {
-    setCode(problemById(problemId)?.starters[lang] || "");
+    setCode(codingProblemById(problemId)?.starters[lang] || "");
     setRunOut(null);
     setCases(null);
     toast("↺ Starter restored");
-  };
-
-  const insertTab = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key !== "Tab") return;
-    e.preventDefault();
-    const ta = e.currentTarget;
-    const { selectionStart, selectionEnd, value } = ta;
-    const next = value.slice(0, selectionStart) + "  " + value.slice(selectionEnd);
-    setCode(next);
-    requestAnimationFrame(() => {
-      ta.selectionStart = ta.selectionEnd = selectionStart + 2;
-    });
   };
 
   return (
@@ -170,15 +178,12 @@ export function Playground() {
           </div>
 
           <div className="p-4">
-            <textarea
-              ref={taRef}
+            <CodeEditor
               value={code}
-              onChange={e => setCode(e.target.value)}
-              onKeyDown={insertTab}
-              spellCheck={false}
-              rows={18}
-              placeholder="// write your solution here"
-              className="editor-surface w-full resize-y p-4 text-[13px] leading-relaxed placeholder:text-fnt"
+              onChange={setCode}
+              lang={lang}
+              theme={theme}
+              className="cm-host"
             />
           </div>
 
@@ -191,10 +196,9 @@ export function Playground() {
             </button>
             {(cases && cases.every(c => c.pass)) && <Chip tone="ok">✅ Solved</Chip>}
             <button className={btnGhost + btnSm} onClick={resetCode}>↺ Reset</button>
-            <span className="flex-1" />
-            {!langMeta.offline && (
-              <span className="hidden text-[11.5px] text-fnt sm:inline">compiles on {langMeta.compiler}</span>
-            )}
+            <span className="hidden flex-1 text-right text-[11.5px] text-fnt sm:inline">
+              {langMeta.offline ? "runs locally in your browser" : `compiles on ${langMeta.compiler}`} · Tab indents · Ctrl/Cmd+Space completes
+            </span>
           </div>
 
           {/* custom input */}
@@ -260,6 +264,57 @@ export function Playground() {
   );
 }
 
-function problemById(id: string): CodingProblem | undefined {
-  return CODING_PROBLEMS.find(p => p.id === id);
+/* ---------- CodeMirror editor ---------- */
+/* Real IDE experience: syntax highlighting, bracket matching, auto-closing
+   brackets, line numbers and Ctrl/Cmd+Space autocomplete (language-aware for
+   JS/TS/Python, word-based for C++/Java/Go). Recreates when the language or
+   app theme changes; external value updates (reset / language switch) are
+   pushed in without clobbering the user's cursor while typing. */
+
+function CodeEditor({ value, onChange, lang, theme, className }: {
+  value: string;
+  onChange: (v: string) => void;
+  lang: LangId;
+  theme: Theme;
+  className?: string;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  /* create (or recreate) the editor when the language or theme changes */
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const view = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: value,
+        extensions: [
+          basicSetup,
+          LANG_EXT[lang](),
+          theme === "dark" ? oneDark : [],
+          EditorView.updateListener.of(u => {
+            if (u.docChanged) onChangeRef.current(u.state.doc.toString());
+          })
+        ]
+      })
+    });
+    viewRef.current = view;
+    return () => { view.destroy(); viewRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang, theme]);
+
+  /* push external value changes (reset, language switch) into the editor */
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const current = view.state.doc.toString();
+    if (current !== value) {
+      view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
+    }
+  }, [value]);
+
+  return <div ref={hostRef} className={className} />;
 }

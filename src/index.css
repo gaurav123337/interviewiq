@@ -218,3 +218,34 @@ html.light .card-shadow { box-shadow: 0 12px 32px rgba(15, 23, 42, 0.10); }
   border-color: rgba(99, 102, 241, 0.7);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
 }
+
+/* ---------- CodeMirror host ---------- */
+.cm-host {
+  background: var(--color-deep);
+  border: 1px solid var(--color-line);
+  border-radius: 0.9rem;
+  min-height: 380px;
+  overflow: hidden;
+}
+.cm-host:focus-within {
+  border-color: rgba(99, 102, 241, 0.7);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+.cm-host .cm-editor {
+  height: 380px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.cm-host .cm-editor.cm-focused { outline: none; }
+.cm-host .cm-scroller { overflow: auto; }
+.cm-host .cm-gutters {
+  border: none;
+  background: var(--color-deep);
+}
+.light .cm-host .cm-editor .cm-content {
+  background: #ffffff;
+}
+.light .cm-host {
+  background: #ffffff;
+}
