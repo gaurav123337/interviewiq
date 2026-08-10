@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { LevelId } from "../types";
 import { FIELDS, LEVELS } from "../data";
 import { getCloudState, subscribeCloud } from "../services/cloud";
+import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../services/teams";
 import { aiAvailable } from "../ai";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
@@ -24,7 +25,7 @@ import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteCo
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "teams";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -35,7 +36,8 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "import", label: "Auto-fill", icon: "⚡" },
   { id: "scraper", label: "Scraper", icon: "🕷️" },
   { id: "config", label: "Product config", icon: "🎛️" },
-  { id: "activity", label: "Activity", icon: "🧾" }
+  { id: "activity", label: "Activity", icon: "🧾" },
+  { id: "teams", label: "Teams", icon: "🏢" }
 ];
 
 const FEATURE_LABELS: Record<string, string> = {
@@ -49,6 +51,7 @@ const FEATURE_LABELS: Record<string, string> = {
 export function Admin() {
   const [admin, setAdmin] = useState(getAdminState());
   const [cloud, setCloud] = useState(getCloudState());
+  const [teamState, setTeamState] = useState<TeamsState>(() => getTeamsState());
   const [section, setSection] = useState<Section>("overview");
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null);
   const [users, setUsers] = useState<AdminUserRow[]>([]);
@@ -61,6 +64,7 @@ export function Admin() {
 
   useEffect(() => subscribeAdmin(setAdmin), []);
   useEffect(() => subscribeCloud(setCloud), []);
+  useEffect(() => subscribeTeams(setTeamState), []);
 
   const load = async () => {
     setLoading(true);
@@ -136,6 +140,7 @@ export function Admin() {
         {section === "scraper" && <ScraperSection busy={busy} setBusy={setBusy} />}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
         {section === "activity" && <Activity busy={busy} setBusy={setBusy} />}
+        {section === "teams" && <AdminTeams teamState={teamState} />}
       </div>
     </div>
   );
@@ -1314,6 +1319,75 @@ function NumField({ label, value, step = 1, onChange }: { label: string; value: 
       <span className="mb-1 block text-[12px] font-bold text-mut">{label}</span>
       <input type="number" step={step} value={value} onChange={e => onChange(Number(e.target.value))} className="inp w-full" />
     </label>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin teams — team analytics section                                */
+/* ------------------------------------------------------------------ */
+
+function AdminTeams({ teamState }: { teamState: TeamsState }) {
+  const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
+
+  if (!teamState.teams.length) {
+    return (
+      <div className={`${cardCls} flex flex-col items-center px-6 py-10 text-center`}>
+        <div className="text-[36px]">🏢</div>
+        <h2 className="mt-2 text-base font-extrabold">No teams yet</h2>
+        <p className="mx-auto mt-1 max-w-[400px] text-[13px] text-mut">
+          Teams are created from the 🏢 Team view (More menu) by signed-in users — once any exists, their analytics show up here.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {teamState.teams.map(t => (
+        <div key={t.teamId} className={`${cardCls} overflow-hidden`}>
+          <div className="flex flex-wrap items-center gap-3 p-5">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-[15.5px] font-extrabold">
+                {t.name}
+                {t.role === "owner" ? <span className="rounded-full border border-co/40 bg-co/15 px-2 py-0.5 text-[10px] font-bold text-co">OWNER</span> : <span className="text-[12px] text-mut">· {t.role}</span>}
+              </div>
+              <div className="mt-1 text-[12.5px] text-mut">{t.members}/{t.seats} seats used</div>
+            </div>
+            <button
+              onClick={() => { selectTeam(t.teamId); setExpandedTeam(expandedTeam === t.teamId ? null : t.teamId); }}
+              className="rounded-lg border border-line/20 px-3 py-1.5 text-[12.5px] font-bold text-mut hover:bg-wht/10"
+            >
+              {expandedTeam === t.teamId ? "△ Collapse" : "▽ View members"}
+            </button>
+          </div>
+          {/* seat utilization bar */}
+          <div className="border-t border-line/10 bg-wht/[.03] px-5 py-3">
+            <div className="flex items-center justify-between text-[12px] text-mut">
+              <span>Seat utilization</span>
+              <span>{Math.round((t.members / Math.max(1, t.seats)) * 100)}%</span>
+            </div>
+            <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-wht/10">
+              <div className={`h-full rounded-full ${t.members === t.seats ? "grad-bg" : "grad-bg-soft"}`}
+                style={{ width: `${Math.min(100, (t.members / Math.max(1, t.seats)) * 100)}%` }} />
+            </div>
+          </div>
+          {expandedTeam === t.teamId && (
+            <div className="border-t border-line/10 px-5 py-3">
+              <h4 className="mb-2 text-[12.5px] font-bold uppercase tracking-wider text-mut">Members</h4>
+              {teamState.roster.length === 0 && <p className="text-[12px] text-mut">Loading…</p>}
+              {teamState.roster.map(m => (
+                <div key={m.userId ?? m.invitedEmail ?? m.email} className="flex items-center gap-2 py-1.5 text-[13px]">
+                  <span className="h-2 w-2 rounded-full bg-ok" />
+                  <span className="flex-1 font-bold">{m.email ?? m.invitedEmail ?? "—"}</span>
+                  <span className="text-mut">{m.status}</span>
+                  {m.status === "active" && <span className="text-[11px] text-ok">active</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

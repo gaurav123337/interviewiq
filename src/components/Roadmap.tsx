@@ -95,6 +95,8 @@ export function Roadmap() {
   const [resumeMode, setResumeMode] = useState(false);
   const [resumePaste, setResumePaste] = useState("");
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [gapJd, setGapJd] = useState("");
+  const [gapResult, setGapResult] = useState<{ field: string; level: string; missingSkills: string[]; missingKeywords: string[] } | null>(null);
   const proGated = isPaywallEnabled() && getTier() !== "pro";
 
   const roadmap = useMemo(
@@ -304,6 +306,54 @@ export function Roadmap() {
                     />
                   </label>
                 </div>
+              </div>
+            )}
+
+            {/* gap analysis — visible when skills are set (from resume or manual) */}
+            {skills.length > 0 && !resumeMode && !jdMode && !gapResult && (
+              <div className="mb-5 rounded-xl border border-warn/30 bg-warn/10 p-4">
+                <div className="mb-1.5 flex items-center gap-2 text-[13.5px] font-extrabold">
+                  <span>🔍 Resume gap analysis</span>
+                  <span className="rounded-full border border-warn/40 bg-warn/15 px-2 py-0.5 text-[10px]">BETA</span>
+                </div>
+                <p className="mb-3 text-[12.5px] text-mut">Paste the job description you're targeting — we'll compare it against your detected skills and show the gaps.</p>
+                <textarea value={gapJd} onChange={e => setGapJd(e.target.value)} rows={2} placeholder="Paste the target job description here…" className="w-full resize-y rounded-xl border border-line/25 bg-deep/60 p-2.5 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none" />
+                <button className={`${btnOk} ${btnSm} mt-2`} disabled={!gapJd.trim()} onClick={() => {
+                  if (!gapJd.trim()) { toast("Paste a job description first"); return; }
+                  const fromResume = draft.fieldId;
+                  const matchField = fromResume;
+                  const lower = gapJd.toLowerCase();
+                  /* Which of our skills does the JD mention? */
+                  const missingSkills = skills.filter(s => !lower.includes(s.skill.toLowerCase().slice(0, 6))).map(s => s.skill);
+                  /* JD keywords that don't match any skill */
+                  const allWords = gapJd.split(/[,\s]+/).filter(w => w.length > 3 && /^[a-z]/i.test(w));
+                  const skillLower = new Set(skills.map(s => s.skill.toLowerCase()));
+                  const missingKeywords = [...new Set(allWords.filter(w => !skillLower.has(w.toLowerCase()) && (w.length > 5) && !["description","requirements","experience","qualifications","responsibilities"].includes(w.toLowerCase())))];
+                  setGapResult({ field: matchField, level: draft.targetLevel, missingSkills: missingSkills.slice(0, 10), missingKeywords: missingKeywords.slice(0, 12) });
+                }}>🔍 Analyze gap</button>
+              </div>
+            )}
+
+            {gapResult && (
+              <div className="mb-5 rounded-xl border border-acc1/30 bg-acc1/10 p-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[13.5px] font-extrabold">📊 Gap analysis results</span>
+                  <button className="rounded-lg border border-line/20 px-2.5 py-0.5 text-[11.5px] text-mut hover:bg-wht/10" onClick={() => setGapResult(null)}>✕ Close</button>
+                </div>
+                <p className="mb-3 text-[12.5px] text-mut">{gapResult.field} · {gapResult.level}</p>
+                {gapResult.missingSkills.length > 0 && (
+                  <div className="mb-2">
+                    <div className="text-[12px] font-bold uppercase tracking-wider text-warn">⚡ Skills not mentioned in the JD</div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">{gapResult.missingSkills.map(s => <span key={s} className="rounded-lg border border-warn/30 bg-warn/15 px-2.5 py-1 text-[12px] font-bold text-warn">{s}</span>)}</div>
+                  </div>
+                )}
+                {gapResult.missingKeywords.length > 0 && (
+                  <div>
+                    <div className="text-[12px] font-bold uppercase tracking-wider text-acc3">📌 JD keywords not in your skills</div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">{gapResult.missingKeywords.map(k => <span key={k} className="rounded-lg border border-acc1/30 bg-acc1/15 px-2.5 py-1 text-[12px] font-bold text-acctxt">{k}</span>)}</div>
+                  </div>
+                )}
+                {gapResult.missingSkills.length === 0 && gapResult.missingKeywords.length === 0 && <p className="text-[12px] text-ok">✓ Your resume skills cover everything mentioned in this JD — strong alignment!</p>}
               </div>
             )}
 
