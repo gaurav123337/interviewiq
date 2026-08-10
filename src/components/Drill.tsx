@@ -1,12 +1,20 @@
 import { useState } from "react";
 import type { LevelId } from "../types";
 import { FIELDS, LEVELS, levelById } from "../data";
+import { companyById } from "../data";
+import { freqForProblem } from "../data/codingCompanies";
 import { getSrs, learnedCount, makeDeck, rate, resetSrs, type DrillCard, type Rating } from "../services/drill";
+import { getGoal } from "../services/goal";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSoft, btnSm, cardCls, Chip, KpNeutral } from "./ui";
+import { CoachChat } from "./CoachChat";
 
 export function Drill() {
   const [fieldSel, setFieldSel] = useState(FIELDS[0].id);
+  /* goal company — coding cards show the company's question weight when set */
+  const goal = getGoal();
+  const goalCompanyId = goal && goal.companyId !== "general" ? goal.companyId : null;
+  const goalCompany = goalCompanyId ? companyById(goalCompanyId) : null;
   const [lvlSel, setLvlSel] = useState<LevelId | "all">("all");
   const [deck, setDeck] = useState<DrillCard[] | null>(null);
   const [idx, setIdx] = useState(0);
@@ -111,6 +119,9 @@ export function Drill() {
               <>
                 <div className="mb-4 flex flex-wrap gap-2">
                   <Chip tone="lvl">{levelById(card.lvl).icon} {levelById(card.lvl).name}</Chip>
+                  {card.codeId && goalCompanyId && (
+                    <Chip tone="co">🔥 {goalCompany?.name} weight: {freqForProblem(goalCompanyId, card.codeId)}/3</Chip>
+                  )}
                   <Chip>Tap to reveal</Chip>
                 </div>
                 <p className="text-[19px] font-bold leading-[1.5] tracking-tight">{card.q}</p>
@@ -128,6 +139,10 @@ export function Drill() {
               </>
             )}
           </button>
+
+          <div className="mt-4">
+            <CoachChat prompt={card.q} answer={card.a} kp={card.kp} fieldId={fieldSel} levelId={card.lvl} />
+          </div>
 
           <div className="mt-4 flex flex-wrap justify-center gap-2.5">
             {!flipped ? (

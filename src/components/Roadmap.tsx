@@ -19,6 +19,7 @@ import { toast } from "../toast";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Drawer, Seg } from "./ui";
 import { type CodingProblem } from "../data/coding";
 import { codingForTopicLabels } from "../data/codingMap";
+import { freqForProblem } from "../data/codingCompanies";
 
 /* P4 roadmap → coding wiring: match this week's topic labels to playground
    problems so "solve X problems in category Y" becomes concrete actions.
@@ -638,19 +639,23 @@ function Dashboard({ goal, profile, roadmap, onEdit, onClear, onRetake, onLearn,
                 Hand-picked from the current week's topics — solving these reinforces what you're studying.
               </p>
               <div className="flex flex-wrap gap-2">
-                {codeFocusFor((roadmap.weeks.find(w => w.status === "current") ?? roadmap.weeks[0])?.topics ?? []).map(p => (
-                  <button
-                    key={p.id}
-                    onClick={onCode}
-                    className="flex items-center gap-2 rounded-xl border border-line/10 bg-wht/5 px-3 py-2 text-left text-[12.5px] font-bold transition-all hover:border-acc1/40"
-                  >
-                    <span>{p.kind === "fn" ? "🧩" : p.kind === "ui" ? "🎨" : "⚙️"}</span>
-                    {p.title}
-                    <span className={`text-[10.5px] font-extrabold uppercase ${p.difficulty === 1 ? "text-ok" : p.difficulty === 2 ? "text-warn" : "text-bad"}`}>
-                      {["Easy", "Medium", "Hard"][p.difficulty - 1]}
-                    </span>
-                  </button>
-                ))}
+                {codeFocusFor((roadmap.weeks.find(w => w.status === "current") ?? roadmap.weeks[0])?.topics ?? []).map(p => {
+                  const heat = goal.companyId !== "general" ? freqForProblem(goal.companyId, p.id) : null;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={onCode}
+                      className="flex items-center gap-2 rounded-xl border border-line/10 bg-wht/5 px-3 py-2 text-left text-[12.5px] font-bold transition-all hover:border-acc1/40"
+                    >
+                      <span>{p.kind === "fn" ? "🧩" : p.kind === "ui" ? "🎨" : "⚙️"}</span>
+                      {p.title}
+                      {heat && <span className="text-[10px] font-bold text-acctxt">🔥{heat}</span>}
+                      <span className={`text-[10.5px] font-extrabold uppercase ${p.difficulty === 1 ? "text-ok" : p.difficulty === 2 ? "text-warn" : "text-bad"}`}>
+                        {["Easy", "Medium", "Hard"][p.difficulty - 1]}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -9,6 +9,8 @@ export interface DrillCard {
   a: string;
   kp: string[];
   lvl: LevelId;
+  /** Set when the card came from a coding problem — lets the UI show company heat. */
+  codeId?: string;
 }
 
 export type Rating = "again" | "hard" | "good" | "easy";
@@ -77,7 +79,7 @@ export function makeDeck(fieldSel: string, lvlSel: LevelId | "all", count = 10):
   const cd = codingDrillCards()
     .filter(c => !bankQ.has(c.q))
     .map(c => ({ ...c, lvl: (lvlSel === "all" ? c.lvl : lvlSel) as LevelId }));
-  const pool = [
+  const pool: DrillCard[] = [
     ...items.filter(i => (lvlSel === "all" || i.lvl === lvlSel) && isDue(i.q, srs, now)),
     ...dd.filter(c => (lvlSel === "all" || c.lvl === lvlSel) && isDue(c.q, srs, now)),
     ...cd.filter(c => (lvlSel === "all" || c.lvl === lvlSel) && isDue(c.q, srs, now))
@@ -85,5 +87,8 @@ export function makeDeck(fieldSel: string, lvlSel: LevelId | "all", count = 10):
   const overdue = pool.filter(i => srs[i.q]).sort((a, b) => srs[a.q].due - srs[b.q].due);
   const fresh = shuffle(pool.filter(i => !srs[i.q]));
   const ordered = [...overdue, ...fresh];
-  return ordered.slice(0, Math.min(count, ordered.length)).map(i => ({ q: i.q, a: i.a, kp: i.kp, lvl: i.lvl }));
+  return ordered.slice(0, Math.min(count, ordered.length)).map(i => ({
+    q: i.q, a: i.a, kp: i.kp, lvl: i.lvl,
+    ...(i.codeId ? { codeId: i.codeId } : {})
+  }));
 }

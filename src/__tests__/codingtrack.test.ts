@@ -77,4 +77,15 @@ describe("drill integration", () => {
     const deck = makeDeck("backend", "all", 500);
     expect(deck.some(c => c.q.includes("Two Sum"))).toBe(true);
   });
+
+  it("coding cards keep their problem id through the deck so UI can show company heat", () => {
+    recordCodingAttempt("two-sum", false);
+    recordCodingAttempt("two-sum", false);
+    const deck = makeDeck("backend", "all", 500);
+    const card = deck.find(c => c.q.includes("Two Sum"));
+    expect(card?.codeId).toBe("two-sum");
+    /* non-coding cards carry no codeId */
+    const qa = deck.find(c => !c.q.startsWith("Code:"));
+    expect(qa?.codeId).toBeUndefined();
+  });
 });

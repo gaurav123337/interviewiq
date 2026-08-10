@@ -9,6 +9,8 @@ import { CODING_PROBLEMS } from "./coding";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { getCodingTrack } from "../services/codingTrack";
 import { getProfile } from "../services/goal";
+import { STORAGE_KEYS, storageGet } from "../services/storage";
+import type { SavedSession } from "../types";
 
 export const PROBLEM_COMPANIES: Record<string, string[]> = {
   /* original CLI six */
@@ -194,16 +196,52 @@ const SKILL_TOPIC_HINTS: { re: RegExp; topics: string[] }[] = [
   { re: /async|promise|event|node|backend|api|server/i, topics: ["async", "timing"] }
 ];
 
+/** Key points missed across interview sessions → coding topics. Phrases like
+    “time complexity” or “edge cases” in missed key points signal a real gap
+    that the company heat ranking should surface. */
+const MISSED_TOPIC_HINTS: { re: RegExp; topics: string[] }[] = [
+  { re: /time complexity|space complexity|asymptotic|big-?o|optimize|efficien/i, topics: ["Arrays & hashing", "Search & sorting", "Dynamic programming"] },
+  { re: /hash|dictionary|map\b|set\b/i, topics: ["Arrays & hashing"] },
+  { re: /recurs|base case|stack|queue|backtrack/i, topics: ["Strings & stacks", "Search & sorting", "Dynamic programming"] },
+  { re: /binary search|search|sort|two pointer|sliding window/i, topics: ["Search & sorting", "Arrays & hashing"] },
+  { re: /edge case|corner case|input validation|boundar/i, topics: ["Language basics", "Arrays & hashing"] },
+  { re: /debounce|throttle|async|promise|event loop|callback|timer|concurren/i, topics: ["async", "timing", "collections"] },
+  { re: /memoiz|cache|lru|performance/i, topics: ["collections", "classes"] },
+  { re: /component|render|dom|props|state|hook|react|vue|a11y|accessib/i, topics: ["UI components"] },
+  { re: /data structure|linked|tree|graph|heap|trie/i, topics: ["Arrays & hashing", "Strings & stacks", "Search & sorting"] }
+];
+
+/** Topics the user has missed across saved interview sessions (key-point level). */
+export function missedSessionTopics(): Set<string> {
+  const sessions = storageGet<SavedSession[]>(STORAGE_KEYS.sessions, []);
+  const hits = new Set<string>();
+  for (const s of sessions) {
+    for (const a of s.answers) {
+      for (const m of a.missed ?? []) {
+        for (const h of MISSED_TOPIC_HINTS) {
+          if (h.re.test(m)) h.topics.forEach(t => hits.add(t));
+        }
+      }
+    }
+  }
+  return hits;
+}
+
 /** Personal signals for a problem: how often it was failed in the playground,
-    and whether a weak self/diagnostic skill maps to its topic. */
-export function focusSignals(p: CodingProblem): { misses: number; weakSkill: boolean } {
+    and whether a weak self/diagnostic skill OR a missed session key point maps
+    to its topic. `weakSrc` says which signal fired. */
+export function focusSignals(p: CodingProblem): { misses: number; weakSkill: boolean; weakSrc: "skill" | "session" | null } {
   const misses = getCodingTrack()[p.id]?.fails ?? 0;
-  const profile = getProfile();
-  if (!profile || !profile.skills.length) return { misses, weakSkill: false };
-  const weak = profile.skills.filter(s => (s.measured ?? s.self) < 3).map(s => s.skill.toLowerCase());
   const topic = codingTopicFor(p);
-  const weakSkill = SKILL_TOPIC_HINTS.some(h => weak.some(w => h.re.test(w)) && h.topics.includes(topic));
-  return { misses, weakSkill };
+  const profile = getProfile();
+  const weak = profile?.skills.filter(s => (s.measured ?? s.self) < 3).map(s => s.skill.toLowerCase()) ?? [];
+  if (SKILL_TOPIC_HINTS.some(h => weak.some(w => h.re.test(w)) && h.topics.includes(topic))) {
+    return { misses, weakSkill: true, weakSrc: "skill" };
+  }
+  if (missedSessionTopics().has(topic)) {
+    return { misses, weakSkill: true, weakSrc: "session" };
+  }
+  return { misses, weakSkill: false, weakSrc: null };
 }
 
 /** Whether the user has any personalization signal at all (so the UI can show
@@ -213,7 +251,7 @@ export function hasPersonalSignals(): boolean {
   const anyMiss = Object.values(track).some(e => (e?.fails ?? 0) > 0);
   const profile = getProfile();
   const anyWeak = !!profile?.skills.some(s => (s.measured ?? s.self) < 3);
-  return anyMiss || anyWeak;
+  return anyMiss || anyWeak || missedSessionTopics().size > 0;
 }
 
 export interface FocusRank {
@@ -222,8 +260,10 @@ export interface FocusRank {
   freq: CompanyFreq;
   /** Playground failures for this problem. */
   misses: number;
-  /** True when a weak skill maps to this problem's topic. */
+  /** True when a weak skill or missed session key point maps to this topic. */
   weakSkill: boolean;
+  /** Which personal signal fired — "skill" or "session". */
+  weakSrc: "skill" | "session" | null;
   /** Combined score — freq dominates, personal signals add. */
   score: number;
 }
@@ -236,9 +276,9 @@ export function personalFocusForCompany(companyId: string, problems: CodingProbl
     .filter(p => problemIsForCompany(p, companyId))
     .map(p => {
       const freq = freqForProblem(companyId, p.id);
-      const { misses, weakSkill } = focusSignals(p);
+      const { misses, weakSkill, weakSrc } = focusSignals(p);
       const score = freq * 3 + (misses >= 2 ? 2 : misses >= 1 ? 1 : 0) + (weakSkill ? 2 : 0);
-      return { problem: p, freq, misses, weakSkill, score };
+      return { problem: p, freq, misses, weakSkill, weakSrc, score };
     })
     .sort((a, b) => b.score - a.score || b.freq - a.freq || a.problem.title.localeCompare(b.problem.title));
 }

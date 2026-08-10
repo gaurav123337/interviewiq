@@ -50,7 +50,8 @@ export function codingDrillCards(problems: CodingProblem[] = CODING_PROBLEMS): D
           ? `Implement ${p.fn.name}(${p.fn.args}) → ${p.fn.returns}.`
           : p.prompt,
       kp: [catOf(p), "Practice in the playground — tests are hidden, so verify edge cases yourself."],
-      lvl: p.difficulty === 1 ? "junior" : p.difficulty === 2 ? "mid" : "senior"
+      lvl: p.difficulty === 1 ? "junior" : p.difficulty === 2 ? "mid" : "senior",
+      codeId: p.id
     });
     if (cards.length >= 6) break;
   }

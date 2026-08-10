@@ -3,13 +3,21 @@
 
 import { describe, expect, it, beforeEach } from "vitest";
 import { CODING_PROBLEMS } from "../data/coding";
-import { companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, personalFocusForCompany, personalPlan, qaCategoryHeat } from "../data/codingCompanies";
+import { companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, missedSessionTopics, personalFocusForCompany, personalPlan, qaCategoryHeat } from "../data/codingCompanies";
+import { codingDrillCards } from "../services/codingTrack";
+import { localCoachReply } from "../components/CoachChat";
 import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
+
+const sessionWithMissed = (missed: string[]) => ({
+  meta: { field: "Frontend Engineer", fieldId: "frontend", company: "Google", companyId: "google", level: "Mid-Level", levelId: "mid", mode: "standard" },
+  answers: [{ q: { q: "Explain closures", a: "…", kp: ["lexical scope"], cat: "field", catLabel: "Technical", catColor: "#22d3ee", level: "mid", src: "field" }, user: "…", score: 1, pct: 20, missed }]
+});
 
 beforeEach(() => {
   storageRemove(STORAGE_KEYS.codingTrack);
   storageRemove(STORAGE_KEYS.skills);
   storageRemove(STORAGE_KEYS.remoteConfig);
+  storageRemove(STORAGE_KEYS.sessions);
 });
 
 describe("remote frequency overrides", () => {
@@ -45,7 +53,7 @@ describe("focusSignals", () => {
   });
 
   it("no profile and no track means no signals", () => {
-    expect(focusSignals(CODING_PROBLEMS.find(p => p.id === "two-sum")!)).toEqual({ misses: 0, weakSkill: false });
+    expect(focusSignals(CODING_PROBLEMS.find(p => p.id === "two-sum")!)).toEqual({ misses: 0, weakSkill: false, weakSrc: null });
     expect(hasPersonalSignals()).toBe(false);
   });
 
@@ -94,6 +102,66 @@ describe("personalized focus", () => {
     const a = personalFocusForCompany("meta").map(r => r.problem.id);
     const b = personalFocusForCompany("meta").map(r => r.problem.id);
     expect(a).toEqual(b);
+  });
+});
+
+describe("learning from session answers", () => {
+  it("missed key points map to coding topics", () => {
+    expect(missedSessionTopics().size).toBe(0);
+    storageSet(STORAGE_KEYS.sessions, [sessionWithMissed(["time complexity", "edge cases"])]);
+    const topics = missedSessionTopics();
+    expect(topics.has("Arrays & hashing")).toBe(true);
+    expect(topics.has("Search & sorting")).toBe(true);
+    expect(topics.has("Language basics")).toBe(true);
+  });
+
+  it("a missed session key point flags problems in the matching topic as a session signal", () => {
+    storageSet(STORAGE_KEYS.sessions, [sessionWithMissed(["time complexity"])]);
+    const sig = focusSignals(CODING_PROBLEMS.find(p => p.id === "two-sum")!);
+    expect(sig.weakSkill).toBe(true);
+    expect(sig.weakSrc).toBe("session");
+    expect(hasPersonalSignals()).toBe(true);
+  });
+
+  it("coding drill cards carry their problem id for company heat", () => {
+    storageSet(STORAGE_KEYS.codingTrack, { "fn-range": { fails: 2, solved: false } });
+    const cards = codingDrillCards();
+    expect(cards[0].codeId).toBe("fn-range");
+  });
+});
+
+describe("local coach replies", () => {
+  const ctx = {
+    prompt: "Explain how closures work in JavaScript.",
+    answer: "A closure is a function that remembers its lexical scope even when executed outside it.",
+    kp: ["lexical scope", "state preservation", "memory implications"],
+    fieldId: "frontend",
+    levelId: "mid" as const
+  };
+
+  it("hint requests surface the key points as a checklist", () => {
+    const r = localCoachReply("I'm stuck, give me a hint", ctx);
+    expect(r).toContain("lexical scope");
+    expect(r).toContain("state preservation");
+    expect(r).toContain("memory implications");
+  });
+
+  it("sharing an approach highlights what's missing", () => {
+    const r = localCoachReply("I would just return the inner function", ctx);
+    expect(r).toContain("Don't miss");
+    expect(r).toContain("lexical scope");
+  });
+
+  it("debating gets the model answer's position", () => {
+    const r = localCoachReply("I disagree, closures are about hoisting", ctx);
+    expect(r).toContain("model answer's position");
+    expect(r).toContain("lexical scope");
+  });
+
+  it("generic messages fall back to an invitation + reference outline", () => {
+    const r = localCoachReply("hello", ctx);
+    expect(r).toContain("Tell me your approach");
+    expect(r).toContain("closure");
   });
 });
 

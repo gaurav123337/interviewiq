@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { LevelId } from "../types";
-import { COMPANIES, FIELDS, LEVELS } from "../data";
+import { COMPANIES, FIELDS, LEVELS, companyById } from "../data";
 import { codingProblemById } from "../data/coding";
 import { COMPANY_FREQ, problemsForCompany } from "../data/codingCompanies";
 import { getCloudState, subscribeCloud } from "../services/cloud";
@@ -1315,6 +1315,20 @@ function AutoFill({ busy, setBusy, onChanged }: {
 /* Product config — feature flags, AI capabilities, quotas             */
 /* ------------------------------------------------------------------ */
 
+/* Audit trail for company-frequency publishes — drives the weekly digest.
+   Kept in the admin's local storage (no schema change); each publish records
+   the diff against the previous snapshot plus the new snapshot. */
+const FREQ_AUDIT_KEY = "iq.adminFreqAudit";
+interface FreqChange { company: string; problem: string; to: number }
+interface FreqAuditEntry { at: number; changes: FreqChange[]; snapshot: Record<string, Partial<Record<string, number>>> }
+
+function getFreqAudit(): FreqAuditEntry[] {
+  try { return JSON.parse(localStorage.getItem(FREQ_AUDIT_KEY) || "[]") as FreqAuditEntry[]; } catch { return []; }
+}
+function saveFreqAudit(a: FreqAuditEntry[]): void {
+  localStorage.setItem(FREQ_AUDIT_KEY, JSON.stringify(a));
+}
+
 function ConfigSection({ config, setConfig, busy, setBusy }: {
   config: RemoteConfig; setConfig: (c: RemoteConfig) => void; busy: boolean; setBusy: (b: boolean) => void;
 }) {
@@ -1324,7 +1338,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, ai: { ...config.ai, [k]: v } });
   const setLimit = (k: keyof NonNullable<RemoteConfig["limits"]>, v: number) =>
     setConfig({ ...config, limits: { ...config.limits, [k]: v } });
-  /* company question-frequency editor */
+  /* company question-frequency editor + publish audit (weekly digest) */
   const [freqCo, setFreqCo] = useState<string | null>(null);
   const freqCompanies = COMPANIES.filter(c => c.id !== "general");
   const setFreq = (pid: string, v: number) => {
@@ -1336,6 +1350,15 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     next[freqCo] = co;
     setConfig({ ...config, companyFreq: next });
   };
+  const [audit, setAudit] = useState<FreqAuditEntry[]>(() => getFreqAudit());
+  const [activeWeek, setActiveWeek] = useState<number | null>(null);
+  useEffect(() => {
+    let on = true;
+    adminListUsers()
+      .then(rows => { if (on) setActiveWeek(rows.filter(r => r.last_seen && Date.now() - new Date(r.last_seen).getTime() < 7 * 86_400_000).length); })
+      .catch(() => {});
+    return () => { on = false; };
+  }, []);
 
   const publish = async () => {
     setBusy(true);
@@ -1343,6 +1366,25 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
       await saveRemoteConfig({
         features: config.features, ai: config.ai, limits: config.limits, companyFreq: config.companyFreq ?? {}
       });
+      /* record what changed since the last publish for the weekly digest */
+      const prev = audit[0]?.snapshot ?? {};
+      const next = config.companyFreq ?? {};
+      const changes: FreqChange[] = [];
+      for (const [co, entries] of Object.entries(next)) {
+        for (const [pid, raw] of Object.entries(entries)) {
+          const to = raw as number;
+          if (prev[co]?.[pid] !== to) changes.push({ company: co, problem: pid, to });
+        }
+      }
+      for (const [co, entries] of Object.entries(prev)) {
+        for (const pid of Object.keys(entries)) {
+          if (!next[co]?.[pid]) changes.push({ company: co, problem: pid, to: 0 });
+        }
+      }
+      const entry: FreqAuditEntry = { at: Date.now(), changes, snapshot: JSON.parse(JSON.stringify(next)) };
+      const nextAudit = [entry, ...audit].slice(0, 50);
+      saveFreqAudit(nextAudit);
+      setAudit(nextAudit);
       toast("🎛️ Config published — clients pick it up on next sync");
     } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
     finally { setBusy(false); }
@@ -1391,6 +1433,35 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           <NumField label="Free sessions / month" value={config.limits.sessionsPerMonth ?? 3} onChange={v => setLimit("sessionsPerMonth", v)} />
           <NumField label="Free AI calls / day" value={config.limits.aiPerDay ?? 5} onChange={v => setLimit("aiPerDay", v)} />
         </div>
+      </div>
+
+      <div className={`${cardCls} p-5`}>
+        <h2 className="mb-1 text-[16px] font-extrabold">📬 Weekly digest</h2>
+        <p className="mb-3 text-[12.5px] text-mut">What changed in the company-frequency rankings over the last 7 days, and how many users are active (they pick up config on their next sync).</p>
+        {(() => {
+          const week = audit.filter(e => Date.now() - e.at < 7 * 86_400_000);
+          const all = week.flatMap(e => e.changes.map(c => ({ ...c, at: e.at })));
+          return (
+            <div className="text-[12.5px]">
+              <div className="mb-2 flex flex-wrap gap-2">
+                <Chip tone="co">{all.length} change{all.length === 1 ? "" : "s"} this week</Chip>
+                <Chip tone="lvl">👥 {activeWeek ?? "…"} user{activeWeek === 1 ? "" : "s"} active this week</Chip>
+              </div>
+              {all.length === 0 ? (
+                <p className="text-mut">No frequency changes published in the last 7 days.</p>
+              ) : (
+                <ul className="max-h-[180px] space-y-1 overflow-y-auto pr-1">
+                  {all.slice(0, 20).map((c, i) => (
+                    <li key={i} className="flex items-center justify-between rounded-lg bg-deep/40 px-2.5 py-1">
+                      <span className="font-semibold">{companyById(c.company).icon} {companyById(c.company).name} · {c.problem}</span>
+                      <span className="text-[11px] font-bold text-acctxt">{c.to === 0 ? "↩ reset to default" : `→ 🔥${c.to}`}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       <div className={`${cardCls} p-5`}>

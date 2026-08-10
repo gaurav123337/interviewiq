@@ -11,6 +11,7 @@ import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { hasVoted, sendFeedback, type FeedbackKind } from "../services/feedback";
 import { loadVoices, speak, stopSpeaking, ttsSupported } from "../services/voice";
 import { UpgradeModal } from "./Upgrade";
+import { CoachChat } from "./CoachChat";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Kp, Modal, Switch } from "./ui";
 
 const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
@@ -154,6 +155,10 @@ export function Interview() {
               <button className={btnOk} onClick={onSubmit}>Submit answer</button>
             </div>
           )}
+        </div>
+
+        <div className="mb-4">
+          <CoachChat prompt={q.q} answer={q.a} kp={q.kp} fieldId={meta.fieldId} levelId={q.level} />
         </div>
 
         {feedbackShown && <FeedbackPanel ai={ai} aiLoading={aiLoading} onSkip={skipQuestion} onNext={nextQuestion} isLast={idx + 1 >= session.questions.length} />}

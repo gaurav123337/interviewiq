@@ -409,7 +409,7 @@ export function Playground() {
               )}
               <div className="mt-1 flex flex-col gap-1.5">
                 {(focusRanks.length
-                  ? focusRanks.map(r => ({ id: r.problem.id, title: r.problem.title, kind: r.problem.kind, difficulty: r.problem.difficulty, freq: r.freq, tag: r.misses >= 2 ? `missed ×${r.misses}` : r.misses === 1 ? "missed" : r.weakSkill ? "weak skill" : null }))
+                  ? focusRanks.map(r => ({ id: r.problem.id, title: r.problem.title, kind: r.problem.kind, difficulty: r.problem.difficulty, freq: r.freq, tag: r.misses >= 2 ? `missed ×${r.misses}` : r.misses === 1 ? "missed" : r.weakSrc === "skill" ? "weak skill" : r.weakSrc === "session" ? "missed in interviews" : null }))
                   : companyPlan.map(p => ({ id: p.id, title: p.title, kind: p.kind, difficulty: p.difficulty, freq: freqForProblem(companyFilter, p.id), tag: null }))
                 ).map(item => (
                   <button
