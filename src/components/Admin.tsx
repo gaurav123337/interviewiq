@@ -1636,6 +1636,29 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [cutoff, setCutoff] = useState(90);
   const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
   const [coachGaps, setCoachGaps] = useState<CoachGapRow[]>([]);
+  /* coach-gap alerts — topics debated enough to warrant a deep-dive guide */
+  const [gapMin, setGapMin] = useState(5);
+  const gapAlerts = coachGaps.filter(g => g.discussions >= gapMin);
+  const draftGuide = (topic: string) => {
+    const t = `Deep-dive guide: ${topic}
+
+Concepts to cover:
+- 
+- 
+
+Key points interviewers look for:
+- 
+- 
+
+Common traps:
+- 
+- 
+
+Practice questions:
+- 
+`;
+    navigator.clipboard.writeText(t).then(() => toast("📋 Guide template copied — paste it into the deep-dive bank"), () => toast("✗ Clipboard blocked — copy manually"));
+  };
 
   const bank = getPublishedQuestions();
   const merged = useMemo(
@@ -1690,7 +1713,11 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
             The composite score (0-100) is: avg score · pass-rate band · 👍/👎/🚩 · days since review.
           </p>
         </div>
-        <Seg options={[...QUALITY_TABS]} value={tab} onChange={v => setTab(v)} />
+        <Seg
+          options={QUALITY_TABS.map(t => t.value === "coach" && gapAlerts.length > 0 ? { ...t, label: `${t.label} · ${gapAlerts.length}` } : t)}
+          value={tab}
+          onChange={v => setTab(v)}
+        />
         <button className={btnGhost + btnSm} onClick={load} disabled={busy}>↻ Refresh</button>
       </div>
 
@@ -1923,11 +1950,34 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
       {tab === "coach" && (
         <div className={`${cardCls} overflow-hidden`}>
           <div className="border-b border-line/10 p-5">
-            <h3 className="text-[15px] font-extrabold">🎯 Coach gaps ({coachGaps.length} topics debated)</h3>
-            <p className="text-[12.5px] text-mut">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-[15px] font-extrabold">🎯 Coach gaps ({coachGaps.length} topics debated)</h3>
+              <label className="flex items-center gap-2 text-[12px] font-bold text-mut">
+                Alert at
+                <input
+                  type="number" min={1} value={gapMin}
+                  onChange={e => setGapMin(Math.max(1, Number(e.target.value) || 5))}
+                  className="inp w-16 py-1 text-center"
+                />
+                discussions
+              </label>
+            </div>
+            <p className="mt-1 text-[12.5px] text-mut">
               Weak coding topics users saved from AI-coach discussions (queued as coach_discussion events).
-              High discussion + user counts = a gap worth a deep-dive guide or more practice problems.
+              Topics at or above the alert threshold get flagged for a deep-dive guide.
             </p>
+            {gapAlerts.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                <div className="text-[12px] font-extrabold uppercase tracking-wider text-bad">🚨 Guide opportunities ({gapAlerts.length})</div>
+                {gapAlerts.map(g => (
+                  <div key={g.topic} className="flex flex-wrap items-center gap-2 rounded-xl border border-bad/30 bg-bad/10 px-3 py-2 text-[12.5px]">
+                    <span className="flex-1 font-bold">{g.topic}</span>
+                    <Chip tone="bad">{g.discussions} discussions · {g.users} users</Chip>
+                    <button className={btnGhost + btnSm} onClick={() => draftGuide(g.topic)}>✍️ Draft guide</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-left text-[13px]">

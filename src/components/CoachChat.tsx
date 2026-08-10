@@ -12,6 +12,7 @@ import { aiAvailable, chat, type ChatMessage } from "../ai";
 import { fieldById } from "../data";
 import { deepDiveCards } from "../data/deepDive";
 import { codingTopicsFromText, suggestNextProblem } from "../data/codingCompanies";
+import { getCodingTrack } from "../services/codingTrack";
 import { publishedFor } from "../services/remoteConfig";
 import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -89,6 +90,43 @@ export interface CoachDiscussion {
   text: string;
 }
 
+export interface CoachWeekStats {
+  cur: number;
+  longest: number;
+  thisWeek: number;
+  topics: number;
+}
+
+/** Coach usage stats — discussions per week (Monday-start), current + longest
+    weekly streak, this week's count, and distinct coding topics debated. */
+export function coachWeekStats(discussions: Pick<CoachDiscussion, "at" | "text">[]): CoachWeekStats {
+  const WEEK = 7 * 86_400_000;
+  const weekKey = (t: number) => {
+    const d = new Date(t);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); /* Monday start */
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const nowWk = weekKey(Date.now());
+  const weeks = [...new Set(discussions.map(d => weekKey(d.at)))].sort((a, b) => b - a);
+  const thisWeek = discussions.filter(d => weekKey(d.at) === nowWk).length;
+  let cur = 0;
+  if (weeks.includes(nowWk) || weeks.includes(nowWk - WEEK)) {
+    let anchor = weeks.includes(nowWk) ? nowWk : nowWk - WEEK;
+    cur = 1;
+    while (weeks.includes(anchor - WEEK)) { cur += 1; anchor -= WEEK; }
+  }
+  let longest = 0;
+  for (const w of weeks) {
+    let run = 1;
+    while (weeks.includes(w - run * WEEK)) run += 1;
+    longest = Math.max(longest, run);
+  }
+  const topics = new Set<string>();
+  for (const d of discussions) codingTopicsFromText(d.text).forEach(t => topics.add(t));
+  return { cur, longest, thisWeek, topics: topics.size };
+}
+
 /** Saved coach discussions — read by codingCompanies (focus) and History. */
 export function getCoachDiscussions(): CoachDiscussion[] {
   return storageGet<CoachDiscussion[]>(STORAGE_KEYS.coachTopics, []);
@@ -162,6 +200,7 @@ export function CoachChat(ctx: CoachContext) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [suggestion, setSuggestion] = useState<{ id: string; title: string; kind: string } | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -178,6 +217,7 @@ export function CoachChat(ctx: CoachContext) {
   };
 
   const suggest = () => {
+    checkCompletion();
     const text = msgs.map(m => m.text).join(" ");
     const p = suggestNextProblem(ctx.companyId ?? null, text);
     if (!p) {
@@ -187,9 +227,36 @@ export function CoachChat(ctx: CoachContext) {
     setSuggestion({ id: p.id, title: p.title, kind: p.kind });
   };
 
+  /* practice loop — once the suggested problem is solved (codingTrack), the
+     coach notices on the next interaction and prompts to keep the loop going */
+  const checkCompletion = () => {
+    if (!pending) return;
+    const t = getCodingTrack()[pending];
+    if (t?.solved) {
+      setPending(null);
+      setSuggestion(null);
+      setMsgs(m => [...m, {
+        role: "assistant",
+        text: "🎉 Looks like you solved that one! Keep the loop going: save this discussion, then hit “Suggest next problem” to chain into the next challenge."
+      }]);
+    }
+  };
+
+  const practice = (id: string) => {
+    ctx.onPractice?.(id);
+    setPending(id);
+    setSuggestion(null);
+    const sug = suggestion;
+    setMsgs(m => [...m, {
+      role: "assistant",
+      text: `👋 Go solve ${sug?.title ?? "it"} — when you're done (or stuck), come back and we'll keep the loop going.`
+    }]);
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || busy) return;
+    checkCompletion();
     setInput("");
     setMsgs(m => [...m, { role: "user", text }]);
     setBusy(true);
@@ -228,7 +295,7 @@ export function CoachChat(ctx: CoachContext) {
 
   return (
     <div className={`${cardCls} overflow-hidden`}>
-      <button type="button" onClick={() => setOpen(o => !o)} className="flex w-full items-center justify-between px-4 py-3 text-left">
+      <button type="button" onClick={() => setOpen(o => { const n = !o; if (n) checkCompletion(); return n; })} className="flex w-full items-center justify-between px-4 py-3 text-left">
         <span className="text-[13px] font-extrabold">🤖 AI Coach — discuss your approach</span>
         <span className="text-[11px] font-bold text-mut">{open ? "Hide ▾" : "Ask anytime ▴"}</span>
       </button>
@@ -282,7 +349,7 @@ export function CoachChat(ctx: CoachContext) {
             <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-acc1/30 bg-acc1/10 px-3 py-2 text-[12.5px]">
               <span className="font-bold text-acctxt">🎯 Next: {suggestion.kind === "fn" ? "🧩" : suggestion.kind === "ui" ? "🎨" : "⚙️"} {suggestion.title}</span>
               {ctx.onPractice && (
-                <button className={`${btnPrimary} ${btnSm} ml-auto`} onClick={() => { ctx.onPractice?.(suggestion.id); setSuggestion(null); }}>
+                <button className={`${btnPrimary} ${btnSm} ml-auto`} onClick={() => practice(suggestion.id)}>
                   ▶ Practice this
                 </button>
               )}

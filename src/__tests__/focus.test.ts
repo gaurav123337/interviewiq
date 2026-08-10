@@ -5,7 +5,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { CODING_PROBLEMS } from "../data/coding";
 import { coachDiscussionTopics, companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, missedSessionTopics, personalFocusForCompany, personalPlan, qaCategoryHeat, suggestNextProblem } from "../data/codingCompanies";
 import { codingDrillCards } from "../services/codingTrack";
-import { getCoachDiscussions, localCoachReply, saveCoachDiscussion } from "../components/CoachChat";
+import { coachWeekStats, getCoachDiscussions, localCoachReply, saveCoachDiscussion } from "../components/CoachChat";
 import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
 
 const sessionWithMissed = (missed: string[]) => ({
@@ -166,6 +166,47 @@ describe("coach discussions feed the weakness profile", () => {
     /* two-sum: Arrays & hashing, company heat 3, unsolved → top scorer */
     expect(p!.id).toBe("two-sum");
     expect(suggestNextProblem("google", "hi there")).toBeNull();
+  });
+});
+
+describe("coach week stats", () => {
+  const WEEK = 7 * 86_400_000;
+  const now = Date.now();
+
+  it("counts discussions this week and derives topics", () => {
+    const s = coachWeekStats([
+      { at: now, text: "we debated time complexity" },
+      { at: now - 60_000, text: "edge cases again" }
+    ]);
+    expect(s.thisWeek).toBe(2);
+    expect(s.topics).toBeGreaterThan(0);
+    expect(s.cur).toBe(1);
+  });
+
+  it("a streak of consecutive weeks counts back from this week", () => {
+    const s = coachWeekStats([
+      { at: now, text: "one" },
+      { at: now - WEEK, text: "two" },
+      { at: now - 2 * WEEK, text: "three" }
+    ]);
+    expect(s.cur).toBe(3);
+    expect(s.longest).toBe(3);
+  });
+
+  it("a gap breaks the current streak but longest survives", () => {
+    const s = coachWeekStats([
+      { at: now, text: "one" },
+      { at: now - 3 * WEEK, text: "old" },
+      { at: now - 4 * WEEK, text: "older" }
+    ]);
+    expect(s.cur).toBe(1);
+    expect(s.longest).toBe(2);
+  });
+
+  it("no recent activity means no current streak", () => {
+    const s = coachWeekStats([{ at: now - 5 * WEEK, text: "old" }]);
+    expect(s.cur).toBe(0);
+    expect(s.longest).toBe(1);
   });
 });
 

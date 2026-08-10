@@ -6,6 +6,7 @@ import { useApp } from "../store";
 import { getProfileStats } from "../services/events";
 import { streaks } from "../services/progress";
 import { getCodingTrack } from "../services/codingTrack";
+import { coachWeekStats, getCoachDiscussions } from "./CoachChat";
 import { getTier, getUsage, isPaywallEnabled } from "../services/entitlements";
 import { cloudSignOut, cloudSyncNow, getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { STORAGE_KEYS } from "../services/storage";
@@ -25,6 +26,9 @@ export function Account() {
   const proGated = isPaywallEnabled() && tier !== "pro";
   const codeSolved = Object.values(track).filter(e => e.solved).length;
   const questions = sessions.reduce((n, s) => n + s.answers.length, 0);
+  /* coach usage — discussions per week, week streak, topics debated */
+  const coach = useMemo(getCoachDiscussions, []);
+  const coachStats = useMemo(() => coachWeekStats(coach), [coach]);
 
   useEffect(() => subscribeCloud(setCloud), []);
 
@@ -144,6 +148,20 @@ export function Account() {
         <div className="mt-4 flex flex-wrap gap-2">
           <button className={btnGhost + btnSm} onClick={() => nav("progress")}>Full progress dashboard →</button>
           <button className={btnGhost + btnSm} onClick={() => nav("history")}>Session history →</button>
+        </div>
+      </section>
+
+      {/* coach usage card */}
+      <section className={`${cardCls} mt-4 p-6`}>
+        <h2 className="mb-3 text-[16px] font-extrabold">🤖 AI Coach usage</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Discussions saved" value={String(coach.length)} />
+          <Stat label="This week" value={String(coachStats.thisWeek)} />
+          <Stat label="Coach streak" value={`${coachStats.cur} 🔥`} sub={`longest ${coachStats.longest}`} />
+          <Stat label="Topics debated" value={String(coachStats.topics)} />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button className={btnGhost + btnSm} onClick={() => nav("history")}>Read past discussions →</button>
         </div>
       </section>
 
