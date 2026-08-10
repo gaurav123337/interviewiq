@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById } from "../data/coding";
+import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CliProblem, type FnProblem } from "../data/coding";
 import { buildProgram, matchesExpected, runLocalJavaScript, runTests, normalizeOutput } from "../services/runner";
 
 beforeEach(() => {
@@ -7,11 +7,22 @@ beforeEach(() => {
 });
 
 describe("coding catalog", () => {
-  it("every problem has starters for every language and at least 2 tests", () => {
-    for (const p of CODING_PROBLEMS) {
+  it("every problem has tests and a sensible shape for its kind", () => {
+    const cli = CODING_PROBLEMS.filter((p): p is CliProblem => p.kind === "cli");
+    const fn = CODING_PROBLEMS.filter((p): p is FnProblem => p.kind === "fn");
+    expect(cli.length).toBeGreaterThanOrEqual(6);
+    expect(fn.length).toBeGreaterThanOrEqual(15);
+    for (const p of cli) {
       expect(Object.keys(p.starters).sort()).toEqual(RUNNER_LANGS.map(l => l.id).sort());
       expect(p.tests.length).toBeGreaterThanOrEqual(2);
       for (const t of p.tests) expect(t.expect.trim().length).toBeGreaterThan(0);
+    }
+    for (const p of fn) {
+      expect(p.starter.trim().length).toBeGreaterThan(0);
+      expect(p.fn.name.trim().length).toBeGreaterThan(0);
+      expect(p.tests.length).toBeGreaterThanOrEqual(2);
+      expect(p.reference.trim().length).toBeGreaterThan(0);
+      for (const t of p.tests) expect(Array.isArray(t.args)).toBe(true);
     }
   });
 });
@@ -55,6 +66,7 @@ __run();`;
 
   it("passes the real problem tests for two-sum in JS", async () => {
     const p = codingProblemById("two-sum")!;
+    if (p.kind !== "cli") throw new Error("two-sum must stay a cli problem");
     const starter = p.starters.javascript.replace("// your code here — push each output line onto out", `const seen = new Map();
 for (let i = 0; i < lines.length; i++) { /* parse */ }
 const n = Number(lines[0]);

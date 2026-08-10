@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { scoreStar } from "../engine/star";
 import { composeSession } from "../engine/compose";
-import { CODING_PROBLEMS } from "../data/coding";
+import { CODING_PROBLEMS, type CliProblem, type FnProblem } from "../data/coding";
 
 describe("scoreStar", () => {
   it("scores an empty answer as 0", () => {
@@ -54,15 +54,30 @@ describe("coding judge", () => {
   it("every problem has at least one visible test and hidden cases exist for the main set", () => {
     for (const p of CODING_PROBLEMS) {
       expect(p.tests.length).toBeGreaterThan(0);
-      expect(p.tests.every(t => typeof t.stdin === "string" && typeof t.expect === "string")).toBe(true);
+      if (p.kind === "cli") {
+        expect(p.tests.every(t => typeof t.stdin === "string" && typeof t.expect === "string")).toBe(true);
+      } else {
+        expect(p.tests.every(t => Array.isArray(t.args) && "expect" in t)).toBe(true);
+      }
     }
-    const withHidden = CODING_PROBLEMS.filter(p => (p.hidden?.length ?? 0) > 0);
-    expect(withHidden.length).toBeGreaterThanOrEqual(4);
+    const cliWithHidden = CODING_PROBLEMS.filter((p): p is CliProblem => p.kind === "cli" && (p.hidden?.length ?? 0) > 0);
+    const fnWithHidden = CODING_PROBLEMS.filter((p): p is FnProblem => p.kind === "fn" && (p.hidden?.length ?? 0) > 0);
+    expect(cliWithHidden.length).toBeGreaterThanOrEqual(4);
+    expect(fnWithHidden.length).toBeGreaterThanOrEqual(4);
     /* hidden cases never collide with visible ones (no accidental leaks) */
-    for (const p of withHidden) {
+    for (const p of cliWithHidden) {
       const visible = new Set(p.tests.map(t => t.stdin));
       for (const h of p.hidden!) {
         expect(visible.has(h.stdin)).toBe(false);
+      }
+    }
+    for (const p of fnWithHidden) {
+      /* drive-based tests all use args: [], so the key includes the drive source */
+      const key = (t: { args: unknown[]; drive?: (fn: unknown) => unknown | Promise<unknown> }) =>
+        JSON.stringify(t.args) + "|" + (t.drive?.toString() ?? "");
+      const visibleKeys = new Set(p.tests.map(key));
+      for (const h of p.hidden!) {
+        expect(visibleKeys.has(key(h))).toBe(false);
       }
     }
   });

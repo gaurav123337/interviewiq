@@ -27,12 +27,11 @@ export const RUNNER_LANGS: RunnerLang[] = [
   { id: "go", label: "Go", compiler: "go-1.23.2", offline: false }
 ];
 
-export interface CodingTest {
-  stdin: string;
-  expect: string;
-}
+/* CLI problem: classic stdin/stdout judging (any runner language). */
+export interface CliTest { stdin: string; expect: string }
 
-export interface CodingProblem {
+export interface CliProblem {
+  kind: "cli";
   id: string;
   title: string;
   difficulty: 1 | 2 | 3;
@@ -42,10 +41,45 @@ export interface CodingProblem {
   io: string;
   /** Starter `solve(lines)` skeleton per language (returns output lines). */
   starters: Record<LangId, string>;
-  tests: CodingTest[];
+  tests: CliTest[];
   /** Hidden judge cases — run with the visible ones but never shown to the user. */
-  hidden?: CodingTest[];
+  hidden?: CliTest[];
 }
+
+/* Function problem: implement a named function; the judge calls it with typed
+   args (or hands it to an optional `drive` harness for multi-call / timer-based
+   behavior like debounce or EventEmitter) and deep-compares the result. */
+export interface FnTest {
+  /** Shown in the results list. */
+  label?: string;
+  /** Arguments passed to the user's function (functions are allowed). */
+  args: unknown[];
+  /** Expected return value — deep-compared (supports Date, NaN, undefined). */
+  expect: unknown;
+  /** Optional harness: receives the user's function/class, drives it (multiple
+      calls, timers, `new`), and returns the value to compare with `expect`. */
+  drive?: (fn: unknown) => unknown | Promise<unknown>;
+}
+
+export interface FnProblem {
+  kind: "fn";
+  id: string;
+  title: string;
+  difficulty: 1 | 2 | 3;
+  /** Taxonomy bucket shown in the picker (async · timing · collections · …). */
+  category: string;
+  prompt: string;
+  /** Signature banner shown above the editor. */
+  fn: { name: string; args: string; returns: string };
+  /** JavaScript starter (function mode runs in the browser, fully offline). */
+  starter: string;
+  tests: FnTest[];
+  hidden?: FnTest[];
+  /** Reference implementation — the bank self-test asserts it passes its own tests. */
+  reference: string;
+}
+
+export type CodingProblem = CliProblem | FnProblem;
 
 export const codingProblemById = (id: string): CodingProblem | undefined => CODING_PROBLEMS.find(p => p.id === id);
 
@@ -146,8 +180,9 @@ func main() {
 }
 `;
 
-export const CODING_PROBLEMS: CodingProblem[] = [
+const CLI_PROBLEMS: CliProblem[] = [
   {
+    kind: "cli",
     id: "two-sum",
     title: "Two Sum",
     difficulty: 1,
@@ -174,6 +209,7 @@ export const CODING_PROBLEMS: CodingProblem[] = [
     ]
   },
   {
+    kind: "cli",
     id: "valid-parens",
     title: "Valid Parentheses",
     difficulty: 2,
@@ -203,6 +239,7 @@ export const CODING_PROBLEMS: CodingProblem[] = [
     ]
   },
   {
+    kind: "cli",
     id: "max-subarray",
     title: "Maximum Subarray",
     difficulty: 2,
@@ -229,6 +266,7 @@ export const CODING_PROBLEMS: CodingProblem[] = [
     ]
   },
   {
+    kind: "cli",
     id: "binary-search",
     title: "Binary Search",
     difficulty: 1,
@@ -250,6 +288,7 @@ export const CODING_PROBLEMS: CodingProblem[] = [
     ]
   },
   {
+    kind: "cli",
     id: "buy-sell",
     title: "Best Time to Buy and Sell Stock",
     difficulty: 2,
@@ -276,6 +315,7 @@ export const CODING_PROBLEMS: CodingProblem[] = [
     ]
   },
   {
+    kind: "cli",
     id: "fizzbuzz",
     title: "FizzBuzz",
     difficulty: 1,
@@ -296,3 +336,8 @@ export const CODING_PROBLEMS: CodingProblem[] = [
     ]
   }
 ];
+
+/* Function-mode problems (JS, runs offline in the browser). */
+import { JS_FUNCTION_PROBLEMS } from "./codingBank/jsFunctions";
+
+export const CODING_PROBLEMS: CodingProblem[] = [...CLI_PROBLEMS, ...JS_FUNCTION_PROBLEMS];
