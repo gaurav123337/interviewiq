@@ -553,3 +553,45 @@ language sql security definer set search_path = public as $$
   where m.team_id = p_team_id and public.is_team_member(p_team_id)
   order by m.created_at;
 $$;
+
+/* ------------------------------------------------------------------ */
+/* Team audit log — every seat change, payment, or config update       */
+/* ------------------------------------------------------------------ */
+
+create table if not exists public.team_audit (
+  id bigint generated always as identity primary key,
+  team_id uuid not null references public.teams(id) on delete cascade,
+  kind text not null,
+  meta jsonb not null default '{}'::jsonb,
+  actor text not null default 'system',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists team_audit_team_idx on public.team_audit (team_id, created_at desc);
+
+alter table public.team_audit enable row level security;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'team_audit' and policyname = 'team audit member read') then
+    create policy "team audit member read" on public.team_audit for select
+      using (public.is_team_member(team_id));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'team_audit' and policyname = 'team audit admin write') then
+    create policy "team audit admin write" on public.team_audit for all
+      using (public.is_team_admin(team_id)) with check (public.is_team_admin(team_id));
+  end if;
+end $$;
+
+/* Seat bump RPC — increases seat count and logs the change. */
+create or replace function public.bump_team_seats(p_team_id uuid, p_extra integer)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_old integer; v_new integer;
+begin
+  if not public.is_team_admin(p_team_id) then raise exception 'forbidden'; end if;
+  if p_extra < 1 or p_extra > 500 then raise exception 'extra seats must be 1-500'; end if;
+  select seats into v_old from public.teams where id = p_team_id;
+  v_new := least(500, v_old + p_extra);
+  update public.teams set seats = v_new where id = p_team_id;
+  insert into public.team_audit (team_id, kind, meta, actor)
+  values (p_team_id, 'seats_bumped', jsonb_build_object('old', v_old, 'extra', p_extra, 'new', v_new), auth.jwt() ->> 'email');
+end $$;

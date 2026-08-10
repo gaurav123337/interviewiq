@@ -8,6 +8,8 @@ export const CONFIG = {
   repoUrl: "https://github.com/gaurav123337/interviewiq",
   /** Checkout / purchase URL for Pro (empty until a storefront exists → falls back to mailto). */
   proUrl: "",
+  /** Checkout URL for team seat upgrades (empty → fallback to support email). */
+  teamProUrl: "",
   features: {
     /** Master switch for the freemium paywall. Off = the app is fully free; flip to true to enforce limits. */
     paywall: true

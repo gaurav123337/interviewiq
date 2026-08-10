@@ -1,15 +1,21 @@
 import type { CatStat } from "../types";
+import { useState } from "react";
 import { aggregate, topicSuggestions, verdict } from "../engine";
 import { levelById } from "../data";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { exportMd } from "../services/report";
+import { earnCertificate } from "../services/certificates";
+import { makeSavedSession } from "../services/session";
+import { encodeSharePayload } from "./ShareView";
 import { btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, KpNeutral, ScoreBadge } from "./ui";
 import { DiagnosticResults } from "./DiagnosticResults";
+import { CertificateView } from "./Certificate";
 
 export function Results() {
   const { state, retry, newSession, practiceWeakTopics } = useApp();
   const { session, answers } = state;
+  const [showCert, setShowCert] = useState(false);
 
   /* Completion is persisted by the store facade when the session ends, so this view is a pure presenter.
      If the user somehow lands here with no session/answers (e.g. ended before answering), show a
@@ -44,6 +50,16 @@ export function Results() {
   const topCat = agg.cats.slice().sort((a, b) => b.score - a.score)[0];
   const pct = agg.pct;
   const gradeTone = agg.grade === "A" || agg.grade === "B" ? "ok" : agg.grade === "C" ? "warn" : "bad";
+  const eligible = pct >= 0.7 && session; /* diagnostic sessions already returned early */
+
+  /* certificate view takes over when opened */
+  if (showCert && session) {
+    const saved = makeSavedSession(session.meta, state.config, answers);
+    if (saved) {
+      const cert = earnCertificate(saved);
+      if (cert) return <CertificateView cert={cert} onClose={() => setShowCert(false)} />;
+    }
+  }
 
   const onExport = () => {
     const md = exportMd(session, answers);
@@ -58,10 +74,17 @@ export function Results() {
   };
 
   const onShare = async () => {
-    const text = `InterviewIQ — ${meta.company} · ${meta.field} · ${meta.level}: ${(pct * 100).toFixed(0)}% (grade ${agg.grade})`;
+    const payload = encodeSharePayload({
+      id: session!.meta.field + "-" + Date.now(),
+      date: new Date().toISOString().slice(0, 10),
+      meta: { field: meta.field, company: meta.company, level: meta.level, mode: meta.mode },
+      agg: { score: agg.score, pct: agg.pct, grade: agg.grade },
+      cats: agg.cats.map(c => ({ label: c.label, pct: c.pct }))
+    });
+    const url = `${window.location.origin}${window.location.pathname}?share=${payload}`;
     try {
-      if (navigator.share) await navigator.share({ title: "InterviewIQ result", text });
-      else { await navigator.clipboard.writeText(text); toast("Copied result to clipboard"); }
+      if (navigator.share) await navigator.share({ title: "InterviewIQ result", url });
+      else { await navigator.clipboard.writeText(url); toast("🔗 Share link copied to clipboard"); }
     } catch { toast("Share cancelled"); }
   };
 
@@ -90,6 +113,11 @@ export function Results() {
           <button className={btnGhost + btnSm} onClick={onExport}>⬇ Export .md</button>
           <button className={btnGhost + btnSm} onClick={() => window.print()}>🖨 Print</button>
           <button className={btnGhost + btnSm} onClick={onShare}>↗ Share</button>
+          {eligible && (
+            <button className={btnOk + btnSm} onClick={() => setShowCert(true)}>
+              🎓 Certificate
+            </button>
+          )}
         </div>
       </div>
 

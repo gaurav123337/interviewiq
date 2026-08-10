@@ -6,6 +6,8 @@ import { getDeepDive } from "../data/deepDive";
 import { aiAvailable } from "../ai";
 import { explainTopic, tutorChat, type TutorMsg } from "../services/tutor";
 import { analyzeJd } from "../services/jd";
+import { analyzeResume } from "../services/resume";
+import { extractFileText } from "../services/pdf";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import {
   clearGoal, getGoal, getProfile, getProgress, markDiagnosticSkipped,
@@ -90,6 +92,9 @@ export function Roadmap() {
   const [chatBusy, setChatBusy] = useState(false);
   const [jdMode, setJdMode] = useState(false);
   const [jdText, setJdText] = useState("");
+  const [resumeMode, setResumeMode] = useState(false);
+  const [resumePaste, setResumePaste] = useState("");
+  const [resumeBusy, setResumeBusy] = useState(false);
   const proGated = isPaywallEnabled() && getTier() !== "pro";
 
   const roadmap = useMemo(
@@ -222,8 +227,9 @@ export function Roadmap() {
         {step === "goal" && (
           <div className={`${cardCls} mt-6 p-6`}>
             <div className="mb-4 flex flex-wrap items-center gap-2">
-              <button className={`${jdMode ? btnGhost : btnPrimary} ${btnSm}`} onClick={() => setJdMode(false)}>🎯 Pick a role</button>
-              <button className={`${jdMode ? btnPrimary : btnGhost} ${btnSm}`} onClick={() => setJdMode(true)}>📋 Paste a job description</button>
+              <button className={`${!jdMode && !resumeMode ? btnPrimary : btnGhost} ${btnSm}`} onClick={() => { setJdMode(false); setResumeMode(false); }}>🎯 Pick a role</button>
+              <button className={`${jdMode ? btnPrimary : btnGhost} ${btnSm}`} onClick={() => { setJdMode(true); setResumeMode(false); }}>📋 Paste a job description</button>
+              <button className={`${resumeMode ? btnPrimary : btnGhost} ${btnSm}`} onClick={() => { setResumeMode(true); setJdMode(false); }}>📄 Import resume</button>
             </div>
 
             {jdMode && (
@@ -240,6 +246,64 @@ export function Roadmap() {
                 {draft.jd && (
                   <p className="mt-2 text-[12px] text-ok">✓ Tailoring to your posting — {draft.jdKeywords?.length ?? 0} keywords will become P0 topics.</p>
                 )}
+              </div>
+            )}
+
+            {resumeMode && (
+              <div className="mb-5 rounded-xl border border-acc1/30 bg-acc1/10 p-4">
+                <label className="mb-1.5 block text-[12.5px] font-bold text-mut">Paste your resume / CV text or upload a file</label>
+                <textarea
+                  value={resumePaste}
+                  onChange={e => setResumePaste(e.target.value)}
+                  rows={4}
+                  placeholder="Paste your resume text here…"
+                  className="w-full resize-y rounded-xl border border-line/25 bg-deep/60 p-3 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button className={`${btnOk} ${btnSm}`} disabled={resumeBusy || !resumePaste.trim()} onClick={() => {
+                    if (!resumePaste.trim()) { toast("Paste your resume text first"); return; }
+                    setResumeBusy(true);
+                    try {
+                      const r = analyzeResume(resumePaste);
+                      setDraft(d => ({
+                        ...d, currentLevel: r.levelId,
+                        targetLevel: r.levelId === "ceo" ? "ceo" : LEVELS[Math.min(LEVEL_INDEX[r.levelId] + 1, LEVELS.length - 1)].id as LevelId,
+                        fieldId: r.fieldId
+                      }));
+                      setSkills(r.skills);
+                      setResumeMode(false);
+                      toast(`📄 Detected: ${r.levelId} · ${FIELDS.find(f => f.id === r.fieldId)?.name ?? ""}`);
+                    } finally { setResumeBusy(false); }
+                  }}>
+                    {resumeBusy ? <><span className="spinner" />…</> : "🔍 Analyze & prefill"}
+                  </button>
+                  <label className={`${btnGhost} ${btnSm} cursor-pointer`}>
+                    📎 Upload .pdf / .txt
+                    <input
+                      type="file" accept=".pdf,.txt" className="hidden"
+                      onChange={async e => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setResumeBusy(true);
+                        try {
+                          const text = await extractFileText(file);
+                          setResumePaste(text);
+                          const r = analyzeResume(text);
+                          setDraft(d => ({
+                            ...d, currentLevel: r.levelId,
+                            targetLevel: r.levelId === "ceo" ? "ceo" : LEVELS[Math.min(LEVEL_INDEX[r.levelId] + 1, LEVELS.length - 1)].id as LevelId,
+                            fieldId: r.fieldId
+                          }));
+                          setSkills(r.skills);
+                          setResumeMode(false);
+                          toast(`📄 Detected: ${r.levelId} · ${FIELDS.find(f => f.id === r.fieldId)?.name ?? ""}`);
+                        } catch (err) {
+                          toast("✗ Could not read file — try pasting the text");
+                        } finally { setResumeBusy(false); }
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
             )}
 

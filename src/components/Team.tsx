@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../store";
+import { CONFIG } from "../config";
 import { getCloudState, subscribeCloud, type CloudState } from "../services/cloud";
 import {
-  acceptInvite, createTeam, deleteTeam, getTeamsState, inviteMember, leaveTeam,
-  refresh, removeMember, selectTeam, subscribeTeams, type TeamsState
+  acceptInvite, confirmBumpSeats, createTeam, deleteTeam, getTeamsState, inviteMember, leaveTeam,
+  openTeamUpgradeLink, refresh, removeMember, selectTeam, subscribeTeams, type TeamsState
 } from "../services/teams";
 import { toast } from "../toast";
-import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal } from "./ui";
+import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal } from "./ui";
 
 export function Team() {
   const { nav } = useApp();
@@ -17,6 +18,8 @@ export function Team() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [bumpSeats, setBumpSeats] = useState(5);
+  const [bumpPending, setBumpPending] = useState(() => sessionStorage.getItem("iq.teamUpgrade"));
 
   useEffect(() => subscribeCloud(setCloud), []);
   useEffect(() => subscribeTeams(setTs), []);
@@ -162,7 +165,7 @@ export function Team() {
 
               {active && (
                 <div className="mt-4 space-y-4">
-                  {/* seats bar */}
+                  {/* seats bar + upgrade */}
                   <div>
                     <div className="mb-1.5 flex items-center justify-between text-[12.5px]">
                       <span className="font-bold text-mut">Seats</span>
@@ -174,6 +177,32 @@ export function Team() {
                         style={{ width: `${Math.min(100, (active.members / Math.max(1, active.seats)) * 100)}%` }}
                       />
                     </div>
+                    {isAdmin && (
+                      <div className="mt-3 flex flex-wrap items-end gap-2.5 rounded-xl border border-line/10 bg-wht/5 p-3">
+                        <label>
+                          <span className="mb-1 block text-[11.5px] font-bold text-mut">Add seats</span>
+                          <input type="number" min={1} max={100} value={bumpSeats} onChange={e => setBumpSeats(Number(e.target.value) || 1)}
+                            className="w-[100px] rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[13px] focus:border-acc1/80 focus:outline-none" />
+                        </label>
+                        <button className={btnPrimary + btnSm} onClick={() => { openTeamUpgradeLink(bumpSeats); setBumpPending(String(bumpSeats)); }}>
+                          💳 Buy seats
+                        </button>
+                        {bumpPending && (
+                          <button className={btnOk + btnSm} onClick={async () => {
+                            const r = await confirmBumpSeats(Number(bumpPending));
+                            toast(r.ok ? `✅ ${bumpPending} seats added` : "✗ " + (r.error ?? "Failed"));
+                            if (r.ok) { sessionStorage.removeItem("iq.teamUpgrade"); setBumpPending(null); }
+                          }}>
+                            ✅ I've paid — confirm
+                          </button>
+                        )}
+                        {!CONFIG.teamProUrl && !CONFIG.proUrl && (
+                          <p className="w-full text-[11.5px] text-fnt">
+                            💡 Set <span className="font-mono">CONFIG.teamProUrl</span> to enable instant checkout — for now, your email app opens.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* invite (admin only) */}
@@ -222,6 +251,29 @@ export function Team() {
                       </div>
                     ))}
                   </div>
+
+                  {/* audit log */}
+                  {ts.auditLog.length > 0 && (
+                    <div className="border-t border-line/10 pt-4">
+                      <h4 className="mb-2 text-[12.5px] font-bold uppercase tracking-wider text-mut">📋 Activity log</h4>
+                      <div className="space-y-1.5">
+                        {ts.auditLog.slice(0, 10).map(e => (
+                          <div key={e.id} className="flex items-center gap-2 text-[12px] text-mut">
+                            <span className="font-bold text-ink">
+                              {e.kind === "seats_bumped" ? "💳" : "📝"}
+                            </span>
+                            <span className="flex-1">
+                              {e.kind === "seats_bumped"
+                                ? `Seats increased by ${String(e.meta.extra ?? "")} (${String(e.meta.old ?? "")} → ${String(e.meta.new ?? "")})`
+                                : e.kind}
+                            </span>
+                            <span className="text-[11px]">{e.actor}</span>
+                            <span className="text-[11px]">{e.createdAt.slice(0, 10)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* owner actions */}
                   {active.role === "owner" && (

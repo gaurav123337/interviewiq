@@ -17,6 +17,7 @@ import { Playground } from "./Playground";
 import { Admin } from "./Admin";
 import { Landing } from "./Landing";
 import { Team } from "./Team";
+import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { getAdminState, subscribeAdmin, type AdminState } from "../services/admin";
@@ -50,6 +51,7 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [admin, setAdmin] = useState<AdminState>(() => getAdminState());
   const [banner, setBanner] = useState<Announcement | null>(() => nextUnseenAnnouncement());
+  const [sharePayload] = useState<string | null>(() => new URLSearchParams(window.location.search).get("share"));
 
   const toggleTheme = () => {
     const next: Theme = theme === "light" ? "dark" : "light";
@@ -97,6 +99,17 @@ export function App() {
 
   const view = state.view;
   const go = (id: View) => { setMenuOpen(false); nav(id); };
+
+  /* share view overrides all other content */
+  if (sharePayload) {
+    return (
+      <div className={theme === "dark" ? "dark" : ""}>
+        <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pb-12 pt-6">
+          <ShareView payload={sharePayload} />
+        </main>
+      </div>
+    );
+  }
   /* feature flags + admin role shape the nav */
   const flagForTab = (id: string): "roadmap" | "playground" | null =>
     id === "roadmap" ? "roadmap" : id === "playground" ? "playground" : null;

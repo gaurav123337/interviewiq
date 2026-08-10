@@ -4,6 +4,7 @@
    seat grants Pro via entitlements.setTeamPro() without touching the user's
    local license key. Everything is best-effort — no cloud, no team. */
 
+import { CONFIG } from "../config";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCloudState, getSupabaseClient, subscribeCloud } from "./cloud";
 import { setTeamPro } from "./entitlements";
@@ -42,6 +43,7 @@ export interface TeamsState {
   teams: TeamInfo[];
   pending: PendingInvite[];
   roster: TeamMemberRow[];
+  auditLog: AuditLogRow[];
   activeTeamId: string | null;
   loading: boolean;
   /** True when an active team seat is granting Pro right now. */
@@ -49,10 +51,18 @@ export interface TeamsState {
   error: string | null;
 }
 
+export interface AuditLogRow {
+  id: number;
+  kind: string;
+  meta: Record<string, unknown>;
+  actor: string;
+  createdAt: string;
+}
+
 type TeamsListener = (s: TeamsState) => void;
 
 const listeners = new Set<TeamsListener>();
-let state: TeamsState = { teams: [], pending: [], roster: [], activeTeamId: null, loading: false, proBySeat: false, error: null };
+let state: TeamsState = { teams: [], pending: [], roster: [], auditLog: [], activeTeamId: null, loading: false, proBySeat: false, error: null };
 
 function setState(patch: Partial<TeamsState>): void {
   state = { ...state, ...patch };
@@ -108,8 +118,8 @@ export async function refresh(): Promise<void> {
       ? state.activeTeamId
       : (teams[0]?.teamId ?? null);
     setTeamPro(!!pro);
-    setState({ teams, pending, activeTeamId, loading: false, proBySeat: !!pro, error: null });
-    if (activeTeamId) await loadRoster(client, activeTeamId);
+    setState({ teams, pending, activeTeamId, loading: false, proBySeat: !!pro, error: null, auditLog: [] });
+    if (activeTeamId) { await loadRoster(client, activeTeamId); await loadAuditLog(client, activeTeamId); }
   } catch (e) {
     setTeamPro(false);
     setState({ loading: false, error: (e as Error).message });
@@ -139,9 +149,27 @@ async function loadRoster(client: SupabaseClient, teamId: string): Promise<void>
   }
 }
 
+async function loadAuditLog(client: SupabaseClient, teamId: string): Promise<void> {
+  try {
+    const { data, error } = await client.from("team_audit")
+      .select("id, kind, meta, actor, created_at")
+      .eq("team_id", teamId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) throw new Error(error.message);
+    const auditLog: AuditLogRow[] = (data ?? []).map(r => ({
+      id: r.id, kind: r.kind, meta: r.meta ?? {},
+      actor: r.actor ?? "system", createdAt: r.created_at
+    }));
+    setState({ auditLog, error: null });
+  } catch (e) {
+    setState({ error: (e as Error).message });
+  }
+}
+
 export function selectTeam(teamId: string): void {
   setState({ activeTeamId: teamId });
-  void getSupabaseClient().then(c => { if (c) void loadRoster(c, teamId); });
+  void getSupabaseClient().then(c => { if (c) { void loadRoster(c, teamId); void loadAuditLog(c, teamId); } });
 }
 
 /* ------------------------------------------------------------------ */
@@ -214,6 +242,31 @@ export async function deleteTeam(teamId: string): Promise<{ ok: boolean; error?:
   try {
     await rpc(client, "delete_team", { p_team_id: teamId });
     await refresh();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/* Seat bump — opens a payment link then confirms */
+export function openTeamUpgradeLink(extraSeats: number): void {
+  const url = CONFIG.teamProUrl || CONFIG.proUrl;
+  if (url) {
+    sessionStorage.setItem("iq.teamUpgrade", String(extraSeats));
+    window.open(url + `?seats=${extraSeats}&team=${state.activeTeamId ?? ""}`, "_blank", "noopener");
+  } else if (CONFIG.supportEmail) {
+    const subject = encodeURIComponent(`Team plan upgrade — ${state.teams.find(t => t.teamId === state.activeTeamId)?.name ?? ""}`);
+    window.location.href = `mailto:${CONFIG.supportEmail}?subject=${subject}`;
+  }
+}
+
+export async function confirmBumpSeats(extraSeats: number): Promise<{ ok: boolean; error?: string }> {
+  const client = await getSupabaseClient();
+  if (!client || !state.activeTeamId) return { ok: false, error: "No team selected." };
+  try {
+    await rpc(client, "bump_team_seats", { p_team_id: state.activeTeamId, p_extra: extraSeats });
+    await refresh();
+    await loadAuditLog(client, state.activeTeamId);
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
