@@ -2,7 +2,7 @@
    Hashed build assets are immutable, so cache-first is safe for them;
    navigations are network-first so app updates land, with cached shell offline. */
 
-const CACHE = "interviewiq-v2";
+const CACHE = "interviewiq-v3";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {

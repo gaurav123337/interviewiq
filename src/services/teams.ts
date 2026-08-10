@@ -91,7 +91,19 @@ export function initTeams(): void {
 /* Refresh — the single source of truth for membership + entitlement    */
 /* ------------------------------------------------------------------ */
 
-export async function refresh(): Promise<void> {
+let inflight: Promise<void> | null = null;
+
+/** Refreshes membership + entitlement. Concurrent calls share one run, so a
+    burst of cloud notifications (init, auth changes, the subscribeCloud seed
+    call) can never pile up into an RPC storm or a synchronous re-entrancy loop. */
+export function refresh(): Promise<void> {
+  if (!inflight) {
+    inflight = doRefresh().finally(() => { inflight = null; });
+  }
+  return inflight;
+}
+
+async function doRefresh(): Promise<void> {
   const client = await getSupabaseClient();
   const user = getCloudState().user;
   if (!client || !user) {

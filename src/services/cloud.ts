@@ -75,14 +75,17 @@ export function setTestClient(c: SupabaseClient | null): void {
   clientPromise = c ? Promise.resolve(c) : null;
 }
 
-/** Returns the client when cloud sync is available (configured, or a test client is injected). */
+/** Returns the client when cloud sync is available (configured, or a test client is injected).
+    NOTE: `configured` is only emitted when it actually changes. Emitting it on every access
+    re-triggered the teams listener (refresh → getSupabaseClient → setState → listener → …),
+    which recursed until "Maximum call stack size exceeded" at startup. */
 async function resolveClient(): Promise<SupabaseClient | null> {
   if (clientPromise) {
-    setState({ configured: true });
+    if (!state.configured) setState({ configured: true });
     return clientPromise;
   }
   if (!isCloudConfigured()) return null;
-  setState({ configured: true });
+  if (!state.configured) setState({ configured: true });
   return getClient();
 }
 
