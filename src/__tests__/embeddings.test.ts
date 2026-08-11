@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chunkText, DEFAULT_EMBED_MODEL, embed, embedModel, estimateTokens } from "../services/embeddings";
+import { changedChunkIndices, chunkText, DEFAULT_EMBED_MODEL, embed, embedModel, estimateTokens } from "../services/embeddings";
 import { STORAGE_KEYS, storageSet } from "../services/storage";
 
 afterEach(() => {
@@ -36,6 +36,26 @@ describe("chunkText", () => {
 
   it("returns an empty list for empty input", () => {
     expect(chunkText("   ")).toHaveLength(0);
+  });
+});
+
+describe("changedChunkIndices", () => {
+  const oldChunks = ["chunk one unchanged", "chunk two unchanged", "chunk three old version"];
+  it("returns [] when nothing changed", () => {
+    expect(changedChunkIndices(oldChunks, oldChunks)).toEqual([]);
+  });
+  it("flags only the changed chunk when a small edit is made", () => {
+    const next = ["chunk one unchanged", "chunk two unchanged", "chunk three NEW version"];
+    expect(changedChunkIndices(oldChunks, next)).toEqual([2]);
+  });
+  it("flags every index when the document is new or fully replaced", () => {
+    expect(changedChunkIndices([], ["a", "b"])).toEqual([0, 1]);
+    expect(changedChunkIndices(["x"], ["y", "z"])).toEqual([0, 1]);
+  });
+  it("treats identical content at a shifted position as unchanged", () => {
+    /* chunk inserted at the front — the other two keep their vectors */
+    const next = ["chunk zero new", ...oldChunks];
+    expect(changedChunkIndices(oldChunks, next)).toEqual([0]);
   });
 });
 

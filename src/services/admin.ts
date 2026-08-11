@@ -340,6 +340,42 @@ export async function deletePdfDocument(id: number): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+export interface PdfChunkRow {
+  chunkIndex: number;
+  content: string;
+  embedding: number[];
+}
+
+/** The indexed chunks of one document — used by incremental re-embedding to
+    reuse embeddings for content that didn't change. */
+export async function listPdfChunks(documentId: number): Promise<PdfChunkRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.from("pdf_chunks")
+    .select("chunk_index, content, embedding")
+    .eq("document_id", documentId)
+    .order("chunk_index", { ascending: true });
+  if (error) return [];
+  return ((data ?? []) as { chunk_index: number; content: string; embedding: number[] }[])
+    .map(d => ({ chunkIndex: d.chunk_index, content: d.content, embedding: d.embedding }));
+}
+
+/** Removes a document's chunks without removing the document (re-embed update). */
+export async function deletePdfChunks(documentId: number): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) return;
+  await client.from("pdf_chunks").delete().eq("document_id", documentId);
+}
+
+/** Updates document metadata (e.g. char count after a re-embed). */
+export async function updatePdfDocument(id: number, patch: { charCount?: number }): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) return;
+  const row: Record<string, unknown> = {};
+  if (patch.charCount !== undefined) row.char_count = patch.charCount;
+  await client.from("pdf_documents").update(row).eq("id", id);
+}
+
 export interface PdfHit {
   documentId: number;
   content: string;

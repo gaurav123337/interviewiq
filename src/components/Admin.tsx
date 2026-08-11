@@ -9,9 +9,10 @@ import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../s
 import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
-  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, adminRagHealth,
-  mergeQuality, ragHealthSummary, touchQuestion,
-  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow, type RagHealthRow
+  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, adminRagDocuments,
+  adminRagHealth, mergeQuality, ragHealthSummary, touchQuestion,
+  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow,
+  type RagDocRow, type RagHealthRow
 } from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
@@ -19,12 +20,13 @@ import { parseQuestionBatch } from "../services/import";
 import { extractFileText } from "../services/pdf";
 import {
   adminListUsers, adminMetrics, adminMissCandidates, batchDeleteQuestions, batchSetQuestionsPublished,
-  createAnnouncement, createPdfDocument, createQuestion, deleteAnnouncement, deletePdfDocument,
-  deleteQuestion, grantAdmin, insertPdfChunks, listAdmins, listPdfDocuments, listQuestionAudit,
+  createAnnouncement, createPdfDocument, createQuestion, deleteAnnouncement, deletePdfChunks, deletePdfDocument,
+  deleteQuestion, grantAdmin, insertPdfChunks, listAdmins, listPdfChunks, listPdfDocuments, listQuestionAudit,
   revokeAdmin, saveRemoteConfig, setAnnouncementPublished, setPdfChunkCount, setQuestionPublished,
-  updateQuestion, type AdminMetrics, type AdminUserRow, type AuditEntry, type MissCandidate, type PdfDocumentRow
+  updatePdfDocument, updateQuestion,
+  type AdminMetrics, type AdminUserRow, type AuditEntry, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
-import { chunkText, embed, sectionChunkText } from "../services/embeddings";
+import { changedChunkIndices, chunkText, contentHash, embed, sectionChunkText } from "../services/embeddings";
 import {
   deleteScraperSource, getScraperSchedule, listScraperSources, runScraperNow, saveScraperSchedule,
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
@@ -1111,24 +1113,53 @@ function AutoFill({ busy, setBusy, onChanged }: {
   const indexRag = async () => {
     if (!rawText.trim()) { toast("Import a file first"); return; }
     if (!aiAvailable()) { toast("Add an AI key in Settings — indexing needs one"); return; }
-    /* skip identical re-uploads — no point re-embedding unchanged content */
-    const dup = docs.find(d => d.title === (fileName || "Imported document") && d.char_count === rawText.length);
-    if (dup) { toast(`⏭️ "${dup.title}" was already indexed — no changes to embed`); return; }
     setRagBusy(true);
     try {
       /* heading-aware chunking keeps Q&A pairs together; plain text falls back */
       const sectioned = sectionChunkText(rawText);
       const chunks = sectioned.length ? sectioned : chunkText(rawText);
       if (!chunks.length) { toast("Nothing to index — the extracted text is empty"); return; }
-      toast(`🧠 Embedding ${chunks.length} chunk(s)…`);
-      const vectors = await embed(chunks.map(c => c.content));
-      const docId = await createPdfDocument({ title: fileName || "Imported document", source: "pdf-import", charCount: rawText.length });
-      await insertPdfChunks(chunks.map((c, i) => ({
-        documentId: docId, index: c.index, content: c.content, tokens: c.tokens, embedding: vectors[i]
-      })));
-      await setPdfChunkCount(docId, chunks.length);
+      const title = fileName || "Imported document";
+      const existing = docs.find(d => d.title === title);
+      /* incremental re-embed: unchanged chunks keep their vectors, only new/
+         changed chunks are embedded — a small edit to a big PDF is cheap */
+      const oldRows = existing ? await listPdfChunks(existing.id) : [];
+      const changed = changedChunkIndices(oldRows.map(c => c.content), chunks.map(c => c.content));
+      if (existing && changed.length === 0) {
+        toast(`⏭️ "${existing.title}" is unchanged — nothing to re-embed`);
+        return;
+      }
+      const vectors: number[][] = new Array(chunks.length);
+      const oldByHash = new Map(oldRows.map(c => [contentHash(c.content), c.embedding]));
+      const toEmbedIdx: number[] = [];
+      chunks.forEach((c, i) => {
+        const old = oldByHash.get(contentHash(c.content));
+        if (old) vectors[i] = old;
+        else toEmbedIdx.push(i);
+      });
+      if (toEmbedIdx.length) {
+        toast(`🧠 Embedding ${toEmbedIdx.length} new/changed chunk(s) of ${chunks.length}…`);
+        const fresh = await embed(toEmbedIdx.map(i => chunks[i].content));
+        toEmbedIdx.forEach((idx, k) => { vectors[idx] = fresh[k]; });
+      }
+      const rows = chunks.map((c, i) => ({
+        documentId: existing ? existing.id : 0, index: c.index, content: c.content,
+        tokens: c.tokens, embedding: vectors[i]
+      }));
+      let docId: number;
+      if (existing) {
+        docId = existing.id;
+        await deletePdfChunks(docId);
+        await insertPdfChunks(rows.map(r => ({ ...r, documentId: docId })));
+        await setPdfChunkCount(docId, chunks.length);
+        await updatePdfDocument(docId, { charCount: rawText.length });
+      } else {
+        docId = await createPdfDocument({ title, source: "pdf-import", charCount: rawText.length });
+        await insertPdfChunks(rows.map(r => ({ ...r, documentId: docId })));
+        await setPdfChunkCount(docId, chunks.length);
+      }
       await reloadDocs();
-      toast(`🧠 Indexed ${chunks.length} chunk(s) — the AI tutor is now grounded in this document`);
+      toast(`🧠 Indexed ${chunks.length} chunk(s) (${toEmbedIdx.length} fresh embed${toEmbedIdx.length === 1 ? "" : "s"}${existing ? `, reused ${chunks.length - toEmbedIdx.length}` : ""}) — the AI tutor is now grounded in this document`);
     } catch (e) {
       toast("✗ " + ((e as Error).message || "Indexing failed"));
     } finally { setRagBusy(false); }
@@ -1718,6 +1749,8 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
   const [coachGaps, setCoachGaps] = useState<CoachGapRow[]>([]);
   const [ragRows, setRagRows] = useState<RagHealthRow[]>([]);
+  const [ragDocs, setRagDocs] = useState<RagDocRow[]>([]);
+  const [kbDocs, setKbDocs] = useState<PdfDocumentRow[]>([]);
   /* threshold explorer — reclassify recent retrievals against any cutoff */
   const [ragThreshold, setRagThreshold] = useState<number>(() => effectiveGroundingMinSim());
   /* coach-gap alerts — topics debated enough to warrant a deep-dive guide */
@@ -1755,8 +1788,8 @@ Practice questions:
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth()])
-      .then(([q, f, c, g, r]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); })
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), listPdfDocuments()])
+      .then(([q, f, c, g, r, d, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setKbDocs(k); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -2147,6 +2180,54 @@ Practice questions:
                     <span>— publish a new cutoff in <span className="font-bold">Product config → 🗄️ RAG retrieval</span> to apply it.</span>
                   </div>
                 )}
+                {/* per-document breakdown — which uploaded PDF actually answers */}
+                <div className="mt-4">
+                  <div className="mb-1.5 text-[12px] font-extrabold uppercase tracking-wider text-mut">📄 Per-document</div>
+                  <div className="overflow-x-auto rounded-xl border border-line/10">
+                    <table className="w-full min-w-[560px] text-left text-[13px]">
+                      <thead>
+                        <tr className="border-b border-line/10 bg-wht/[.04] text-[11px] uppercase tracking-wider text-mut">
+                          <th className="px-3 py-2 font-bold">Document</th>
+                          <th className="px-3 py-2 font-bold">Retrievals</th>
+                          <th className="px-3 py-2 font-bold">Avg sim</th>
+                          <th className="px-3 py-2 font-bold">Last cited</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {kbDocs.length === 0 && (
+                          <tr><td colSpan={4} className="px-3 py-6 text-center text-mut">No documents indexed yet — upload PDFs in the Auto-fill section to build the knowledge base.</td></tr>
+                        )}
+                        {(() => {
+                          const stats = new Map(ragDocs.map(d => [d.documentId, d]));
+                          const rows = kbDocs
+                            .map(k => ({ k, s: stats.get(k.id) }))
+                            .sort((a, b) => (b.s?.retrievals ?? 0) - (a.s?.retrievals ?? 0) || a.k.title.localeCompare(b.k.title));
+                          return rows.map(({ k, s }) => (
+                            <tr key={k.id} className={`border-b border-line/5 last:border-0 hover:bg-wht/5 ${s ? "" : "opacity-70"}`}>
+                              <td className="max-w-[300px] px-3 py-2.5">
+                                <div className="truncate font-bold">{k.title}</div>
+                                <div className="text-[11px] text-fnt">{k.chunk_count} chunk{k.chunk_count === 1 ? "" : "s"}</div>
+                              </td>
+                              <td className="px-3 py-2.5">
+                                {s ? (
+                                  <Chip tone={s.retrievals >= 3 ? "ok" : "warn"}>{s.retrievals} retrieval{s.retrievals === 1 ? "" : "s"}</Chip>
+                                ) : (
+                                  <Chip tone="bad">📭 never retrieved</Chip>
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 tabular-nums">{s ? s.avgSim.toFixed(2) : "—"}</td>
+                              <td className="px-3 py-2.5 text-[12px] text-fnt">{s?.lastSeen ? new Date(s.lastSeen).toLocaleDateString() : "—"}</td>
+                            </tr>
+                          ));
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                  {kbDocs.some(k => !ragDocs.some(d => d.documentId === k.id)) && (
+                    <p className="mt-1.5 text-[11.5px] text-fnt">📭 Documents never retrieved aren't answering user questions — either their content misses the queries being asked, or they need re-uploading with better structure.</p>
+                  )}
+                </div>
+
                 <div className="mt-4 max-h-[360px] space-y-1.5 overflow-y-auto">
                   {ragRows.map((r, i) => {
                     const wouldBe = r.topSim >= ragThreshold;

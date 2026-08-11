@@ -53,6 +53,12 @@ export function effectiveCandidatePool(): number {
   return getRagDefaults().candidatePool ?? CANDIDATE_POOL;
 }
 
+/** The tuning values actually in effect — surfaced to users in the tutor/coach
+    so an answer's 📚 grounded / 🧠 general status is explainable. */
+export function ragTuningInfo(): { minSim: number; pool: number } {
+  return { minSim: effectiveGroundingMinSim(), pool: effectiveCandidatePool() };
+}
+
 /* ------------------------------------------------------------------ */
 /* Pure scoring (unit-tested by the retrieval eval harness)            */
 /* ------------------------------------------------------------------ */
@@ -161,7 +167,9 @@ export async function retrieveContext(query: string): Promise<RetrievalResult> {
       hits: hits.length,
       topSim: hits.length ? Math.round(hits[0].similarity * 100) / 100 : 0,
       grounded: hits.some(h => h.grounded),
-      checked: true
+      checked: true,
+      /* per-document attribution for the admin RAG health tab */
+      docs: hits.map(h => ({ id: h.documentId, sim: Math.round(h.similarity * 100) / 100 }))
     });
     return { hits, checked: true };
   } catch {

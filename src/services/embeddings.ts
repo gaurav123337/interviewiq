@@ -81,6 +81,19 @@ export function contentHash(text: string): string {
   return (h >>> 0).toString(36);
 }
 
+/** Which NEW chunks changed vs the document's old chunks (by content hash).
+    Returns indices of new chunks that need a fresh embedding — unchanged
+    chunks can reuse their existing vectors, so a small edit to a big PDF
+    re-embeds only the affected parts. */
+export function changedChunkIndices(oldContents: string[], newContents: string[]): number[] {
+  const oldHashes = new Set(oldContents.map(contentHash));
+  const out: number[] = [];
+  for (let i = 0; i < newContents.length; i++) {
+    if (!oldHashes.has(contentHash(newContents[i]))) out.push(i);
+  }
+  return out;
+}
+
 /** Generates embeddings for a batch of texts via the OpenAI-compatible /embeddings endpoint. */
 export async function embed(texts: string[]): Promise<number[][]> {
   const s = getSettings();

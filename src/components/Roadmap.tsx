@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { CareerGoal, LevelId, SkillRating } from "../types";
 import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, LEVEL_INDEX, companyById, fieldById, levelById } from "../data";
 import { getDeepDive } from "../data/deepDive";
 import { aiAvailable } from "../ai";
 import { explainTopic, tutorChat, type TutorMsg } from "../services/tutor";
+import { documentTitles, ragTuningInfo } from "../services/rag";
+import { GroundingNote } from "./GroundingNote";
 import { analyzeJd } from "../services/jd";
 import { analyzeResume } from "../services/resume";
 import { extractFileText } from "../services/pdf";
@@ -690,6 +692,14 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
   onRelated: (t: RoadmapTopic) => void;
 }) {
   const [ask, setAsk] = useState("");
+  /* indexed-document count for the grounding note (one public read per mount) */
+  const [kbDocs, setKbDocs] = useState<number | null>(null);
+  useEffect(() => {
+    let on = true;
+    documentTitles().then(m => { if (on) setKbDocs(m.size); }).catch(() => { if (on) setKbDocs(null); });
+    return () => { on = false; };
+  }, []);
+  const tuning = ragTuningInfo();
   if (!topic) return null;
   const dd = getDeepDive(topic.label);
   const related = (dd.related ?? [])
@@ -786,6 +796,9 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
           {aiAvailable() && (
             <button className={btnGhost + btnSm} onClick={onExplain} disabled={aiLoading}>Explain it to me</button>
           )}
+        </div>
+        <div className="mb-2">
+          <GroundingNote minSim={tuning.minSim} pool={tuning.pool} docs={kbDocs} />
         </div>
         {aiLoading && <p className="text-[13.5px] text-ink"><span className="spinner" />Explaining…</p>}
 

@@ -6,7 +6,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CANDIDATE_POOL, GROUNDING_MIN_SIM, effectiveCandidatePool, effectiveGroundingMinSim,
-  expandQuery, groundingPrompt, hybridScore, lexicalScore, rerankHits, retrieveContext
+  expandQuery, groundingPrompt, hybridScore, lexicalScore, ragTuningInfo,
+  rerankHits, retrieveContext
 } from "../services/rag";
 import { setRemoteConfig } from "../services/remoteConfig";
 import { ragHealthSummary, type RagHealthRow } from "../services/quality";
@@ -154,6 +155,10 @@ describe("retrieveContext", () => {
     expect(ev).toBeDefined();
     expect(ev!.meta.q).toContain("event loop");
     expect(ev!.meta.grounded).toBe(true);
+    /* per-document attribution feeds the admin per-doc breakdown */
+    const docs = ev!.meta.docs as { id: number; sim: number }[];
+    expect(docs.length).toBeGreaterThan(0);
+    expect(docs.every(d => typeof d.id === "number" && typeof d.sim === "number")).toBe(true);
   });
 });
 
@@ -193,6 +198,8 @@ describe("remote-tunable grounding", () => {
     setRemoteConfig({ rag: { minSim: 0.62, candidatePool: 12 } });
     expect(effectiveGroundingMinSim()).toBe(0.62);
     expect(effectiveCandidatePool()).toBe(12);
+    /* the user-facing tuning info reflects the same effective values */
+    expect(ragTuningInfo()).toEqual({ minSim: 0.62, pool: 12 });
     /* rerankHits applies the cutoff passed in */
     const hits = rerankHits("anything", [
       { documentId: 1, content: "moderate match chunk", similarity: 0.55 },

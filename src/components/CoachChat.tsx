@@ -14,9 +14,11 @@ import { getCodingTrack } from "../services/codingTrack";
 import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { withGrounding, type Citation } from "../services/tutor";
+import { ragTuningInfo } from "../services/rag";
 import { coachReply, type CoachContext, type CoachMsg } from "../coach/reply";
 import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
 import { CitationChip } from "./CitationChip";
+import { GroundingNote } from "./GroundingNote";
 import { toast } from "../toast";
 
 /* API-mode replies carry knowledge-base citations + grounding state. */
@@ -224,6 +226,9 @@ export function CoachChat(ctx: CoachContext) {
             <button type="button" className={seg(mode === "api")} onClick={() => setMode("api")}>🤖 AI · API key</button>
             <button type="button" className={seg(mode === "local")} onClick={() => setMode("local")}>📚 Knowledge · offline</button>
             {mode === "local" && <span className="text-[10.5px] text-mut">no key needed — grounded in the question bank</span>}
+          </div>
+          <div className="mb-1.5">
+            <GroundingNote minSim={ragTuningInfo().minSim} pool={ragTuningInfo().pool} />
           </div>
           <div ref={boxRef} className="h-[240px] space-y-2 overflow-y-auto pr-1">
             {msgs.length === 0 ? (

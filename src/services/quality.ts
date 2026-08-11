@@ -186,6 +186,27 @@ export async function adminRagHealth(maxRows = 40): Promise<RagHealthRow[]> {
   }));
 }
 
+export interface RagDocRow {
+  documentId: number;
+  retrievals: number;
+  avgSim: number;
+  lastSeen: string | null;
+}
+
+/** Per-document retrieval stats — which uploaded PDF actually answers queries. */
+export async function adminRagDocuments(): Promise<RagDocRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_rag_documents");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+    documentId: Number(r.document_id ?? 0),
+    retrievals: Number(r.retrievals ?? 0),
+    avgSim: Number(r.avg_sim ?? 0),
+    lastSeen: (r.last_seen as string | null) ?? null
+  }));
+}
+
 /** Aggregate the recent retrieval log into the health signals shown to admins.
     With a `threshold`, grounded rows are reclassified by top similarity against
     that cutoff (the RAG-health explorer); without one, the stored flag is used. */
