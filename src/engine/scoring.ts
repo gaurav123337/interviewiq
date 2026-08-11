@@ -1,4 +1,5 @@
 import type { SessionQuestion } from "../types";
+import { textMatches } from "../coach/concepts";
 
 const STOP = new Set(
   ("a an the and or but if of to in on at for with from by as is are was were be been being it its this that these those do does did done has have had i you he she we they them their your my our his her not no can could will would should may might must shall than then so such there here what which who whom when where why how all any both each few more most other some only own same very just about into over under up out off above below again once also too").split(" ")
@@ -44,7 +45,11 @@ export interface ScoreResult {
   words: number;
 }
 
-/** Scores an answer by token overlap with the question's key points, plus a length heuristic. */
+/** Scores an answer against the question's key points, plus a length heuristic.
+    Matching is concept-aware (synonyms like router≈routing≈navigation collapse
+    into one family via ../coach/concepts), so a paraphrase counts as coverage —
+    and the offline coach's in-chat grade uses this exact function so the two
+    never disagree. */
 export function scoreAnswer(userText: string, question: SessionQuestion): ScoreResult {
   const words = tokenize(userText);
   const ansLen = words.length;
@@ -54,7 +59,7 @@ export function scoreAnswer(userText: string, question: SessionQuestion): ScoreR
   for (const kp of question.kp ?? []) {
     const kt = kpTokens(kp);
     if (!kt.length) continue;
-    const isHit = kt.some(t => words.includes(t));
+    const isHit = kt.length > 0 && textMatches(userText, kp);
     if (isHit) { hit++; covered.push(kp); } else { missed.push(kp); }
   }
   const total = Math.max(1, question.kp.length);

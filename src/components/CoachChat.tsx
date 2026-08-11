@@ -9,75 +9,19 @@
 
 import { useEffect, useRef, useState } from "react";
 import { aiAvailable, chat, type ChatMessage } from "../ai";
-import { fieldById } from "../data";
-import { deepDiveCards } from "../data/deepDive";
 import { codingTopicsFromText, suggestNextProblem } from "../data/codingCompanies";
 import { getCodingTrack } from "../services/codingTrack";
-import { publishedFor } from "../services/remoteConfig";
 import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
-import type { LevelId } from "../types";
+import { coachReply, type CoachContext, type CoachMsg } from "../coach/reply";
 import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
 import { toast } from "../toast";
 
-interface CoachMsg { role: "user" | "assistant"; text: string }
-
-export interface CoachContext {
-  prompt: string;
-  answer: string;
-  kp: string[];
-  fieldId?: string | null;
-  levelId?: LevelId | null;
-  /** Goal company id — used to rank the next-problem suggestion. */
-  companyId?: string | null;
-  /** Called with a problem id when the candidate accepts a suggestion. */
-  onPractice?: (problemId: string) => void;
-}
-
-/* ------------------------------------------------------------------ */
-/* Retrieval + response for the offline knowledge mode                 */
-/* ------------------------------------------------------------------ */
-
-const tokens = (s: string): Set<string> =>
-  new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 3));
-
-/** Number of shared meaningful tokens between two strings. */
-function overlap(a: string, b: string): number {
-  const wa = tokens(a);
-  const wb = tokens(b);
-  let n = 0;
-  for (const w of wa) if (wb.has(w)) n++;
-  return n;
-}
-
-/** Retrieval pool for the offline tutor — the current field's questions, the
-    curated deep-dive knowledge base, and admin-published bank updates. */
-function retrievalPool(ctx: CoachContext): { q: string; a: string }[] {
-  const pool: { q: string; a: string }[] = [];
-  const seen = new Set<string>();
-  const push = (qa: { q: string; a: string }) => {
-    if (qa.q && !seen.has(qa.q)) { seen.add(qa.q); pool.push(qa); }
-  };
-  if (ctx.fieldId) {
-    const field = fieldById(ctx.fieldId);
-    const levels = ctx.levelId ? [ctx.levelId] : field ? (Object.keys(field.questions) as LevelId[]) : [];
-    for (const lv of levels) {
-      for (const qa of field?.questions[lv] ?? []) push({ q: qa.q, a: qa.a });
-      if (ctx.levelId) for (const qa of publishedFor(ctx.fieldId, ctx.levelId)) push({ q: qa.q, a: qa.a });
-    }
-  }
-  for (const c of deepDiveCards()) push({ q: c.q, a: c.a });
-  return pool;
-}
-
-function relatedQuestions(ctx: CoachContext, text: string, limit: number): { q: string; a: string }[] {
-  return retrievalPool(ctx)
-    .map(qa => ({ qa, s: overlap(qa.q, text) + overlap(qa.a, text) }))
-    .filter(x => x.s > 0)
-    .sort((a, b) => b.s - a.s)
-    .slice(0, limit)
-    .map(x => x.qa);
-}
+/* The offline coach's brain (concept-aware matching, intents, grading,
+   dialogue memory) lives in ../coach/reply + ../coach/concepts. Re-exported
+   here for compatibility with existing tests and host imports. */
+export { localCoachReply } from "../coach/reply";
+export type { CoachContext } from "../coach/reply";
 
 /* ------------------------------------------------------------------ */
 /* Saving discussions into the weakness profile + history              */
@@ -144,58 +88,6 @@ export function saveCoachDiscussion(d: { prompt: string; mode: "api" | "local"; 
   const topics = codingTopicsFromText(t);
   queueEvent("coach_discussion", { topics, prompt: d.prompt.slice(0, 300), mode: d.mode });
   return true;
-}
-
-/** Deterministic, grounded answer — retrieval over the bank, no network. */
-export function localCoachReply(text: string, ctx: CoachContext): string {
-  const t = text.toLowerCase();
-  const kp = ctx.kp ?? [];
-  const answer = (ctx.answer ?? "").trim();
-  const hitKp = kp.filter(k => overlap(k, text) > 0);
-  const missing = kp.filter(k => overlap(k, text) === 0);
-  const wantHint = /hint|stuck|help|how (do|should|can) i|approach/.test(t);
-  /* approach detection is intentionally broad — “I'll use a router”, “I can use
-     Next.js”, “I decided to cache” are all approaches even without the words
-     “my approach” */
-  const sharing = /\b(i'?ll|i will|i would|i can|i could|i plan|i'm going|i am going|i decided|i use|i chose|i prefer|my approach|my solution|i think|i did|my answer|what about|this is how|here'?s (my|how))\b/i.test(t);
-  const debating = /disagree|but |not sure|isn't|wrong|debate|different|however|objection/.test(t);
-  /* a substantive message (real content beyond greetings) is always worth
-     stress-testing, not dismissing with an invitation */
-  const hasContent = t.replace(/[^a-z0-9\s]/g, " ").trim().split(/\s+/).filter(w => w.length > 3).length >= 3;
-
-  const lines: string[] = [];
-
-  if (wantHint) {
-    lines.push("🧭 Hint — break the question into parts before you answer. A strong reply covers:");
-    lines.push("• " + (kp.length ? kp.join("\n• ") : "the core idea, a concrete example, and the tradeoffs"));
-    if (answer) lines.push("Work toward the outline: " + answer.slice(0, 220) + (answer.length > 220 ? "…" : ""));
-  } else if (debating && !sharing) {
-    lines.push("🤔 Fair challenge. Here's the model answer's position:");
-    lines.push(answer.slice(0, 300) || "See the key points below — that's the position interviewers expect.");
-    if (kp.length) lines.push("Interviewers at this level are listening for: " + kp.join(" · "));
-    lines.push("If you can hit those points with your own structure, that's a stronger debate than the wording — what's your version?");
-  } else if (sharing || hasContent) {
-    /* echo the user's own terms back so it feels like the coach actually read
-       the answer, then stress-test against the grading points */
-    const terms = [...new Set(
-      text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)
-        .filter(w => w.length > 3 && !/about|your|their|with|have|this|that|will|would|could|there|what|when|from|into|using|just|also|then|than|some|them|they|been|were|should/.test(w))
-    )].slice(0, 4);
-    lines.push("✅ I read that you're thinking about: " + (terms.length ? terms.join(" · ") : "your approach") + ". Let's stress-test it against what this question is graded on.");
-    if (hitKp.length) lines.push("You're covering: " + hitKp.join(" · "));
-    if (missing.length) lines.push("Don't miss: " + missing.join(" · "));
-    if (answer) lines.push("The model answer reasons through: " + answer.slice(0, 240) + (answer.length > 240 ? "…" : ""));
-  } else {
-    lines.push("Tell me your approach and I'll compare it with the model answer — or ask for a hint if you're stuck.");
-    if (answer) lines.push("Reference outline: " + answer.slice(0, 200) + (answer.length > 200 ? "…" : ""));
-  }
-
-  const related = relatedQuestions(ctx, text, 2);
-  if (related.length) {
-    lines.push("📚 Related practice from this field: " + related.map(r => "“" + r.q + "”").join(" · "));
-  }
-
-  return lines.join("\n\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -269,12 +161,14 @@ export function CoachChat(ctx: CoachContext) {
     }]);
   };
 
-  const send = async () => {
-    const text = input.trim();
+  /* one send path shared by the composer and the quick-action chips */
+  const submit = async (raw: string) => {
+    const text = raw.trim();
     if (!text || busy) return;
     checkCompletion();
     setInput("");
-    setMsgs(m => [...m, { role: "user", text }]);
+    const next: CoachMsg[] = [...msgs, { role: "user", text }];
+    setMsgs(next);
     setBusy(true);
     try {
       if (mode === "api") {
@@ -295,7 +189,9 @@ export function CoachChat(ctx: CoachContext) {
         const reply = await chat(history, { maxTokens: 450 });
         setMsgs(m => [...m, { role: "assistant", text: reply }]);
       } else {
-        setMsgs(m => [...m, { role: "assistant", text: localCoachReply(text, ctx) }]);
+        /* full history incl. the new message → the coach grades the latest
+           real answer and remembers what's already covered across turns */
+        setMsgs(m => [...m, { role: "assistant", text: coachReply(text, ctx, next) }]);
       }
     } catch (e) {
       const msg = (e as Error).message || "Coach unavailable";
@@ -305,6 +201,8 @@ export function CoachChat(ctx: CoachContext) {
       setBusy(false);
     }
   };
+
+  const send = () => submit(input);
 
   const seg = (active: boolean) =>
     `rounded-full px-3 py-1 text-[11px] font-bold transition-all ${active ? "grad-bg text-white" : "border border-line/15 text-mut hover:border-acc1/40"}`;
@@ -341,7 +239,25 @@ export function CoachChat(ctx: CoachContext) {
             )}
             {busy && <div className="text-[12px] text-mut">…thinking</div>}
           </div>
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {[
+              { label: "💡 Hint", cmd: "Give me a hint" },
+              { label: "📝 Grade my answer", cmd: "Grade my answer" },
+              { label: "🤔 Debate", cmd: "I disagree with the model answer" },
+              { label: "🎯 Next", cmd: "What should I study next?" }
+            ].map(c => (
+              <button
+                key={c.label}
+                type="button"
+                disabled={busy}
+                onClick={() => submit(c.cmd)}
+                className="rounded-full border border-line/15 px-2.5 py-1 text-[11px] font-bold text-mut transition-all hover:border-acc1/40 hover:text-ink disabled:opacity-50"
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-1.5 flex gap-2">
             <textarea
               value={input}
               rows={1}
