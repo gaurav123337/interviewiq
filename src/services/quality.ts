@@ -284,6 +284,74 @@ export interface RagWeeklyDigest {
   topDocs: { id: number; n: number }[];
 }
 
+export interface RagDigestOpts {
+  /** Alert when the weekly grounded rate falls below this % (default 60). */
+  minGroundedRate?: number;
+  /** Alert when the weekly empty-hit rate rises above this % (default 40). */
+  maxEmptyRate?: number;
+  /** Alert when weekly concept-gate rejections exceed this count (default 10). */
+  maxGateRejects?: number;
+  /** Delivery webhook (Slack / email bridge) called once per week on breach. */
+  webhook?: string;
+}
+
+export interface RagDigestAlert {
+  severity: "ok" | "warn" | "bad";
+  title: string;
+  detail: string;
+  /** True when the threshold was actually breached (the alert fires). */
+  fired: boolean;
+}
+
+/** Evaluates a weekly digest against the alert thresholds — pure, unit-tested.
+    Healthy checks are returned with fired:false so the UI can show what's green
+    alongside what breached; an empty digest yields no alerts at all. */
+export function evaluateRagDigest(digest: RagWeeklyDigest | null, opts: RagDigestOpts = {}): RagDigestAlert[] {
+  if (!digest || digest.total <= 0) return [];
+  const minG = opts.minGroundedRate ?? 60;
+  const maxE = opts.maxEmptyRate ?? 40;
+  const maxR = opts.maxGateRejects ?? 10;
+  const groundedRate = Math.round((digest.grounded / digest.total) * 100);
+  const emptyRate = Math.round((digest.empty / digest.total) * 100);
+  const alerts: RagDigestAlert[] = [];
+  if (groundedRate < minG) {
+    alerts.push({ severity: "bad", title: "Grounded rate dropped", detail: `${groundedRate}% of retrievals grounded this week — below the ${minG}% target. Users' questions aren't in the knowledge base.`, fired: true });
+  } else {
+    alerts.push({ severity: "ok", title: "Grounded rate healthy", detail: `${groundedRate}% grounded this week (target ≥ ${minG}%).`, fired: false });
+  }
+  if (emptyRate > maxE) {
+    alerts.push({ severity: "warn", title: "Empty-hit rate high", detail: `${emptyRate}% of retrievals found no matches — above the ${maxE}% ceiling.`, fired: true });
+  }
+  if (digest.gateRejects > maxR) {
+    alerts.push({ severity: "warn", title: "Concept-gate rejects spiked", detail: `${digest.gateRejects} high-sim candidates were dropped by the concept gate — above ${maxR}. Consider lowering the hard floor.`, fired: true });
+  }
+  return alerts;
+}
+
+/** Suggests a hard floor from the retrieval log: when the concept gate dropped
+    high-similarity candidates, the floor is too strict — lower it to the
+    highest dropped top-hit so the closest matches still cite. Pure, unit-tested. */
+export function suggestHardFloor(
+  rows: RagHealthRow[],
+  current: number,
+  minSim: number
+): { value: number; reason: string; changed: boolean } {
+  const gated = rows.filter(r => (r.gateRejects ?? 0) > 0);
+  if (!gated.length) {
+    return { value: current, reason: "No concept-gate rejections in this window — the floor isn't dropping candidates", changed: false };
+  }
+  const highest = Math.max(...gated.map(r => r.topSim));
+  const value = Math.round(Math.min(current, Math.max(minSim, highest)) * 100) / 100;
+  const changed = value !== current;
+  return {
+    value,
+    reason: changed
+      ? `${gated.length} retrieval(s) had high-sim candidates dropped by the concept gate (top ${highest.toFixed(2)}) — lower the floor to ${value.toFixed(2)} so the closest matches still cite`
+      : `${gated.length} retrieval(s) had gate rejections but the highest (${highest.toFixed(2)}) is already at/below the floor — the gate is behaving as tuned`,
+    changed
+  };
+}
+
 /** Weekly RAG digest — last-7-days aggregates + week-over-week deltas + top
     queries/docs. Returns null when the RPC is missing or has no data. */
 export async function adminRagWeeklyDigest(): Promise<RagWeeklyDigest | null> {

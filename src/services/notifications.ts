@@ -118,7 +118,7 @@ export function checkReminder(input: {
 /* ------------------------------------------------------------------ */
 
 /** Monday-based calendar week key (yyyy-w#), so the digest fires once per week. */
-const weekKey = (d = new Date()) => {
+export function weekKey(d = new Date()) {
   const c = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const day = (c.getUTCDay() + 6) % 7; // Mon = 0
   c.setUTCDate(c.getUTCDate() - day + 3);

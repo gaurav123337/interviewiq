@@ -26,6 +26,7 @@ export const STORAGE_KEYS = {
   roadmapProg: "iq.roadmapProg",
   theme: "iq.theme",
   notifLastWeekly: "iq.notifLastWeekly",
+  ragAlertWeek: "iq.ragAlertWeek",
   code: "iq.code",
   uiCode: "iq.uiCode",
   codingTrack: "iq.codingTrack",

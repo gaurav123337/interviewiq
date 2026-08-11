@@ -54,6 +54,19 @@ export interface RemoteConfig {
     /** At/above this similarity a chunk grounds even with zero concept
         overlap; below it, a concept/token match is required. */
     hardFloor?: number;
+    /** RAG health digest alerts — evaluated against the weekly digest on the
+        admin dashboard; breached thresholds show an in-app banner and, when a
+        webhook is set, deliver once per week (Slack / email bridge). */
+    digest?: {
+      /** Alert when the weekly grounded rate falls below this % (default 60). */
+      minGroundedRate?: number;
+      /** Alert when the weekly empty-hit rate rises above this % (default 40). */
+      maxEmptyRate?: number;
+      /** Alert when weekly concept-gate rejections exceed this count (default 10). */
+      maxGateRejects?: number;
+      /** Delivery webhook (Slack incoming webhook / email bridge). */
+      webhook?: string;
+    };
   };
 }
 
@@ -105,7 +118,17 @@ export function getAiDefaults(): { model?: string; embeddingsModel?: string; max
 }
 
 /** RAG retrieval defaults an admin can push instead of the baked-in ones. */
-export function getRagDefaults(): { minSim?: number; candidatePool?: number; hardFloor?: number } {
+export function getRagDefaults(): {
+  minSim?: number;
+  candidatePool?: number;
+  hardFloor?: number;
+  digest?: {
+    minGroundedRate?: number;
+    maxEmptyRate?: number;
+    maxGateRejects?: number;
+    webhook?: string;
+  };
+} {
   return { ...(getRemoteConfig().rag ?? {}) };
 }
 

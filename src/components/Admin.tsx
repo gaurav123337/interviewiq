@@ -10,7 +10,8 @@ import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
   adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, adminRagDocuments,
-  adminRagHealth, adminRagWeeklyDigest, mergeQuality, ragHealthSummary, ragHistogram, touchQuestion,
+  adminRagHealth, adminRagWeeklyDigest, evaluateRagDigest, mergeQuality, ragHealthSummary, ragHistogram,
+  suggestHardFloor, touchQuestion,
   type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow,
   type RagDocRow, type RagHealthRow, type RagWeeklyDigest
 } from "../services/quality";
@@ -32,7 +33,9 @@ import {
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
 } from "../services/scraper";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
-import { effectiveGroundingMinSim, effectiveHardFloor } from "../services/rag";
+import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
+import { weekKey } from "../services/notifications";
+import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
@@ -152,7 +155,17 @@ export function Admin() {
         {section === "scraper" && <ScraperSection busy={busy} setBusy={setBusy} />}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
         {section === "activity" && <Activity busy={busy} setBusy={setBusy} />}
-        {section === "quality" && <QualitySection busy={busy} setBusy={setBusy} />}
+        {section === "quality" && (
+          <QualitySection
+            busy={busy}
+            setBusy={setBusy}
+            onApplyHardFloor={v => {
+              setConfig(c => ({ ...c, rag: { ...c.rag, hardFloor: v } }));
+              setSection("config");
+              toast(`🎚️ Hard floor staged at ${v.toFixed(2)} — hit “Publish config to all clients” to ship it`);
+            }}
+          />
+        )}
         {section === "teams" && <AdminTeams teamState={teamState} />}
       </div>
     </div>
@@ -1347,6 +1360,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, limits: { ...config.limits, [k]: v } });
   const setRag = (k: keyof NonNullable<RemoteConfig["rag"]>, v: number) =>
     setConfig({ ...config, rag: { ...config.rag, [k]: v } });
+  const setRagDigest = (k: keyof NonNullable<NonNullable<RemoteConfig["rag"]>["digest"]>, v: number | string) =>
+    setConfig({ ...config, rag: { ...config.rag, digest: { ...config.rag?.digest, [k]: v } } });
   /* coach vocabulary JSON editor (families + misconceptions) */
   const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
   /* company question-frequency editor + publish audit (weekly digest) */
@@ -1552,6 +1567,49 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
         </p>
       </div>
 
+      {/* RAG digest alerts — weekly threshold breaches surface in the Quality RAG
+          tab and can be delivered via webhook (Slack / email bridge) once a week */}
+      <div className={`${cardCls} p-5`}>
+        <h2 className="mb-1 text-[16px] font-extrabold">🔔 RAG digest alerts</h2>
+        <p className="mb-3 text-[12.5px] text-mut">
+          Every week the RAG health tab evaluates the last 7 days against these thresholds. A breach shows an
+          in-app alert banner; if a delivery webhook is set (Slack incoming webhook or an email bridge), it is
+          also delivered once per week. Published like the rest of the config.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <NumField
+            label={`Alert when grounded rate below (%) — current ${config.rag?.digest?.minGroundedRate ?? 60}`}
+            value={config.rag?.digest?.minGroundedRate ?? 60} step={1}
+            onChange={v => setRagDigest("minGroundedRate", Math.max(0, Math.min(100, Math.round(v))))}
+          />
+          <NumField
+            label={`Alert when empty-hit rate above (%) — current ${config.rag?.digest?.maxEmptyRate ?? 40}`}
+            value={config.rag?.digest?.maxEmptyRate ?? 40} step={1}
+            onChange={v => setRagDigest("maxEmptyRate", Math.max(0, Math.min(100, Math.round(v))))}
+          />
+          <NumField
+            label={`Alert when gate rejects above — current ${config.rag?.digest?.maxGateRejects ?? 10}`}
+            value={config.rag?.digest?.maxGateRejects ?? 10} step={1}
+            onChange={v => setRagDigest("maxGateRejects", Math.max(0, Math.round(v)))}
+          />
+        </div>
+        <label className="mt-3 block">
+          <span className="mb-1 block text-[12px] font-bold text-mut">
+            Delivery webhook URL (Slack / email bridge) — {config.rag?.digest?.webhook ? "set" : "not set"}
+          </span>
+          <input
+            type="url"
+            placeholder="https://hooks.slack.com/services/…"
+            value={config.rag?.digest?.webhook ?? ""}
+            onChange={e => setRagDigest("webhook", e.target.value)}
+            className="inp w-full"
+          />
+        </label>
+        <p className="mt-2 text-[11.5px] text-fnt">
+          💡 Leave the webhook empty for in-app alerts only — the banner shows whenever an alert fires.
+        </p>
+      </div>
+
       {/* coach vocabulary — concept families + misconception corrections the
           offline tutor uses; published to every client like the frequency table */}
       <div className={`${cardCls} p-5`}>
@@ -1715,7 +1773,14 @@ function QualityBar({ score }: { score: number }) {
   );
 }
 
-function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean) => void }) {
+function QualitySection({
+  busy, setBusy, onApplyHardFloor
+}: {
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  /** Stages a suggested hard floor into the Product config draft (auto-tune). */
+  onApplyHardFloor: (v: number) => void;
+}) {
   const [rows, setRows] = useState<QualityRow[]>([]);
   const [feed, setFeed] = useState<FeedbackFeedRow[]>([]);
   const [coding, setCoding] = useState<CodingQualityRow[]>([]);
@@ -1730,7 +1795,12 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [kbDocs, setKbDocs] = useState<PdfDocumentRow[]>([]);
   /* threshold explorer — reclassify recent retrievals against any cutoff */
   const [ragThreshold, setRagThreshold] = useState<number>(() => effectiveGroundingMinSim());
+  /* clickable histogram — filter the query log to one similarity band */
+  const [histSel, setHistSel] = useState<number | null>(null);
   const [reindexBusy, setReindexBusy] = useState(false);
+  /* RAG digest alerts — breached thresholds surface as a banner; when a webhook
+     (Slack / email bridge) is configured they are delivered once per week */
+  const [alertSent, setAlertSent] = useState(false);
   /* coach-gap alerts — topics debated enough to warrant a deep-dive guide */
   const [gapMin, setGapMin] = useState(5);
   const gapAlerts = coachGaps.filter(g => g.discussions >= gapMin);
@@ -1772,6 +1842,37 @@ Practice questions:
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
+
+  const ragAlerts = useMemo(
+    () => (ragDigest && ragDigest.total > 0 ? evaluateRagDigest(ragDigest, getRagDigestOpts()).filter(a => a.fired) : []),
+    [ragDigest]
+  );
+  useEffect(() => {
+    if (!ragAlerts.length || alertSent) return;
+    const wk = weekKey();
+    if (storageGet<string>(STORAGE_KEYS.ragAlertWeek, "") === wk) { setAlertSent(true); return; }
+    const opts = getRagDigestOpts();
+    if (!opts.webhook) return; /* in-app banner only — nothing to deliver to */
+    storageSet(STORAGE_KEYS.ragAlertWeek, wk);
+    setAlertSent(true);
+    void fetch(opts.webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "rag_digest_alert",
+        week: wk,
+        alerts: ragAlerts.map(a => ({ severity: a.severity, title: a.title, detail: a.detail })),
+        digest: {
+          total: ragDigest?.total ?? 0,
+          groundedRate: ragDigest ? Math.round((ragDigest.grounded / Math.max(1, ragDigest.total)) * 100) : 0,
+          emptyRate: ragDigest ? Math.round((ragDigest.empty / Math.max(1, ragDigest.total)) * 100) : 0,
+          avgTopSim: ragDigest?.avgTopSim ?? 0,
+          gateRejects: ragDigest?.gateRejects ?? 0
+        },
+        sentAt: new Date().toISOString()
+      })
+    }).catch(() => { /* webhook delivery is best-effort */ });
+  }, [ragAlerts, alertSent]);
 
   const touch = async (question: string) => {
     const q = bank.find(b => b.question === question);
@@ -2158,6 +2259,28 @@ Practice questions:
             )}
           </div>
 
+          {/* digest alert banner — breached thresholds this week (in-app + webhook) */}
+          {ragAlerts.length > 0 && (
+            <div className="mt-3 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3">
+              <div className="text-[13px] font-extrabold">🔔 RAG health alerts — this week</div>
+              <ul className="mt-1 space-y-1 text-[12.5px]">
+                {ragAlerts.map((a, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span className={`font-black ${a.severity === "bad" ? "text-bad" : "text-warn"}`}>•</span>
+                    <span><span className="font-bold">{a.title}:</span> {a.detail}</span>
+                  </li>
+                ))}
+              </ul>
+              {getRagDigestOpts().webhook ? (
+                <p className="mt-1 text-[11px] text-fnt">Delivered to the configured webhook once this week.</p>
+              ) : (
+                <p className="mt-1 text-[11px] text-fnt">
+                  No delivery webhook configured — set one in <span className="font-bold">Product config → 🔔 RAG digest alerts</span> for Slack / email delivery.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* weekly digest — last-7-days aggregates vs the previous week */}
           {ragDigest && ragDigest.total > 0 && (
             <div className="mt-3 rounded-xl border border-line/10 bg-deep/40 px-4 py-3">
@@ -2218,6 +2341,11 @@ Practice questions:
             if (!s.total) {
               return <p className="py-6 text-center text-[13px] text-mut">No retrieval events yet — they appear once signed-in users ask the tutor or API coach anything.</p>;
             }
+            /* hoisted so the histogram, its drill-down and the query log share one view */
+            const bins = ragHistogram(ragRows, ragThreshold);
+            const shown = histSel == null
+              ? ragRows
+              : ragRows.filter(r => r.topSim >= bins[histSel].min && r.topSim < bins[histSel].max);
             const signal = (label: string, value: string, tone: "ok" | "warn" | "bad") => (
               <div className="rounded-xl border border-line/10 bg-wht/5 p-4 text-center">
                 <div className={`text-[24px] font-extrabold tabular-nums ${tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : "text-bad"}`}>{value}</div>
@@ -2244,35 +2372,58 @@ Practice questions:
                     <span className="normal-case font-bold text-bad">hard floor {effectiveHardFloor().toFixed(2)}</span>
                   </div>
                   {(() => {
-                    const bins = ragHistogram(ragRows, ragThreshold);
                     const max = Math.max(1, ...bins.map(b => b.total));
                     const cutoffBin = bins.findIndex(b => ragThreshold >= b.min && ragThreshold < b.max);
                     const floorBin = bins.findIndex(b => effectiveHardFloor() >= b.min && effectiveHardFloor() < b.max);
                     return (
                       <div className="space-y-1.5">
                         {bins.map((b, i) => (
-                          <div key={b.label} className="flex items-center gap-2 text-[12px]">
+                          <button
+                            key={b.label}
+                            type="button"
+                            onClick={() => setHistSel(histSel === i ? null : i)}
+                            title="Click to see the queries in this band"
+                            className={`flex items-center gap-2 text-left text-[12px] transition-opacity hover:opacity-100 ${histSel === i ? "opacity-100" : "opacity-80"}`}
+                          >
                             <span className={`w-14 shrink-0 font-bold ${i === floorBin ? "text-bad" : "text-fnt"}`}>
                               {b.label}{i === floorBin ? " 🚫" : ""}
                             </span>
-                            <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-wht/5">
-                              <div
+                            <span className={`relative h-5 flex-1 overflow-hidden rounded-md bg-wht/5 ${histSel === i ? "ring-1 ring-co/70" : ""}`}>
+                              <span
                                 className={`absolute inset-y-0 left-0 ${i === floorBin ? "bg-bad/40" : "bg-acc1/40"}`}
                                 style={{ width: `${(b.total / max) * 100}%` }}
                               />
-                              <div className="absolute inset-y-0 left-0 bg-ok/50" style={{ width: `${(b.grounded / max) * 100}%` }} />
+                              <span className="absolute inset-y-0 left-0 bg-ok/50" style={{ width: `${(b.grounded / max) * 100}%` }} />
                               {i === cutoffBin && (
-                                <div className="absolute inset-y-0 w-px bg-ink/70" style={{ left: `${((ragThreshold - b.min) / (b.max - b.min)) * 100}%` }} />
+                                <span className="absolute inset-y-0 w-px bg-ink/70" style={{ left: `${((ragThreshold - b.min) / (b.max - b.min)) * 100}%` }} />
                               )}
                               <span className="absolute inset-y-0 right-1 flex items-center text-[10px] font-bold text-ink/80">
                                 {b.total} {b.grounded > 0 ? `· ${b.grounded} grounded` : ""}{b.gated > 0 ? ` · 🚫 ${b.gated}` : ""}
                               </span>
-                            </div>
-                          </div>
+                            </span>
+                          </button>
                         ))}
                         <p className="text-[11px] text-fnt">
-                          Bar = queries whose top hit landed in this similarity band (<span className="text-ok">green</span> = grounded at the explorer cutoff, <span className="text-bad">red band</span> = concept-free citations allowed, <span className="text-ink">tick</span> = explorer cutoff).
+                          Bar = queries whose top hit landed in this similarity band (<span className="text-ok">green</span> = grounded at the explorer cutoff, <span className="text-bad">red band</span> = concept-free citations allowed, <span className="text-ink">tick</span> = explorer cutoff). Click a band to drill into its queries.
                         </p>
+                        {(() => {
+                          const sug = suggestHardFloor(ragRows, effectiveHardFloor(), effectiveGroundingMinSim());
+                          return (
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              {sug.changed ? (
+                                <>
+                                  <Chip tone="warn">💡 Suggested hard floor: {sug.value.toFixed(2)}</Chip>
+                                  <span className="text-[11.5px] text-fnt">{sug.reason}.</span>
+                                  <button className={btnGhost + btnSm} onClick={() => onApplyHardFloor(sug.value)}>
+                                    🎚️ Apply to Product config
+                                  </button>
+                                </>
+                              ) : (
+                                <span className="text-[11.5px] text-fnt">✅ {sug.reason}.</span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     );
                   })()}
@@ -2347,8 +2498,20 @@ Practice questions:
                   )}
                 </div>
 
-                <div className="mt-4 max-h-[360px] space-y-1.5 overflow-y-auto">
-                  {ragRows.map((r, i) => {
+                <div className="mt-4">
+                  <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] font-extrabold uppercase tracking-wider text-mut">
+                    <span>🕘 Query log</span>
+                    {histSel != null && (
+                      <>
+                        <span className="normal-case font-bold text-co">
+                          showing {bins[histSel].label} ({shown.length} of {ragRows.length})
+                        </span>
+                        <button type="button" className={btnGhost + btnSm} onClick={() => setHistSel(null)}>✕ clear band filter</button>
+                      </>
+                    )}
+                  </div>
+                  <div className="max-h-[360px] space-y-1.5 overflow-y-auto">
+                  {shown.map((r, i) => {
                     const wouldBe = r.topSim >= ragThreshold;
                     const flipped = wouldBe !== r.grounded;
                     return (
@@ -2363,6 +2526,7 @@ Practice questions:
                       </div>
                     );
                   })}
+                  </div>
                 </div>
               </>
             );

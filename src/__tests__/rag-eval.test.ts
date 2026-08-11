@@ -6,11 +6,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CANDIDATE_POOL, GROUNDING_HARD_FLOOR, GROUNDING_MIN_SIM, effectiveCandidatePool,
-  effectiveGroundingMinSim, effectiveHardFloor, expandQuery, gateStats, groundingPrompt, hybridScore,
-  isGrounded, lexicalScore, lexicalSearch, ragTuningInfo, rerankHits, retrieveContext
+  effectiveGroundingMinSim, effectiveHardFloor, expandQuery, gateStats, getRagDigestOpts, groundingPrompt,
+  hybridScore, isGrounded, lexicalScore, lexicalSearch, ragTuningInfo, rerankHits, retrieveContext
 } from "../services/rag";
 import { setRemoteConfig } from "../services/remoteConfig";
-import { ragHealthSummary, ragHistogram, type RagHealthRow } from "../services/quality";
+import {
+  evaluateRagDigest, ragHealthSummary, ragHistogram, suggestHardFloor, type RagHealthRow, type RagWeeklyDigest
+} from "../services/quality";
 import { contentHash, sectionChunkText } from "../services/embeddings";
 import { STORAGE_KEYS, storageGet, storageRemove } from "../services/storage";
 import type { PdfHit } from "../services/admin";
@@ -301,6 +303,64 @@ describe("remote-tunable grounding", () => {
     ], 4, 0.62);
     expect(hits.find(h => h.documentId === 1)?.grounded).toBe(false);
     expect(hits.find(h => h.documentId === 2)?.grounded).toBe(true);
+  });
+});
+
+describe("weekly RAG digest alerts", () => {
+  const digest: RagWeeklyDigest = {
+    total: 20, grounded: 8, empty: 9, avgTopSim: 0.4, gateRejects: 12,
+    prevTotal: 20, prevGrounded: 15, topQueries: [], topDocs: []
+  };
+  it("fires on grounded-rate breach with defaults", () => {
+    const alerts = evaluateRagDigest(digest);
+    expect(alerts.filter(a => a.fired).map(a => a.title)).toEqual(["Grounded rate dropped", "Empty-hit rate high", "Concept-gate rejects spiked"]);
+  });
+  it("reports healthy checks as non-firing", () => {
+    const healthy: RagWeeklyDigest = { ...digest, total: 20, grounded: 18, empty: 2, gateRejects: 1 };
+    const alerts = evaluateRagDigest(healthy);
+    expect(alerts.every(a => !a.fired)).toBe(true);
+    expect(alerts.map(a => a.title)).toEqual(["Grounded rate healthy"]);
+  });
+  it("honors custom thresholds", () => {
+    const alerts = evaluateRagDigest({ ...digest, grounded: 19, empty: 1, gateRejects: 1 }, { minGroundedRate: 99, maxEmptyRate: 0, maxGateRejects: 0 });
+    expect(alerts.filter(a => a.fired).length).toBe(3);
+  });
+  it("is empty-safe — no digest, no alerts", () => {
+    expect(evaluateRagDigest(null)).toEqual([]);
+    expect(evaluateRagDigest({ ...digest, total: 0 })).toEqual([]);
+  });
+});
+
+describe("hard-floor suggestion", () => {
+  const rows: RagHealthRow[] = [
+    { query: "a", hits: 2, topSim: 0.7, grounded: true, gateRejects: 3, at: "2026-08-01T00:00:00Z" },
+    { query: "b", hits: 1, topSim: 0.5, grounded: true, at: "2026-08-01T00:00:00Z" }
+  ];
+  it("lowers the floor to the highest gated top-hit when the gate drops candidates", () => {
+    const sug = suggestHardFloor(rows, 0.9, 0.45);
+    expect(sug.changed).toBe(true);
+    expect(sug.value).toBe(0.7);
+    expect(sug.reason).toContain("0.70");
+  });
+  it("clamps to the similarity cutoff and never raises the floor", () => {
+    const sug = suggestHardFloor(rows, 0.5, 0.45);
+    expect(sug.changed).toBe(false);
+    expect(sug.value).toBe(0.5);
+  });
+  it("is a no-op when nothing was gate-rejected", () => {
+    const sug = suggestHardFloor([rows[1]], 0.9, 0.45);
+    expect(sug.changed).toBe(false);
+    expect(sug.value).toBe(0.9);
+    expect(sug.reason).toContain("No concept-gate rejections");
+  });
+  it("reads digest thresholds from remote config, defaults when unset", () => {
+    expect(getRagDigestOpts()).toEqual({});
+    setRemoteConfig({ rag: { digest: { minGroundedRate: 50, maxEmptyRate: 30, maxGateRejects: 5, webhook: "https://hooks.slack.com/x" } } });
+    const opts = getRagDigestOpts();
+    expect(opts.minGroundedRate).toBe(50);
+    expect(opts.webhook).toBe("https://hooks.slack.com/x");
+    setRemoteConfig({ rag: undefined });
+    expect(getRagDigestOpts()).toEqual({});
   });
 });
 

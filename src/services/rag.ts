@@ -22,6 +22,7 @@ import { embed } from "./embeddings";
 import { listPdfDocuments, searchPdfChunks, type PdfHit } from "./admin";
 import { queueEvent } from "./events";
 import { getRagDefaults } from "./remoteConfig";
+import type { RagDigestOpts } from "./quality";
 
 export interface RagHit {
   documentId: number;
@@ -60,6 +61,13 @@ export function effectiveCandidatePool(): number {
 /** Effective hard floor — admin-published remote value or baked-in. */
 export function effectiveHardFloor(): number {
   return getRagDefaults().hardFloor ?? GROUNDING_HARD_FLOOR;
+}
+
+/** The weekly-digest alert thresholds an admin published (empty = baked-in
+    defaults used by the evaluator). Read on every evaluation so a config
+    change applies without a deploy. */
+export function getRagDigestOpts(): RagDigestOpts {
+  return getRagDefaults().digest ?? {};
 }
 
 /** The tuning values actually in effect — surfaced to users in the tutor/coach
