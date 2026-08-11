@@ -13,10 +13,11 @@ import { grade, scoreAnswer } from "../engine";
 import { publishedFor } from "../services/remoteConfig";
 import type { LevelId, SessionQuestion } from "../types";
 import {
-  classifyIntent, conceptOverlap, cumulativeCoverage,
+  analyzeCoverage, classifyIntent, conceptOverlap, cumulativeCoverage,
   detectMisconception, structuralSignals, textMatches, tokenize,
   type CoachIntent
 } from "./concepts";
+import { knowledgeSection } from "./graph";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -199,6 +200,8 @@ export function coachReply(text: string, ctx: CoachContext, history: CoachMsg[] 
     case "explain": {
       lines.push("Here's the core idea: " + (answer || "see the key points below."));
       if (kp.length) lines.push("Interviewers at this level listen for: " + kp.join(" · "));
+      const kb = knowledgeSection(t);
+      if (kb) lines.push(kb);
       lines.push("Want me to unpack any one of those in more depth?");
       break;
     }
@@ -207,6 +210,8 @@ export function coachReply(text: string, ctx: CoachContext, history: CoachMsg[] 
       lines.push(`Your take is on: ${terms.length ? terms.join(" · ") : "your approach"}. The model answer's opening move: ${firstOf(kp) || answer.slice(0, 160)}.`);
       if (cov.missing.length) lines.push("Where they diverge — you haven't hit: " + cov.missing.join(" · "));
       if (answer) lines.push("The model answer reasons through: " + answer.slice(0, 240) + (answer.length > 240 ? "…" : ""));
+      const kb = knowledgeSection(t);
+      if (kb) lines.push(kb);
       lines.push(probe(firstOf(cov.missing, "the main trade-off")));
       break;
     }
@@ -268,6 +273,25 @@ export function coachReply(text: string, ctx: CoachContext, history: CoachMsg[] 
 /** Backward-compatible single-turn entry point (used by tests). */
 export function localCoachReply(text: string, ctx: CoachContext): string {
   return coachReply(text, ctx, [{ role: "user", text }]);
+}
+
+/** Session-consistent grade + concept-aware per-key-point breakdown — shown
+    under the interview score card so users see exactly what the grader
+    rewarded (and what to add for a higher score). */
+export function scoreBreakdown(
+  userText: string,
+  ctx: Pick<CoachContext, "prompt" | "answer" | "kp" | "levelId">
+): {
+  score: number; grade: string; pct: number; words: number;
+  covered: string[]; partial: string[]; missing: string[];
+} {
+  const sq = asSessionQuestion(ctx as CoachContext);
+  const r = scoreAnswer(userText, sq);
+  const cov = analyzeCoverage(userText, ctx.kp ?? [], ctx.prompt ?? "");
+  return {
+    score: r.score, grade: grade(r.pct), pct: cov.pct, words: r.words,
+    covered: cov.covered, partial: cov.partial, missing: cov.missing
+  };
 }
 
 /* Small re-export so graders outside this module stay in sync with the

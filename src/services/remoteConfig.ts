@@ -8,6 +8,7 @@
 
 import type { LevelId, QA } from "../types";
 import { CONFIG } from "../config";
+import { applyCoachVocab, type CoachVocabOverrides } from "../coach/concepts";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 
 /* ------------------------------------------------------------------ */
@@ -40,6 +41,9 @@ export interface RemoteConfig {
   /** Company question-frequency overrides — admin-tunable; merged over the
       baked-in COMPANY_FREQ table so rankings can be tuned without a deploy. */
   companyFreq?: Record<string, Partial<Record<string, 1 | 2 | 3>>>;
+  /** Coach vocabulary overrides — extra concept families + misconception
+      corrections the offline tutor should know (no deploy needed). */
+  coachVocab?: CoachVocabOverrides;
 }
 
 export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {} };
@@ -50,12 +54,15 @@ export function getRemoteConfig(): RemoteConfig {
     features: { ...REMOTE_CONFIG_DEFAULTS.features, ...(c?.features ?? {}) },
     ai: { ...REMOTE_CONFIG_DEFAULTS.ai, ...(c?.ai ?? {}) },
     limits: { ...REMOTE_CONFIG_DEFAULTS.limits, ...(c?.limits ?? {}) },
-    companyFreq: { ...(c?.companyFreq ?? {}) }
+    companyFreq: { ...(c?.companyFreq ?? {}) },
+    coachVocab: c?.coachVocab
   };
 }
 
 export function setRemoteConfig(c: Partial<RemoteConfig>): void {
   storageSet(STORAGE_KEYS.remoteConfig, c);
+  /* keep the offline tutor's vocabulary in sync with whatever was published */
+  applyCoachVocab(c.coachVocab);
 }
 
 /** Feature on unless the admin explicitly turned it off. */

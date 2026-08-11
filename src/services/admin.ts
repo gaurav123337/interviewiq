@@ -11,8 +11,9 @@
 
 import type { LevelId } from "../types";
 import { getSupabaseClient } from "./cloud";
+import { applyCoachVocab } from "../coach/concepts";
 import {
-  setAnnouncements, setPublishedQuestions, setRemoteConfig, type RemoteConfig
+  getRemoteConfig, setAnnouncements, setPublishedQuestions, setRemoteConfig, type RemoteConfig
 } from "./remoteConfig";
 import { flushEvents, queueEvent, updateProfile } from "./events";
 
@@ -61,6 +62,8 @@ export function initAdmin(): Promise<void> {
       try {
         /* public reads — every client caches these for offline use */
         await refreshRemoteData(client);
+        /* tutor vocabulary from the cached copy (network may have failed) */
+        applyCoachVocab(getRemoteConfig().coachVocab);
         setState({ ready: true });
         const { data } = await client.auth.getUser();
         const user = data?.user;
@@ -100,6 +103,7 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
       if (row.key === "ai" && row.value) merged.ai = { ...merged.ai, ...(row.value as object) };
       if (row.key === "limits" && row.value) merged.limits = { ...merged.limits, ...(row.value as object) };
       if (row.key === "company_freq" && row.value) merged.companyFreq = { ...merged.companyFreq, ...(row.value as object) };
+      if (row.key === "coach_vocab" && row.value) merged.coachVocab = row.value as RemoteConfig["coachVocab"];
     }
     setRemoteConfig(merged);
   }
@@ -118,6 +122,7 @@ export async function refreshAdminData(): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) return;
   await refreshRemoteData(client);
+  applyCoachVocab(getRemoteConfig().coachVocab);
   setState({ ready: true });
   const { data } = await client.auth.getUser();
   if (data?.user) {

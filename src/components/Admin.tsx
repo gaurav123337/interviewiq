@@ -1338,6 +1338,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, ai: { ...config.ai, [k]: v } });
   const setLimit = (k: keyof NonNullable<RemoteConfig["limits"]>, v: number) =>
     setConfig({ ...config, limits: { ...config.limits, [k]: v } });
+  /* coach vocabulary JSON editor (families + misconceptions) */
+  const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
   /* company question-frequency editor + publish audit (weekly digest) */
   const [freqCo, setFreqCo] = useState<string | null>(null);
   const freqCompanies = COMPANIES.filter(c => c.id !== "general");
@@ -1364,7 +1366,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setBusy(true);
     try {
       await saveRemoteConfig({
-        features: config.features, ai: config.ai, limits: config.limits, companyFreq: config.companyFreq ?? {}
+        features: config.features, ai: config.ai, limits: config.limits,
+        companyFreq: config.companyFreq ?? {}, coachVocab: config.coachVocab
       });
       /* record what changed since the last publish for the weekly digest */
       const prev = audit[0]?.snapshot ?? {};
@@ -1505,6 +1508,48 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             })}
           </div>
         )}
+      </div>
+
+      {/* coach vocabulary — concept families + misconception corrections the
+          offline tutor uses; published to every client like the frequency table */}
+      <div className={`${cardCls} p-5`}>
+        <h2 className="mb-1 text-[16px] font-extrabold">🧠 Coach vocabulary</h2>
+        <p className="mb-3 text-[12.5px] text-mut">
+          Teach the offline tutor new concepts and misconception corrections without a deploy. JSON:
+          <span className="font-mono"> {"{"} families: {"{"} family: ["word", "…"] {"}"}, misconceptions: [{"{"} re: "regex", correction: "…" {"}"}] {"}"} </span>
+          Family words make answers match (e.g. <span className="font-mono">micro-frontend</span> ≈ splitting); misconception
+          regexes settle debates (e.g. <span className="font-mono">"graphql is always better"</span>). Clients apply these on next sync.
+        </p>
+        <textarea
+          value={vocabJson}
+          onChange={e => setVocabJson(e.target.value)}
+          rows={8}
+          spellCheck={false}
+          className="inp w-full resize-y font-mono text-[12px] leading-relaxed"
+        />
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            className={btnGhost + btnSm}
+            onClick={() => {
+              try {
+                const parsed = JSON.parse(vocabJson || "{}") as Record<string, unknown>;
+                if (parsed.families !== undefined && (typeof parsed.families !== "object" || Array.isArray(parsed.families))) throw new Error("families must be an object of arrays");
+                if (parsed.misconceptions !== undefined && !Array.isArray(parsed.misconceptions)) throw new Error("misconceptions must be an array");
+                setConfig({ ...config, coachVocab: (parsed.families || parsed.misconceptions) ? parsed as RemoteConfig["coachVocab"] : undefined });
+                toast("✅ Vocabulary staged — hit “Publish config to all clients” to ship it");
+              } catch (e) {
+                toast("✗ Invalid JSON: " + ((e as Error).message || "parse error"));
+              }
+            }}
+          >
+            💾 Validate & stage
+          </button>
+          {config.coachVocab && (
+            <span className="text-[11.5px] text-fnt">
+              Staged: {Object.keys(config.coachVocab.families ?? {}).length} famil{(Object.keys(config.coachVocab.families ?? {}).length === 1 ? "y" : "ies")} · {(config.coachVocab.misconceptions ?? []).length} correction{(config.coachVocab.misconceptions ?? []).length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex justify-end">

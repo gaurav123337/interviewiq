@@ -556,6 +556,16 @@ export function hasDeepDive(label: string): boolean {
   return !!DEEP_DIVE[norm(label)] || BEHAVIORAL_RE.test(norm(label)) || LEADERSHIP_RE.test(norm(label));
 }
 
+/** The authored knowledge base as (label, content) pairs — powers the coach's
+    concept-graph retrieval (topic → related topics → concepts/traps/QA). */
+export function deepDiveRegistry(): { label: string; dd: DeepDive }[] {
+  return [
+    ...Object.entries(DEEP_DIVE).map(([label, dd]) => ({ label, dd })),
+    { label: "behavioral stories", dd: BEHAVIORAL },
+    { label: "leadership", dd: LEADERSHIP }
+  ];
+}
+
 /** Generic but genuinely useful structure for any unmapped topic. */
 function synthesize(label: string): DeepDive {
   const t = label.charAt(0).toUpperCase() + label.slice(1);

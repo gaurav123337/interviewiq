@@ -37,7 +37,7 @@ export function stem(w: string): string {
 }
 
 /** Significant tokens: stemmed, stopword-free, meaningful length. */
-function sigTokens(text: string): Set<string> {
+export function sigTokens(text: string): Set<string> {
   const out = new Set<string>();
   for (const w of tokenize(text)) {
     const s = stem(w);
@@ -149,9 +149,13 @@ const FAMILIES: Record<string, string[]> = {
 
 /** Family → synonyms index, and the full synonym → family reverse index. */
 const TO_FAMILY: Record<string, string> = {};
-for (const [fam, words] of Object.entries(FAMILIES)) {
-  for (const w of words) TO_FAMILY[w] = fam;
+function rebuildIndex(): void {
+  for (const k of Object.keys(TO_FAMILY)) delete TO_FAMILY[k];
+  for (const [fam, words] of Object.entries(FAMILIES)) {
+    for (const w of words) TO_FAMILY[w] = fam;
+  }
 }
+rebuildIndex();
 
 /** Concept families present in a text (synonym-aware). */
 export function conceptSet(text: string): Set<string> {
@@ -297,6 +301,49 @@ export function detectMisconception(text: string): string | null {
     if (m.re.test(text)) return m.correction;
   }
   return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin-editable vocabulary overrides                                 */
+/* ------------------------------------------------------------------ */
+
+/* Deep snapshot of the baked-in tables so overrides can be applied and reset
+   (tests) without leaking state across runs. */
+const BASE_FAMILIES: Record<string, string[]> = {};
+for (const [f, words] of Object.entries(FAMILIES)) BASE_FAMILIES[f] = [...words];
+const BASE_MISCONCEPTIONS: Misconception[] = MISCONCEPTIONS.slice();
+
+/** Admin-published coach vocabulary (app_config → coach_vocab). New concept
+    families extend the baked-in map; misconception entries are appended. */
+export interface CoachVocabOverrides {
+  families?: Record<string, string[]>;
+  misconceptions?: { re: string; correction: string }[];
+}
+
+/** Applies remote vocabulary overrides — call after every remote-config sync
+    and once at boot from the cached copy. Multi-word entries should be
+    hyphenated or single tokens ("service-mesh", "micro-frontend"). */
+export function applyCoachVocab(overrides?: CoachVocabOverrides | null): void {
+  if (!overrides) return;
+  for (const [fam, words] of Object.entries(overrides.families ?? {})) {
+    if (!Array.isArray(words) || !words.length) continue;
+    FAMILIES[fam] = [...new Set([...(FAMILIES[fam] ?? []), ...words])];
+  }
+  rebuildIndex();
+  for (const m of overrides.misconceptions ?? []) {
+    if (m && typeof m.re === "string" && m.re && m.correction) {
+      try { MISCONCEPTIONS.push({ re: new RegExp(m.re, "i"), correction: m.correction }); } catch { /* bad regex — skip */ }
+    }
+  }
+}
+
+/** Restores the baked-in families + misconceptions (test isolation). */
+export function resetCoachVocab(): void {
+  for (const k of Object.keys(FAMILIES)) delete FAMILIES[k];
+  for (const [f, words] of Object.entries(BASE_FAMILIES)) FAMILIES[f] = [...words];
+  rebuildIndex();
+  MISCONCEPTIONS.length = 0;
+  MISCONCEPTIONS.push(...BASE_MISCONCEPTIONS);
 }
 
 /* ------------------------------------------------------------------ */

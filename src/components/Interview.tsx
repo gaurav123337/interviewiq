@@ -4,6 +4,7 @@ import { companyById, levelById } from "../data";
 import { qaCategoryHeat } from "../data/codingCompanies";
 import { aiAvailable, getFeedback, getHint } from "../ai";
 import { grade } from "../engine";
+import { scoreBreakdown } from "../coach/reply";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { fmtTime } from "../util";
@@ -327,6 +328,8 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
   const ringColor = pct >= 0.8 ? "var(--color-ok)" : pct >= 0.55 ? "var(--color-warn)" : "var(--color-bad)";
   const R = 33, C = 2 * Math.PI * R;
   const gradeL = grade(pct);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const why = whyOpen ? scoreBreakdown(answer.user, { prompt: q.q, answer: q.a, kp: q.kp, levelId: q.level }) : null;
 
   return (
     <div className="anim-view mt-5 overflow-hidden rounded-2xl border border-line/10">
@@ -359,6 +362,44 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
               {fb.gaps.map((g, i) => <li key={i} className="relative pl-4 text-[13.5px] leading-snug text-warn before:absolute before:left-0 before:top-0 before:text-warn before:content-['▲']">{g}</li>)}
             </ul>
           </div>
+        </div>
+
+        {/* why this score — the same engine the grade came from, with the
+            concept-aware per-key-point breakdown visible to the candidate */}
+        <div className="mb-5">
+          <button
+            type="button"
+            onClick={() => setWhyOpen(o => !o)}
+            className="flex w-full items-center justify-between rounded-xl border border-line/10 bg-wht/5 px-4 py-2.5 text-[13px] font-bold text-mut transition-colors hover:bg-wht/10 hover:text-ink"
+          >
+            <span>🧐 Why this score — concept-aware breakdown</span>
+            <span className="text-[11px]">{whyOpen ? "Hide ▾" : "Show ▴"}</span>
+          </button>
+          {why && (
+            <div className="mt-2 rounded-xl border border-line/10 bg-deep/40 p-4">
+              <p className="mb-2 text-[12.5px] font-bold text-mut">
+                Session engine: {why.score}/5 · {why.grade} · concept coverage {Math.round(why.pct * 100)}% · {why.words} words
+              </p>
+              <ul className="space-y-1 text-[13px] leading-snug">
+                {why.covered.map(k => (
+                  <li key={"c" + k} className="text-ok">✅ {k}</li>
+                ))}
+                {why.partial.map(k => (
+                  <li key={"p" + k} className="text-warn">🟡 {k} — touched, not nailed</li>
+                ))}
+                {why.missing.map(k => (
+                  <li key={"m" + k} className="text-fnt">❌ {k}</li>
+                ))}
+              </ul>
+              {why.missing.length > 0 ? (
+                <p className="mt-2.5 text-[12.5px] font-semibold text-acctxt">💡 To score higher, add: “{why.missing[0]}”.</p>
+              ) : why.partial.length > 0 ? (
+                <p className="mt-2.5 text-[12.5px] font-semibold text-acctxt">💡 Develop your touched points with specifics — an example, a tradeoff, or structure.</p>
+              ) : (
+                <p className="mt-2.5 text-[12.5px] font-semibold text-ok">🏆 You're covering the whole checklist — push into tradeoffs to go beyond.</p>
+              )}
+            </div>
+          )}
         </div>
 
         {aiAvailable() && (

@@ -2,13 +2,22 @@
 /* Robust offline coach — concept matching, coverage, intents, misconceptions,
    dialogue memory, and grading aligned with the session engine. */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { scoreAnswer } from "../engine";
 import {
-  analyzeCoverage, classifyIntent, conceptOverlap, conceptSet,
-  detectMisconception, structuralSignals, textMatches
+  analyzeCoverage, applyCoachVocab, classifyIntent, conceptOverlap, conceptSet,
+  detectMisconception, resetCoachVocab, structuralSignals, textMatches
 } from "../coach/concepts";
-import { coachReply, localCoachReply } from "../coach/reply";
+import { graphRetrieve, knowledgeSection, topicFor } from "../coach/graph";
+import { coachReply, localCoachReply, scoreBreakdown } from "../coach/reply";
+import { setRemoteConfig } from "../services/remoteConfig";
+import { STORAGE_KEYS, storageRemove } from "../services/storage";
+
+/* vocabulary overrides mutate shared module state — always reset */
+afterEach(() => {
+  resetCoachVocab();
+  storageRemove(STORAGE_KEYS.remoteConfig);
+});
 
 const CTX = {
   prompt: "Explain how closures work in JavaScript.",
@@ -259,6 +268,100 @@ describe("coachReply grading", () => {
     const r = coachReply("Grade my answer", CTX, hist);
     expect(r).toContain("Signals:");
     expect(r).toContain("structure");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Concept-graph retrieval (Phase 2)                                   */
+/* ------------------------------------------------------------------ */
+
+describe("concept-graph retrieval", () => {
+  it("resolves a concept-rich message to a knowledge topic", () => {
+    const t = topicFor("how does memoization work");
+    expect(t).not.toBeNull();
+    expect(t!.score).toBeGreaterThan(0);
+  });
+
+  it("returns null for messages with no knowledge topic", () => {
+    expect(topicFor("pizza toppings on a weekend")).toBeNull();
+  });
+
+  it("centrality: a caching question resolves to a dedicated caching topic, not an incidental one", () => {
+    const t = topicFor("how does memoization work");
+    expect(["databases & caching", "web performance", "react · vue · angular"]).toContain(t!.label);
+  });
+
+  it("walks related links: seed topic first, then its neighborhood", () => {
+    const nodes = graphRetrieve("how does memoization work", 3);
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+    expect(nodes[0].depth).toBe(0);
+    /* the seed's related topics are reachable (BFS) and ranked */
+    expect(nodes.some(n => n.depth > 0)).toBe(true);
+    expect(nodes.every(n => n.dd.concepts.length > 0)).toBe(true);
+  });
+
+  it("formats a knowledge-base section, empty when nothing matches", () => {
+    const kb = knowledgeSection("explain closures and lexical scope", 2);
+    expect(kb).toContain("📖 From the knowledge base");
+    expect(kb).toContain("JavaScript / TypeScript");
+    expect(knowledgeSection("pizza weekend")).toBe("");
+  });
+
+  it("explain replies are enriched from the knowledge base", () => {
+    const r = localCoachReply("explain how closures work", CTX);
+    expect(r).toContain("From the knowledge base");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Admin-editable coach vocabulary                                     */
+/* ------------------------------------------------------------------ */
+
+describe("admin-editable coach vocabulary", () => {
+  it("new families teach the matcher unknown concepts", () => {
+    expect(textMatches("we used qubits for the experiment", "superposition and entanglement")).toBe(false);
+    applyCoachVocab({ families: { quantum: ["qubit", "qubits", "superposition", "entangle", "entanglement"] } });
+    expect(textMatches("we used qubits for the experiment", "superposition and entanglement")).toBe(true);
+  });
+
+  it("appended misconception corrections settle new debates", () => {
+    expect(detectMisconception("kubernetes is always the right choice")).toBeNull();
+    applyCoachVocab({ misconceptions: [{ re: "kubernetes is always", correction: "K8s isn't always right — name the trade-off instead." }] });
+    expect(detectMisconception("kubernetes is always the right choice")!).toContain("K8s isn't always right");
+  });
+
+  it("reset restores the baked-in tables", () => {
+    applyCoachVocab({ families: { quantum: ["qubit", "superposition"] } });
+    expect(textMatches("qubit", "superposition")).toBe(true);
+    resetCoachVocab();
+    expect(textMatches("qubit", "superposition")).toBe(false);
+    expect(detectMisconception("kubernetes is always the right choice")).toBeNull();
+  });
+
+  it("setRemoteConfig applies published vocabulary end-to-end", () => {
+    setRemoteConfig({ coachVocab: { families: { quantum: ["qubit", "superposition"] } } });
+    expect(textMatches("qubit physics", "superposition")).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Score breakdown (score-card parity)                                 */
+/* ------------------------------------------------------------------ */
+
+describe("scoreBreakdown", () => {
+  it("returns the session-consistent score and a grade letter", () => {
+    const b = scoreBreakdown("I'd just return the inner function", { prompt: CTX.prompt, answer: CTX.answer, kp: CTX.kp, levelId: CTX.levelId });
+    expect(b.score).toBeGreaterThanOrEqual(0);
+    expect(b.score).toBeLessThanOrEqual(5);
+    expect(b.grade).toMatch(/^[A-F]$/);
+    expect(b.missing).toEqual(CTX.kp);
+  });
+
+  it("a strong answer is covered, weak ones are missing", () => {
+    const good = scoreBreakdown("a closure captures the lexical scope, preserves state, and has memory implications", { prompt: CTX.prompt, answer: CTX.answer, kp: CTX.kp, levelId: CTX.levelId });
+    expect(good.covered).toEqual(CTX.kp);
+    expect(good.missing).toEqual([]);
+    expect(good.pct).toBe(1);
   });
 });
 
