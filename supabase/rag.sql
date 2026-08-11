@@ -48,3 +48,17 @@ begin
     group by (d.value->>'id')::bigint
     order by retrievals desc;
 end $$;
+
+/* Keyless knowledge-base search — term overlap over chunk contents, no
+   embeddings needed. Powers the offline coach's RAG fallback so a no-key
+   user still gets KB-grounded replies + citations when the network is up. */
+create or replace function public.search_pdf_chunks_lex(terms text[], match_count integer default 4)
+returns table (document_id bigint, content text, score double precision)
+language sql stable as $$
+  select c.document_id, c.content,
+         (select count(*) from unnest(terms) t where c.content ilike '%' || t || '%')::double precision as score
+  from public.pdf_chunks c
+  where exists (select 1 from unnest(terms) t where c.content ilike '%' || t || '%')
+  order by score desc, c.document_id
+  limit match_count;
+$$;

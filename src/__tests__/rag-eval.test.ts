@@ -5,9 +5,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CANDIDATE_POOL, GROUNDING_MIN_SIM, effectiveCandidatePool, effectiveGroundingMinSim,
-  expandQuery, groundingPrompt, hybridScore, lexicalScore, ragTuningInfo,
-  rerankHits, retrieveContext
+  CANDIDATE_POOL, GROUNDING_HARD_FLOOR, GROUNDING_MIN_SIM, effectiveCandidatePool,
+  effectiveGroundingMinSim, expandQuery, groundingPrompt, hybridScore, isGrounded,
+  lexicalScore, lexicalSearch, ragTuningInfo, rerankHits, retrieveContext
 } from "../services/rag";
 import { setRemoteConfig } from "../services/remoteConfig";
 import { ragHealthSummary, type RagHealthRow } from "../services/quality";
@@ -76,12 +76,35 @@ describe("hybrid retrieval — golden set (retrieval@1)", () => {
 
 describe("grounding discipline", () => {
   it("flags hits below the similarity threshold as NOT grounded", () => {
-    const hits = rerankHits("anything", [
-      { documentId: 1, content: "weak overlap chunk", similarity: GROUNDING_MIN_SIM - 0.1 },
-      { documentId: 2, content: "strong overlap chunk", similarity: GROUNDING_MIN_SIM + 0.1 }
+    const hits = rerankHits("caching", [
+      { documentId: 1, content: "styling with flexbox and grid", similarity: GROUNDING_MIN_SIM - 0.1 },
+      { documentId: 2, content: "versioned cache keys with ttl expiry", similarity: GROUNDING_MIN_SIM + 0.1 }
     ]);
     expect(hits.find(h => h.documentId === 1)?.grounded).toBe(false);
     expect(hits.find(h => h.documentId === 2)?.grounded).toBe(true);
+  });
+
+  it("concept gate: same-domain chunks aren't cited without shared concepts", () => {
+    const hits = rerankHits("closures", [
+      { documentId: 1, content: "marketing copy about the product brand identity", similarity: 0.8 },
+      { documentId: 2, content: "a closure captures lexical scope so functions remember variables", similarity: 0.6 }
+    ]);
+    expect(hits.find(h => h.documentId === 1)?.grounded).toBe(false);
+    expect(hits.find(h => h.documentId === 2)?.grounded).toBe(true);
+  });
+
+  it("very close matches are cited even without lexical overlap", () => {
+    const hits = rerankHits("closures", [
+      { documentId: 1, content: "unrelated but semantically near prose", similarity: GROUNDING_HARD_FLOOR + 0.01 }
+    ]);
+    expect(hits[0].grounded).toBe(true);
+  });
+
+  it("isGrounded is a pure function of similarity + lexical signal", () => {
+    expect(isGrounded(0.5, 0)).toBe(false);
+    expect(isGrounded(0.5, 0.1)).toBe(true);
+    expect(isGrounded(GROUNDING_HARD_FLOOR, 0)).toBe(true);
+    expect(isGrounded(GROUNDING_MIN_SIM - 0.05, 0.9)).toBe(false);
   });
 
   it("orders the strict prompt when grounded, the honest prompt when not", () => {
@@ -110,11 +133,25 @@ describe("grounding discipline", () => {
 
 /* ---------------- retrieveContext end-to-end (mocked cloud/KB) ---------------- */
 
+const cloudRpc = vi.hoisted(() => vi.fn().mockImplementation((name: string) => {
+  if (name === "search_pdf_chunks_lex") {
+    return Promise.resolve({
+      data: [
+        { document_id: 1, content: "a closure captures lexical scope so functions remember variables", score: 2 },
+        { document_id: 1, content: "promise then callbacks drain before the next timer", score: 1 }
+      ],
+      error: null
+    });
+  }
+  return Promise.resolve({ data: null, error: null });
+}));
+
 vi.mock("../services/cloud", () => ({
   getCloudState: () => ({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] }),
   getSupabaseClient: vi.fn().mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: { id: "u1" } } }) },
-    from: () => ({ insert: async () => ({ error: { message: "not flushed in tests" } }) })
+    from: () => ({ insert: async () => ({ error: { message: "not flushed in tests" } }) }),
+    rpc: cloudRpc
   })
 }));
 
@@ -162,6 +199,23 @@ describe("retrieveContext", () => {
   });
 });
 
+describe("lexicalSearch (keyless offline-coach fallback)", () => {
+  it("filters query terms, calls the RPC, and returns hits with doc attribution", async () => {
+    const hits = await lexicalSearch("how do closures capture variables");
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].content).toContain("closure");
+    expect(cloudRpc).toHaveBeenCalledWith("search_pdf_chunks_lex", expect.objectContaining({ match_count: 4 }));
+    const terms = cloudRpc.mock.calls[0][1].terms as string[];
+    expect(terms).toContain("closure");
+    expect(terms.length).toBeLessThanOrEqual(8);
+    /* the keyless path still feeds per-document analytics */
+    const outbox = storageGet<{ kind: string; meta: Record<string, unknown> }[]>(STORAGE_KEYS.eventOutbox, []);
+    const ev = outbox.find(e => e.kind === "rag_event");
+    expect(ev).toBeDefined();
+    expect((ev!.meta.docs as { id: number }[]).every(d => d.id === 1)).toBe(true);
+  });
+});
+
 describe("RAG health summary", () => {
   const rows: RagHealthRow[] = [
     { query: "a", hits: 2, topSim: 0.7, grounded: true, at: "2026-08-01T00:00:00Z" },
@@ -201,9 +255,9 @@ describe("remote-tunable grounding", () => {
     /* the user-facing tuning info reflects the same effective values */
     expect(ragTuningInfo()).toEqual({ minSim: 0.62, pool: 12 });
     /* rerankHits applies the cutoff passed in */
-    const hits = rerankHits("anything", [
-      { documentId: 1, content: "moderate match chunk", similarity: 0.55 },
-      { documentId: 2, content: "strong match chunk", similarity: 0.7 }
+    const hits = rerankHits("caching", [
+      { documentId: 1, content: "styling with flexbox grid", similarity: 0.55 },
+      { documentId: 2, content: "versioned cache keys and ttl expiry solve invalidation", similarity: 0.7 }
     ], 4, 0.62);
     expect(hits.find(h => h.documentId === 1)?.grounded).toBe(false);
     expect(hits.find(h => h.documentId === 2)?.grounded).toBe(true);

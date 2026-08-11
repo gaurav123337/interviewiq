@@ -20,13 +20,13 @@ import { parseQuestionBatch } from "../services/import";
 import { extractFileText } from "../services/pdf";
 import {
   adminListUsers, adminMetrics, adminMissCandidates, batchDeleteQuestions, batchSetQuestionsPublished,
-  createAnnouncement, createPdfDocument, createQuestion, deleteAnnouncement, deletePdfChunks, deletePdfDocument,
-  deleteQuestion, grantAdmin, insertPdfChunks, listAdmins, listPdfChunks, listPdfDocuments, listQuestionAudit,
-  revokeAdmin, saveRemoteConfig, setAnnouncementPublished, setPdfChunkCount, setQuestionPublished,
+  createAnnouncement, createPdfDocument, createQuestion, deleteAnnouncement, deletePdfDocument,
+  deleteQuestion, grantAdmin, listAdmins, listPdfChunks, listPdfDocuments, listQuestionAudit,
+  revokeAdmin, saveRemoteConfig, setAnnouncementPublished, setQuestionPublished,
   updatePdfDocument, updateQuestion,
   type AdminMetrics, type AdminUserRow, type AuditEntry, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
-import { changedChunkIndices, chunkText, contentHash, embed, sectionChunkText } from "../services/embeddings";
+import { prepareChunks, reindexDocument } from "../services/indexer";
 import {
   deleteScraperSource, getScraperSchedule, listScraperSources, runScraperNow, saveScraperSchedule,
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
@@ -1115,51 +1115,20 @@ function AutoFill({ busy, setBusy, onChanged }: {
     if (!aiAvailable()) { toast("Add an AI key in Settings — indexing needs one"); return; }
     setRagBusy(true);
     try {
-      /* heading-aware chunking keeps Q&A pairs together; plain text falls back */
-      const sectioned = sectionChunkText(rawText);
-      const chunks = sectioned.length ? sectioned : chunkText(rawText);
-      if (!chunks.length) { toast("Nothing to index — the extracted text is empty"); return; }
+      if (!prepareChunks(rawText).length) { toast("Nothing to index — the extracted text is empty"); return; }
       const title = fileName || "Imported document";
       const existing = docs.find(d => d.title === title);
+      const docId = existing ? existing.id : await createPdfDocument({ title, source: "pdf-import", charCount: rawText.length });
       /* incremental re-embed: unchanged chunks keep their vectors, only new/
          changed chunks are embedded — a small edit to a big PDF is cheap */
-      const oldRows = existing ? await listPdfChunks(existing.id) : [];
-      const changed = changedChunkIndices(oldRows.map(c => c.content), chunks.map(c => c.content));
-      if (existing && changed.length === 0) {
+      const r = await reindexDocument(docId, rawText);
+      if (existing && r.changed === 0) {
         toast(`⏭️ "${existing.title}" is unchanged — nothing to re-embed`);
         return;
       }
-      const vectors: number[][] = new Array(chunks.length);
-      const oldByHash = new Map(oldRows.map(c => [contentHash(c.content), c.embedding]));
-      const toEmbedIdx: number[] = [];
-      chunks.forEach((c, i) => {
-        const old = oldByHash.get(contentHash(c.content));
-        if (old) vectors[i] = old;
-        else toEmbedIdx.push(i);
-      });
-      if (toEmbedIdx.length) {
-        toast(`🧠 Embedding ${toEmbedIdx.length} new/changed chunk(s) of ${chunks.length}…`);
-        const fresh = await embed(toEmbedIdx.map(i => chunks[i].content));
-        toEmbedIdx.forEach((idx, k) => { vectors[idx] = fresh[k]; });
-      }
-      const rows = chunks.map((c, i) => ({
-        documentId: existing ? existing.id : 0, index: c.index, content: c.content,
-        tokens: c.tokens, embedding: vectors[i]
-      }));
-      let docId: number;
-      if (existing) {
-        docId = existing.id;
-        await deletePdfChunks(docId);
-        await insertPdfChunks(rows.map(r => ({ ...r, documentId: docId })));
-        await setPdfChunkCount(docId, chunks.length);
-        await updatePdfDocument(docId, { charCount: rawText.length });
-      } else {
-        docId = await createPdfDocument({ title, source: "pdf-import", charCount: rawText.length });
-        await insertPdfChunks(rows.map(r => ({ ...r, documentId: docId })));
-        await setPdfChunkCount(docId, chunks.length);
-      }
+      if (!existing) await updatePdfDocument(docId, { charCount: rawText.length });
       await reloadDocs();
-      toast(`🧠 Indexed ${chunks.length} chunk(s) (${toEmbedIdx.length} fresh embed${toEmbedIdx.length === 1 ? "" : "s"}${existing ? `, reused ${chunks.length - toEmbedIdx.length}` : ""}) — the AI tutor is now grounded in this document`);
+      toast(`🧠 Indexed ${r.reused + r.fresh} chunk(s) (${r.fresh} fresh embed${r.fresh === 1 ? "" : "s"}${existing ? `, reused ${r.reused}` : ""}) — the AI tutor is now grounded in this document`);
     } catch (e) {
       toast("✗ " + ((e as Error).message || "Indexing failed"));
     } finally { setRagBusy(false); }
@@ -1753,6 +1722,7 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [kbDocs, setKbDocs] = useState<PdfDocumentRow[]>([]);
   /* threshold explorer — reclassify recent retrievals against any cutoff */
   const [ragThreshold, setRagThreshold] = useState<number>(() => effectiveGroundingMinSim());
+  const [reindexBusy, setReindexBusy] = useState(false);
   /* coach-gap alerts — topics debated enough to warrant a deep-dive guide */
   const [gapMin, setGapMin] = useState(5);
   const gapAlerts = coachGaps.filter(g => g.discussions >= gapMin);
@@ -2134,6 +2104,34 @@ Practice questions:
                 users' questions aren't in the uploaded PDFs — time to add documents or improve chunking.
               </p>
             </div>
+            {kbDocs.length > 0 && (
+              <button
+                className={btnGhost + btnSm}
+                disabled={reindexBusy || busy || !aiAvailable()}
+                onClick={async () => {
+                  if (!aiAvailable()) { toast("Add an AI key in Settings — re-indexing needs one"); return; }
+                  setReindexBusy(true);
+                  try {
+                    let reembedded = 0, skipped = 0, fresh = 0;
+                    for (const doc of kbDocs) {
+                      const oldRows = await listPdfChunks(doc.id);
+                      if (!oldRows.length) { skipped++; continue; }
+                      const text = oldRows.map(c => c.content).join("\n");
+                      const r = await reindexDocument(doc.id, text, oldRows);
+                      if (r.changed === 0) { skipped++; continue; }
+                      fresh += r.fresh;
+                      reembedded++;
+                    }
+                    await load();
+                    toast(`🧠 Re-indexed ${reembedded} document(s) with the current chunker${fresh ? ` — ${fresh} fresh embed${fresh === 1 ? "" : "s"}, rest reused` : ""} · ${skipped} unchanged`);
+                  } catch (e) {
+                    toast("✗ " + ((e as Error).message || "Re-index failed"));
+                  } finally { setReindexBusy(false); }
+                }}
+              >
+                {reindexBusy ? <><span className="spinner" /> Re-indexing…</> : `♻️ Re-index all (${kbDocs.length})`}
+              </button>
+            )}
           </div>
           {/* threshold explorer — reclassify the recent log against any cutoff */}
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-line/10 bg-deep/40 px-4 py-3">

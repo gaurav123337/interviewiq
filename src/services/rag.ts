@@ -42,6 +42,10 @@ export const CANDIDATE_POOL = 24;
 /** Final number of citations handed to the model / UI. */
 export const RANK_TOP_N = 4;
 export const DEFAULT_TITLE = "Knowledge base";
+/** At or above this similarity a chunk grounds even with zero lexical overlap
+    (pure semantic confidence); below it, a concept/token match is required so
+    a high-sim chunk that is merely same-domain doesn't get cited. */
+export const GROUNDING_HARD_FLOOR = 0.85;
 
 /** Effective grounding threshold — admin-published remote value or baked-in. */
 export function effectiveGroundingMinSim(): number {
@@ -100,6 +104,13 @@ export function hybridScore(query: string, content: string, similarity: number):
   return 0.6 * similarity + 0.4 * lexicalScore(query, content);
 }
 
+/** The grounding decision: a chunk is citable when its similarity clears the
+    cutoff AND it either shares concept/token signal with the question or is
+    so semantically close (hard floor) that lexical evidence is unnecessary. */
+export function isGrounded(similarity: number, lex: number, minSim = GROUNDING_MIN_SIM): boolean {
+  return similarity >= minSim && (lex > 0 || similarity >= GROUNDING_HARD_FLOOR);
+}
+
 /** Re-ranks the raw vector candidates by the hybrid score, keeping the top N.
     `minSim` is the grounding cutoff (defaults to the baked-in threshold). */
 export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N, minSim = GROUNDING_MIN_SIM): RagHit[] {
@@ -113,7 +124,7 @@ export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N, min
       content: h.content,
       similarity: h.similarity,
       hybrid: h.hybrid,
-      grounded: h.similarity >= minSim
+      grounded: isGrounded(h.similarity, lexicalScore(expanded, h.content), minSim)
     }));
 }
 
@@ -181,4 +192,42 @@ export async function retrieveContext(query: string): Promise<RetrievalResult> {
 export async function documentTitles(): Promise<Map<number, string>> {
   const docs = await listPdfDocuments().catch(() => []);
   return new Map(docs.map(d => [d.id, d.title]));
+}
+
+/* ------------------------------------------------------------------ */
+/* Keyless lexical search — the offline coach's RAG fallback           */
+/* ------------------------------------------------------------------ */
+
+export interface LexicalHit {
+  documentId: number;
+  content: string;
+  score: number;
+}
+
+/** Knowledge-base search by term overlap over chunk contents (server-side
+    RPC, no embeddings, no API key). Lets the offline coach ground replies in
+    admin PDFs whenever the network is up — the no-key experience, plus
+    citations. Best-effort: any failure returns []. */
+export async function lexicalSearch(query: string, matchCount = RANK_TOP_N): Promise<LexicalHit[]> {
+  try {
+    const client = await getSupabaseClient();
+    if (!client) return [];
+    const terms = [...sigTokens(query)].filter(w => w.length > 3).slice(0, 8);
+    if (!terms.length) return [];
+    const { data, error } = await client.rpc("search_pdf_chunks_lex", { terms, match_count: matchCount });
+    if (error || !data) return [];
+    const hits = ((data as { document_id: number; content: string; score: number }[]) ?? [])
+      .map(d => ({ documentId: d.document_id, content: d.content, score: Number(d.score) }));
+    queueEvent("rag_event", {
+      q: String(query).slice(0, 200),
+      hits: hits.length,
+      topSim: 0,
+      grounded: hits.length > 0,
+      checked: true,
+      docs: hits.map(h => ({ id: h.documentId, sim: 0 }))
+    });
+    return hits;
+  } catch {
+    return []; /* offline coach must never break on retrieval */
+  }
 }

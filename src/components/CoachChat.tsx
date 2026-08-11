@@ -14,7 +14,7 @@ import { getCodingTrack } from "../services/codingTrack";
 import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { withGrounding, type Citation } from "../services/tutor";
-import { ragTuningInfo } from "../services/rag";
+import { documentTitles, lexicalSearch, ragTuningInfo } from "../services/rag";
 import { coachReply, type CoachContext, type CoachMsg } from "../coach/reply";
 import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
 import { CitationChip } from "./CitationChip";
@@ -195,9 +195,24 @@ export function CoachChat(ctx: CoachContext) {
         const reply = await chat(history, { maxTokens: 450 });
         setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded, checked }]);
       } else {
-        /* full history incl. the new message → the coach grades the latest
-           real answer and remembers what's already covered across turns */
-        setMsgs(m => [...m, { role: "assistant", text: coachReply(text, ctx, next) }]);
+        /* offline mode — no key needed. The deterministic coach answer is
+           grounded in the question bank; when the network is up, it ALSO
+           retrieves the RAG knowledge base (lexically, no embeddings) so
+           replies carry KB citations without any API key. */
+        const reply = coachReply(text, ctx, next);
+        const lex = await lexicalSearch(text).catch(() => []);
+        let citations: Citation[] = [];
+        if (lex.length) {
+          const titles = await documentTitles().catch(() => new Map<number, string>());
+          citations = lex.map(h => ({
+            documentId: h.documentId,
+            title: titles.get(h.documentId) ?? "Knowledge base",
+            content: h.content,
+            similarity: h.score,
+            grounded: true
+          }));
+        }
+        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded: citations.length > 0, checked: citations.length > 0 }]);
       }
     } catch (e) {
       const msg = (e as Error).message || "Coach unavailable";
