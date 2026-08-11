@@ -5,9 +5,7 @@ import { chat } from "../ai";
 import type { CareerGoal } from "../types";
 import { fieldById, levelById } from "../data";
 import { aiCallsLeft, isPaywallEnabled, recordAiCall } from "./entitlements";
-import { embed } from "./embeddings";
-import { getSupabaseClient, getCloudState } from "./cloud";
-import { listPdfDocuments, searchPdfChunks } from "./admin";
+import { documentTitles, groundingPrompt, retrieveContext } from "./rag";
 
 async function guard(): Promise<void> {
   if (isPaywallEnabled() && aiCallsLeft() <= 0) {
@@ -15,49 +13,39 @@ async function guard(): Promise<void> {
   }
 }
 
-/** A retrieved knowledge-base excerpt the tutor answer was grounded on. */
+/** A retrieved knowledge-base excerpt the tutor answer was grounded on.
+    `grounded` is false when the hit was too weak to cite — the answer then
+    comes from general knowledge and says so. */
 export interface Citation {
   documentId: number;
   title: string;
   content: string;
   similarity: number;
+  grounded: boolean;
 }
 
-/** Retrieves the most relevant chunks of the RAG knowledge base for a query.
-    Best-effort: any failure (no key, not signed in, empty index) returns []. */
-async function ragContext(query: string): Promise<Citation[]> {
-  try {
-    const client = await getSupabaseClient();
-    if (!client || !getCloudState().user) return [];
-    const qv = await embed([query]);
-    if (!qv[0]?.length) return [];
-    const hits = await searchPdfChunks(qv[0], 4);
-    if (!hits.length) return [];
-    const titles = new Map((await listPdfDocuments()).map(d => [d.id, d.title]));
-    return hits.map(h => ({
-      documentId: h.documentId,
-      title: titles.get(h.documentId) ?? "Knowledge base",
-      content: h.content,
-      similarity: h.similarity
-    }));
-  } catch {
-    return []; /* grounding must never break the tutor */
+/** Appends the grounded context + instructions to a system prompt when the
+    knowledge base is relevant. Exported so the AI-coach API mode grounds its
+    replies through the same pipeline (and shows the same citation chips). */
+export async function withGrounding(
+  sys: string,
+  query: string
+): Promise<{ sys: string; citations: Citation[]; grounded: boolean; checked: boolean }> {
+  const { hits, checked } = await retrieveContext(query);
+  if (!hits.length) {
+    return { sys: checked ? groundingPrompt(sys, false, "") : sys, citations: [], grounded: false, checked };
   }
-}
-
-/** Appends the grounded context instructions to a system prompt when retrieved. */
-async function withGrounding(sys: string, query: string): Promise<{ sys: string; citations: Citation[] }> {
-  const citations = await ragContext(query);
-  if (!citations.length) return { sys, citations: [] };
-  const ctx = citations.map(c => c.content).join("\n\n---\n\n").slice(0, 6000);
-  return {
-    sys:
-      sys +
-      "\n\nReference material from the product knowledge base (use it only when it helps; " +
-      "answer from your own knowledge otherwise, and never claim the reference says what it doesn't):\n" +
-      ctx,
-    citations
-  };
+  const titles = await documentTitles();
+  const citations: Citation[] = hits.map(h => ({
+    documentId: h.documentId,
+    title: titles.get(h.documentId) ?? "Knowledge base",
+    content: h.content,
+    similarity: h.similarity,
+    grounded: h.grounded
+  }));
+  const grounded = hits.some(h => h.grounded);
+  const ctx = hits.map(c => c.content).join("\n\n---\n\n").slice(0, 6000);
+  return { sys: groundingPrompt(sys, grounded, ctx), citations, grounded, checked };
 }
 
 /** Plain-language explanation of a roadmap topic for the user's target level. */
@@ -86,11 +74,19 @@ export interface TutorMsg {
   content: string;
   /** Knowledge-base excerpts this assistant reply was grounded on. */
   citations?: Citation[];
+  /** True when the reply cited knowledge-base sources. */
+  grounded?: boolean;
+  /** True when retrieval was attempted (signed in + key) but found nothing. */
+  checked?: boolean;
 }
 
 export interface TutorReply {
   text: string;
   citations: Citation[];
+  /** True when the reply cited knowledge-base sources. */
+  grounded: boolean;
+  /** True when retrieval was attempted (signed in + key). */
+  checked: boolean;
 }
 
 /** Continues a tutor conversation about one topic — follow-ups keep full context. */
@@ -104,14 +100,14 @@ export async function tutorChat(topic: string, goal: CareerGoal, history: TutorM
     `speak about it in an interview at ${lvl.name} level. If they ask something off-topic, gently steer back. ` +
     `Under ~180 words per reply.`;
   const lastUser = [...history].reverse().find(m => m.role === "user")?.content ?? "";
-  const { sys: sysGrounded, citations } = await withGrounding(sys, lastUser || topic);
+  const { sys: sysGrounded, citations, grounded, checked } = await withGrounding(sys, lastUser || topic);
   const msgs: { role: "system" | "user" | "assistant"; content: string }[] = [
     { role: "system", content: sysGrounded },
     ...history.map(m => ({ role: m.role, content: m.content }))
   ];
   const out = await chat(msgs, { maxTokens: 500 });
   recordAiCall();
-  return { text: out, citations };
+  return { text: out, citations, grounded, checked };
 }
 
 /** Explains why a specific weak skill matters for the target role (the "gap explainer"). */

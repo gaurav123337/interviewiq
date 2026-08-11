@@ -17,6 +17,7 @@ import { applyProgress, buildRoadmap, downloadRoadmapMarkdown, exportRoadmapMark
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Drawer, Seg } from "./ui";
+import { CitationChip } from "./CitationChip";
 import { type CodingProblem } from "../data/coding";
 import { codingForTopicLabels } from "../data/codingMap";
 import { freqForProblem } from "../data/codingCompanies";
@@ -156,7 +157,10 @@ export function Roadmap() {
     setChatBusy(true);
     try {
       const reply = await tutorChat(t.label, goal, [...history, userMsg]);
-      appendChat(t.id, { role: "assistant", content: reply.text, citations: reply.citations });
+      appendChat(t.id, {
+        role: "assistant", content: reply.text,
+        citations: reply.citations, grounded: reply.grounded, checked: reply.checked
+      });
     } catch (e) {
       toast("✗ " + ((e as Error).message || "AI unavailable — add an API key in Settings"));
     } finally { setChatBusy(false); }
@@ -795,9 +799,19 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
                 </div>
                 {m.role === "assistant" && (m.citations?.length ?? 0) > 0 && (
                   <div className="mt-1 max-w-[90%] space-y-1">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-ok">
+                      📚 Grounded · {m.citations!.length} source{m.citations!.length > 1 ? "s" : ""}
+                    </div>
                     {m.citations!.map((c, ci) => (
                       <CitationChip key={ci} title={c.title} content={c.content} />
                     ))}
+                  </div>
+                )}
+                {m.role === "assistant" && m.checked && !m.grounded && (m.citations?.length ?? 0) === 0 && (
+                  <div className="mt-1 max-w-[90%]">
+                    <span className="rounded-full border border-line/15 bg-deep/60 px-2 py-0.5 text-[10px] font-bold text-fnt" title="Retrieval ran but found no strong knowledge-base match">
+                      🧠 General knowledge — no knowledge-base match
+                    </span>
                   </div>
                 )}
               </div>
@@ -844,24 +858,6 @@ function LearnModal({ topic, aiLoading, chat, chatBusy, proGated, onClose, onExp
 /* ------------------------------------------------------------------ */
 /* bits                                                                */
 /* ------------------------------------------------------------------ */
-
-/* A visible citation under a grounded tutor reply — click to expand the source excerpt. */
-function CitationChip({ title, content }: { title: string; content: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <button
-      onClick={() => setOpen(!open)}
-      className={`w-full rounded-lg border px-2.5 py-1.5 text-left transition-colors ${open ? "border-acc1/50 bg-acc1/10" : "border-line/15 bg-deep/60 hover:bg-wht/10"}`}
-      title="Knowledge-base source"
-    >
-      <span className="block text-[11px] font-bold text-acc3">📚 {title}</span>
-      <span className={`block text-[11.5px] leading-snug text-mut ${open ? "" : "line-clamp-1"}`}>
-        {content}
-      </span>
-      <span className="mt-0.5 block text-[10px] font-semibold text-fnt">{open ? "▲ hide" : "▼ show source excerpt"}</span>
-    </button>
-  );
-}
 
 function WizardHeader() {
   return (

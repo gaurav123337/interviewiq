@@ -157,6 +157,12 @@ function rebuildIndex(): void {
 }
 rebuildIndex();
 
+/** Vocabulary words of a concept family (used for query expansion in the
+    RAG pipeline — "closures" expands to also search "lexical scope"). */
+export function familyVocabulary(family: string): string[] {
+  return FAMILIES[family] ?? [];
+}
+
 /** Concept families present in a text (synonym-aware). */
 export function conceptSet(text: string): Set<string> {
   const out = new Set<string>();

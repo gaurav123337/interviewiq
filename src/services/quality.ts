@@ -160,3 +160,45 @@ export async function adminCodingQuality(): Promise<CodingQualityRow[]> {
     lastSeen: (r.last_seen as string | null) ?? null
   }));
 }
+
+/* ---------- RAG health (knowledge-base retrieval) ---------- */
+
+export interface RagHealthRow {
+  query: string;
+  hits: number;
+  topSim: number;
+  grounded: boolean;
+  at: string;
+}
+
+/** Recent knowledge-base retrievals (queued as rag_event by the tutor/coach). */
+export async function adminRagHealth(maxRows = 40): Promise<RagHealthRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_rag_health", { max_rows: maxRows });
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+    query: (r.query as string) ?? "",
+    hits: Number(r.hits ?? 0),
+    topSim: Number(r.top_sim ?? 0),
+    grounded: Boolean(r.grounded),
+    at: r.at as string
+  }));
+}
+
+/** Aggregate the recent retrieval log into the health signals shown to admins. */
+export function ragHealthSummary(rows: RagHealthRow[]): {
+  total: number; groundedRate: number; emptyRate: number; avgTopSim: number;
+} {
+  const total = rows.length;
+  if (!total) return { total: 0, groundedRate: 0, emptyRate: 0, avgTopSim: 0 };
+  const grounded = rows.filter(r => r.grounded).length;
+  const empty = rows.filter(r => r.hits === 0).length;
+  const avgTopSim = rows.reduce((n, r) => n + r.topSim, 0) / total;
+  return {
+    total,
+    groundedRate: Math.round((grounded / total) * 100),
+    emptyRate: Math.round((empty / total) * 100),
+    avgTopSim: Math.round(avgTopSim * 100) / 100
+  };
+}

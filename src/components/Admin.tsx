@@ -9,8 +9,9 @@ import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../s
 import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
-  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, mergeQuality, touchQuestion,
-  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow
+  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, adminRagHealth,
+  mergeQuality, ragHealthSummary, touchQuestion,
+  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow, type RagHealthRow
 } from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
@@ -23,7 +24,7 @@ import {
   revokeAdmin, saveRemoteConfig, setAnnouncementPublished, setPdfChunkCount, setQuestionPublished,
   updateQuestion, type AdminMetrics, type AdminUserRow, type AuditEntry, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
-import { chunkText, embed } from "../services/embeddings";
+import { chunkText, embed, sectionChunkText } from "../services/embeddings";
 import {
   deleteScraperSource, getScraperSchedule, listScraperSources, runScraperNow, saveScraperSchedule,
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
@@ -1109,9 +1110,14 @@ function AutoFill({ busy, setBusy, onChanged }: {
   const indexRag = async () => {
     if (!rawText.trim()) { toast("Import a file first"); return; }
     if (!aiAvailable()) { toast("Add an AI key in Settings — indexing needs one"); return; }
+    /* skip identical re-uploads — no point re-embedding unchanged content */
+    const dup = docs.find(d => d.title === (fileName || "Imported document") && d.char_count === rawText.length);
+    if (dup) { toast(`⏭️ "${dup.title}" was already indexed — no changes to embed`); return; }
     setRagBusy(true);
     try {
-      const chunks = chunkText(rawText);
+      /* heading-aware chunking keeps Q&A pairs together; plain text falls back */
+      const sectioned = sectionChunkText(rawText);
+      const chunks = sectioned.length ? sectioned : chunkText(rawText);
       if (!chunks.length) { toast("Nothing to index — the extracted text is empty"); return; }
       toast(`🧠 Embedding ${chunks.length} chunk(s)…`);
       const vectors = await embed(chunks.map(c => c.content));
@@ -1660,7 +1666,8 @@ const QUALITY_TABS = [
   { value: "staleness", label: "⏳ Staleness" },
   { value: "feedback", label: "💬 Feedback" },
   { value: "coding", label: "💻 Coding" },
-  { value: "coach", label: "🎯 Coach gaps" }
+  { value: "coach", label: "🎯 Coach gaps" },
+  { value: "rag", label: "🛰️ RAG health" }
 ] as const;
 
 function QualityBar({ score }: { score: number }) {
@@ -1681,6 +1688,7 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [cutoff, setCutoff] = useState(90);
   const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
   const [coachGaps, setCoachGaps] = useState<CoachGapRow[]>([]);
+  const [ragRows, setRagRows] = useState<RagHealthRow[]>([]);
   /* coach-gap alerts — topics debated enough to warrant a deep-dive guide */
   const [gapMin, setGapMin] = useState(5);
   const gapAlerts = coachGaps.filter(g => g.discussions >= gapMin);
@@ -1716,8 +1724,8 @@ Practice questions:
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps()])
-      .then(([q, f, c, g]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); })
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth()])
+      .then(([q, f, c, g, r]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -2049,6 +2057,53 @@ Practice questions:
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab === "rag" && (
+        <div className={`${cardCls} p-5`}>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1">
+              <h3 className="text-[15px] font-extrabold">🛰️ RAG health — is the knowledge base answering?</h3>
+              <p className="mt-1 text-[12.5px] text-mut">
+                Every tutor/coach retrieval queues a rag_event. A low grounded rate or high empty rate means
+                users' questions aren't in the uploaded PDFs — time to add documents or improve chunking.
+              </p>
+            </div>
+          </div>
+          {(() => {
+            const s = ragHealthSummary(ragRows);
+            if (!s.total) {
+              return <p className="py-6 text-center text-[13px] text-mut">No retrieval events yet — they appear once signed-in users ask the tutor or API coach anything.</p>;
+            }
+            const signal = (label: string, value: string, tone: "ok" | "warn" | "bad") => (
+              <div className="rounded-xl border border-line/10 bg-wht/5 p-4 text-center">
+                <div className={`text-[24px] font-extrabold tabular-nums ${tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : "text-bad"}`}>{value}</div>
+                <div className="mt-0.5 text-[11.5px] font-bold text-mut">{label}</div>
+              </div>
+            );
+            return (
+              <>
+                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {signal("Retrievals (window)", String(s.total), "ok")}
+                  {signal("Grounded rate", s.groundedRate + "%", s.groundedRate >= 60 ? "ok" : s.groundedRate >= 30 ? "warn" : "bad")}
+                  {signal("Empty hits", s.emptyRate + "%", s.emptyRate <= 20 ? "ok" : s.emptyRate <= 40 ? "warn" : "bad")}
+                  {signal("Avg top similarity", s.avgTopSim.toFixed(2), s.avgTopSim >= 0.55 ? "ok" : s.avgTopSim >= 0.4 ? "warn" : "bad")}
+                </div>
+                <div className="mt-4 max-h-[360px] space-y-1.5 overflow-y-auto">
+                  {ragRows.map((r, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+                      <span className="min-w-[160px] flex-1 truncate font-bold">{r.query}</span>
+                      <Chip tone={r.grounded ? "ok" : "default"}>{r.grounded ? "📚 grounded" : "🧠 general"}</Chip>
+                      <Chip>{r.hits} hit{r.hits === 1 ? "" : "s"}</Chip>
+                      <Chip>sim {r.topSim.toFixed(2)}</Chip>
+                      <span className="text-[11px] text-fnt">{new Date(r.at).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

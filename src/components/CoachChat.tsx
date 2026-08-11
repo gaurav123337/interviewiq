@@ -13,9 +13,14 @@ import { codingTopicsFromText, suggestNextProblem } from "../data/codingCompanie
 import { getCodingTrack } from "../services/codingTrack";
 import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
+import { withGrounding, type Citation } from "../services/tutor";
 import { coachReply, type CoachContext, type CoachMsg } from "../coach/reply";
 import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
+import { CitationChip } from "./CitationChip";
 import { toast } from "../toast";
+
+/* API-mode replies carry knowledge-base citations + grounding state. */
+type ChatMsg = CoachMsg & { citations?: Citation[]; grounded?: boolean; checked?: boolean };
 
 /* The offline coach's brain (concept-aware matching, intents, grading,
    dialogue memory) lives in ../coach/reply + ../coach/concepts. Re-exported
@@ -98,7 +103,7 @@ export function CoachChat(ctx: CoachContext) {
   const { prompt, answer, kp } = ctx;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"api" | "local">(aiAvailable() ? "api" : "local");
-  const [msgs, setMsgs] = useState<CoachMsg[]>([]);
+  const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [suggestion, setSuggestion] = useState<{ id: string; title: string; kind: string } | null>(null);
@@ -167,27 +172,26 @@ export function CoachChat(ctx: CoachContext) {
     if (!text || busy) return;
     checkCompletion();
     setInput("");
-    const next: CoachMsg[] = [...msgs, { role: "user", text }];
+    const next: ChatMsg[] = [...msgs, { role: "user", text }];
     setMsgs(next);
     setBusy(true);
     try {
       if (mode === "api") {
-        const system: ChatMessage = {
-          role: "system",
-          content:
-            "You are a friendly senior technical interviewer coaching a candidate through a live quiz question. " +
-            `Question: ${prompt}\nModel answer outline: ${answer}\nKey points graded: ${kp.join("; ")}\n\n` +
-            "The candidate can ask for hints, share their approach, or debate your/model answers. Be encouraging, " +
-            "probe with follow-up questions, point out what their approach misses relative to the key points, and " +
-            "only reveal the full model answer when they explicitly ask. Keep replies focused, under ~180 words."
-        };
+        const base =
+          "You are a friendly senior technical interviewer coaching a candidate through a live quiz question. " +
+          `Question: ${prompt}\nModel answer outline: ${answer}\nKey points graded: ${kp.join("; ")}\n\n` +
+          "The candidate can ask for hints, share their approach, or debate your/model answers. Be encouraging, " +
+          "probe with follow-up questions, point out what their approach misses relative to the key points, and " +
+          "only reveal the full model answer when they explicitly ask. Keep replies focused, under ~180 words.";
+        /* ground the reply in the admin knowledge base (same pipeline as the roadmap tutor) */
+        const { sys: sysGrounded, citations, grounded, checked } = await withGrounding(base, text);
         const history: ChatMessage[] = [
-          system,
+          { role: "system", content: sysGrounded },
           ...msgs.map(m => ({ role: m.role, content: m.text }) as ChatMessage),
           { role: "user", content: text }
         ];
         const reply = await chat(history, { maxTokens: 450 });
-        setMsgs(m => [...m, { role: "assistant", text: reply }]);
+        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded, checked }]);
       } else {
         /* full history incl. the new message → the coach grades the latest
            real answer and remembers what's already covered across turns */
@@ -229,11 +233,22 @@ export function CoachChat(ctx: CoachContext) {
               </div>
             ) : (
               msgs.map((m, i) => (
-                <div
-                  key={i}
-                  className={`max-w-[92%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[12.5px] leading-relaxed ${m.role === "user" ? "ml-auto grad-bg text-white" : "bg-deep/60 text-ink"}`}
-                >
-                  {m.text}
+                <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
+                  <div
+                    className={`max-w-[92%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[12.5px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "bg-deep/60 text-ink"}`}
+                  >
+                    {m.text}
+                  </div>
+                  {m.role === "assistant" && (m.citations?.length ?? 0) > 0 && (
+                    <div className="mt-1 w-full max-w-[92%] space-y-1">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-ok">
+                        📚 Grounded · {m.citations!.length} source{m.citations!.length > 1 ? "s" : ""}
+                      </div>
+                      {m.citations!.map((c, ci) => (
+                        <CitationChip key={ci} title={c.title} content={c.content} />
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))
             )}
