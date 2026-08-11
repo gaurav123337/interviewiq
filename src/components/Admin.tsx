@@ -30,6 +30,7 @@ import {
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
 } from "../services/scraper";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
+import { effectiveGroundingMinSim } from "../services/rag";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
@@ -1344,6 +1345,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, ai: { ...config.ai, [k]: v } });
   const setLimit = (k: keyof NonNullable<RemoteConfig["limits"]>, v: number) =>
     setConfig({ ...config, limits: { ...config.limits, [k]: v } });
+  const setRag = (k: keyof NonNullable<RemoteConfig["rag"]>, v: number) =>
+    setConfig({ ...config, rag: { ...config.rag, [k]: v } });
   /* coach vocabulary JSON editor (families + misconceptions) */
   const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
   /* company question-frequency editor + publish audit (weekly digest) */
@@ -1373,7 +1376,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     try {
       await saveRemoteConfig({
         features: config.features, ai: config.ai, limits: config.limits,
-        companyFreq: config.companyFreq ?? {}, coachVocab: config.coachVocab
+        companyFreq: config.companyFreq ?? {}, coachVocab: config.coachVocab, rag: config.rag
       });
       /* record what changed since the last publish for the weekly digest */
       const prev = audit[0]?.snapshot ?? {};
@@ -1514,6 +1517,32 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             })}
           </div>
         )}
+      </div>
+
+      {/* RAG retrieval — grounding threshold + candidate pool the tutor and
+          API coach use; published like the frequency table */}
+      <div className={`${cardCls} p-5`}>
+        <h2 className="mb-1 text-[16px] font-extrabold">🗄️ RAG retrieval</h2>
+        <p className="mb-3 text-[12.5px] text-mut">
+          How strictly the tutor/coach ground answers in the knowledge base. A higher similarity cutoff means
+          fewer (but safer) citations — answers then come from general knowledge and say so. The candidate pool is
+          how many vector hits the hybrid re-ranker considers. Clients pick these up on next sync.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <NumField
+            label={`Grounding similarity cutoff (0.30–0.80) — current ${config.rag?.minSim ?? 0.45}`}
+            value={config.rag?.minSim ?? 0.45} step={0.01}
+            onChange={v => setRag("minSim", Math.max(0.1, Math.min(0.95, v)))}
+          />
+          <NumField
+            label={`Vector candidate pool (4–50) — current ${config.rag?.candidatePool ?? 24}`}
+            value={config.rag?.candidatePool ?? 24} step={1}
+            onChange={v => setRag("candidatePool", Math.max(2, Math.min(50, Math.round(v))))}
+          />
+        </div>
+        <p className="mt-2 text-[11.5px] text-fnt">
+          💡 Preview the effect on real retrieval events in <span className="font-bold">Quality → 🛰️ RAG health</span> before publishing.
+        </p>
       </div>
 
       {/* coach vocabulary — concept families + misconception corrections the
@@ -1689,6 +1718,8 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
   const [coachGaps, setCoachGaps] = useState<CoachGapRow[]>([]);
   const [ragRows, setRagRows] = useState<RagHealthRow[]>([]);
+  /* threshold explorer — reclassify recent retrievals against any cutoff */
+  const [ragThreshold, setRagThreshold] = useState<number>(() => effectiveGroundingMinSim());
   /* coach-gap alerts — topics debated enough to warrant a deep-dive guide */
   const [gapMin, setGapMin] = useState(5);
   const gapAlerts = coachGaps.filter(g => g.discussions >= gapMin);
@@ -2071,8 +2102,28 @@ Practice questions:
               </p>
             </div>
           </div>
+          {/* threshold explorer — reclassify the recent log against any cutoff */}
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-line/10 bg-deep/40 px-4 py-3">
+            <span className="text-[12.5px] font-bold">🔍 Explorer cutoff</span>
+            <input
+              type="range" min={0.3} max={0.8} step={0.01}
+              value={ragThreshold}
+              onChange={e => setRagThreshold(Number(e.target.value))}
+              className="min-w-[180px] flex-1 accent-acc1"
+            />
+            <input
+              type="number" min={0.3} max={0.8} step={0.01}
+              value={ragThreshold}
+              onChange={e => setRagThreshold(Math.max(0.1, Math.min(0.95, Number(e.target.value) || 0.45)))}
+              className="inp w-20 py-1 text-center"
+            />
+            <Chip tone={ragThreshold === effectiveGroundingMinSim() ? "ok" : "warn"}>
+              {ragThreshold === effectiveGroundingMinSim() ? "= live cutoff" : "preview only — not saved"}
+            </Chip>
+          </div>
           {(() => {
-            const s = ragHealthSummary(ragRows);
+            const live = ragHealthSummary(ragRows);
+            const s = ragHealthSummary(ragRows, ragThreshold);
             if (!s.total) {
               return <p className="py-6 text-center text-[13px] text-mut">No retrieval events yet — they appear once signed-in users ask the tutor or API coach anything.</p>;
             }
@@ -2090,16 +2141,27 @@ Practice questions:
                   {signal("Empty hits", s.emptyRate + "%", s.emptyRate <= 20 ? "ok" : s.emptyRate <= 40 ? "warn" : "bad")}
                   {signal("Avg top similarity", s.avgTopSim.toFixed(2), s.avgTopSim >= 0.55 ? "ok" : s.avgTopSim >= 0.4 ? "warn" : "bad")}
                 </div>
+                {ragThreshold !== effectiveGroundingMinSim() && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11.5px] text-fnt">
+                    <Chip tone="lvl">at the live cutoff ({effectiveGroundingMinSim()}) this window was {live.groundedRate}% grounded</Chip>
+                    <span>— publish a new cutoff in <span className="font-bold">Product config → 🗄️ RAG retrieval</span> to apply it.</span>
+                  </div>
+                )}
                 <div className="mt-4 max-h-[360px] space-y-1.5 overflow-y-auto">
-                  {ragRows.map((r, i) => (
-                    <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
-                      <span className="min-w-[160px] flex-1 truncate font-bold">{r.query}</span>
-                      <Chip tone={r.grounded ? "ok" : "default"}>{r.grounded ? "📚 grounded" : "🧠 general"}</Chip>
-                      <Chip>{r.hits} hit{r.hits === 1 ? "" : "s"}</Chip>
-                      <Chip>sim {r.topSim.toFixed(2)}</Chip>
-                      <span className="text-[11px] text-fnt">{new Date(r.at).toLocaleString()}</span>
-                    </div>
-                  ))}
+                  {ragRows.map((r, i) => {
+                    const wouldBe = r.topSim >= ragThreshold;
+                    const flipped = wouldBe !== r.grounded;
+                    return (
+                      <div key={i} className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] ${flipped ? "border-warn/40 bg-warn/10" : "border-line/10 bg-deep/40"}`}>
+                        <span className="min-w-[160px] flex-1 truncate font-bold">{r.query}</span>
+                        <Chip tone={wouldBe ? "ok" : "default"}>{wouldBe ? "📚 grounded" : "🧠 general"}</Chip>
+                        <Chip>{r.hits} hit{r.hits === 1 ? "" : "s"}</Chip>
+                        <Chip>sim {r.topSim.toFixed(2)}</Chip>
+                        {flipped && <Chip tone="warn">↻ flips at {ragThreshold.toFixed(2)}</Chip>}
+                        <span className="text-[11px] text-fnt">{new Date(r.at).toLocaleString()}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </>
             );

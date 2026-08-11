@@ -21,6 +21,7 @@ import { getCloudState, getSupabaseClient } from "./cloud";
 import { embed } from "./embeddings";
 import { listPdfDocuments, searchPdfChunks, type PdfHit } from "./admin";
 import { queueEvent } from "./events";
+import { getRagDefaults } from "./remoteConfig";
 
 export interface RagHit {
   documentId: number;
@@ -41,6 +42,16 @@ export const CANDIDATE_POOL = 24;
 /** Final number of citations handed to the model / UI. */
 export const RANK_TOP_N = 4;
 export const DEFAULT_TITLE = "Knowledge base";
+
+/** Effective grounding threshold — admin-published remote value or baked-in. */
+export function effectiveGroundingMinSim(): number {
+  return getRagDefaults().minSim ?? GROUNDING_MIN_SIM;
+}
+
+/** Effective candidate pool — admin-published remote value or baked-in. */
+export function effectiveCandidatePool(): number {
+  return getRagDefaults().candidatePool ?? CANDIDATE_POOL;
+}
 
 /* ------------------------------------------------------------------ */
 /* Pure scoring (unit-tested by the retrieval eval harness)            */
@@ -83,8 +94,9 @@ export function hybridScore(query: string, content: string, similarity: number):
   return 0.6 * similarity + 0.4 * lexicalScore(query, content);
 }
 
-/** Re-ranks the raw vector candidates by the hybrid score, keeping the top N. */
-export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N): RagHit[] {
+/** Re-ranks the raw vector candidates by the hybrid score, keeping the top N.
+    `minSim` is the grounding cutoff (defaults to the baked-in threshold). */
+export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N, minSim = GROUNDING_MIN_SIM): RagHit[] {
   const expanded = expandQuery(query);
   return hits
     .map(h => ({ ...h, hybrid: hybridScore(expanded, h.content, h.similarity) }))
@@ -95,7 +107,7 @@ export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N): Ra
       content: h.content,
       similarity: h.similarity,
       hybrid: h.hybrid,
-      grounded: h.similarity >= GROUNDING_MIN_SIM
+      grounded: h.similarity >= minSim
     }));
 }
 
@@ -142,8 +154,8 @@ export async function retrieveContext(query: string): Promise<RetrievalResult> {
     if (!client || !getCloudState().user) return { hits: [], checked: false };
     const qv = await embed([query]);
     if (!qv[0]?.length) return { hits: [], checked: true };
-    const raw = await searchPdfChunks(qv[0], CANDIDATE_POOL);
-    const hits = rerankHits(query, raw);
+    const raw = await searchPdfChunks(qv[0], effectiveCandidatePool());
+    const hits = rerankHits(query, raw, RANK_TOP_N, effectiveGroundingMinSim());
     queueEvent("rag_event", {
       q: String(query).slice(0, 200),
       hits: hits.length,

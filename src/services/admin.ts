@@ -104,6 +104,7 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
       if (row.key === "limits" && row.value) merged.limits = { ...merged.limits, ...(row.value as object) };
       if (row.key === "company_freq" && row.value) merged.companyFreq = { ...merged.companyFreq, ...(row.value as object) };
       if (row.key === "coach_vocab" && row.value) merged.coachVocab = row.value as RemoteConfig["coachVocab"];
+      if (row.key === "rag" && row.value) merged.rag = { ...merged.rag, ...(row.value as object) };
     }
     setRemoteConfig(merged);
   }

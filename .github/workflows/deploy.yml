@@ -24,6 +24,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # fast retrieval-regression gate: a golden-set failure here stops the deploy
+      - run: npm run eval:rag
       - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v5

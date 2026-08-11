@@ -5,9 +5,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CANDIDATE_POOL, GROUNDING_MIN_SIM, expandQuery, groundingPrompt, hybridScore,
-  lexicalScore, rerankHits, retrieveContext
+  CANDIDATE_POOL, GROUNDING_MIN_SIM, effectiveCandidatePool, effectiveGroundingMinSim,
+  expandQuery, groundingPrompt, hybridScore, lexicalScore, rerankHits, retrieveContext
 } from "../services/rag";
+import { setRemoteConfig } from "../services/remoteConfig";
 import { ragHealthSummary, type RagHealthRow } from "../services/quality";
 import { contentHash, sectionChunkText } from "../services/embeddings";
 import { STORAGE_KEYS, storageGet, storageRemove } from "../services/storage";
@@ -169,8 +170,36 @@ describe("RAG health summary", () => {
     expect(s.emptyRate).toBe(33);
     expect(s.avgTopSim).toBeCloseTo(0.43, 1);
   });
+  it("reclassifies the log against an explorer cutoff", () => {
+    /* at 0.65 only the 0.7 query stays grounded */
+    expect(ragHealthSummary(rows, 0.65).groundedRate).toBe(33);
+    /* at 0.5 both non-empty queries ground */
+    expect(ragHealthSummary(rows, 0.5).groundedRate).toBe(67);
+  });
   it("is empty-safe", () => {
     expect(ragHealthSummary([])).toEqual({ total: 0, groundedRate: 0, emptyRate: 0, avgTopSim: 0 });
+  });
+});
+
+describe("remote-tunable grounding", () => {
+  afterEach(() => {
+    setRemoteConfig({ rag: undefined });
+  });
+  it("falls back to the baked-in threshold and pool", () => {
+    expect(effectiveGroundingMinSim()).toBe(GROUNDING_MIN_SIM);
+    expect(effectiveCandidatePool()).toBe(CANDIDATE_POOL);
+  });
+  it("honors admin-published values without a deploy", () => {
+    setRemoteConfig({ rag: { minSim: 0.62, candidatePool: 12 } });
+    expect(effectiveGroundingMinSim()).toBe(0.62);
+    expect(effectiveCandidatePool()).toBe(12);
+    /* rerankHits applies the cutoff passed in */
+    const hits = rerankHits("anything", [
+      { documentId: 1, content: "moderate match chunk", similarity: 0.55 },
+      { documentId: 2, content: "strong match chunk", similarity: 0.7 }
+    ], 4, 0.62);
+    expect(hits.find(h => h.documentId === 1)?.grounded).toBe(false);
+    expect(hits.find(h => h.documentId === 2)?.grounded).toBe(true);
   });
 });
 

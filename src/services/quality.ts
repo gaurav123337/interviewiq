@@ -186,13 +186,16 @@ export async function adminRagHealth(maxRows = 40): Promise<RagHealthRow[]> {
   }));
 }
 
-/** Aggregate the recent retrieval log into the health signals shown to admins. */
-export function ragHealthSummary(rows: RagHealthRow[]): {
-  total: number; groundedRate: number; emptyRate: number; avgTopSim: number;
-} {
+/** Aggregate the recent retrieval log into the health signals shown to admins.
+    With a `threshold`, grounded rows are reclassified by top similarity against
+    that cutoff (the RAG-health explorer); without one, the stored flag is used. */
+export function ragHealthSummary(
+  rows: RagHealthRow[],
+  threshold: number | null = null
+): { total: number; groundedRate: number; emptyRate: number; avgTopSim: number } {
   const total = rows.length;
   if (!total) return { total: 0, groundedRate: 0, emptyRate: 0, avgTopSim: 0 };
-  const grounded = rows.filter(r => r.grounded).length;
+  const grounded = rows.filter(r => (threshold == null ? r.grounded : r.topSim >= threshold)).length;
   const empty = rows.filter(r => r.hits === 0).length;
   const avgTopSim = rows.reduce((n, r) => n + r.topSim, 0) / total;
   return {

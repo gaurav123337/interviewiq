@@ -44,9 +44,17 @@ export interface RemoteConfig {
   /** Coach vocabulary overrides — extra concept families + misconception
       corrections the offline tutor should know (no deploy needed). */
   coachVocab?: CoachVocabOverrides;
+  /** RAG retrieval tuning — grounding threshold + vector candidate pool.
+      Admins can tighten/loosen grounding without a code deploy. */
+  rag?: {
+    /** Minimum vector similarity for a chunk to count as grounded (0-1). */
+    minSim?: number;
+    /** How many vector candidates to fetch before the hybrid re-rank. */
+    candidatePool?: number;
+  };
 }
 
-export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {} };
+export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {}, rag: {} };
 
 export function getRemoteConfig(): RemoteConfig {
   const c = storageGet<RemoteConfig>(STORAGE_KEYS.remoteConfig, REMOTE_CONFIG_DEFAULTS);
@@ -55,7 +63,8 @@ export function getRemoteConfig(): RemoteConfig {
     ai: { ...REMOTE_CONFIG_DEFAULTS.ai, ...(c?.ai ?? {}) },
     limits: { ...REMOTE_CONFIG_DEFAULTS.limits, ...(c?.limits ?? {}) },
     companyFreq: { ...(c?.companyFreq ?? {}) },
-    coachVocab: c?.coachVocab
+    coachVocab: c?.coachVocab,
+    rag: { ...(c?.rag ?? {}) }
   };
 }
 
@@ -90,6 +99,11 @@ export function getLimits(): { sessionsPerMonth: number; aiPerDay: number } {
 export function getAiDefaults(): { model?: string; embeddingsModel?: string; maxTokens?: number; temperature?: number } {
   const { ai } = getRemoteConfig();
   return { model: ai.model, embeddingsModel: ai.embeddingsModel, maxTokens: ai.maxTokens, temperature: ai.temperature };
+}
+
+/** RAG retrieval defaults an admin can push instead of the baked-in ones. */
+export function getRagDefaults(): { minSim?: number; candidatePool?: number } {
+  return { ...(getRemoteConfig().rag ?? {}) };
 }
 
 export function aiEnabled(): boolean {

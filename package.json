@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "eval:rag": "vitest run src/__tests__/rag-eval.test.ts",
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/gen-icons.js"
   },
