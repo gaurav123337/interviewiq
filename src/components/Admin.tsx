@@ -1778,6 +1778,22 @@ Practice questions:
     finally { setBusy(false); }
   };
 
+  /* re-embed ONE document with the current chunker (used from the RAG tab). */
+  const reindexOne = async (doc: PdfDocumentRow) => {
+    if (!aiAvailable()) { toast("Add an AI key in Settings — re-indexing needs one"); return; }
+    setReindexBusy(true);
+    try {
+      const oldRows = await listPdfChunks(doc.id);
+      if (!oldRows.length) { toast(`⏭️ "${doc.title}" has no chunks to re-index`); return; }
+      const text = oldRows.map(c => c.content).join("\n");
+      const r = await reindexDocument(doc.id, text, oldRows);
+      if (r.changed === 0) { toast(`⏭️ "${doc.title}" already matches the current chunker`); return; }
+      await load();
+      toast(`♻️ Re-indexed "${doc.title}" — ${r.fresh} fresh embed${r.fresh === 1 ? "" : "s"}, reused ${r.reused}`);
+    } catch (e) { toast("✗ " + ((e as Error).message || "Re-index failed")); }
+    finally { setReindexBusy(false); }
+  };
+
   /* calibration bands — pass rate 0-20 / 20-40 / … / 80-100 */
   const confident = merged.filter(m => m.attempts >= 5);
   const tooEasy = confident.filter(m => m.passRate > 90);
@@ -2166,12 +2182,21 @@ Practice questions:
             );
             return (
               <>
-                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
                   {signal("Retrievals (window)", String(s.total), "ok")}
                   {signal("Grounded rate", s.groundedRate + "%", s.groundedRate >= 60 ? "ok" : s.groundedRate >= 30 ? "warn" : "bad")}
                   {signal("Empty hits", s.emptyRate + "%", s.emptyRate <= 20 ? "ok" : s.emptyRate <= 40 ? "warn" : "bad")}
                   {signal("Avg top similarity", s.avgTopSim.toFixed(2), s.avgTopSim >= 0.55 ? "ok" : s.avgTopSim >= 0.4 ? "warn" : "bad")}
+                  {(() => {
+                    const gateRejects = ragRows.reduce((n, r) => n + (r.gateRejects ?? 0), 0);
+                    return signal("Gate rejections", String(gateRejects), gateRejects === 0 ? "ok" : "warn");
+                  })()}
                 </div>
+                {ragRows.some(r => (r.gateRejects ?? 0) > 0) && (
+                  <p className="mt-1.5 text-[11.5px] text-fnt">
+                    🚫 <span className="font-bold">Concept gate:</span> {ragRows.reduce((n, r) => n + (r.gateRejects ?? 0), 0)} high-sim chunk(s) were dropped for sharing no concepts with the query — tune the hard floor in <span className="font-bold">Product config → 🗄️ RAG retrieval</span>.
+                  </p>
+                )}
                 {ragThreshold !== effectiveGroundingMinSim() && (
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-[11.5px] text-fnt">
                     <Chip tone="lvl">at the live cutoff ({effectiveGroundingMinSim()}) this window was {live.groundedRate}% grounded</Chip>
@@ -2189,11 +2214,12 @@ Practice questions:
                           <th className="px-3 py-2 font-bold">Retrievals</th>
                           <th className="px-3 py-2 font-bold">Avg sim</th>
                           <th className="px-3 py-2 font-bold">Last cited</th>
+                          <th className="px-3 py-2 font-bold">Action</th>
                         </tr>
                       </thead>
                       <tbody>
                         {kbDocs.length === 0 && (
-                          <tr><td colSpan={4} className="px-3 py-6 text-center text-mut">No documents indexed yet — upload PDFs in the Auto-fill section to build the knowledge base.</td></tr>
+                          <tr><td colSpan={5} className="px-3 py-6 text-center text-mut">No documents indexed yet — upload PDFs in the Auto-fill section to build the knowledge base.</td></tr>
                         )}
                         {(() => {
                           const stats = new Map(ragDocs.map(d => [d.documentId, d]));
@@ -2215,6 +2241,16 @@ Practice questions:
                               </td>
                               <td className="px-3 py-2.5 tabular-nums">{s ? s.avgSim.toFixed(2) : "—"}</td>
                               <td className="px-3 py-2.5 text-[12px] text-fnt">{s?.lastSeen ? new Date(s.lastSeen).toLocaleDateString() : "—"}</td>
+                              <td className="px-3 py-2.5">
+                                <button
+                                  className={btnGhost + btnSm}
+                                  disabled={reindexBusy || !aiAvailable()}
+                                  title="Re-embed this document with the current chunker"
+                                  onClick={() => reindexOne(k)}
+                                >
+                                  ♻️ Re-index
+                                </button>
+                              </td>
                             </tr>
                           ));
                         })()}
@@ -2236,6 +2272,7 @@ Practice questions:
                         <Chip tone={wouldBe ? "ok" : "default"}>{wouldBe ? "📚 grounded" : "🧠 general"}</Chip>
                         <Chip>{r.hits} hit{r.hits === 1 ? "" : "s"}</Chip>
                         <Chip>sim {r.topSim.toFixed(2)}</Chip>
+                        {(r.gateRejects ?? 0) > 0 && <Chip tone="warn">🚫 gate −{r.gateRejects}</Chip>}
                         {flipped && <Chip tone="warn">↻ flips at {ragThreshold.toFixed(2)}</Chip>}
                         <span className="text-[11px] text-fnt">{new Date(r.at).toLocaleString()}</span>
                       </div>

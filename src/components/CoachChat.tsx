@@ -21,8 +21,24 @@ import { CitationChip } from "./CitationChip";
 import { GroundingNote } from "./GroundingNote";
 import { toast } from "../toast";
 
-/* API-mode replies carry knowledge-base citations + grounding state. */
-type ChatMsg = CoachMsg & { citations?: Citation[]; grounded?: boolean; checked?: boolean };
+/* API-mode replies carry knowledge-base citations + grounding state.
+   citationsSource tells users HOW the answer was grounded: vector (semantic
+   retrieval with an API key) or lexical (keyless term match over the KB). */
+type ChatMsg = CoachMsg & {
+  citations?: Citation[];
+  grounded?: boolean;
+  checked?: boolean;
+  citationsSource?: "vector" | "lexical";
+};
+
+/** Label for the grounded chip — lets users tell semantic grounding (API key)
+    from the keyless term-match fallback apart. Exported for tests. */
+export function citationSourceLabel(n: number, source?: "vector" | "lexical"): string {
+  const base = `📚 Grounded · ${n} source${n === 1 ? "" : "s"}`;
+  if (source === "lexical") return base + " · term match (no key)";
+  if (source === "vector") return base + " · semantic";
+  return base;
+}
 
 /* The offline coach's brain (concept-aware matching, intents, grading,
    dialogue memory) lives in ../coach/reply + ../coach/concepts. Re-exported
@@ -193,7 +209,7 @@ export function CoachChat(ctx: CoachContext) {
           { role: "user", content: text }
         ];
         const reply = await chat(history, { maxTokens: 450 });
-        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded, checked }]);
+        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded, checked, citationsSource: "vector" }]);
       } else {
         /* offline mode — no key needed. The deterministic coach answer is
            grounded in the question bank; when the network is up, it ALSO
@@ -212,7 +228,7 @@ export function CoachChat(ctx: CoachContext) {
             grounded: true
           }));
         }
-        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded: citations.length > 0, checked: citations.length > 0 }]);
+        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded: citations.length > 0, checked: citations.length > 0, citationsSource: "lexical" }]);
       }
     } catch (e) {
       const msg = (e as Error).message || "Coach unavailable";
@@ -262,7 +278,7 @@ export function CoachChat(ctx: CoachContext) {
                   {m.role === "assistant" && (m.citations?.length ?? 0) > 0 && (
                     <div className="mt-1 w-full max-w-[92%] space-y-1">
                       <div className="text-[10px] font-bold uppercase tracking-wider text-ok">
-                        📚 Grounded · {m.citations!.length} source{m.citations!.length > 1 ? "s" : ""}
+                        {citationSourceLabel(m.citations!.length, m.citationsSource)}
                       </div>
                       {m.citations!.map((c, ci) => (
                         <CitationChip key={ci} title={c.title} content={c.content} />

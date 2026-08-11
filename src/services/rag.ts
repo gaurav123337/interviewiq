@@ -111,6 +111,31 @@ export function isGrounded(similarity: number, lex: number, minSim = GROUNDING_M
   return similarity >= minSim && (lex > 0 || similarity >= GROUNDING_HARD_FLOOR);
 }
 
+export interface GateStats {
+  /** Raw candidates that ended up citable. */
+  groundedCount: number;
+  /** Candidates above the similarity cutoff that the concept gate dropped
+      (high-sim but no shared concepts, below the hard floor). */
+  gateRejects: number;
+  /** Candidates below the similarity cutoff entirely. */
+  belowMin: number;
+}
+
+/** Classifies raw vector candidates against the grounding gate — the signal
+    that feeds the admin's gate-rejection analytics (how often the concept
+    gate drops high-sim chunks, and whether the hard floor should move). */
+export function gateStats(hits: PdfHit[], expandedQuery: string, minSim = GROUNDING_MIN_SIM): GateStats {
+  let groundedCount = 0;
+  let gateRejects = 0;
+  let belowMin = 0;
+  for (const h of hits) {
+    if (h.similarity < minSim) { belowMin++; continue; }
+    if (isGrounded(h.similarity, lexicalScore(expandedQuery, h.content), minSim)) groundedCount++;
+    else gateRejects++;
+  }
+  return { groundedCount, gateRejects, belowMin };
+}
+
 /** Re-ranks the raw vector candidates by the hybrid score, keeping the top N.
     `minSim` is the grounding cutoff (defaults to the baked-in threshold). */
 export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N, minSim = GROUNDING_MIN_SIM): RagHit[] {
@@ -172,13 +197,18 @@ export async function retrieveContext(query: string): Promise<RetrievalResult> {
     const qv = await embed([query]);
     if (!qv[0]?.length) return { hits: [], checked: true };
     const raw = await searchPdfChunks(qv[0], effectiveCandidatePool());
-    const hits = rerankHits(query, raw, RANK_TOP_N, effectiveGroundingMinSim());
+    const minSim = effectiveGroundingMinSim();
+    const hits = rerankHits(query, raw, RANK_TOP_N, minSim);
+    /* how often the concept gate drops high-sim chunks — feeds admin tuning */
+    const gs = gateStats(raw, expandQuery(query), minSim);
     queueEvent("rag_event", {
       q: String(query).slice(0, 200),
       hits: hits.length,
       topSim: hits.length ? Math.round(hits[0].similarity * 100) / 100 : 0,
       grounded: hits.some(h => h.grounded),
       checked: true,
+      gateRejects: gs.gateRejects,
+      belowMin: gs.belowMin,
       /* per-document attribution for the admin RAG health tab */
       docs: hits.map(h => ({ id: h.documentId, sim: Math.round(h.similarity * 100) / 100 }))
     });

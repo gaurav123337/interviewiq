@@ -6,8 +6,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CANDIDATE_POOL, GROUNDING_HARD_FLOOR, GROUNDING_MIN_SIM, effectiveCandidatePool,
-  effectiveGroundingMinSim, expandQuery, groundingPrompt, hybridScore, isGrounded,
-  lexicalScore, lexicalSearch, ragTuningInfo, rerankHits, retrieveContext
+  effectiveGroundingMinSim, expandQuery, gateStats, groundingPrompt, hybridScore,
+  isGrounded, lexicalScore, lexicalSearch, ragTuningInfo, rerankHits, retrieveContext
 } from "../services/rag";
 import { setRemoteConfig } from "../services/remoteConfig";
 import { ragHealthSummary, type RagHealthRow } from "../services/quality";
@@ -107,6 +107,16 @@ describe("grounding discipline", () => {
     expect(isGrounded(GROUNDING_MIN_SIM - 0.05, 0.9)).toBe(false);
   });
 
+  it("gateStats classifies candidates for the rejection analytics", () => {
+    const q = expandQuery("closures");
+    const s = gateStats([
+      { documentId: 1, content: "a closure captures lexical scope", similarity: 0.6 },
+      { documentId: 2, content: "marketing copy about the product brand", similarity: 0.8 },
+      { documentId: 3, content: "totally unrelated prose", similarity: 0.3 }
+    ], q);
+    expect(s).toEqual({ groundedCount: 1, gateRejects: 1, belowMin: 1 });
+  });
+
   it("orders the strict prompt when grounded, the honest prompt when not", () => {
     const strict = groundingPrompt("sys", true, "REFERENCE HERE");
     expect(strict).toContain("Answer ONLY from this reference material");
@@ -192,6 +202,9 @@ describe("retrieveContext", () => {
     expect(ev).toBeDefined();
     expect(ev!.meta.q).toContain("event loop");
     expect(ev!.meta.grounded).toBe(true);
+    /* the concept gate's rejections are tracked for admin tuning */
+    expect(ev!.meta.gateRejects).toBe(1); /* the 0.82-sim marketing distractor */
+    expect(ev!.meta.belowMin).toBe(0);
     /* per-document attribution feeds the admin per-doc breakdown */
     const docs = ev!.meta.docs as { id: number; sim: number }[];
     expect(docs.length).toBeGreaterThan(0);

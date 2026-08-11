@@ -168,6 +168,10 @@ export interface RagHealthRow {
   hits: number;
   topSim: number;
   grounded: boolean;
+  /** Candidates the concept gate dropped (high sim, no shared concepts). */
+  gateRejects?: number;
+  /** Candidates below the similarity cutoff entirely. */
+  belowMin?: number;
   at: string;
 }
 
@@ -182,6 +186,8 @@ export async function adminRagHealth(maxRows = 40): Promise<RagHealthRow[]> {
     hits: Number(r.hits ?? 0),
     topSim: Number(r.top_sim ?? 0),
     grounded: Boolean(r.grounded),
+    gateRejects: Number(r.gate_rejects ?? 0),
+    belowMin: Number(r.below_min ?? 0),
     at: r.at as string
   }));
 }

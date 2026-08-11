@@ -5,7 +5,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import { CODING_PROBLEMS } from "../data/coding";
 import { coachDiscussionTopics, companyFrequency, focusSignals, freqForProblem, hasPersonalSignals, missedSessionTopics, personalFocusForCompany, personalPlan, qaCategoryHeat, suggestNextProblem } from "../data/codingCompanies";
 import { codingDrillCards } from "../services/codingTrack";
-import { coachWeekStats, getCoachDiscussions, localCoachReply, saveCoachDiscussion } from "../components/CoachChat";
+import { citationSourceLabel, coachWeekStats, getCoachDiscussions, localCoachReply, saveCoachDiscussion } from "../components/CoachChat";
 import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
 
 const sessionWithMissed = (missed: string[]) => ({
@@ -166,6 +166,15 @@ describe("coach discussions feed the weakness profile", () => {
     /* two-sum: Arrays & hashing, company heat 3, unsolved → top scorer */
     expect(p!.id).toBe("two-sum");
     expect(suggestNextProblem("google", "hi there")).toBeNull();
+  });
+});
+
+describe("citation source labels", () => {
+  it("distinguishes semantic (vector) from keyless (lexical) grounding", () => {
+    expect(citationSourceLabel(1, "vector")).toContain("semantic");
+    expect(citationSourceLabel(2, "lexical")).toContain("term match (no key)");
+    expect(citationSourceLabel(3)).toContain("3 sources");
+    expect(citationSourceLabel(3)).not.toContain("term match");
   });
 });
 
