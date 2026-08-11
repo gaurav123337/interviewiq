@@ -10,9 +10,9 @@ import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
   adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, adminRagDocuments,
-  adminRagHealth, mergeQuality, ragHealthSummary, touchQuestion,
+  adminRagHealth, adminRagWeeklyDigest, mergeQuality, ragHealthSummary, ragHistogram, touchQuestion,
   type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow,
-  type RagDocRow, type RagHealthRow
+  type RagDocRow, type RagHealthRow, type RagWeeklyDigest
 } from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
@@ -32,7 +32,7 @@ import {
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
 } from "../services/scraper";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
-import { effectiveGroundingMinSim } from "../services/rag";
+import { effectiveGroundingMinSim, effectiveHardFloor } from "../services/rag";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
@@ -1519,16 +1519,18 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
         )}
       </div>
 
-      {/* RAG retrieval — grounding threshold + candidate pool the tutor and
-          API coach use; published like the frequency table */}
+      {/* RAG retrieval — grounding threshold + candidate pool + hard floor the
+          tutor and API coach use; published like the frequency table */}
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">🗄️ RAG retrieval</h2>
         <p className="mb-3 text-[12.5px] text-mut">
           How strictly the tutor/coach ground answers in the knowledge base. A higher similarity cutoff means
           fewer (but safer) citations — answers then come from general knowledge and say so. The candidate pool is
-          how many vector hits the hybrid re-ranker considers. Clients pick these up on next sync.
+          how many vector hits the hybrid re-ranker considers. The hard floor is the similarity at which a chunk is
+          cited even with zero shared concepts — the escape hatch when the concept gate is too strict.
+          Clients pick these up on next sync.
         </p>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <NumField
             label={`Grounding similarity cutoff (0.30–0.80) — current ${config.rag?.minSim ?? 0.45}`}
             value={config.rag?.minSim ?? 0.45} step={0.01}
@@ -1538,6 +1540,11 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             label={`Vector candidate pool (4–50) — current ${config.rag?.candidatePool ?? 24}`}
             value={config.rag?.candidatePool ?? 24} step={1}
             onChange={v => setRag("candidatePool", Math.max(2, Math.min(50, Math.round(v))))}
+          />
+          <NumField
+            label={`Hard floor, concept-free cite (0.80–0.95) — current ${config.rag?.hardFloor ?? 0.85}`}
+            value={config.rag?.hardFloor ?? 0.85} step={0.01}
+            onChange={v => setRag("hardFloor", Math.max(0.7, Math.min(0.99, v)))}
           />
         </div>
         <p className="mt-2 text-[11.5px] text-fnt">
@@ -1718,6 +1725,7 @@ function QualitySection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean
   const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
   const [coachGaps, setCoachGaps] = useState<CoachGapRow[]>([]);
   const [ragRows, setRagRows] = useState<RagHealthRow[]>([]);
+  const [ragDigest, setRagDigest] = useState<RagWeeklyDigest | null>(null);
   const [ragDocs, setRagDocs] = useState<RagDocRow[]>([]);
   const [kbDocs, setKbDocs] = useState<PdfDocumentRow[]>([]);
   /* threshold explorer — reclassify recent retrievals against any cutoff */
@@ -1758,8 +1766,8 @@ Practice questions:
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), listPdfDocuments()])
-      .then(([q, f, c, g, r, d, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setKbDocs(k); })
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), adminRagWeeklyDigest(), listPdfDocuments()])
+      .then(([q, f, c, g, r, d, dig, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setRagDigest(dig); setKbDocs(k); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -2149,6 +2157,42 @@ Practice questions:
               </button>
             )}
           </div>
+
+          {/* weekly digest — last-7-days aggregates vs the previous week */}
+          {ragDigest && ragDigest.total > 0 && (
+            <div className="mt-3 rounded-xl border border-line/10 bg-deep/40 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12.5px] font-extrabold">📅 This week</span>
+                <Chip tone="ok">{ragDigest.total} retrieval{ragDigest.total === 1 ? "" : "s"}</Chip>
+                <Chip tone={ragDigest.grounded / Math.max(1, ragDigest.total) >= 0.6 ? "ok" : "warn"}>
+                  {Math.round((ragDigest.grounded / Math.max(1, ragDigest.total)) * 100)}% grounded
+                </Chip>
+                <Chip tone={ragDigest.empty / Math.max(1, ragDigest.total) <= 0.2 ? "ok" : "warn"}>
+                  {ragDigest.empty} empty
+                </Chip>
+                <Chip>avg sim {ragDigest.avgTopSim.toFixed(2)}</Chip>
+                {ragDigest.gateRejects > 0 && <Chip tone="warn">🚫 {ragDigest.gateRejects} gate rejects</Chip>}
+                {ragDigest.prevTotal > 0 && (
+                  <Chip tone={ragDigest.total >= ragDigest.prevTotal ? "ok" : "warn"}>
+                    {ragDigest.total >= ragDigest.prevTotal ? "▲" : "▼"} {Math.round((Math.abs(ragDigest.total - ragDigest.prevTotal) / ragDigest.prevTotal) * 100)}% vs prior week
+                  </Chip>
+                )}
+                {ragDigest.prevTotal > 0 && (
+                  <Chip tone={ragDigest.grounded / Math.max(1, ragDigest.total) >= ragDigest.prevGrounded / Math.max(1, ragDigest.prevTotal) ? "ok" : "warn"}>
+                    grounded {(ragDigest.grounded / Math.max(1, ragDigest.total) * 100 - ragDigest.prevGrounded / Math.max(1, ragDigest.prevTotal) * 100) >= 0 ? "▲" : "▼"} {Math.abs((ragDigest.grounded / Math.max(1, ragDigest.total) - ragDigest.prevGrounded / Math.max(1, ragDigest.prevTotal)) * 100).toFixed(0)}pt
+                  </Chip>
+                )}
+              </div>
+              {ragDigest.topQueries.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-mut">Top asked:</span>
+                  {ragDigest.topQueries.map((t, i) => (
+                    <Chip key={i} tone="lvl">{t.q} · {t.n}</Chip>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {/* threshold explorer — reclassify the recent log against any cutoff */}
           <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-line/10 bg-deep/40 px-4 py-3">
             <span className="text-[12.5px] font-bold">🔍 Explorer cutoff</span>
@@ -2190,6 +2234,47 @@ Practice questions:
                   {(() => {
                     const gateRejects = ragRows.reduce((n, r) => n + (r.gateRejects ?? 0), 0);
                     return signal("Gate rejections", String(gateRejects), gateRejects === 0 ? "ok" : "warn");
+                  })()}
+                </div>
+                {/* similarity histogram — where retrieval quality lands vs the cutoff + hard floor */}
+                <div className="mt-4">
+                  <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] font-extrabold uppercase tracking-wider text-mut">
+                    <span>📊 Similarity distribution</span>
+                    <span className="normal-case font-bold">cutoff {ragThreshold.toFixed(2)}</span>
+                    <span className="normal-case font-bold text-bad">hard floor {effectiveHardFloor().toFixed(2)}</span>
+                  </div>
+                  {(() => {
+                    const bins = ragHistogram(ragRows, ragThreshold);
+                    const max = Math.max(1, ...bins.map(b => b.total));
+                    const cutoffBin = bins.findIndex(b => ragThreshold >= b.min && ragThreshold < b.max);
+                    const floorBin = bins.findIndex(b => effectiveHardFloor() >= b.min && effectiveHardFloor() < b.max);
+                    return (
+                      <div className="space-y-1.5">
+                        {bins.map((b, i) => (
+                          <div key={b.label} className="flex items-center gap-2 text-[12px]">
+                            <span className={`w-14 shrink-0 font-bold ${i === floorBin ? "text-bad" : "text-fnt"}`}>
+                              {b.label}{i === floorBin ? " 🚫" : ""}
+                            </span>
+                            <div className="relative h-5 flex-1 overflow-hidden rounded-md bg-wht/5">
+                              <div
+                                className={`absolute inset-y-0 left-0 ${i === floorBin ? "bg-bad/40" : "bg-acc1/40"}`}
+                                style={{ width: `${(b.total / max) * 100}%` }}
+                              />
+                              <div className="absolute inset-y-0 left-0 bg-ok/50" style={{ width: `${(b.grounded / max) * 100}%` }} />
+                              {i === cutoffBin && (
+                                <div className="absolute inset-y-0 w-px bg-ink/70" style={{ left: `${((ragThreshold - b.min) / (b.max - b.min)) * 100}%` }} />
+                              )}
+                              <span className="absolute inset-y-0 right-1 flex items-center text-[10px] font-bold text-ink/80">
+                                {b.total} {b.grounded > 0 ? `· ${b.grounded} grounded` : ""}{b.gated > 0 ? ` · 🚫 ${b.gated}` : ""}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                        <p className="text-[11px] text-fnt">
+                          Bar = queries whose top hit landed in this similarity band (<span className="text-ok">green</span> = grounded at the explorer cutoff, <span className="text-bad">red band</span> = concept-free citations allowed, <span className="text-ink">tick</span> = explorer cutoff).
+                        </p>
+                      </div>
+                    );
                   })()}
                 </div>
                 {ragRows.some(r => (r.gateRejects ?? 0) > 0) && (

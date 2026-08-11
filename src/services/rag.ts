@@ -57,10 +57,15 @@ export function effectiveCandidatePool(): number {
   return getRagDefaults().candidatePool ?? CANDIDATE_POOL;
 }
 
+/** Effective hard floor — admin-published remote value or baked-in. */
+export function effectiveHardFloor(): number {
+  return getRagDefaults().hardFloor ?? GROUNDING_HARD_FLOOR;
+}
+
 /** The tuning values actually in effect — surfaced to users in the tutor/coach
     so an answer's 📚 grounded / 🧠 general status is explainable. */
-export function ragTuningInfo(): { minSim: number; pool: number } {
-  return { minSim: effectiveGroundingMinSim(), pool: effectiveCandidatePool() };
+export function ragTuningInfo(): { minSim: number; pool: number; hardFloor: number } {
+  return { minSim: effectiveGroundingMinSim(), pool: effectiveCandidatePool(), hardFloor: effectiveHardFloor() };
 }
 
 /* ------------------------------------------------------------------ */
@@ -107,8 +112,13 @@ export function hybridScore(query: string, content: string, similarity: number):
 /** The grounding decision: a chunk is citable when its similarity clears the
     cutoff AND it either shares concept/token signal with the question or is
     so semantically close (hard floor) that lexical evidence is unnecessary. */
-export function isGrounded(similarity: number, lex: number, minSim = GROUNDING_MIN_SIM): boolean {
-  return similarity >= minSim && (lex > 0 || similarity >= GROUNDING_HARD_FLOOR);
+export function isGrounded(
+  similarity: number,
+  lex: number,
+  minSim = GROUNDING_MIN_SIM,
+  hardFloor = GROUNDING_HARD_FLOOR
+): boolean {
+  return similarity >= minSim && (lex > 0 || similarity >= hardFloor);
 }
 
 export interface GateStats {
@@ -124,21 +134,33 @@ export interface GateStats {
 /** Classifies raw vector candidates against the grounding gate — the signal
     that feeds the admin's gate-rejection analytics (how often the concept
     gate drops high-sim chunks, and whether the hard floor should move). */
-export function gateStats(hits: PdfHit[], expandedQuery: string, minSim = GROUNDING_MIN_SIM): GateStats {
+export function gateStats(
+  hits: PdfHit[],
+  expandedQuery: string,
+  minSim = GROUNDING_MIN_SIM,
+  hardFloor = GROUNDING_HARD_FLOOR
+): GateStats {
   let groundedCount = 0;
   let gateRejects = 0;
   let belowMin = 0;
   for (const h of hits) {
     if (h.similarity < minSim) { belowMin++; continue; }
-    if (isGrounded(h.similarity, lexicalScore(expandedQuery, h.content), minSim)) groundedCount++;
+    if (isGrounded(h.similarity, lexicalScore(expandedQuery, h.content), minSim, hardFloor)) groundedCount++;
     else gateRejects++;
   }
   return { groundedCount, gateRejects, belowMin };
 }
 
 /** Re-ranks the raw vector candidates by the hybrid score, keeping the top N.
-    `minSim` is the grounding cutoff (defaults to the baked-in threshold). */
-export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N, minSim = GROUNDING_MIN_SIM): RagHit[] {
+    `minSim` is the grounding cutoff, `hardFloor` the no-lexical-evidence
+    threshold (both default to the baked-in values). */
+export function rerankHits(
+  query: string,
+  hits: PdfHit[],
+  topN = RANK_TOP_N,
+  minSim = GROUNDING_MIN_SIM,
+  hardFloor = GROUNDING_HARD_FLOOR
+): RagHit[] {
   const expanded = expandQuery(query);
   return hits
     .map(h => ({ ...h, hybrid: hybridScore(expanded, h.content, h.similarity) }))
@@ -149,7 +171,7 @@ export function rerankHits(query: string, hits: PdfHit[], topN = RANK_TOP_N, min
       content: h.content,
       similarity: h.similarity,
       hybrid: h.hybrid,
-      grounded: isGrounded(h.similarity, lexicalScore(expanded, h.content), minSim)
+      grounded: isGrounded(h.similarity, lexicalScore(expanded, h.content), minSim, hardFloor)
     }));
 }
 
@@ -198,9 +220,11 @@ export async function retrieveContext(query: string): Promise<RetrievalResult> {
     if (!qv[0]?.length) return { hits: [], checked: true };
     const raw = await searchPdfChunks(qv[0], effectiveCandidatePool());
     const minSim = effectiveGroundingMinSim();
-    const hits = rerankHits(query, raw, RANK_TOP_N, minSim);
+    const hardFloor = effectiveHardFloor();
+    const expanded = expandQuery(query);
+    const hits = rerankHits(query, raw, RANK_TOP_N, minSim, hardFloor);
     /* how often the concept gate drops high-sim chunks — feeds admin tuning */
-    const gs = gateStats(raw, expandQuery(query), minSim);
+    const gs = gateStats(raw, expanded, minSim, hardFloor);
     queueEvent("rag_event", {
       q: String(query).slice(0, 200),
       hits: hits.length,
@@ -209,6 +233,11 @@ export async function retrieveContext(query: string): Promise<RetrievalResult> {
       checked: true,
       gateRejects: gs.gateRejects,
       belowMin: gs.belowMin,
+      /* per-candidate similarity + gate state → the admin histogram */
+      cands: raw.slice(0, 24).map(h => ({
+        s: Math.round(h.similarity * 100) / 100,
+        st: h.similarity < minSim ? 0 : isGrounded(h.similarity, lexicalScore(expanded, h.content), minSim, hardFloor) ? 1 : 2
+      })),
       /* per-document attribution for the admin RAG health tab */
       docs: hits.map(h => ({ id: h.documentId, sim: Math.round(h.similarity * 100) / 100 }))
     });

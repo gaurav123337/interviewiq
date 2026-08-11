@@ -66,3 +66,47 @@ language sql stable as $$
   order by score desc, c.document_id
   limit match_count;
 $$;
+
+/* Weekly RAG digest — last-7-days aggregates vs the previous 7 days, plus the
+   top queries asked and top documents cited. Feeds the admin RAG health tab's
+   weekly summary so product can see week-over-week grounding health at a glance. */
+create or replace function public.admin_rag_weekly_digest()
+returns table (
+  total bigint, grounded bigint, empty bigint, avg_top_sim double precision,
+  gate_rejects bigint, prev_total bigint, prev_grounded bigint,
+  top_queries jsonb, top_docs jsonb
+)
+language plpgsql security definer set search_path = public as $$
+declare
+  w_start timestamptz := now() - interval '7 days';
+  p_start timestamptz := now() - interval '14 days';
+begin
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  return query
+    select
+      (select count(*) from public.usage_events where kind = 'rag_event' and created_at >= w_start)::bigint,
+      (select count(*) from public.usage_events where kind = 'rag_event' and created_at >= w_start
+         and coalesce((meta->>'grounded')::boolean, false))::bigint,
+      (select count(*) from public.usage_events where kind = 'rag_event' and created_at >= w_start
+         and coalesce((meta->>'hits')::bigint, 0) = 0)::bigint,
+      (select round(avg(coalesce((meta->>'topSim')::double precision, 0))::numeric, 3)::double precision
+         from public.usage_events where kind = 'rag_event' and created_at >= w_start),
+      (select coalesce(sum(coalesce((meta->>'gateRejects')::bigint, 0)), 0)::bigint
+         from public.usage_events where kind = 'rag_event' and created_at >= w_start),
+      (select count(*) from public.usage_events where kind = 'rag_event'
+         and created_at >= p_start and created_at < w_start)::bigint,
+      (select count(*) from public.usage_events where kind = 'rag_event'
+         and created_at >= p_start and created_at < w_start
+         and coalesce((meta->>'grounded')::boolean, false))::bigint,
+      (select coalesce(jsonb_agg(j), '[]'::jsonb) from (
+         select jsonb_build_object('q', meta->>'q', 'n', count(*)) as j
+         from public.usage_events
+         where kind = 'rag_event' and meta->>'q' is not null and meta->>'q' <> '' and created_at >= w_start
+         group by meta->>'q' order by count(*) desc limit 8) t),
+      (select coalesce(jsonb_agg(j), '[]'::jsonb) from (
+         select jsonb_build_object('id', (d.value->>'id')::bigint, 'n', count(*)) as j
+         from public.usage_events e
+         cross join lateral jsonb_array_elements(coalesce(e.meta->'docs', '[]'::jsonb)) as d(value)
+         where e.kind = 'rag_event' and e.created_at >= w_start
+         group by (d.value->>'id')::bigint order by count(*) desc limit 8) t);
+end $$;

@@ -6,11 +6,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CANDIDATE_POOL, GROUNDING_HARD_FLOOR, GROUNDING_MIN_SIM, effectiveCandidatePool,
-  effectiveGroundingMinSim, expandQuery, gateStats, groundingPrompt, hybridScore,
+  effectiveGroundingMinSim, effectiveHardFloor, expandQuery, gateStats, groundingPrompt, hybridScore,
   isGrounded, lexicalScore, lexicalSearch, ragTuningInfo, rerankHits, retrieveContext
 } from "../services/rag";
 import { setRemoteConfig } from "../services/remoteConfig";
-import { ragHealthSummary, type RagHealthRow } from "../services/quality";
+import { ragHealthSummary, ragHistogram, type RagHealthRow } from "../services/quality";
 import { contentHash, sectionChunkText } from "../services/embeddings";
 import { STORAGE_KEYS, storageGet, storageRemove } from "../services/storage";
 import type { PdfHit } from "../services/admin";
@@ -251,22 +251,49 @@ describe("RAG health summary", () => {
   it("is empty-safe", () => {
     expect(ragHealthSummary([])).toEqual({ total: 0, groundedRate: 0, emptyRate: 0, avgTopSim: 0 });
   });
+  it("buckets the log into similarity bands for the gate histogram", () => {
+    const hist = ragHistogram(rows);
+    expect(hist.length).toBe(5);
+    /* 0.7 and 0.6 land in the 0.50–0.65 / 0.65–0.80 bands; 0 is empty-hit */
+    const mid = hist.find(b => b.label === "0.65–0.80")!;
+    expect(mid.total).toBe(1);
+    expect(mid.grounded).toBe(1);
+    expect(hist.find(b => b.label === "< 0.35")!.total).toBe(1);
+    expect(hist.find(b => b.label === "≥ 0.80")!.total).toBe(0);
+  });
+  it("histogram respects the explorer cutoff and flags gated rows", () => {
+    const gated = ragHistogram([
+      { query: "x", hits: 3, topSim: 0.7, grounded: true, gateRejects: 2, at: "2026-08-01T00:00:00Z" }
+    ], 0.65);
+    const band = gated.find(b => b.label === "0.65–0.80")!;
+    expect(band.grounded).toBe(1);
+    expect(band.gated).toBe(1);
+    const dropped = ragHistogram([
+      { query: "y", hits: 2, topSim: 0.7, grounded: true, at: "2026-08-01T00:00:00Z" }
+    ], 0.85);
+    expect(dropped.find(b => b.label === "0.65–0.80")!.grounded).toBe(0);
+  });
 });
 
 describe("remote-tunable grounding", () => {
   afterEach(() => {
     setRemoteConfig({ rag: undefined });
   });
-  it("falls back to the baked-in threshold and pool", () => {
+  it("falls back to the baked-in threshold, pool and hard floor", () => {
     expect(effectiveGroundingMinSim()).toBe(GROUNDING_MIN_SIM);
     expect(effectiveCandidatePool()).toBe(CANDIDATE_POOL);
+    expect(effectiveHardFloor()).toBe(GROUNDING_HARD_FLOOR);
   });
   it("honors admin-published values without a deploy", () => {
-    setRemoteConfig({ rag: { minSim: 0.62, candidatePool: 12 } });
+    setRemoteConfig({ rag: { minSim: 0.62, candidatePool: 12, hardFloor: 0.9 } });
     expect(effectiveGroundingMinSim()).toBe(0.62);
     expect(effectiveCandidatePool()).toBe(12);
+    expect(effectiveHardFloor()).toBe(0.9);
     /* the user-facing tuning info reflects the same effective values */
-    expect(ragTuningInfo()).toEqual({ minSim: 0.62, pool: 12 });
+    expect(ragTuningInfo()).toEqual({ minSim: 0.62, pool: 12, hardFloor: 0.9 });
+    /* the configurable hard floor changes the concept-free citation escape hatch */
+    expect(isGrounded(0.88, 0, 0.62, 0.9)).toBe(false);
+    expect(isGrounded(0.88, 0, 0.62, 0.85)).toBe(true);
     /* rerankHits applies the cutoff passed in */
     const hits = rerankHits("caching", [
       { documentId: 1, content: "styling with flexbox grid", similarity: 0.55 },

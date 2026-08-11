@@ -44,13 +44,16 @@ export interface RemoteConfig {
   /** Coach vocabulary overrides — extra concept families + misconception
       corrections the offline tutor should know (no deploy needed). */
   coachVocab?: CoachVocabOverrides;
-  /** RAG retrieval tuning — grounding threshold + vector candidate pool.
-      Admins can tighten/loosen grounding without a code deploy. */
+  /** RAG retrieval tuning — grounding threshold + vector candidate pool +
+      the concept-gate hard floor. Admins can tune grounding without a deploy. */
   rag?: {
     /** Minimum vector similarity for a chunk to count as grounded (0-1). */
     minSim?: number;
     /** How many vector candidates to fetch before the hybrid re-rank. */
     candidatePool?: number;
+    /** At/above this similarity a chunk grounds even with zero concept
+        overlap; below it, a concept/token match is required. */
+    hardFloor?: number;
   };
 }
 
@@ -102,7 +105,7 @@ export function getAiDefaults(): { model?: string; embeddingsModel?: string; max
 }
 
 /** RAG retrieval defaults an admin can push instead of the baked-in ones. */
-export function getRagDefaults(): { minSim?: number; candidatePool?: number } {
+export function getRagDefaults(): { minSim?: number; candidatePool?: number; hardFloor?: number } {
   return { ...(getRemoteConfig().rag ?? {}) };
 }
 

@@ -232,3 +232,81 @@ export function ragHealthSummary(
     avgTopSim: Math.round(avgTopSim * 100) / 100
   };
 }
+
+export interface RagHistBin {
+  label: string;
+  /** Inclusive lower bound. */
+  min: number;
+  /** Exclusive upper bound (last bin is inclusive to 1). */
+  max: number;
+  total: number;
+  /** Of the rows in this band, how many grounded (respects explorer cutoff). */
+  grounded: number;
+  /** Of the rows in this band, how many had concept-gate rejections. */
+  gated: number;
+}
+
+/** Similarity-band histogram of the retrieval log — shows where retrieval
+    quality lands relative to the grounding cutoff and the 0.85 hard floor.
+    With a `threshold`, grounded is reclassified per-band like the explorer. */
+export function ragHistogram(rows: RagHealthRow[], threshold: number | null = null): RagHistBin[] {
+  const bands = [
+    { label: "< 0.35", min: 0, max: 0.35 },
+    { label: "0.35–0.50", min: 0.35, max: 0.5 },
+    { label: "0.50–0.65", min: 0.5, max: 0.65 },
+    { label: "0.65–0.80", min: 0.65, max: 0.8 },
+    { label: "≥ 0.80", min: 0.8, max: 1.01 }
+  ];
+  return bands.map(b => {
+    const inBand = rows.filter(r => r.topSim >= b.min && r.topSim < b.max);
+    return {
+      label: b.label,
+      min: b.min,
+      max: b.max,
+      total: inBand.length,
+      grounded: inBand.filter(r => (threshold == null ? r.grounded : r.topSim >= threshold)).length,
+      gated: inBand.filter(r => (r.gateRejects ?? 0) > 0).length
+    };
+  });
+}
+
+export interface RagWeeklyDigest {
+  /** Last 7 days. */
+  total: number;
+  grounded: number;
+  empty: number;
+  avgTopSim: number;
+  gateRejects: number;
+  /** Previous 7 days (for deltas). */
+  prevTotal: number;
+  prevGrounded: number;
+  topQueries: { q: string; n: number }[];
+  topDocs: { id: number; n: number }[];
+}
+
+/** Weekly RAG digest — last-7-days aggregates + week-over-week deltas + top
+    queries/docs. Returns null when the RPC is missing or has no data. */
+export async function adminRagWeeklyDigest(): Promise<RagWeeklyDigest | null> {
+  const client = await getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.rpc("admin_rag_weekly_digest");
+  if (error || !data || !Array.isArray(data) || !data.length) return null;
+  const r = data[0] as Record<string, unknown>;
+  return {
+    total: Number(r.total ?? 0),
+    grounded: Number(r.grounded ?? 0),
+    empty: Number(r.empty ?? 0),
+    avgTopSim: Number(r.avg_top_sim ?? 0),
+    gateRejects: Number(r.gate_rejects ?? 0),
+    prevTotal: Number(r.prev_total ?? 0),
+    prevGrounded: Number(r.prev_grounded ?? 0),
+    topQueries: ((r.top_queries as unknown[] | null) ?? []).map((q: unknown) => {
+      const o = q as Record<string, unknown>;
+      return { q: String(o.q ?? ""), n: Number(o.n ?? 0) };
+    }),
+    topDocs: ((r.top_docs as unknown[] | null) ?? []).map((d: unknown) => {
+      const o = d as Record<string, unknown>;
+      return { id: Number(o.id ?? 0), n: Number(o.n ?? 0) };
+    })
+  };
+}
