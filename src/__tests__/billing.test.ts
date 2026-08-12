@@ -276,6 +276,54 @@ describe("admin refund flow", () => {
   });
 });
 
+describe("razorpay standard checkout (client)", () => {
+  it("createStandardOrder posts mode=standard and maps the order fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ provider: "razorpay", order_id: "order_1", amount_minor: 7900, currency: "USD", key_id: "rzp_test_key", mode: "standard" })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { createStandardOrder } = await import("../services/billing");
+    const r = await createStandardOrder("yearly", 0, "WELCOME");
+    expect(r).toMatchObject({ orderId: "order_1", amountMinor: 7900, keyId: "rzp_test_key" });
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/functions/v1/pay-checkout");
+    expect(JSON.parse(String(opts.body))).toEqual({ plan: "yearly", discountPct: 0, coupon: "WELCOME", mode: "standard" });
+  });
+
+  it("createStandardOrder surfaces a fallback as an error (caller falls back to the link)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "Razorpay not configured — set RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET", fallback: true })
+    }));
+    const { createStandardOrder } = await import("../services/billing");
+    await expect(createStandardOrder("monthly")).rejects.toThrow(/Razorpay not configured/);
+  });
+
+  it("verifyPayment posts the three callback fields and maps the grant", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, granted: "u1", plan: "yearly", paymentId: "pay_1" })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { verifyPayment } = await import("../services/billing");
+    const r = await verifyPayment("pay_1", "order_1", "abc123");
+    expect(r).toMatchObject({ ok: true, granted: "u1", plan: "yearly" });
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/functions/v1/pay-verify");
+    expect(JSON.parse(String(opts.body))).toEqual({ paymentId: "pay_1", orderId: "order_1", signature: "abc123" });
+  });
+
+  it("verifyPayment surfaces a signature rejection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ ok: false, error: "Signature verification failed" })
+    }));
+    const { verifyPayment } = await import("../services/billing");
+    await expect(verifyPayment("pay_1", "order_1", "bad")).rejects.toThrow(/Signature verification failed/);
+  });
+});
+
 describe("admin billing actions", () => {
   it("calls the grant, discount and create-code RPCs", async () => {
     rpc.mockClear();

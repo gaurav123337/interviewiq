@@ -62,6 +62,56 @@ export interface PaymentProvider {
       provided = partial refund in minor units. Returns the provider refund
       id so it can be recorded alongside the DB mark. */
   refundPayment(providerPaymentId: string, amountMinor?: number): Promise<{ status: string; refundId: string | null }>;
+  /** Create a payment ORDER (not a link/session) for client-side checkout
+      (Razorpay Standard Checkout modal). Providers without a modal flow
+      throw — the caller falls back to createCheckout. */
+  createOrder(r: CheckoutRequest): Promise<{ provider: string; orderId: string; amountMinor: number; currency: string }>;
+}
+
+/* ------------------------------------------------------------------ */
+/* Razorpay Standard Checkout signature (order_id|payment_id HMAC)      */
+/* ------------------------------------------------------------------ */
+
+/** HMAC-SHA256 hex — pure WebCrypto, usable from the app's vitest suite too. */
+async function hmacSha256Hex(message: string, secret: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
+  return [...new Uint8Array(mac)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The exact string Razorpay signs in the Standard Checkout callback:
+    `razorpay_order_id|razorpay_payment_id`, HMAC-SHA256 with the key secret. */
+export async function computeRazorpaySignature(orderId: string, paymentId: string, keySecret: string): Promise<string> {
+  return hmacSha256Hex(`${orderId}|${paymentId}`, keySecret);
+}
+
+/** Constant-time compare of two hex strings (length + XOR, no early exit). */
+function timingSafeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/** Verify the callback signature the client received after the modal.
+    True ONLY when the HMAC over `order_id|payment_id` (key secret) matches
+    the provided signature — a forged callback can't produce this without
+    the secret, which never leaves the server. */
+export async function verifyPaymentSignature(
+  orderId: string,
+  paymentId: string,
+  signature: string,
+  keySecret: string
+): Promise<boolean> {
+  if (!orderId || !paymentId || !signature || !keySecret) return false;
+  const expected = await computeRazorpaySignature(orderId, paymentId, keySecret);
+  return timingSafeEqualHex(expected, signature.trim().toLowerCase());
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,6 +278,47 @@ export class RazorpayProvider implements PaymentProvider {
     return { status: String(refund.status ?? "processed"), refundId: (refund.id as string) ?? null };
   }
 
+  async createOrder(r: CheckoutRequest): Promise<{ provider: string; orderId: string; amountMinor: number; currency: string }> {
+    const base = r.amountMinorOverride ?? PLAN_CATALOG[r.plan].amountMinor;
+    const amount = priceWithDiscount(base, r.discountPct);
+    const order = await this.rzpPost("/v1/orders", {
+      amount,
+      currency: r.currency,
+      receipt: `pro_${r.userId}`.slice(0, 40),
+      notes: {
+        user_id: r.userId,
+        plan: r.plan,
+        ...(r.discountPct ? { discount_pct: String(r.discountPct) } : {}),
+        ...(r.coupon ? { coupon: r.coupon } : {})
+      }
+    });
+    return {
+      provider: this.name,
+      orderId: order.id as string,
+      amountMinor: amount,
+      currency: r.currency
+    };
+  }
+
+  /** Server-side confirmation for pay-verify: fetch the captured payment.
+      Only a `captured` status proves the money actually moved. */
+  async fetchPayment(paymentId: string): Promise<{ status: string; amount: number }> {
+    const p = await this.rzpGet(`/v1/payments/${paymentId}`);
+    return { status: String(p.status ?? ""), amount: Number(p.amount ?? 0) };
+  }
+
+  /** Fetch the order to read the server-authoritative amount + the notes
+      (user_id / plan / coupon) bound at creation time. */
+  async fetchOrder(orderId: string): Promise<{ amount: number; currency: string; notes: Record<string, string> | null }> {
+    const o = await this.rzpGet(`/v1/orders/${orderId}`);
+    const notes = (o.notes ?? {}) as Record<string, string>;
+    return {
+      amount: Number(o.amount ?? 0),
+      currency: String(o.currency ?? "USD"),
+      notes: Object.keys(notes).length ? notes : null
+    };
+  }
+
   private async rzpGet(path: string): Promise<Record<string, unknown>> {
     return this.rzp(path, null);
   }
@@ -387,6 +478,10 @@ export class StripeProvider implements PaymentProvider {
     }
     const data = (await res.json()) as { status?: string; id?: string };
     return { status: String(data.status ?? "succeeded"), refundId: data.id ?? null };
+  }
+
+  async createOrder(_r: CheckoutRequest): Promise<{ provider: string; orderId: string; amountMinor: number; currency: string }> {
+    throw new Error("Standard Checkout modal is Razorpay-only — use the payment link (createCheckout) for Stripe.");
   }
 }
 

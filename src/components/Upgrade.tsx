@@ -4,8 +4,8 @@ import { getTier, setTier } from "../services/entitlements";
 import {
   PLANS, discountedPrice, discountLive, fmtMoney, getCachedEntitlement, refreshEntitlement, tierSource
 } from "../services/entitlement";
-import { createCheckout, getRemotePricing, paymentProviderName, validateCoupon, type CouponCheck, type RemotePricing } from "../services/billing";
-import { isCloudConfigured } from "../services/cloud";
+import { createCheckout, createStandardOrder, getRemotePricing, paymentProviderName, validateCoupon, verifyPayment, type CouponCheck, type RemotePricing } from "../services/billing";
+import { getCloudState, isCloudConfigured } from "../services/cloud";
 import { queueEvent, updateProfile } from "../services/events";
 import { toast } from "../toast";
 import { btnGhost, btnOk, btnPrimary, btnSm, Modal, Chip } from "./ui";
@@ -20,6 +20,23 @@ const BENEFITS = [
 ];
 
 const CHECKOUT_KEY = "iq.checkout";
+
+/** Lazily inject checkout.js (never bundled; only when the modal opens). */
+let rzpScriptPromise: Promise<boolean> | null = null;
+function loadRazorpayScript(): Promise<boolean> {
+  if (window.Razorpay) return Promise.resolve(true);
+  if (rzpScriptPromise) return rzpScriptPromise;
+  rzpScriptPromise = new Promise(resolve => {
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.async = true;
+    s.onload = () => resolve(Boolean(window.Razorpay));
+    s.onerror = () => resolve(false);
+    setTimeout(() => resolve(Boolean(window.Razorpay)), 8000);
+    document.head.appendChild(s);
+  });
+  return rzpScriptPromise;
+}
 
 /** True when the URL says the payment flow completed (e.g. checkout redirect). */
 function returnedFromCheckout(): boolean {
@@ -95,14 +112,66 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
   const [buying, setBuying] = useState(false);
   const checkout = () => isCloudConfigured();
 
+  /* Razorpay Standard Checkout — creates an order, opens the checkout.js
+     modal, and on success sends { payment_id, order_id, signature } to
+     pay-verify (the server re-checks the signature + capture before
+     granting). Returns true when the modal actually opened; false (or
+     throws) when it can't, so the caller falls back to the payment link. */
+  const payWithModal = async (plan: string): Promise<boolean> => {
+    let order;
+    try {
+      order = await createStandardOrder(plan, effDiscount, coupon);
+    } catch {
+      return false; /* e.g. Razorpay not configured — link flow will explain */
+    }
+    const loaded = await loadRazorpayScript();
+    if (!loaded || !window.Razorpay) return false;
+    const user = getCloudState().user;
+    const rzp = new window.Razorpay({
+      key: order.keyId,
+      order_id: order.orderId,
+      amount: order.amountMinor,
+      currency: order.currency,
+      name: CONFIG.productName,
+      description: `Pro — ${PLANS.find(p => p.id === plan)?.label ?? plan}`,
+      prefill: { email: user?.email, name: user?.email?.split("@")[0] },
+      theme: { color: "#6366f1" },
+      handler: async (res) => {
+        try {
+          const v = await verifyPayment(res.razorpay_payment_id, res.razorpay_order_id, res.razorpay_signature);
+          if (v.ok) {
+            sessionStorage.removeItem(CHECKOUT_KEY);
+            setTier("pro");
+            void queueEvent("tier", { tier: "pro" });
+            void updateProfile({ tier: "pro" }).catch(() => {});
+            toast("💎 Payment verified — Pro unlocked 🎉");
+            onClose();
+          }
+        } catch (e) {
+          toast("✗ " + ((e as Error).message || "Verification failed — tap “I've paid” to re-check"));
+        }
+      },
+      modal: { ondismiss: () => toast("Checkout cancelled — no charge was made.") }
+    });
+    rzp.open();
+    return true;
+  };
+
   const getPro = async (plan: string) => {
     /* provider-agnostic checkout: the pay-checkout Edge Function picks the
-       provider (Razorpay today, swap via PAYMENT_PROVIDER env later) */
+       provider (Razorpay today, swap via PAYMENT_PROVIDER env later).
+       One-time Razorpay purchases open the checkout.js modal; subscriptions
+       and other providers use the hosted payment link. */
     if (checkout()) {
       setBuying(true);
       try {
         sessionStorage.setItem(CHECKOUT_KEY, "pending");
-        const r = await createCheckout(plan, effDiscount, subscribe && plan !== "lifetime", coupon);
+        const recurring = subscribe && plan !== "lifetime";
+        if (!recurring && paymentProviderName() === "razorpay") {
+          if (await payWithModal(plan)) return; /* modal open — wait for it */
+          /* fall through to the hosted link (also toasts the real error) */
+        }
+        const r = await createCheckout(plan, effDiscount, recurring, coupon);
         window.open(r.url, "_blank", "noopener");
         const mode = r.mode === "subscription" ? "🔁 subscription" : "one-time";
         toast(`💳 ${paymentProviderName()} ${mode} checkout opened — complete it, then tap “I've paid” to verify`);

@@ -38,6 +38,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({})) as {
       plan?: string; discountPct?: number; subscribe?: boolean; successUrl?: string; cancelUrl?: string; coupon?: string;
+      mode?: "standard" | "link";
     };
     const plan = body.plan ?? "monthly";
     if (!PLAN_CATALOG[plan]) {
@@ -65,7 +66,8 @@ Deno.serve(async (req) => {
       effectiveDiscount = Math.max(effectiveDiscount, Number(row.discount_pct ?? 0));
     }
 
-    const provider = getPaymentProvider(Deno.env.toObject());
+    const env = Deno.env.toObject();
+    const provider = getPaymentProvider(env);
     const r = {
       plan: plan as "monthly" | "yearly" | "lifetime",
       discountPct: effectiveDiscount,
@@ -76,6 +78,30 @@ Deno.serve(async (req) => {
       amountMinorOverride,
       coupon: coupon || undefined
     };
+
+    /* Standard Checkout (Razorpay modal): create an ORDER instead of a link.
+       The client opens checkout.js with the returned order id and sends the
+       callback signature to pay-verify. The key id is returned from the
+       server env so the KEY_SECRET never reaches the frontend. Providers
+       without a modal flow throw → the client falls back to the link. */
+    if (body.mode === "standard" && !(body.subscribe && plan !== "lifetime")) {
+      try {
+        const order = await provider.createOrder(r);
+        return new Response(JSON.stringify({
+          provider: order.provider,
+          order_id: order.orderId,
+          amount_minor: order.amountMinor,
+          currency: order.currency,
+          key_id: env.RAZORPAY_KEY_ID ?? "",
+          mode: "standard"
+        }), { status: 200, headers });
+      } catch (e) {
+        return new Response(JSON.stringify({
+          error: (e as Error).message ?? "Standard checkout unavailable",
+          fallback: true
+        }), { status: 400, headers });
+      }
+    }
 
     /* subscriptions: monthly/yearly via the provider's recurring flow */
     if (body.subscribe && plan !== "lifetime" && provider.supportsSubscriptions) {

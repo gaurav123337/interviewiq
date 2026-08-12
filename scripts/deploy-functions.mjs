@@ -5,8 +5,8 @@
    of truth.
 
    Usage: node scripts/deploy-functions.mjs <PAT>
-   Deploys: pay-checkout (verify_jwt), pay-webhook (no JWT), pay-cancel and
-   pay-refund (verify_jwt). */
+   Deploys: pay-checkout / pay-cancel / pay-refund / pay-verify (verify_jwt)
+   and pay-webhook (no JWT). */
 
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -21,22 +21,26 @@ if (!PAT) {
 }
 
 const SHARED = readFileSync(join(root, "supabase/functions/_shared/payment.ts"), "utf8");
+const SHARED_EMAIL = readFileSync(join(root, "supabase/functions/_shared/email.ts"), "utf8");
 
 const FUNCTIONS = [
   { slug: "pay-checkout", dir: "pay-checkout", verifyJwt: true },
   { slug: "pay-webhook", dir: "pay-webhook", verifyJwt: false },
   { slug: "pay-cancel", dir: "pay-cancel", verifyJwt: true },
-  { slug: "pay-refund", dir: "pay-refund", verifyJwt: true }
+  { slug: "pay-refund", dir: "pay-refund", verifyJwt: true },
+  { slug: "pay-verify", dir: "pay-verify", verifyJwt: true }
 ];
 
 function inline(indexSrc) {
-  /* swap the shared-module import for its contents */
-  const marker = /import\s*\{[^}]*\}\s*from\s*"\.\.\/_shared\/payment\.ts";\s*/;
-  const has = marker.test(indexSrc);
-  if (!has) throw new Error("no _shared import found in " + indexSrc.slice(0, 120));
-  const imports = indexSrc.match(marker)[0];
-  const named = imports.match(/\{([^}]*)\}/)[1].split(",").map(s => s.trim()).filter(Boolean);
-  return indexSrc.replace(marker, SHARED + "\n") + "\n/* (inlined exports: " + named.join(", ") + ") */\n";
+  /* swap the shared-module imports for their contents (payment.ts is always
+     used; email.ts only by pay-refund / pay-verify) */
+  const paymentMarker = /import\s*\{[^}]*\}\s*from\s*"\.\.\/_shared\/payment\.ts";\s*/;
+  const emailMarker = /import\s*\{[^}]*\}\s*from\s*"\.\.\/_shared\/email\.ts";\s*/;
+  if (!paymentMarker.test(indexSrc)) throw new Error("no _shared import found in " + indexSrc.slice(0, 120));
+  const named = indexSrc.match(paymentMarker)[0].match(/\{([^}]*)\}/)[1].split(",").map(s => s.trim()).filter(Boolean);
+  let out = indexSrc.replace(paymentMarker, SHARED + "\n");
+  if (emailMarker.test(out)) out = out.replace(emailMarker, SHARED_EMAIL + "\n");
+  return out + "\n/* (inlined exports: " + named.join(", ") + ") */\n";
 }
 
 async function deploy(fn) {

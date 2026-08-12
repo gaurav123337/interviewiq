@@ -5,8 +5,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  extendExpiry, getPaymentProvider, isCancelEvent, isPaidEvent, isRefundEvent, planDays, priceWithDiscount,
-  RazorpayProvider, refundPolicyCheck, StripeProvider
+  computeRazorpaySignature, extendExpiry, getPaymentProvider, isCancelEvent, isPaidEvent, isRefundEvent, planDays, priceWithDiscount,
+  RazorpayProvider, refundPolicyCheck, StripeProvider, verifyPaymentSignature
 } from "../../supabase/functions/_shared/payment";
 import { sendEmail, sendRefundEmail } from "../../supabase/functions/_shared/email";
 import { revenueSummary, subscriptionSummary, type AdminPaymentRow, type AdminSubscriptionRow } from "../services/billing";
@@ -520,5 +520,76 @@ describe("refund email (Resend adapter, clean no-op fallback)", () => {
   it("sendEmail shares the same fallback contract", async () => {
     const r = await sendEmail({ to: "a@b.c", subject: "Hi", html: "<p>hi</p>" });
     expect(r.sent).toBe(false);
+  });
+});
+
+describe("razorpay standard checkout (orders + signature)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("computes and verifies the order_id|payment_id HMAC signature", async () => {
+    const secret = "oB1wx75GPgXqrL79LdhFZZok";
+    const orderId = "order_PxYkQ12345";
+    const paymentId = "pay_LmNoP67890";
+    const sig = await computeRazorpaySignature(orderId, paymentId, secret);
+    expect(sig).toMatch(/^[0-9a-f]{64}$/);
+    expect(await verifyPaymentSignature(orderId, paymentId, sig, secret)).toBe(true);
+  });
+
+  it("rejects a tampered signature, wrong secret, or missing fields", async () => {
+    const secret = "oB1wx75GPgXqrL79LdhFZZok";
+    const orderId = "order_A", paymentId = "pay_B";
+    const sig = await computeRazorpaySignature(orderId, paymentId, secret);
+    expect(await verifyPaymentSignature(orderId, "pay_C", sig, secret)).toBe(false); /* different payment */
+    expect(await verifyPaymentSignature(orderId, paymentId, sig, "wrong-secret")).toBe(false);
+    expect(await verifyPaymentSignature(orderId, paymentId, sig.slice(0, 63) + "0", secret)).toBe(false);
+    expect(await verifyPaymentSignature("", paymentId, sig, secret)).toBe(false);
+    expect(await verifyPaymentSignature(orderId, paymentId, "", secret)).toBe(false);
+  });
+
+  it("creates an order via POST /v1/orders with amount, receipt and notes", async () => {
+    const calls: { url: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: init?.body });
+      return new Response(JSON.stringify({ id: "order_1", amount: 5530, currency: "USD" }), { status: 200 });
+    });
+    const provider = new RazorpayProvider("rzp_test_k", "sec", "wh", "https://api.razorpay.com");
+    const r = await provider.createOrder({
+      plan: "yearly", discountPct: 30, userId: "u9", currency: "USD",
+      successUrl: "https://app/s", cancelUrl: "https://app/c", coupon: "WELCOME"
+    });
+    expect(r).toEqual({ provider: "razorpay", orderId: "order_1", amountMinor: 5530, currency: "USD" });
+    expect(calls[0].url).toBe("https://api.razorpay.com/v1/orders");
+    const body = JSON.parse(String(calls[0].body)) as Record<string, unknown>;
+    expect(body.amount).toBe(5530); /* 7900 − 30% */
+    expect(body.currency).toBe("USD");
+    expect(String(body.receipt)).toContain("u9");
+    expect(body.notes).toMatchObject({ user_id: "u9", plan: "yearly", coupon: "WELCOME", discount_pct: "30" });
+  });
+
+  it("fetches payment + order state for server-side verification", async () => {
+    const calls: { url: string }[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      calls.push({ url: String(url) });
+      if (String(url).includes("/payments/")) {
+        return new Response(JSON.stringify({ status: "captured", amount: 7900 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ amount: 7900, currency: "USD", notes: { user_id: "u9", plan: "yearly" } }), { status: 200 });
+    });
+    const provider = new RazorpayProvider("rzp_test_k", "sec", "wh", "https://api.razorpay.com");
+    const pay = await provider.fetchPayment("pay_1");
+    const order = await provider.fetchOrder("order_1");
+    expect(pay).toEqual({ status: "captured", amount: 7900 });
+    expect(order).toMatchObject({ amount: 7900, currency: "USD" });
+    expect(order.notes).toMatchObject({ user_id: "u9" });
+    expect(calls[0].url).toContain("/v1/payments/pay_1");
+    expect(calls[1].url).toContain("/v1/orders/order_1");
+  });
+
+  it("stripe refuses the modal flow (fallback to the link)", async () => {
+    const provider = new StripeProvider("sk_test", "whsec_stripe");
+    await expect(provider.createOrder({
+      plan: "monthly", discountPct: 0, userId: "u1", currency: "USD",
+      successUrl: "s", cancelUrl: "c"
+    })).rejects.toThrow(/Razorpay-only/);
   });
 });
