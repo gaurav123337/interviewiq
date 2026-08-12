@@ -1,14 +1,27 @@
 /* InterviewIQ — service worker (Vite build): offline-first caching.
    Hashed build assets are immutable, so cache-first is safe for them;
-   navigations are network-first so app updates land, with cached shell offline. */
+   navigations are network-first so app updates land, with cached shell offline.
+   The shell precaches index.html AND the hashed JS/CSS bundle it references,
+   so the entire app — including the legal pages (Terms / Privacy / Refunds /
+   Shipping) reachable from the footer on every view — works with no network. */
 
-const CACHE = "interviewiq-v3";
+const CACHE = "interviewiq-v4";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
     caches.open(CACHE)
       .then(c => c.addAll(SHELL))
+      /* precache the hashed JS/CSS the current index.html references, so a
+         fresh install is fully self-contained offline (legal views included) */
+      .then(c =>
+        fetch("./index.html", { cache: "no-cache" })
+          .then(res => res.text())
+          .then(html => {
+            const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(m => m[1]);
+            return Promise.all(assets.map(a => c.add(a).catch(() => {})));
+          })
+      )
       .then(() => self.skipWaiting())
   );
 });
