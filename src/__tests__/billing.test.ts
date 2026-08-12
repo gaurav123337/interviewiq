@@ -33,12 +33,16 @@ const rpc = vi.hoisted(() => vi.fn(baseImpl));
 
 vi.mock("../services/cloud", () => ({
   getCloudState: () => signedIn(),
-  getSupabaseClient: vi.fn().mockResolvedValue({ rpc })
+  getSupabaseClient: vi.fn().mockResolvedValue({
+    rpc,
+    auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "tok-123" } } }) }
+  })
 }));
 
 afterEach(() => {
   storageRemove(STORAGE_KEYS.tier);
   storageRemove(STORAGE_KEYS.licenseKey);
+  vi.unstubAllGlobals();
 });
 
 describe("discount pricing", () => {
@@ -126,6 +130,57 @@ describe("redeem grant code", () => {
     const r = await redeemGrant("IQGRANT-ANYTHING");
     expect(r.ok).toBe(false);
     expect(r.error).toContain("Sign in");
+  });
+});
+
+describe("admin subscription management", () => {
+  beforeEach(() => {
+    rpc.mockReset();
+    rpc.mockImplementation(baseImpl);
+  });
+
+  it("lists every subscription across users with the RPC mapping", async () => {
+    rpc.mockResolvedValueOnce({
+      data: [{
+        user_id: "u1", email: "a@b.c", provider: "razorpay", provider_subscription_id: "sub_1",
+        plan: "yearly", status: "active", current_period_end: "2027-01-01T00:00:00Z",
+        cancelled_at: null, created_at: "2026-08-01T00:00:00Z"
+      }],
+      error: null
+    });
+    const { adminListSubscriptions } = await import("../services/billing");
+    const rows = await adminListSubscriptions();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      userId: "u1", email: "a@b.c", provider: "razorpay", providerSubscriptionId: "sub_1",
+      plan: "yearly", status: "active", currentPeriodEnd: "2027-01-01T00:00:00Z", cancelledAt: null
+    });
+    expect(rpc).toHaveBeenCalledWith("admin_list_subscriptions");
+  });
+
+  it("admin cancel calls pay-cancel with the target user id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, status: "cancelled", currentPeriodEnd: "2027-02-01T00:00:00Z" })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { adminCancelSubscription } = await import("../services/billing");
+    const r = await adminCancelSubscription("sub_1", "u1");
+    expect(r.status).toBe("cancelled");
+    expect(r.currentPeriodEnd).toBe("2027-02-01T00:00:00Z");
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/functions/v1/pay-cancel");
+    expect(opts.headers).toMatchObject({ Authorization: "Bearer tok-123" });
+    expect(JSON.parse(String(opts.body))).toEqual({ providerSubscriptionId: "sub_1", targetUserId: "u1" });
+  });
+
+  it("admin cancel surfaces a server rejection", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ ok: false, error: "Not your subscription" })
+    }));
+    const { adminCancelSubscription } = await import("../services/billing");
+    await expect(adminCancelSubscription("sub_1", "u2")).rejects.toThrow("Not your subscription");
   });
 });
 

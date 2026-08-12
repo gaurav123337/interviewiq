@@ -38,7 +38,7 @@ import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../services/entitlement";
-import { adminBillingActions, adminCreateCoupon, adminListCoupons, adminListPayments, adminRefundPayment, adminSimulatePurchase, fmtMinor, revenueSummary, type AdminCoupon, type AdminPaymentRow, type BillingActionRow } from "../services/billing";
+import { adminBillingActions, adminCancelSubscription, adminCreateCoupon, adminListCoupons, adminListPayments, adminListSubscriptions, adminRefundPayment, adminSimulatePurchase, fmtMinor, revenueSummary, type AdminCoupon, type AdminPaymentRow, type AdminSubscriptionRow, type BillingActionRow } from "../services/billing";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -77,6 +77,7 @@ const FEATURE_LABELS: Record<string, string> = {
 function BillingSection() {
   const [rows, setRows] = useState<AdminEntitlementRow[]>([]);
   const [payments, setPayments] = useState<AdminPaymentRow[]>([]);
+  const [subs, setSubs] = useState<AdminSubscriptionRow[]>([]);
   const [audit, setAudit] = useState<BillingActionRow[]>([]);
   const [coupons, setCoupons] = useState<AdminCoupon[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,8 +102,8 @@ function BillingSection() {
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminListEntitlements(), adminListPayments(), adminBillingActions(50), adminListCoupons()])
-      .then(([e, p, a, c]) => { setRows(e); setPayments(p); setAudit(a); setCoupons(c); })
+    void Promise.all([adminListEntitlements(), adminListPayments(), adminListSubscriptions(), adminBillingActions(50), adminListCoupons()])
+      .then(([e, p, s, a, c]) => { setRows(e); setPayments(p); setSubs(s); setAudit(a); setCoupons(c); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -149,6 +150,16 @@ function BillingSection() {
       toast(`🪙 Simulated ${gPlan} purchase for ${u.email || u.userId.slice(0, 8)} (${ext}) — same grant path as a real webhook`);
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Simulate failed")); }
+    finally { setBusy(false); }
+  };
+
+  const cancelSub = async (s: AdminSubscriptionRow) => {
+    setBusy(true);
+    try {
+      const r = await adminCancelSubscription(s.providerSubscriptionId, s.userId);
+      toast(`🔁 Cancelled ${s.plan} subscription for ${s.email || s.userId.slice(0, 8)} — access stays until ${r.currentPeriodEnd ? new Date(r.currentPeriodEnd).toLocaleDateString() : "period end"}`);
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Cancel failed")); }
     finally { setBusy(false); }
   };
 
@@ -382,6 +393,63 @@ function BillingSection() {
                         <button className={btnGhost + btnSm} disabled={busy} onClick={() => discount(u)}>Apply</button>
                       </div>
                     )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* subscriptions — every provider subscription across users */}
+      <div className={`${cardCls} overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">🔁 Subscriptions ({subs.length})</h3>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Active and cancelled provider subscriptions. Cancelling stops future billing at the period end — the user keeps Pro until then (verified server-side; the provider API is called only when the provider keys are configured).</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[680px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-line/10 bg-wht/[.04] text-[11px] uppercase tracking-wider text-mut">
+                <th className="px-4 py-2.5 font-bold">User</th>
+                <th className="px-3 py-2.5 font-bold">Plan</th>
+                <th className="px-3 py-2.5 font-bold">Provider</th>
+                <th className="px-3 py-2.5 font-bold">Status</th>
+                <th className="px-3 py-2.5 font-bold">Next billing date</th>
+                <th className="px-3 py-2.5 font-bold">Created</th>
+                <th className="px-4 py-2.5 font-bold">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {subs.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-mut">No subscriptions yet — they appear after the first recurring checkout (or a 🔁 sub simulate) completes.</td></tr>
+              )}
+              {subs.map((s, i) => (
+                <tr key={i} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
+                  <td className="px-4 py-3">
+                    <div className="font-bold">{s.email || "—"}</div>
+                    <div className="text-[11px] text-fnt">{s.userId.slice(0, 8)}…</div>
+                  </td>
+                  <td className="px-3 py-3 font-bold capitalize">{s.plan}</td>
+                  <td className="px-3 py-3"><Chip>{s.provider}</Chip></td>
+                  <td className="px-3 py-3">
+                    <Chip tone={s.status === "active" ? "ok" : s.status === "cancelled" ? "warn" : "bad"}>{s.status}</Chip>
+                  </td>
+                  <td className="px-3 py-3 text-[12px] text-fnt">
+                    {s.currentPeriodEnd ? new Date(s.currentPeriodEnd).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="px-3 py-3 text-[12px] text-fnt">{new Date(s.createdAt).toLocaleDateString()}</td>
+                  <td className="px-4 py-3">
+                    {s.status === "active" ? (
+                      <button
+                        className={btnDanger + btnSm}
+                        disabled={busy}
+                        onClick={() => cancelSub(s)}
+                        title="Cancel at period end — the user keeps Pro until the next billing date"
+                      >
+                        🔁 Cancel
+                      </button>
+                    ) : <span className="text-[12px] text-fnt">—</span>}
                   </td>
                 </tr>
               ))}

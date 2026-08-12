@@ -1,10 +1,14 @@
-/* pay-cancel — user-initiated subscription cancellation.
-   Provider-agnostic, JWT-gated (verify_jwt: true): the signed-in user asks
-   to cancel THEIR subscription; the function verifies ownership against the
-   subscriptions table, asks the provider to cancel at period end (access is
-   kept until current_period_end, future billing stops), then persists the
-   cancelled status through the shared upsert_subscription RPC (service
-   role), which also lands in the billing audit trail. */
+/* pay-cancel — subscription cancellation.
+   Provider-agnostic, JWT-gated (verify_jwt: true). Two callers are allowed:
+   - a user cancelling THEIR OWN subscription (Settings → Subscription), and
+   - an admin cancelling ANY user's subscription (Admin → Billing) — the
+     caller's email is verified against app_admins server-side with the
+     service-role client, and targetUserId must match the subscription's
+     owner, so an admin can't cancel a subscription they don't point at.
+   Cancellation is at period end (access is kept until current_period_end,
+   future billing stops), then the cancelled status is persisted through the
+   shared upsert_subscription RPC (service role), which lands in the billing
+   audit trail. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getPaymentProvider } from "../_shared/payment.ts";
@@ -30,8 +34,9 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Sign in to manage your subscription" }), { status: 401, headers });
     }
 
-    const body = await req.json().catch(() => ({})) as { providerSubscriptionId?: string };
+    const body = await req.json().catch(() => ({})) as { providerSubscriptionId?: string; targetUserId?: string };
     const subId = String(body.providerSubscriptionId ?? "").trim();
+    const targetUserId = String(body.targetUserId ?? "").trim() || undefined;
     if (!subId) {
       return new Response(JSON.stringify({ error: "Missing subscription id" }), { status: 400, headers });
     }
@@ -42,7 +47,8 @@ Deno.serve(async (req) => {
     }
     const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
 
-    /* ownership check — a user can only cancel their own subscription */
+    /* ownership check — a user can cancel their own subscription; an admin
+       can cancel anyone's (targetUserId must match the subscription owner) */
     const { data: sub, error: subErr } = await admin.from("subscriptions")
       .select("user_id, plan, provider_subscription_id")
       .eq("provider_subscription_id", subId).maybeSingle();
@@ -50,7 +56,17 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Subscription not found" }), { status: 404, headers });
     }
     if (sub.user_id !== data.user.id) {
-      return new Response(JSON.stringify({ error: "Not your subscription" }), { status: 403, headers });
+      /* admin-initiated cancel of another user's subscription */
+      if (targetUserId && targetUserId !== sub.user_id) {
+        return new Response(JSON.stringify({ error: "Subscription does not belong to that user" }), { status: 403, headers });
+      }
+      const email = (data.user.email ?? "").trim().toLowerCase();
+      const { data: adminRow } = email
+        ? await admin.from("app_admins").select("email").eq("email", email).maybeSingle()
+        : { data: null };
+      if (!adminRow) {
+        return new Response(JSON.stringify({ error: "Not your subscription" }), { status: 403, headers });
+      }
     }
 
     const provider = getPaymentProvider(Deno.env.toObject());
