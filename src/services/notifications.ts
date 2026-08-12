@@ -15,9 +15,12 @@ export interface ReminderPrefs {
   time: string;
   /** Sunday-evening weekly digest summarizing progress and what's next. */
   weekly: boolean;
+  /** Which weekday the weekly digest fires on: 0=Sun … 6=Sat, null = first
+      open of any new week. Lets users pick their digest day. */
+  digestDay?: number | null;
 }
 
-export const DEFAULT_PREFS: ReminderPrefs = { enabled: false, time: "19:00", weekly: false };
+export const DEFAULT_PREFS: ReminderPrefs = { enabled: false, time: "19:00", weekly: false, digestDay: null };
 
 export function isSupported(): boolean {
   return typeof window !== "undefined" && "Notification" in window;
@@ -186,6 +189,10 @@ export function checkWeeklyDigest(input: {
 
   const wk = weekKey(now);
   if (storageGet<string>(STORAGE_KEYS.notifLastWeekly, "") === wk) return { fired: false, reason: "already-notified" };
+
+  /* digest-day preference — skip unless today is the chosen weekday (or none chosen) */
+  const day = getPrefs().digestDay ?? null;
+  if (day != null && now.getDay() !== day) return { fired: false, reason: "not-digest-day" };
 
   const summary = digestSummary({ sessions: input.sessions, now });
   if (!summary) return { fired: false, reason: "no-data" };

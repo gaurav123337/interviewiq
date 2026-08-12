@@ -92,6 +92,27 @@ begin
   order by dimension, retrievals desc;
 end $$;
 
+/* KB suggestions — users hit a question the KB didn't answer and asked to
+   add it (queued as topic_suggestion events by the coach's suggest-a-topic
+   button). Grouped by topic so product sees the most-requested gaps first. */
+create or replace function public.admin_kb_suggestions(max_rows integer default 30)
+returns table (topic text, field text, level text, requests bigint, latest timestamptz)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  return query
+    select coalesce(e.meta->>'topic', '') as topic,
+           coalesce(nullif(e.meta->>'field', ''), 'general') as field,
+           coalesce(nullif(e.meta->>'level', ''), 'general') as level,
+           count(*)::bigint as requests,
+           max(e.created_at) as latest
+    from public.usage_events e
+    where e.kind = 'topic_suggestion' and coalesce(e.meta->>'topic', '') <> ''
+    group by 1, 2, 3
+    order by requests desc, latest desc
+    limit max_rows;
+end $$;
+
 /* Keyless knowledge-base search — term overlap over chunk contents, no
    embeddings needed. Powers the offline coach's RAG fallback so a no-key
    user still gets KB-grounded replies + citations when the network is up. */

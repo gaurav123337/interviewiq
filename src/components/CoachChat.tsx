@@ -14,7 +14,7 @@ import { getCodingTrack } from "../services/codingTrack";
 import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { withGrounding, type Citation } from "../services/tutor";
-import { documentTitles, lexicalSearch, ragTuningInfo } from "../services/rag";
+import { documentTitles, lexicalSearch, ragTuningInfo, suggestKbTopic } from "../services/rag";
 import { coachReply, type CoachContext, type CoachMsg } from "../coach/reply";
 import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
 import { CitationChip } from "./CitationChip";
@@ -284,6 +284,18 @@ export function CoachChat(ctx: CoachContext) {
                         <CitationChip key={ci} title={c.title} content={c.content} />
                       ))}
                     </div>
+                  )}
+                  {m.role === "assistant" && !m.grounded && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        suggestKbTopic(m.text, { field: ctx.fieldId, level: ctx.levelId });
+                        toast("💡 Thanks — queued for review. Admins see it in Quality → 🛰️ RAG health → 💡 KB suggestions");
+                      }}
+                      className="mt-1 rounded-full border border-line/15 px-2.5 py-1 text-[10.5px] font-bold text-mut transition-all hover:border-acc1/40 hover:text-ink"
+                    >
+                      💡 Suggest adding this to the knowledge base
+                    </button>
                   )}
                 </div>
               ))

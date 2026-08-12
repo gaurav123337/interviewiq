@@ -104,6 +104,20 @@ export function notifyKnowledgeGap(query: string): boolean {
   return true;
 }
 
+/** Queues a user's request to add a missing topic to the knowledge base.
+    Surfaced in the admin RAG health tab (💡 KB suggestions) so product can
+    see exactly what users hit that the KB didn't cover. Best-effort — never
+    breaks the chat. */
+export function suggestKbTopic(topic: string, ctx?: RagContext): void {
+  try {
+    queueEvent("topic_suggestion", {
+      topic: String(topic || "").slice(0, 300),
+      field: ctx?.field ?? null,
+      level: ctx?.level ?? null
+    });
+  } catch { /* suggestions are best-effort */ }
+}
+
 /** The tuning values actually in effect — surfaced to users in the tutor/coach
     so an answer's 📚 grounded / 🧠 general status is explainable. */
 export function ragTuningInfo(): { minSim: number; pool: number; hardFloor: number } {

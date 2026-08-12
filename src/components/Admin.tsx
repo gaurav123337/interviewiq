@@ -9,10 +9,10 @@ import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../s
 import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
-  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, adminRagDocuments,
-  adminRagDomains, adminRagHealth, adminRagWeeklyDigest, evaluateRagDigest, mergeQuality, ragHealthSummary,
-  ragHistogram, simulateTuning, suggestHardFloor, touchQuestion,
-  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow,
+  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminKbSuggestions, adminQuestionQuality,
+  adminRagDocuments, adminRagDomains, adminRagHealth, adminRagWeeklyDigest, bestTuningCell, evaluateRagDigest,
+  mergeQuality, ragHealthSummary, ragHistogram, simulateTuning, suggestHardFloor, touchQuestion,
+  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type KbSuggestionRow, type QualityRow,
   type RagDocRow, type RagDomainRow, type RagHealthRow, type RagWeeklyDigest
 } from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
@@ -32,6 +32,7 @@ import {
   deleteScraperSource, getScraperSchedule, listScraperSources, runScraperNow, saveScraperSchedule,
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
 } from "../services/scraper";
+import { CONFIG } from "../config";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
@@ -1368,6 +1369,9 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, rag: { ...config.rag, digest: { ...config.rag?.digest, [k]: v } } });
   /* coach vocabulary JSON editor (families + misconceptions) */
   const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
+  /* native digest email keys — stored locally only (never published to clients) */
+  const [secret, setSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailSecret, ""));
+  const [key, setKey] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailKey, ""));
   /* company question-frequency editor + publish audit (weekly digest) */
   const [freqCo, setFreqCo] = useState<string | null>(null);
   const freqCompanies = COMPANIES.filter(c => c.id !== "general");
@@ -1637,6 +1641,54 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
         <p className="mt-1 text-[11.5px] text-fnt">
           Passed to the bridge as <span className="font-mono">to</span> — point the webhook at an email bridge (e.g. Zapier → Gmail) to receive the digest by mail.
         </p>
+        <div className="mt-3 rounded-xl border border-line/10 bg-deep/40 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-bold">
+              <Switch
+                checked={config.rag?.digest?.nativeEmail ?? false}
+                onChange={v => setRagDigest("nativeEmail", v)}
+              />
+              📧 Native email — send via the <span className="font-mono">send-rag-digest</span> Edge Function (no webhook)
+            </label>
+          </div>
+          {config.rag?.digest?.nativeEmail && (
+            <div className="mt-3 space-y-3">
+              <label className="block">
+                <span className="mb-1 block text-[12px] font-bold text-mut">From address — {config.rag?.digest?.from ? "set" : "default InterviewIQ <digest@interviewiq.app>"}</span>
+                <input
+                  type="text"
+                  placeholder="InterviewIQ <digest@interviewiq.app>"
+                  value={config.rag?.digest?.from ?? ""}
+                  onChange={e => setRagDigest("from", e.target.value)}
+                  className="inp w-full"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[12px] font-bold text-mut">Function secret (x-rag-secret) — {storageGet(STORAGE_KEYS.ragEmailSecret, "") ? "saved in this browser" : "not set"}</span>
+                <input
+                  type="password"
+                  placeholder="rag… — must match the RAG_DIGEST_SECRET on the function"
+                  value={secret}
+                  onChange={e => { setSecret(e.target.value); storageSet(STORAGE_KEYS.ragEmailSecret, e.target.value); }}
+                  className="inp w-full"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[12px] font-bold text-mut">Resend API key — {storageGet(STORAGE_KEYS.ragEmailKey, "") ? "saved in this browser" : "not set"}</span>
+                <input
+                  type="password"
+                  placeholder="re_…"
+                  value={key}
+                  onChange={e => { setKey(e.target.value); storageSet(STORAGE_KEYS.ragEmailKey, e.target.value); }}
+                  className="inp w-full"
+                />
+              </label>
+              <p className="text-[11px] text-fnt">
+                🔒 Both keys stay <span className="font-bold">only in this browser</span> (never published to clients) and travel only to the Edge Function over HTTPS. Set the Resend key here, or as the function secret <span className="font-mono">RESEND_API_KEY</span> in Supabase.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* coach vocabulary — concept families + misconception corrections the
@@ -1828,6 +1880,7 @@ function QualitySection({
   const [ragDigest, setRagDigest] = useState<RagWeeklyDigest | null>(null);
   const [ragDocs, setRagDocs] = useState<RagDocRow[]>([]);
   const [ragDomains, setRagDomains] = useState<RagDomainRow[]>([]);
+  const [kbSuggestions, setKbSuggestions] = useState<KbSuggestionRow[]>([]);
   /* weekly digest delivery — which week the full digest was last sent */
   const [digestSentWeek, setDigestSentWeek] = useState<string | null>(() => storageGet<string>(STORAGE_KEYS.ragDigestWeek, "") || null);
   const [kbDocs, setKbDocs] = useState<PdfDocumentRow[]>([]);
@@ -1874,8 +1927,8 @@ Practice questions:
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), adminRagWeeklyDigest(), adminRagDomains(), listPdfDocuments()])
-      .then(([q, f, c, g, r, d, dig, dom, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setRagDigest(dig); setRagDomains(dom); setKbDocs(k); })
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), adminRagWeeklyDigest(), adminRagDomains(), adminKbSuggestions(), listPdfDocuments()])
+      .then(([q, f, c, g, r, d, dig, dom, sug, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setRagDigest(dig); setRagDomains(dom); setKbSuggestions(sug); setKbDocs(k); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -1920,29 +1973,47 @@ Practice questions:
   const deliverDigest = (wk: string) => {
     const opts = getRagDigestOpts();
     const dig = ragDigest;
-    if (!opts.webhook || !dig) return;
+    if (!dig) return;
+    const payload = {
+      event: "rag_weekly_digest",
+      week: wk,
+      to: (opts.email ?? "").split(",").map(s => s.trim()).filter(Boolean),
+      digest: {
+        total: dig.total,
+        grounded: dig.grounded,
+        groundedRate: Math.round((dig.grounded / Math.max(1, dig.total)) * 100),
+        empty: dig.empty,
+        emptyRate: Math.round((dig.empty / Math.max(1, dig.total)) * 100),
+        avgTopSim: dig.avgTopSim,
+        gateRejects: dig.gateRejects,
+        prevTotal: dig.prevTotal,
+        prevGrounded: dig.prevGrounded,
+        topQueries: dig.topQueries,
+        topDocs: dig.topDocs
+      },
+      sentAt: new Date().toISOString()
+    };
+    if (opts.nativeEmail) {
+      /* native delivery — send-rag-digest Edge Function (no webhook needed) */
+      const fnUrl = `${CONFIG.supabase.url}/functions/v1/send-rag-digest`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const secret = storageGet<string>(STORAGE_KEYS.ragEmailSecret, "");
+      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
+      if (secret) headers["x-rag-secret"] = secret;
+      if (key) headers["x-resend-key"] = key;
+      void fetch(fnUrl, { method: "POST", headers, body: JSON.stringify({ ...payload, from: opts.from ?? "InterviewIQ <digest@interviewiq.app>" }) })
+        .then(async r => {
+          const j = await r.json().catch(() => ({}));
+          if (j && !j.sent) toast("📧 Native digest: " + (j.reason ?? "delivery failed — check the function"));
+        })
+        .catch(() => toast("✗ Native digest delivery failed — is the send-rag-digest function deployed?"));
+      return;
+    }
+    if (!opts.webhook) return;
     void fetch(opts.webhook, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        event: "rag_weekly_digest",
-        week: wk,
-        to: (opts.email ?? "").split(",").map(s => s.trim()).filter(Boolean),
-        digest: {
-          total: dig.total,
-          grounded: dig.grounded,
-          groundedRate: Math.round((dig.grounded / Math.max(1, dig.total)) * 100),
-          empty: dig.empty,
-          emptyRate: Math.round((dig.empty / Math.max(1, dig.total)) * 100),
-          avgTopSim: dig.avgTopSim,
-          gateRejects: dig.gateRejects,
-          prevTotal: dig.prevTotal,
-          prevGrounded: dig.prevGrounded,
-          topQueries: dig.topQueries,
-          topDocs: dig.topDocs
-        },
-        sentAt: new Date().toISOString()
-      })
+      body: JSON.stringify(payload)
     }).catch(() => { /* delivery is best-effort — the in-app digest stays visible */ });
   };
 
@@ -2598,6 +2669,28 @@ Practice questions:
                     <span className="font-bold text-co">Highlighted</span> = today's live pair ({effectiveGroundingMinSim().toFixed(2)} / {effectiveHardFloor().toFixed(2)}).
                     Simulated only — click to stage, then publish from Product config.
                   </p>
+                  {(() => {
+                    const best = bestTuningCell(playCells, effectiveGroundingMinSim(), effectiveHardFloor());
+                    const liveCell = playCells.find(c => c.minSim === effectiveGroundingMinSim() && c.hardFloor === effectiveHardFloor());
+                    if (!best) return null;
+                    const same = best === liveCell || (liveCell && best.groundedRate === liveCell.groundedRate && best.gateRejects === liveCell.gateRejects);
+                    const delta = liveCell ? best.groundedRate - liveCell.groundedRate : 0;
+                    return (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {same ? (
+                          <Chip tone="ok">⭐ Best = live pair — already optimal for this window</Chip>
+                        ) : (
+                          <>
+                            <Chip tone="lvl">⭐ Best: {best.groundedRate}% @ {best.minSim.toFixed(2)} / {best.hardFloor.toFixed(2)}{best.gateRejects ? ` · 🚫${best.gateRejects}` : ""}</Chip>
+                            {liveCell && <span className="text-[11.5px] text-fnt">vs {liveCell.groundedRate}% now {delta > 0 ? `(+${delta}pt)` : `(${delta}pt)`}</span>}
+                            <button className={btnGhost + btnSm} onClick={() => onStageTuning(best.minSim, best.hardFloor)}>
+                              🎚️ Apply best
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* per-domain breakdown — which fields/levels ground best */}
@@ -2642,6 +2735,31 @@ Practice questions:
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+
+                {/* KB suggestions — users asked to add these topics */}
+                <div className="mt-4">
+                  <div className="mb-1.5 text-[12px] font-extrabold uppercase tracking-wider text-mut">💡 KB suggestions ({kbSuggestions.length})</div>
+                  <p className="mb-2 text-[11.5px] text-fnt">
+                    Users hit a question the knowledge base didn't answer and tapped “Suggest adding it”. Most-requested first —
+                    these are the gaps to write deep-dives or upload PDFs for.
+                  </p>
+                  <div className="max-h-[280px] space-y-1.5 overflow-y-auto">
+                    {kbSuggestions.length === 0 && (
+                      <p className="rounded-lg border border-line/10 bg-deep/40 px-3 py-4 text-center text-[12.5px] text-mut">
+                        No suggestions yet — they appear when users tap “💡 Suggest adding to knowledge base” on an ungrounded coach reply.
+                      </p>
+                    )}
+                    {kbSuggestions.map((s, i) => (
+                      <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+                        <span className="min-w-[160px] flex-1 truncate font-bold">{s.topic}</span>
+                        <Chip tone={s.requests >= 3 ? "bad" : "warn"}>{s.requests} request{s.requests === 1 ? "" : "s"}</Chip>
+                        <Chip tone="lvl">{s.field}</Chip>
+                        <Chip>{s.level}</Chip>
+                        <span className="text-[11px] text-fnt">last {new Date(s.latest).toLocaleDateString()}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 

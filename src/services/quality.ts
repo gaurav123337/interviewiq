@@ -318,6 +318,10 @@ export interface RagDigestOpts {
   sendWeekly?: boolean;
   /** Recipient emails the webhook / email bridge should deliver the digest to. */
   email?: string;
+  /** Deliver via the send-rag-digest Edge Function instead of a webhook. */
+  nativeEmail?: boolean;
+  /** From address used by the email bridge / Edge Function. */
+  from?: string;
 }
 
 export interface RagDigestAlert {
@@ -460,6 +464,30 @@ export function simulateTuning(
 /* Per-domain breakdown — which fields/levels ground best               */
 /* ------------------------------------------------------------------ */
 
+/** Picks the playground cell to recommend: highest grounded rate, ties broken
+    by fewest gate rejections, then closest to the current pair. Pure — the
+    "Apply best" one-click action in the admin RAG health tab. */
+export function bestTuningCell(
+  cells: TuningCell[],
+  currentMinSim: number,
+  currentHardFloor: number
+): TuningCell | null {
+  if (!cells.length) return null;
+  let best = cells[0];
+  for (const c of cells) {
+    if (c.groundedRate > best.groundedRate) { best = c; continue; }
+    if (c.groundedRate === best.groundedRate) {
+      if (c.gateRejects < best.gateRejects) { best = c; continue; }
+      if (c.gateRejects === best.gateRejects) {
+        const dc = Math.abs(c.minSim - currentMinSim) + Math.abs(c.hardFloor - currentHardFloor);
+        const db = Math.abs(best.minSim - currentMinSim) + Math.abs(best.hardFloor - currentHardFloor);
+        if (dc < db) best = c;
+      }
+    }
+  }
+  return best;
+}
+
 export interface RagDomainRow {
   /** "field" or "level" — the aggregation dimension. */
   dimension: string;
@@ -487,6 +515,30 @@ export async function adminRagDomains(): Promise<RagDomainRow[]> {
     empty: Number(r.empty ?? 0),
     avgTopSim: Number(r.avg_top_sim ?? 0),
     gateRejects: Number(r.gate_rejects ?? 0)
+  }));
+}
+
+export interface KbSuggestionRow {
+  topic: string;
+  field: string;
+  level: string;
+  requests: number;
+  latest: string;
+}
+
+/** Topics users asked to add to the knowledge base (queued by the coach's
+    suggest-a-topic button). Grouped by topic — most-requested first. */
+export async function adminKbSuggestions(): Promise<KbSuggestionRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_kb_suggestions");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+    topic: String(r.topic ?? ""),
+    field: String(r.field ?? "general"),
+    level: String(r.level ?? "general"),
+    requests: Number(r.requests ?? 0),
+    latest: r.latest as string
   }));
 }
 

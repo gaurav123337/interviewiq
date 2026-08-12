@@ -115,6 +115,16 @@ describe("weekly digest", () => {
     savePrefs({ ...getPrefs(), weekly: false });
     expect(checkWeeklyDigest({ sessions: [], now: new Date("2026-08-09T12:00:00"), permission: "granted" }).reason).toBe("disabled");
   });
+
+  it("honors the chosen digest day (skip until that weekday)", () => {
+    savePrefs({ ...getPrefs(), weekly: true, digestDay: 0 /* Sunday */ });
+    const monday = new Date("2026-08-10T12:00:00");
+    expect(monday.getDay()).toBe(1);
+    expect(checkWeeklyDigest({ sessions: [], now: monday, permission: "granted" }).reason).toBe("not-digest-day");
+    const sunday = new Date("2026-08-16T12:00:00");
+    expect(sunday.getDay()).toBe(0);
+    expect(checkWeeklyDigest({ sessions: [], now: sunday, permission: "granted" }).fired).toBe(true);
+  });
 });
 
 describe("notification delivery", () => {

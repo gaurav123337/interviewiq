@@ -11,7 +11,7 @@ import {
 } from "../services/rag";
 import { setRemoteConfig } from "../services/remoteConfig";
 import {
-  evaluateRagDigest, ragHealthSummary, ragHistogram, simulateTuning, suggestHardFloor,
+  bestTuningCell, evaluateRagDigest, ragHealthSummary, ragHistogram, simulateTuning, suggestHardFloor,
   type RagHealthRow, type RagWeeklyDigest
 } from "../services/quality";
 import { contentHash, sectionChunkText } from "../services/embeddings";
@@ -433,6 +433,20 @@ describe("tuning playground", () => {
     const cells = simulateTuning([], [0.45], [0.85]);
     expect(cells).toEqual([{ minSim: 0.45, hardFloor: 0.85, total: 0, grounded: 0, gateRejects: 0, groundedRate: 0 }]);
   });
+  it("bestTuningCell prefers the highest grounded rate, fewest gate rejects, then proximity", () => {
+    const cells = simulateTuning(rows, [0.45, 0.55], [0.85, 0.9]);
+    const best = bestTuningCell(cells, 0.45, 0.85)!;
+    /* at 0.55 both candidates drop below the cutoff → 0% beats nothing is impossible,
+       so the best must be one of the 50% cells; 0.45/0.85 wins on proximity */
+    expect(best.groundedRate).toBeGreaterThan(0);
+    expect(best.minSim).toBe(0.45);
+    expect(best.hardFloor).toBe(0.85);
+    /* a strictly better cell wins over proximity */
+    const better = cells.map(c => ({ ...c, groundedRate: c.minSim === 0.45 ? 100 : c.groundedRate }));
+    const best2 = bestTuningCell(better, 0.45, 0.85)!;
+    expect(best2.minSim).toBe(0.45);
+    expect(best2.groundedRate).toBe(100);
+  });
 });
 
 describe("user-facing knowledge-gap notification", () => {
@@ -444,6 +458,19 @@ describe("user-facing knowledge-gap notification", () => {
     expect(notifyKnowledgeGap("how do closures capture variables")).toBe(true);
     expect(notifyKnowledgeGap("how do closures capture variables")).toBe(false);
     expect(notifyKnowledgeGap("what is caching")).toBe(false);
+  });
+});
+
+describe("suggest-a-topic", () => {
+  it("queues a topic_suggestion event with the field/level context", async () => {
+    const { suggestKbTopic } = await import("../services/rag");
+    suggestKbTopic("how do closures capture variables", { field: "frontend", level: "senior" });
+    const outbox = storageGet<{ kind: string; meta: Record<string, unknown> }[]>(STORAGE_KEYS.eventOutbox, []);
+    const ev = outbox.find(e => e.kind === "topic_suggestion");
+    expect(ev).toBeDefined();
+    expect(ev!.meta.topic).toContain("closures");
+    expect(ev!.meta.field).toBe("frontend");
+    expect(ev!.meta.level).toBe("senior");
   });
 });
 

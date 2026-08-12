@@ -29,6 +29,9 @@ export const STORAGE_KEYS = {
   ragAlertWeek: "iq.ragAlertWeek",
   ragDigestWeek: "iq.ragDigestWeek",
   ragGapNotif: "iq.ragGapNotif",
+  /* admin-local (never published) keys for native digest email */
+  ragEmailSecret: "iq.ragEmailSecret",
+  ragEmailKey: "iq.ragEmailKey",
   code: "iq.code",
   uiCode: "iq.uiCode",
   codingTrack: "iq.codingTrack",

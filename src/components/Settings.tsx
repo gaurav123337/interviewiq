@@ -5,7 +5,7 @@ import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
-import { fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
+import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
 import { cloudOAuthSignIn, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud } from "../services/cloud";
 import type { OAuthProvider } from "../services/cloud";
 import { useApp } from "../store";
@@ -93,6 +93,23 @@ export function Settings() {
   const testNotification = async () => {
     const ok = await fire("🔔 InterviewIQ", "This is how your practice reminder will look.");
     toast(ok ? "✅ Notification sent" : "🔕 Enable notifications first");
+  };
+
+  const setDigestDay = (day: string) => {
+    savePrefs({ ...getPrefs(), digestDay: day === "any" ? null : Number(day) });
+    setPrefs(getPrefs());
+  };
+
+  const testWeeklyDigest = async () => {
+    if (getPermission() !== "granted") {
+      const p = await requestPermission();
+      setPerm(p);
+      if (p !== "granted") { toast("🔕 Notifications blocked — allow them in your browser settings"); return; }
+    }
+    const s = digestSummary({ sessions });
+    if (!s) { toast("Nothing to summarize yet — complete a session first"); return; }
+    const ok = await fire(s.title, s.body);
+    toast(ok ? "📊 Test digest sent" : "🔕 Enable notifications first");
   };
 
   const saveKey = () => {
@@ -309,11 +326,26 @@ export function Settings() {
                 <input type="time" value={prefs.time} onChange={e => setReminderTime(e.target.value)} className="select-cls" />
               </OptRow>
             )}
-            <OptRow title="Sunday digest" sub="A weekly summary: sessions, streak, and what's next on your roadmap">
+            <OptRow title="Weekly digest" sub="A weekly summary: sessions, streak, and what's next on your roadmap">
               <Switch checked={prefs.weekly} onChange={toggleWeekly} />
             </OptRow>
+            {prefs.weekly && (
+              <OptRow title="Digest day" sub="Which day the summary fires (any = the first time you open the app in a new week)">
+                <select value={prefs.digestDay ?? "any"} onChange={e => setDigestDay(e.target.value)} className="select-cls">
+                  <option value="any">Any day — first open of the week</option>
+                  <option value="0">Sunday</option>
+                  <option value="1">Monday</option>
+                  <option value="2">Tuesday</option>
+                  <option value="3">Wednesday</option>
+                  <option value="4">Thursday</option>
+                  <option value="5">Friday</option>
+                  <option value="6">Saturday</option>
+                </select>
+              </OptRow>
+            )}
             <div className="flex flex-wrap gap-2.5 pt-1">
               <button className={btnGhost + btnSm} onClick={testNotification}>🔔 Test notification</button>
+              {prefs.weekly && <button className={btnGhost + btnSm} onClick={testWeeklyDigest}>📊 Test weekly digest</button>}
             </div>
           </div>
         </section>

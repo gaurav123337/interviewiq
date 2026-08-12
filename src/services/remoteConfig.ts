@@ -70,6 +70,10 @@ export interface RemoteConfig {
       sendWeekly?: boolean;
       /** Recipient emails the webhook/email bridge should deliver the digest to. */
       email?: string;
+      /** Deliver via the send-rag-digest Edge Function instead of a webhook. */
+      nativeEmail?: boolean;
+      /** From address used by the email bridge / Edge Function. */
+      from?: string;
     };
   };
 }
@@ -133,6 +137,8 @@ export function getRagDefaults(): {
     webhook?: string;
     sendWeekly?: boolean;
     email?: string;
+    nativeEmail?: boolean;
+    from?: string;
   };
 } {
   return { ...(getRemoteConfig().rag ?? {}) };
