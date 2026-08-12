@@ -123,17 +123,21 @@ export interface RefundResult {
   ok: boolean;
   providerStatus: string | null;
   providerRefundId: string | null;
+  amountMinor: number | null;
+  withinGrace: boolean;
+  emailSent: boolean;
   note: string;
 }
 
 /** Admin: refund a confirmed payment. Goes through the pay-refund Edge
     Function, which verifies the caller is an admin server-side (app_admins
-    allow-list, never trusting the client), calls the provider's refund API
-    when its keys are configured, then marks the payment refunded through the
-    shared apply_refund SQL helper — subtracting the plan's days and landing
-    the reason in the audit trail. `reason` gives every refund a paper trail,
-    mirroring cancel-with-reason. */
-export async function adminRefundPayment(providerPaymentId: string, reason = ""): Promise<RefundResult> {
+    allow-list, never trusting the client), enforces the published refund
+    policy (grace window + per-user cap unless overridden), calls the
+    provider's refund API when its keys are configured, then marks the
+    payment refunded through the shared apply_refund SQL helper — subtracting
+    the plan's days (scaled for partial refunds) and landing the reason in
+    the audit trail. `amountMinor` omitted = full refund; given = partial. */
+export async function adminRefundPayment(providerPaymentId: string, reason = "", amountMinor?: number): Promise<RefundResult> {
   const client = await getSupabaseClient();
   if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
   const { data: session } = await client.auth.getSession();
@@ -143,16 +147,63 @@ export async function adminRefundPayment(providerPaymentId: string, reason = "")
   const res = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-refund`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ providerPaymentId, reason: reason.trim() || undefined })
+    body: JSON.stringify({
+      providerPaymentId,
+      reason: reason.trim() || undefined,
+      amountMinor: amountMinor && amountMinor > 0 ? amountMinor : undefined
+    })
   });
-  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; providerStatus?: string | null; providerRefundId?: string | null; note?: string; error?: string };
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean; providerStatus?: string | null; providerRefundId?: string | null;
+    amountMinor?: number | null; withinGrace?: boolean; emailSent?: boolean; note?: string; error?: string;
+  };
   if (!res.ok || !body.ok) throw new Error(body.error ?? "Refund failed — try again.");
   return {
     ok: true,
     providerStatus: body.providerStatus ?? null,
     providerRefundId: body.providerRefundId ?? null,
+    amountMinor: body.amountMinor ?? null,
+    withinGrace: Boolean(body.withinGrace),
+    emailSent: Boolean(body.emailSent),
     note: body.note ?? "Refunded."
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Refund policy (admin-published app_config → refund_policy)          */
+/* ------------------------------------------------------------------ */
+
+export interface RefundPolicy {
+  grace_days?: number;
+  max_refunds_per_user?: number;
+  reason_presets?: string[];
+}
+
+export const REFUND_POLICY_DEFAULTS: RefundPolicy = {
+  grace_days: 7,
+  max_refunds_per_user: 3,
+  reason_presets: ["Duplicate purchase", "Requested by user", "Billing error", "User cancelled"]
+};
+
+/** Admin-published refund policy (public-read so the admin form can render
+    the reason presets). Falls back to the defaults when unpublished. */
+export async function getRefundPolicy(): Promise<RefundPolicy> {
+  const client = await getSupabaseClient();
+  if (!client) return { ...REFUND_POLICY_DEFAULTS };
+  const { data, error } = await client.from("app_config").select("value").eq("key", "refund_policy").maybeSingle();
+  if (error || !data) return { ...REFUND_POLICY_DEFAULTS };
+  return { ...REFUND_POLICY_DEFAULTS, ...(data.value as RefundPolicy) };
+}
+
+/** Publish the refund policy (RLS enforces is_admin server-side). */
+export async function publishRefundPolicy(policy: RefundPolicy): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("app_config").upsert(
+    { key: "refund_policy", value: policy, updated_at: Date.now() },
+    { onConflict: "key" }
+  );
+  if (error) throw new Error(error.message);
 }
 
 /** Admin: simulate a confirmed purchase — funnels through the exact same

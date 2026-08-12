@@ -30,11 +30,13 @@ const baseImpl = vi.hoisted(() => (name: string): Promise<{ data: unknown; error
 });
 
 const rpc = vi.hoisted(() => vi.fn(baseImpl));
+const from = vi.hoisted(() => vi.fn());
 
 vi.mock("../services/cloud", () => ({
   getCloudState: () => signedIn(),
   getSupabaseClient: vi.fn().mockResolvedValue({
     rpc,
+    from,
     auth: { getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: "tok-123" } } }) }
   })
 }));
@@ -206,17 +208,62 @@ describe("admin refund flow", () => {
         ok: true,
         providerStatus: "processed",
         providerRefundId: "rfnd_9",
+        amountMinor: 7900,
+        withinGrace: true,
+        emailSent: true,
         note: "Refunded via razorpay (refund rfnd_9) — entitlement days subtracted."
       })
     });
     vi.stubGlobal("fetch", fetchMock);
     const { adminRefundPayment } = await import("../services/billing");
     const r = await adminRefundPayment("pay_1", "  Overcharged  ");
-    expect(r).toMatchObject({ ok: true, providerRefundId: "rfnd_9" });
+    expect(r).toMatchObject({ ok: true, providerRefundId: "rfnd_9", emailSent: true });
     const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/functions/v1/pay-refund");
     expect(opts.headers).toMatchObject({ Authorization: "Bearer tok-123" });
     expect(JSON.parse(String(opts.body))).toEqual({ providerPaymentId: "pay_1", reason: "Overcharged" });
+  });
+
+  it("admin refund carries a partial amount when given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, amountMinor: 500, withinGrace: false, emailSent: false, note: "Refunded." })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { adminRefundPayment } = await import("../services/billing");
+    const r = await adminRefundPayment("pay_1", "Partial", 500);
+    expect(r.amountMinor).toBe(500);
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(opts.body))).toEqual({ providerPaymentId: "pay_1", reason: "Partial", amountMinor: 500 });
+  });
+
+  it("reads the published refund policy (defaults when unpublished)", async () => {
+    from.mockReset();
+    from.mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+        })
+      })
+    });
+    const { getRefundPolicy } = await import("../services/billing");
+    const p = await getRefundPolicy();
+    expect(p.grace_days).toBe(7);
+    expect(p.max_refunds_per_user).toBe(3);
+    expect(p.reason_presets).toContain("Duplicate purchase");
+    expect(from).toHaveBeenCalledWith("app_config");
+  });
+
+  it("publishes the refund policy via app_config upsert", async () => {
+    from.mockReset();
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    from.mockReturnValue({ upsert });
+    const { publishRefundPolicy } = await import("../services/billing");
+    await publishRefundPolicy({ grace_days: 14, max_refunds_per_user: 5, reason_presets: ["A", "B"] });
+    expect(from).toHaveBeenCalledWith("app_config");
+    const [arg] = upsert.mock.calls[0] as [{ key: string; value: Record<string, unknown> }];
+    expect(arg.key).toBe("refund_policy");
+    expect(arg.value).toMatchObject({ grace_days: 14, max_refunds_per_user: 5 });
   });
 
   it("admin refund surfaces a server rejection (e.g. non-admin caller)", async () => {

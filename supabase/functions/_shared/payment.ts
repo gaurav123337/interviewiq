@@ -402,6 +402,7 @@ export interface ProviderEnv {
   RAZORPAY_API_BASE?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  RESEND_API_KEY?: string;
 }
 
 export function getPaymentProvider(env: ProviderEnv): PaymentProvider {
@@ -444,4 +445,52 @@ export function isCancelEvent(provider: string, event: string | null): boolean {
   if (!event) return false;
   if (provider === "stripe") return event === "customer.subscription.deleted";
   return event === "subscription.cancelled";
+}
+
+/* ------------------------------------------------------------------ */
+/* Refund policy (admin-published via app_config → refund_policy)       */
+/* ------------------------------------------------------------------ */
+
+export interface RefundPolicy {
+  /** Purchases younger than this are always refundable (no limit check). */
+  grace_days?: number;
+  /** Max refunds allowed per user outside the grace window (0 = unlimited). */
+  max_refunds_per_user?: number;
+  /** Reason presets surfaced as a picker in the admin refund form. */
+  reason_presets?: string[];
+}
+
+export const REFUND_POLICY_DEFAULTS: RefundPolicy = {
+  grace_days: 7,
+  max_refunds_per_user: 3,
+  reason_presets: ["Duplicate purchase", "Requested by user", "Billing error", "User cancelled" ]
+};
+
+export interface RefundPolicyDecision {
+  allowed: boolean;
+  withinGrace: boolean;
+  message?: string;
+}
+
+/** Pure policy check — enforced server-side by pay-refund (the client's
+    word is never trusted). `override` is the explicit admin force path. */
+export function refundPolicyCheck(i: {
+  policy: RefundPolicy | null;
+  refundCount: number;
+  purchaseAgeDays: number;
+  override?: boolean;
+}): RefundPolicyDecision {
+  const p = { ...REFUND_POLICY_DEFAULTS, ...(i.policy ?? {}) };
+  const graceDays = Math.max(0, p.grace_days ?? REFUND_POLICY_DEFAULTS.grace_days!);
+  const max = Math.max(0, p.max_refunds_per_user ?? REFUND_POLICY_DEFAULTS.max_refunds_per_user!);
+  const withinGrace = i.purchaseAgeDays <= graceDays;
+  if (i.override) return { allowed: true, withinGrace };
+  if (max > 0 && i.refundCount >= max && !withinGrace) {
+    return {
+      allowed: false,
+      withinGrace,
+      message: `This user already has ${i.refundCount} refund${i.refundCount === 1 ? "" : "s"} — the policy allows ${max} outside the ${graceDays}-day grace window. Refund within the window or override explicitly.`
+    };
+  }
+  return { allowed: true, withinGrace };
 }

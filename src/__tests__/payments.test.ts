@@ -6,8 +6,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   extendExpiry, getPaymentProvider, isCancelEvent, isPaidEvent, isRefundEvent, planDays, priceWithDiscount,
-  RazorpayProvider, StripeProvider
+  RazorpayProvider, refundPolicyCheck, StripeProvider
 } from "../../supabase/functions/_shared/payment";
+import { sendEmail, sendRefundEmail } from "../../supabase/functions/_shared/email";
 import { revenueSummary, subscriptionSummary, type AdminPaymentRow, type AdminSubscriptionRow } from "../services/billing";
 
 /* WebCrypto helpers — no node builtins needed */
@@ -445,5 +446,79 @@ describe("subscription summary (admin analytics)", () => {
     /* cancelled 1 of 3 decided (2 active + 1 cancelled) = 33% */
     expect(s.churnRate).toBe(33);
     expect(subscriptionSummary([]).churnRate).toBe(0);
+  });
+});
+
+describe("refund policy (admin-published, enforced server-side by pay-refund)", () => {
+  it("always allows purchases inside the grace window", () => {
+    const d = refundPolicyCheck({ policy: null, refundCount: 9, purchaseAgeDays: 2 });
+    expect(d.allowed).toBe(true);
+    expect(d.withinGrace).toBe(true);
+  });
+
+  it("blocks outside the window once the per-user cap is reached", () => {
+    const d = refundPolicyCheck({ policy: { grace_days: 7, max_refunds_per_user: 3 }, refundCount: 3, purchaseAgeDays: 30 });
+    expect(d.allowed).toBe(false);
+    expect(d.withinGrace).toBe(false);
+    expect(d.message).toMatch(/3 refunds/);
+  });
+
+  it("allows outside the window while under the cap", () => {
+    const d = refundPolicyCheck({ policy: { grace_days: 7, max_refunds_per_user: 3 }, refundCount: 2, purchaseAgeDays: 30 });
+    expect(d.allowed).toBe(true);
+    expect(d.withinGrace).toBe(false);
+  });
+
+  it("honors an explicit admin override even past the cap", () => {
+    const d = refundPolicyCheck({ policy: { grace_days: 7, max_refunds_per_user: 3 }, refundCount: 5, purchaseAgeDays: 60, override: true });
+    expect(d.allowed).toBe(true);
+    expect(d.withinGrace).toBe(false);
+  });
+
+  it("max 0 means unlimited", () => {
+    expect(refundPolicyCheck({ policy: { max_refunds_per_user: 0 }, refundCount: 100, purchaseAgeDays: 999 }).allowed).toBe(true);
+  });
+
+  it("uses defaults when the policy is unpublished", () => {
+    const d = refundPolicyCheck({ policy: null, refundCount: 3, purchaseAgeDays: 30 });
+    expect(d.allowed).toBe(false); /* default cap 3, default grace 7 */
+  });
+});
+
+describe("refund email (Resend adapter, clean no-op fallback)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends via Resend when the key is set", async () => {
+    const calls: { url: string; headers?: Record<string, string>; body?: string }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), headers: init?.headers as Record<string, string>, body: String(init?.body) });
+      return new Response(JSON.stringify({ id: "mail_1" }), { status: 200 });
+    });
+    const r = await sendRefundEmail({ to: "a@b.c", plan: "yearly", amountLabel: "USD 79.00", reason: "Billing error", refundId: "rfnd_1", apiKey: "re_key" });
+    expect(r.sent).toBe(true);
+    expect(calls[0].url).toBe("https://api.resend.com/emails");
+    expect(calls[0].headers?.Authorization).toBe("Bearer re_key");
+    const body = JSON.parse(String(calls[0].body)) as { to: string; subject: string; html: string };
+    expect(body.to).toBe("a@b.c");
+    expect(body.subject).toContain("Yearly");
+    expect(body.html).toContain("USD 79.00");
+  });
+
+  it("no-ops cleanly without a key", async () => {
+    const r = await sendRefundEmail({ to: "a@b.c", plan: "monthly", amountLabel: "USD 9.00" });
+    expect(r.sent).toBe(false);
+    expect(r.note).toContain("RESEND_API_KEY");
+  });
+
+  it("surfaces a provider failure without throwing", async () => {
+    vi.stubGlobal("fetch", async () => new Response("rate limited", { status: 429 }));
+    const r = await sendRefundEmail({ to: "a@b.c", plan: "monthly", amountLabel: "USD 9.00", apiKey: "re_key" });
+    expect(r.sent).toBe(false);
+    expect(r.note).toMatch(/Email failed \(429\)/);
+  });
+
+  it("sendEmail shares the same fallback contract", async () => {
+    const r = await sendEmail({ to: "a@b.c", subject: "Hi", html: "<p>hi</p>" });
+    expect(r.sent).toBe(false);
   });
 });

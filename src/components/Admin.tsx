@@ -38,7 +38,7 @@ import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../services/entitlement";
-import { adminBillingActions, adminCancelSubscription, adminCreateCoupon, adminListCoupons, adminListPayments, adminListSubscriptions, adminRefundPayment, adminSimulatePurchase, fmtMinor, revenueSummary, subscriptionSummary, type AdminCoupon, type AdminPaymentRow, type AdminSubscriptionRow, type BillingActionRow } from "../services/billing";
+import { REFUND_POLICY_DEFAULTS, adminBillingActions, adminCancelSubscription, adminCreateCoupon, adminListCoupons, adminListPayments, adminListSubscriptions, adminRefundPayment, adminSimulatePurchase, fmtMinor, getRefundPolicy, publishRefundPolicy, revenueSummary, subscriptionSummary, type AdminCoupon, type AdminPaymentRow, type AdminSubscriptionRow, type BillingActionRow, type RefundPolicy } from "../services/billing";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -106,6 +106,7 @@ function BillingSection() {
       .then(([e, p, s, a, c]) => { setRows(e); setPayments(p); setSubs(s); setAudit(a); setCoupons(c); })
       .catch(() => {})
       .finally(() => setLoading(false));
+    void getRefundPolicy().then(p => { setPolicyDraft(p); setPresetsText((p.reason_presets ?? []).join(", ")); }).catch(() => {});
   };
   useEffect(load, []);
 
@@ -116,6 +117,11 @@ function BillingSection() {
   const [cancelReason, setCancelReason] = useState("");
   const [refundTarget, setRefundTarget] = useState<AdminPaymentRow | null>(null);
   const [refundReason, setRefundReason] = useState("");
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundOverride, setRefundOverride] = useState(false);
+  /* refund policy editor + enforcement preview */
+  const [policyDraft, setPolicyDraft] = useState<RefundPolicy>({ ...REFUND_POLICY_DEFAULTS });
+  const [presetsText, setPresetsText] = useState((REFUND_POLICY_DEFAULTS.reason_presets ?? []).join(", "));
 
   const createCoupon = async () => {
     if (!coCode.trim() || coPct < 1) { toast("Code and a 1–100% discount are required"); return; }
@@ -170,14 +176,41 @@ function BillingSection() {
     finally { setBusy(false); }
   };
 
+  /* refund policy preview — mirrors the server's check (server stays authoritative) */
+  const policyDecision = (p: AdminPaymentRow) => {
+    const graceDays = policyDraft.grace_days ?? REFUND_POLICY_DEFAULTS.grace_days ?? 7;
+    const max = policyDraft.max_refunds_per_user ?? REFUND_POLICY_DEFAULTS.max_refunds_per_user ?? 3;
+    const refundCount = payments.filter(x => x.userId === p.userId && x.status === "refunded").length;
+    const ageDays = Math.max(0, (Date.now() - new Date(p.createdAt).getTime()) / 86_400_000);
+    const withinGrace = ageDays <= graceDays;
+    return { withinGrace, refundCount, max, graceDays, blocked: max > 0 && refundCount >= max && !withinGrace && !refundOverride };
+  };
+
   const refund = async (p: AdminPaymentRow) => {
     setBusy(true);
     try {
-      const r = await adminRefundPayment(p.providerPaymentId, refundReason);
-      toast(`💸 Refunded ${fmtMinor(p.amountMinor, p.currency)} ${p.plan} for ${p.email || p.userId.slice(0, 8)} — ${r.note}`);
-      setRefundTarget(null); setRefundReason("");
+      const amt = parseFloat(refundAmount);
+      const amountMinor = Number.isFinite(amt) && amt > 0 ? Math.round(amt * 100) : undefined;
+      const r = await adminRefundPayment(p.providerPaymentId, refundReason, amountMinor);
+      toast(`💸 Refunded ${fmtMinor(r.amountMinor ?? p.amountMinor, p.currency)} ${p.plan} for ${p.email || p.userId.slice(0, 8)} — ${r.note}${r.emailSent ? " 📧 user notified" : ""}`);
+      setRefundTarget(null); setRefundReason(""); setRefundOverride(false);
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Refund failed")); }
+    finally { setBusy(false); }
+  };
+
+  const savePolicy = async () => {
+    setBusy(true);
+    try {
+      const next: RefundPolicy = {
+        grace_days: Math.max(0, Number(policyDraft.grace_days) || 0),
+        max_refunds_per_user: Math.max(0, Number(policyDraft.max_refunds_per_user) || 0),
+        reason_presets: presetsText.split(",").map(s => s.trim()).filter(Boolean)
+      };
+      await publishRefundPolicy(next);
+      setPolicyDraft(next);
+      toast("📋 Refund policy published — pay-refund enforces it on the next refund");
+    } catch (e) { toast("✗ " + ((e as Error).message || "Publish failed")); }
     finally { setBusy(false); }
   };
 
@@ -508,6 +541,32 @@ function BillingSection() {
         </div>
       </div>
 
+      {/* refund policy — grace window + per-user cap + reason presets */}
+      <div className={`${cardCls} overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">📋 Refund policy</h3>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Purchases inside the grace window always refund; outside it, a per-user refund cap applies unless the admin overrides. pay-refund enforces this server-side — no deploy needed.</p>
+        </div>
+        <div className="grid gap-4 p-5 sm:grid-cols-3">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Grace window (days)</span>
+            <input type="number" min={0} className="inp" value={policyDraft.grace_days ?? 0} onChange={e => setPolicyDraft({ ...policyDraft, grace_days: Number(e.target.value) || 0 })} />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Max refunds per user</span>
+            <input type="number" min={0} className="inp" value={policyDraft.max_refunds_per_user ?? 0} onChange={e => setPolicyDraft({ ...policyDraft, max_refunds_per_user: Number(e.target.value) || 0 })} />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Reason presets (comma-separated)</span>
+            <input className="inp" value={presetsText} onChange={e => setPresetsText(e.target.value)} placeholder="Duplicate purchase, Requested by user, …" />
+          </label>
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-line/10 px-5 py-3.5">
+          <span className="text-[11.5px] text-fnt">0 = unlimited. Presets appear as a picker in the refund form.</span>
+          <button className={btnPrimary + btnSm} onClick={savePolicy} disabled={busy}>📋 Publish policy</button>
+        </div>
+      </div>
+
       {/* payments — every confirmed provider purchase */}
       <div className={`${cardCls} overflow-hidden`}>
         <div className="border-b border-line/10 p-5">
@@ -549,25 +608,45 @@ function BillingSection() {
                   <td className="px-3 py-3 text-[12px] text-fnt">{new Date(p.createdAt).toLocaleString()}</td>
                   <td className="px-4 py-3">
                     {p.status === "paid" && refundTarget?.providerPaymentId === p.providerPaymentId ? (
-                      <div className="flex flex-col gap-1.5">
+                      <div className="flex w-[220px] flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number" min={0.01} max={(p.amountMinor / 100).toFixed(2)} step={0.01}
+                            value={refundAmount}
+                            onChange={e => setRefundAmount(e.target.value)}
+                            placeholder={(p.amountMinor / 100).toFixed(2)}
+                            className="inp py-1 text-[12px]"
+                          />
+                          <span className="whitespace-nowrap text-[10.5px] text-fnt">of {fmtMinor(p.amountMinor, p.currency)}</span>
+                        </div>
                         <input
                           value={refundReason}
+                          list="refund-reasons"
                           onChange={e => setRefundReason(e.target.value)}
-                          placeholder="Reason (recorded in the audit trail)"
+                          placeholder="Reason (audit trail)"
                           className="inp py-1 text-[12px]"
                           autoFocus
                         />
+                        <datalist id="refund-reasons">
+                          {(policyDraft.reason_presets ?? []).map(r => <option key={r} value={r} />)}
+                        </datalist>
+                        {(() => { const d = policyDecision(p); return d.blocked ? (
+                          <label className="flex cursor-pointer items-start gap-1.5 text-[11px] leading-snug text-mut">
+                            <input type="checkbox" className="mt-0.5" checked={refundOverride} onChange={e => setRefundOverride(e.target.checked)} />
+                            Override policy cap — already {d.refundCount} refund{d.refundCount === 1 ? "" : "s"}, outside the {d.graceDays}-day grace window
+                          </label>
+                        ) : null; })()}
                         <div className="flex gap-1.5">
                           <button className={btnDanger + btnSm} disabled={busy} onClick={() => refund(p)}>Confirm refund</button>
-                          <button className={btnGhost + btnSm} disabled={busy} onClick={() => { setRefundTarget(null); setRefundReason(""); }}>Back</button>
+                          <button className={btnGhost + btnSm} disabled={busy} onClick={() => { setRefundTarget(null); setRefundReason(""); setRefundOverride(false); }}>Back</button>
                         </div>
                       </div>
                     ) : p.status === "paid" ? (
                       <button
                         className={btnDanger + btnSm}
                         disabled={busy}
-                        onClick={() => { setRefundTarget(p); setRefundReason(""); }}
-                        title="Refund — calls the provider when its keys are configured, then marks it refunded and subtracts the plan's days from the entitlement"
+                        onClick={() => { setRefundTarget(p); setRefundReason(""); setRefundAmount(""); setRefundOverride(false); }}
+                        title="Refund — full or partial; calls the provider when its keys are configured, then marks it refunded and subtracts the plan's days"
                       >
                         💸 Refund
                       </button>

@@ -62,8 +62,12 @@ end $$;
 /* Refund a confirmed payment: marks it refunded and subtracts the plan's
    days from the entitlement (clamped at now; lifetime → expires now).
    `p_reason` is carried into the audit trail so every refund has a paper
-   trail, mirroring cancel-with-reason. */
-create or replace function public.apply_refund(p_provider_payment_id text, p_reason text default null)
+   trail, mirroring cancel-with-reason. `p_amount_minor` marks a PARTIAL
+   refund (entitlement days are scaled by the refunded share) and
+   `p_within_grace` records whether the purchase fell inside the admin's
+   refund-policy grace window. */
+create or replace function public.apply_refund(p_provider_payment_id text, p_reason text default null,
+  p_amount_minor integer default null, p_within_grace boolean default null)
 returns void language plpgsql security definer set search_path = public as $$
 declare
   pay public.payments;
@@ -83,9 +87,15 @@ begin
   select * into ent from public.entitlements where user_id = pay.user_id;
   if ent is not null and ent.expires_at is not null then
     days := public.plan_days(pay.plan);
-    new_exp := case when days is null then now()
-                    else greatest(now(), ent.expires_at - (days || ' days')::interval)
-               end;
+    if days is not null then
+      /* partial refunds take back only the refunded share of the plan days */
+      if p_amount_minor is not null and pay.amount_minor > 0 and p_amount_minor < pay.amount_minor then
+        days := greatest(1, round(days * p_amount_minor::numeric / pay.amount_minor::numeric))::integer;
+      end if;
+      new_exp := greatest(now(), ent.expires_at - (days || ' days')::interval);
+    else
+      new_exp := now();
+    end if;
     update public.entitlements
       set expires_at = new_exp, updated_at = now()
       where user_id = pay.user_id;
@@ -93,7 +103,10 @@ begin
 
   insert into public.billing_actions (admin_id, action, user_id, detail)
   values (auth.uid(), 'refund', pay.user_id,
-          jsonb_build_object('provider', pay.provider, 'external_id', p_provider_payment_id, 'plan', pay.plan)
+          jsonb_build_object('provider', pay.provider, 'external_id', p_provider_payment_id, 'plan', pay.plan,
+                             'amount_minor', coalesce(p_amount_minor, pay.amount_minor),
+                             'partial', p_amount_minor is not null and p_amount_minor < pay.amount_minor,
+                             'within_grace', p_within_grace)
             || case when p_reason is not null and btrim(p_reason) <> ''
                     then jsonb_build_object('reason', btrim(left(p_reason, 200))) else '{}'::jsonb end);
 end $$;
