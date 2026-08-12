@@ -1,0 +1,36 @@
+name: Offline-shell PR check
+
+# Runs the offline-readiness suite (service-worker precache vs built assets +
+# legal views with no network) on every pull request and posts the result as
+# a PR comment, so a regression surfaces before merge. The deploy workflow
+# also reports the same summary on main pushes.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # build first — the offline suite verifies the precache list against dist/
+      - run: npm run build
+      - name: Report offline-shell check
+        run: node scripts/report-offline.mjs
+      # post the summary even when the check fails (if: always) so the failure
+      # is visible on the PR itself
+      - name: Comment result on the PR
+        if: always()
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file offline-summary.md
+        env:
+          GH_TOKEN: ${{ github.token }}
