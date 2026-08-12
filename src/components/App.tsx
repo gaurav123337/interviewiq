@@ -119,6 +119,8 @@ export function App() {
 
   const view = state.view;
   const go = (id: View) => { setMenuOpen(false); nav(id); };
+  /* legal pages open in the shared "legal" view; the hash picks the document */
+  const openPolicy = (id: string) => { window.location.hash = id; nav("legal"); };
 
   /* share view overrides all other content */
   if (sharePayload) {
@@ -220,6 +222,23 @@ export function App() {
         {view === "team" && <Team />}
         {view === "legal" && <Legal />}
       </main>
+
+      {/* app-wide footer — branding + the four legal pages on every view
+          (the landing page has its own richer footer) */}
+      {view !== "landing" && (
+        <footer className="no-print border-t border-line/10 px-4 pb-24 pt-6 md:pb-8">
+          <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-3 text-[12px] text-mut">
+            <span className="font-extrabold">Interview<span className="grad-text">IQ</span> — AI Interview Coach</span>
+            <span className="flex flex-wrap gap-4">
+              <button className="hover:text-ink" onClick={() => openPolicy("terms")}>Terms</button>
+              <button className="hover:text-ink" onClick={() => openPolicy("privacy")}>Privacy</button>
+              <button className="hover:text-ink" onClick={() => openPolicy("refunds")}>Refunds</button>
+              <button className="hover:text-ink" onClick={() => openPolicy("shipping")}>Shipping</button>
+              <a href="https://github.com/gaurav123337/interviewiq" target="_blank" rel="noreferrer" className="hover:text-ink">GitHub</a>
+            </span>
+          </div>
+        </footer>
+      )}
 
       {/* product announcement banner */}
       {banner && (
