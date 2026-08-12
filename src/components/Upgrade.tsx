@@ -4,6 +4,8 @@ import { getTier, setTier } from "../services/entitlements";
 import {
   PLANS, discountedPrice, discountLive, fmtMoney, getCachedEntitlement, refreshEntitlement, tierSource
 } from "../services/entitlement";
+import { createCheckout, paymentProviderName } from "../services/billing";
+import { isCloudConfigured } from "../services/cloud";
 import { queueEvent, updateProfile } from "../services/events";
 import { toast } from "../toast";
 import { btnGhost, btnOk, btnPrimary, btnSm, Modal, Chip } from "./ui";
@@ -64,7 +66,26 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
     }
   };
 
-  const getPro = () => {
+  const [buying, setBuying] = useState(false);
+  const checkout = () => isCloudConfigured();
+
+  const getPro = async (plan: string) => {
+    /* provider-agnostic checkout: the pay-checkout Edge Function picks the
+       provider (Razorpay today, swap via PAYMENT_PROVIDER env later) */
+    if (checkout()) {
+      setBuying(true);
+      try {
+        sessionStorage.setItem(CHECKOUT_KEY, "pending");
+        const r = await createCheckout(plan, discount);
+        window.open(r.url, "_blank", "noopener");
+        toast(`💳 ${paymentProviderName()} checkout opened — complete it, then tap “I've paid” to verify`);
+      } catch (e) {
+        toast("✗ " + ((e as Error).message || "Checkout unavailable"));
+      } finally {
+        setBuying(false);
+      }
+      return;
+    }
     if (CONFIG.proUrl) {
       sessionStorage.setItem(CHECKOUT_KEY, "pending");
       window.open(CONFIG.proUrl, "_blank", "noopener");
@@ -103,7 +124,13 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
             const was = discount > 0 ? p.price : 0;
             const now = discountedPrice(p.price, discount);
             return (
-              <div key={p.id} className={`rounded-xl border p-3 text-center ${p.id === "yearly" ? "border-acc1/50 bg-acc1/10" : "border-line/10 bg-deep/40"}`}>
+              <button
+                key={p.id}
+                type="button"
+                disabled={buying}
+                onClick={() => getPro(p.id)}
+                className={`rounded-xl border p-3 text-center transition-all hover:border-acc1/60 disabled:opacity-60 ${p.id === "yearly" ? "border-acc1/50 bg-acc1/10" : "border-line/10 bg-deep/40 hover:bg-deep/60"}`}
+              >
                 <div className="text-[11px] font-extrabold uppercase tracking-wider text-mut">{p.label}</div>
                 <div className="mt-1 text-[17px] font-extrabold tabular-nums">
                   {discount > 0 && <span className="mr-1 text-[12px] text-fnt line-through">{fmtMoney(was)}</span>}
@@ -111,7 +138,8 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
                 </div>
                 {discount > 0 && <div className="text-[10.5px] font-bold text-ok">−{discount}% for you</div>}
                 {p.id === "yearly" && <div className="text-[10px] font-bold text-acc1">best value</div>}
-              </div>
+                <div className="mt-1.5 text-[10.5px] font-bold text-acctxt">{buying ? "Opening…" : "Choose"}</div>
+              </button>
             );
           })}
         </div>
@@ -127,9 +155,9 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
           🎉 Payment window — tap below and we'll verify the grant on your account.
         </div>
       )}
-      {!ent?.active && !CONFIG.proUrl && (
+      {!ent?.active && !CONFIG.proUrl && !checkout() && (
         <p className="mb-4 text-[12.5px] text-warn">
-          Self-serve checkout isn't wired up yet. Paste a Lemon Squeezy/Stripe link into <span className="font-mono">CONFIG.proUrl</span> — or ask your admin for a Pro grant code to redeem in Settings.
+          Self-serve checkout isn't wired up yet. Paste a checkout link into <span className="font-mono">CONFIG.proUrl</span> — or ask your admin for a Pro grant code to redeem in Settings.
         </p>
       )}
 
@@ -137,17 +165,22 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
         <button className={btnGhost} onClick={onClose}>{CONFIG.proUrl && !paid && !ent?.active ? "Not now" : "Close"}</button>
         {ent?.active ? (
           <button className={btnOk + btnSm} onClick={onClose}>✅ Already Pro</button>
-        ) : CONFIG.proUrl ? (
+        ) : CONFIG.proUrl || checkout() ? (
           paid
             ? <button className={btnOk + btnSm} disabled={verifying} onClick={unlock}>{verifying ? "Verifying…" : "✅ I've paid — unlock Pro"}</button>
-            : <button className={btnPrimary + btnSm} onClick={getPro}>💳 Buy Pro</button>
+            : <button className={btnPrimary + btnSm} onClick={() => getPro("yearly")}>💳 Buy Pro</button>
         ) : (
           <>
-            <button className={btnPrimary + btnSm} onClick={getPro}>📬 Email to purchase</button>
+            <button className={btnPrimary + btnSm} onClick={() => getPro("yearly")}>📬 Email to purchase</button>
             <button className={btnOk + btnSm} disabled={verifying} onClick={unlock}>{verifying ? "Verifying…" : "Check my account"}</button>
           </>
         )}
       </div>
+      {checkout() && !ent?.active && (
+        <p className="mt-3 text-center text-[10.5px] font-bold uppercase tracking-wider text-mut">
+          secure checkout by {paymentProviderName()}
+        </p>
+      )}
       {!ent?.active && (
         <p className="mt-3 text-[11.5px] text-fnt">
           Access is tied to your <span className="font-bold">signed-in account</span> — grants and codes are server-verified, not a local flag.

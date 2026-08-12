@@ -6,6 +6,7 @@ import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import {
   clearServerEntitlement, getCachedEntitlement, redeemGrant, refreshEntitlement, testLicensing, tierSource, type ServerEntitlement
 } from "../services/entitlement";
+import { fmtMinor, getMyPayments, type MyPayment } from "../services/billing";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
 import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
@@ -31,6 +32,7 @@ export function Settings() {
   const [ent, setEnt] = useState<ServerEntitlement | null>(() => getCachedEntitlement());
   const [proCode, setProCode] = useState("");
   const [redeemBusy, setRedeemBusy] = useState(false);
+  const [payments, setPayments] = useState<MyPayment[]>([]);
   const [cloud, setCloud] = useState(getCloudState());
   const [cloudMode, setCloudMode] = useState<"in" | "up">("in");
   const [cloudEmail, setCloudEmail] = useState("");
@@ -69,11 +71,15 @@ export function Settings() {
     }
   };
 
-  /* keep the server-verified entitlement in sync with sign-in state */
+  /* keep the server-verified entitlement + purchase history in sync with sign-in */
   useEffect(() => {
     let live = true;
-    void refreshEntitlement().then(e => { if (live) setEnt(e); });
-    const un = subscribeCloud(() => { void refreshEntitlement().then(e => { if (live) setEnt(e); }); });
+    const loadAll = () => {
+      void refreshEntitlement().then(e => { if (live) setEnt(e); });
+      if (getCloudState().user) void getMyPayments().then(p => { if (live) setPayments(p); }).catch(() => {});
+    };
+    loadAll();
+    const un = subscribeCloud(() => { setCloud(getCloudState()); loadAll(); });
     return () => { live = false; un(); };
   }, []);
 
@@ -248,6 +254,30 @@ export function Settings() {
             </div>
           )}
         </section>
+
+        {/* purchase history — confirmed payments on this account */}
+        {cloud.user && (
+          <section className={`${cardCls} p-6`}>
+            <h2 className="mb-1 text-[16px] font-extrabold">🧾 Purchase history</h2>
+            <p className="mb-3 text-[13px] text-mut">Confirmed payments on your account — renewals extend your Pro expiry automatically.</p>
+            {payments.length === 0 ? (
+              <p className="text-[12.5px] text-fnt">No purchases yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {payments.map((p, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+                    <span className="min-w-[110px] flex-1 font-bold capitalize">{p.plan}</span>
+                    <Chip tone="ok">{p.status}</Chip>
+                    <Chip>{p.provider}</Chip>
+                    <span className="font-bold tabular-nums">{fmtMinor(p.amountMinor, p.currency)}</span>
+                    {p.discountPct > 0 && <Chip tone="lvl">−{p.discountPct}%</Chip>}
+                    <span className="text-[11px] text-fnt">{new Date(p.createdAt).toLocaleDateString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* Cloud sync */}
         <section className={`${cardCls} p-6`}>

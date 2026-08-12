@@ -6,8 +6,16 @@ export const CONFIG = {
   /** Where feedback and early-access requests go (mailto target — swap for a form endpoint when a backend exists). */
   supportEmail: "gaurav.123337@gmail.com",
   repoUrl: "https://github.com/gaurav123337/interviewiq",
-  /** Checkout / purchase URL for Pro (empty until a storefront exists → falls back to mailto). */
+  /** Checkout / purchase URL for Pro (empty until a storefront exists → falls back to mailto).
+      When the cloud payment functions (pay-checkout / pay-webhook) are deployed, the app
+      uses those instead and this is ignored. */
   proUrl: "",
+  /** Active payment provider (mirrors the server's PAYMENT_PROVIDER secret).
+      Only used for UI labels — the actual dispatch lives in the Edge Functions,
+      so switching providers is a server-side env change. */
+  payment: {
+    provider: "razorpay"
+  },
   /** Checkout URL for team seat upgrades (empty → fallback to support email). */
   teamProUrl: "",
   features: {

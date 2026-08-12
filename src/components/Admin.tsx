@@ -38,6 +38,7 @@ import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../services/entitlement";
+import { adminBillingActions, adminListPayments, fmtMinor, type AdminPaymentRow, type BillingActionRow } from "../services/billing";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -75,6 +76,8 @@ const FEATURE_LABELS: Record<string, string> = {
    gating end-to-end: sign in as that user and the paywall opens instantly. */
 function BillingSection() {
   const [rows, setRows] = useState<AdminEntitlementRow[]>([]);
+  const [payments, setPayments] = useState<AdminPaymentRow[]>([]);
+  const [audit, setAudit] = useState<BillingActionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Record<string, "grant" | "discount" | undefined>>({});
@@ -92,7 +95,10 @@ function BillingSection() {
 
   const load = () => {
     setLoading(true);
-    void adminListEntitlements().then(setRows).catch(() => {}).finally(() => setLoading(false));
+    void Promise.all([adminListEntitlements(), adminListPayments(), adminBillingActions(50)])
+      .then(([e, p, a]) => { setRows(e); setPayments(p); setAudit(a); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   };
   useEffect(load, []);
 
@@ -254,6 +260,68 @@ function BillingSection() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* payments — every confirmed provider purchase */}
+      <div className={`${cardCls} overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">🧾 Payments ({payments.length})</h3>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Confirmed purchases recorded by the pay-webhook function after signature verification.</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-line/10 bg-wht/[.04] text-[11px] uppercase tracking-wider text-mut">
+                <th className="px-4 py-2.5 font-bold">User</th>
+                <th className="px-3 py-2.5 font-bold">Provider</th>
+                <th className="px-3 py-2.5 font-bold">Plan</th>
+                <th className="px-3 py-2.5 font-bold">Amount</th>
+                <th className="px-3 py-2.5 font-bold">Discount</th>
+                <th className="px-3 py-2.5 font-bold">Status</th>
+                <th className="px-4 py-2.5 font-bold">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-mut">No confirmed payments yet — they appear after the first real purchase completes.</td></tr>
+              )}
+              {payments.map((p, i) => (
+                <tr key={i} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
+                  <td className="px-4 py-3">
+                    <div className="font-bold">{p.email || "—"}</div>
+                    <div className="text-[11px] text-fnt">{p.userId.slice(0, 8)}…</div>
+                  </td>
+                  <td className="px-3 py-3"><Chip>{p.provider}</Chip></td>
+                  <td className="px-3 py-3 font-bold capitalize">{p.plan}</td>
+                  <td className="px-3 py-3 font-bold tabular-nums">{fmtMinor(p.amountMinor, p.currency)}</td>
+                  <td className="px-3 py-3">{p.discountPct > 0 ? <Chip tone="lvl">−{p.discountPct}%</Chip> : "—"}</td>
+                  <td className="px-3 py-3"><Chip tone={p.status === "paid" ? "ok" : "warn"}>{p.status}</Chip></td>
+                  <td className="px-4 py-3 text-[12px] text-fnt">{new Date(p.createdAt).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* audit trail — who did what, when */}
+      <div className={`${cardCls} overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">📜 Billing audit trail</h3>
+        </div>
+        <div className="max-h-[320px] overflow-y-auto">
+          {audit.length === 0 && (
+            <p className="px-5 py-8 text-center text-mut">No billing actions yet — grants, revokes, discounts, codes, redeems and purchases all land here.</p>
+          )}
+          {audit.map((a, i) => (
+            <div key={i} className="flex flex-wrap items-center gap-2 border-b border-line/5 px-5 py-2.5 text-[12.5px] last:border-0">
+              <Chip tone={a.action === "purchase" ? "ok" : a.action === "revoke" ? "bad" : a.action === "discount" ? "lvl" : "default"}>{a.action}</Chip>
+              <span className="min-w-[140px] flex-1 font-bold">{a.email || a.userId?.slice(0, 8) || "system"}</span>
+              {a.detail && <span className="font-mono text-[11px] text-fnt">{JSON.stringify(a.detail).slice(0, 120)}</span>}
+              <span className="text-[11px] text-fnt">{new Date(a.createdAt).toLocaleString()}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
