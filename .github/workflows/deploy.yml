@@ -26,8 +26,11 @@ jobs:
       - run: npm ci
       # fast retrieval-regression gate: a golden-set failure here stops the deploy
       - run: npm run eval:rag
-      - run: npm test
+      # build BEFORE test so the offline-readiness suite (service-worker precache
+      # vs built assets) runs against the real dist/ artifact; any test failure
+      # still stops the deploy
       - run: npm run build
+      - run: npm test
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
