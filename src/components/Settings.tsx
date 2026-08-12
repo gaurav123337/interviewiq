@@ -3,6 +3,9 @@ import type { ReactNode } from "react";
 import type { Config } from "../types";
 import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
+import {
+  clearServerEntitlement, getCachedEntitlement, redeemGrant, refreshEntitlement, testLicensing, tierSource, type ServerEntitlement
+} from "../services/entitlement";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
 import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
@@ -25,6 +28,9 @@ export function Settings() {
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
   const [prefs, setPrefs] = useState(getPrefs());
   const [perm, setPerm] = useState(getPermission());
+  const [ent, setEnt] = useState<ServerEntitlement | null>(() => getCachedEntitlement());
+  const [proCode, setProCode] = useState("");
+  const [redeemBusy, setRedeemBusy] = useState(false);
   const [cloud, setCloud] = useState(getCloudState());
   const [cloudMode, setCloudMode] = useState<"in" | "up">("in");
   const [cloudEmail, setCloudEmail] = useState("");
@@ -61,6 +67,30 @@ export function Settings() {
     } finally {
       setCloudBusy(false);
     }
+  };
+
+  /* keep the server-verified entitlement in sync with sign-in state */
+  useEffect(() => {
+    let live = true;
+    void refreshEntitlement().then(e => { if (live) setEnt(e); });
+    const un = subscribeCloud(() => { void refreshEntitlement().then(e => { if (live) setEnt(e); }); });
+    return () => { live = false; un(); };
+  }, []);
+
+  const doRedeem = async () => {
+    if (!proCode.trim()) return;
+    setRedeemBusy(true);
+    try {
+      const r = await redeemGrant(proCode);
+      if (r.ok) {
+        setEnt(r.entitlement ?? null);
+        setPro(r.entitlement?.active === true);
+        setProCode("");
+        toast("💎 Code redeemed — Pro is now active on your account 🎉");
+      } else {
+        toast("✗ " + (r.error ?? "Couldn't redeem that code"));
+      }
+    } finally { setRedeemBusy(false); }
   };
 
   const toggleReminder = async (v: boolean) => {
@@ -144,34 +174,77 @@ export function Settings() {
           <div className="mb-1 flex items-center gap-2">
             <h2 className="text-[16px] font-extrabold">✨ InterviewIQ Pro</h2>
             {pro && <Chip tone="ok">ACTIVE</Chip>}
+            {ent?.active && <Chip tone="ok">SERVER-VERIFIED</Chip>}
+            {!ent?.active && tierSource() === "local" && <Chip tone="warn">🧪 TEST KEY</Chip>}
           </div>
           <p className="mb-4 text-[13px] text-mut">
             {pro
-              ? `Pro is active on this device (${getStoredKey()}). Unlimited sessions and AI coaching.`
-              : `Unlock unlimited sessions, all companies, and unlimited AI coaching. You have ${sessionsLeft()} session${sessionsLeft() === 1 ? "" : "s"} left this month and ${aiCallsLeft()} AI call${aiCallsLeft() === 1 ? "" : "s"} left today. Enter your license key to activate.`}
+              ? `Pro is active${ent?.active ? " on your account" : ` on this device (${getStoredKey()})`}${ent?.expiresAt ? ` — expires ${new Date(ent.expiresAt).toLocaleDateString()}` : ""}. Unlimited sessions and AI coaching.`
+              : `Unlock unlimited sessions, all companies, and unlimited AI coaching. You have ${sessionsLeft()} session${sessionsLeft() === 1 ? "" : "s"} left this month and ${aiCallsLeft()} AI call${aiCallsLeft() === 1 ? "" : "s"} left today.`}
           </p>
-          {pro ? (
-            <button className={btnDanger + btnSm} onClick={() => { deactivatePro(); setPro(false); toast("Pro deactivated"); }}>
-              Deactivate Pro
-            </button>
-          ) : (
-            <div className="flex flex-wrap gap-2.5">
-              <input
-                value={proKey}
-                onChange={e => setProKey(e.target.value)}
-                placeholder="IQPRO-XXXX-XXXX-XXXX"
-                className="min-w-[240px] flex-1 rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
-              />
-              <button
-                className={btnPrimary + btnSm}
-                onClick={() => {
-                  const r = activatePro(proKey);
-                  if (r.ok) { setPro(true); setProKey(""); toast("🎉 Pro activated!"); }
-                  else toast("✗ " + (r.error ?? "Invalid key"));
-                }}
-              >
-                Activate
+
+          {ent?.active ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-fnt">
+                <Chip tone="ok">{ent.plan ?? "pro"}</Chip>
+                <Chip>via {ent.source ?? "account"}</Chip>
+                {ent.expiresAt ? <Chip>until {new Date(ent.expiresAt).toLocaleDateString()}</Chip> : <Chip>never expires</Chip>}
+                {ent.discountPct > 0 && <Chip tone="lvl">−{ent.discountPct}% discount{ent.discountExpiresAt ? ` until ${new Date(ent.discountExpiresAt).toLocaleDateString()}` : ""}</Chip>}
+              </div>
+              <button className={btnDanger + btnSm} onClick={() => { deactivatePro(); setPro(false); toast("Pro deactivated on this device — it stays active on your account until it expires"); }}>
+                Deactivate on this device
               </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* server-verified grant code — the real path */}
+              <div>
+                <div className="mb-1 text-[12px] font-bold text-mut">Redeem a Pro code (server-verified — works on any device after sign-in)</div>
+                <div className="flex flex-wrap gap-2.5">
+                  <input
+                    value={proCode}
+                    onChange={e => setProCode(e.target.value)}
+                    placeholder="IQGRANT-…"
+                    className="min-w-[240px] flex-1 rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                  />
+                  <button
+                    className={btnPrimary + btnSm}
+                    disabled={redeemBusy || !proCode.trim()}
+                    onClick={doRedeem}
+                  >
+                    {redeemBusy ? "Redeeming…" : "Redeem"}
+                  </button>
+                </div>
+                {!cloud.user && <p className="mt-1.5 text-[11.5px] text-fnt">Sign in to your cloud account first — codes are tied to your account, not the device.</p>}
+              </div>
+              {/* legacy format key — test mode only */}
+              {testLicensing() ? (
+                <div>
+                  <div className="mb-1 text-[12px] font-bold text-mut">🧪 Test key (dev only — forgeable, disabled before launch)</div>
+                  <div className="flex flex-wrap gap-2.5">
+                    <input
+                      value={proKey}
+                      onChange={e => setProKey(e.target.value)}
+                      placeholder="IQPRO-XXXX-XXXX-XXXX"
+                      className="min-w-[240px] flex-1 rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                    />
+                    <button
+                      className={btnGhost + btnSm}
+                      onClick={() => {
+                        const r = activatePro(proKey);
+                        if (r.ok) { setPro(true); setProKey(""); toast("🎉 Pro activated (test key)"); }
+                        else toast("✗ " + (r.error ?? "Invalid key"));
+                      }}
+                    >
+                      Activate test key
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[12px] text-mut">
+                  Pro comes from your account now — ask your admin for a grant code, or buy via checkout.
+                </p>
+              )}
             </div>
           )}
         </section>
@@ -192,7 +265,7 @@ export function Settings() {
                 <button className={btnGhost + btnSm} onClick={async () => { await cloudSyncNow(); toast("☁️ Synced"); }} disabled={cloud.syncing}>
                   {cloud.syncing ? <><span className="spinner" />Syncing…</> : "🔄 Sync now"}
                 </button>
-                <button className={btnDanger + btnSm} onClick={async () => { await cloudSignOut(); toast("Signed out — local data kept"); }}>
+                <button className={btnDanger + btnSm} onClick={async () => { await cloudSignOut(); clearServerEntitlement(); setEnt(null); toast("Signed out — local data kept"); }}>
                   Sign out
                 </button>
               </div>

@@ -9,6 +9,7 @@ import { getCodingTrack } from "../services/codingTrack";
 import { coachWeekStats, getCoachDiscussions } from "./CoachChat";
 import { getTier, getUsage, isPaywallEnabled } from "../services/entitlements";
 import { cloudSignOut, cloudSyncNow, getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
+import { clearServerEntitlement } from "../services/entitlement";
 import { STORAGE_KEYS } from "../services/storage";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
@@ -34,6 +35,7 @@ export function Account() {
 
   const signOut = async () => {
     await cloudSignOut();
+    clearServerEntitlement();
     toast("Signed out — your local data stays on this device");
   };
 

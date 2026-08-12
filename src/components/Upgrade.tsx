@@ -1,9 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CONFIG } from "../config";
 import { getTier, setTier } from "../services/entitlements";
+import {
+  PLANS, discountedPrice, discountLive, fmtMoney, getCachedEntitlement, refreshEntitlement, tierSource
+} from "../services/entitlement";
 import { queueEvent, updateProfile } from "../services/events";
 import { toast } from "../toast";
-import { btnGhost, btnOk, btnPrimary, btnSm, Modal } from "./ui";
+import { btnGhost, btnOk, btnPrimary, btnSm, Modal, Chip } from "./ui";
 
 const BENEFITS = [
   "Unlimited interview sessions",
@@ -24,20 +27,41 @@ function returnedFromCheckout(): boolean {
 export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason: string }) {
   /* paid → show the unlock CTA instead of the buy CTA */
   const [paid] = useState(() => sessionStorage.getItem(CHECKOUT_KEY) === "pending" || returnedFromCheckout());
+  const [verifying, setVerifying] = useState(false);
+  const [ent, setEnt] = useState(getCachedEntitlement());
 
-  const unlock = () => {
-    sessionStorage.removeItem(CHECKOUT_KEY);
-    /* clean the success param so reloads don't re-trigger */
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("pro")) {
-      url.searchParams.delete("pro");
-      window.history.replaceState(null, "", url);
+  /* pull the latest server entitlement (discount + grant status) on open */
+  useEffect(() => {
+    void refreshEntitlement().then(setEnt);
+  }, []);
+
+  const discount = discountLive(ent);
+
+  const unlock = async () => {
+    /* "I've paid" no longer unlocks blindly — the server must confirm the
+       grant (admin grant / redeemed code / Stripe webhook) on the account */
+    setVerifying(true);
+    try {
+      const fresh = await refreshEntitlement();
+      setEnt(fresh);
+      if (fresh?.active) {
+        sessionStorage.removeItem(CHECKOUT_KEY);
+        const url = new URL(window.location.href);
+        if (url.searchParams.get("pro")) {
+          url.searchParams.delete("pro");
+          window.history.replaceState(null, "", url);
+        }
+        setTier("pro");
+        void queueEvent("tier", { tier: "pro" });
+        void updateProfile({ tier: "pro" }).catch(() => {});
+        toast("💎 Welcome to Pro — all limits lifted 🎉");
+        onClose();
+        return;
+      }
+      toast("No Pro grant found on your account yet — payment may still be confirming, or ask your admin (Billing → Grant Pro).");
+    } finally {
+      setVerifying(false);
     }
-    setTier("pro");
-    void queueEvent("tier", { tier: "pro" });
-    void updateProfile({ tier: "pro" }).catch(() => {});
-    toast("💎 Welcome to Pro — all limits lifted 🎉");
-    onClose();
   };
 
   const getPro = () => {
@@ -67,37 +91,70 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
         ))}
       </ul>
 
-      {CONFIG.proUrl ? (
-        paid ? (
-          <div className="mb-4 rounded-xl border border-ok/30 bg-ok/10 px-4 py-3 text-[13.5px] text-ink">
-            🎉 Payment complete — tap below to unlock your account instantly.
-          </div>
-        ) : (
-          <p className="mb-4 text-[12.5px] text-fnt">
-            Checkout opens in a new tab. When you're done, come back and tap <span className="font-bold text-ink">“I've paid — unlock”</span>.
-          </p>
-        )
+      {ent?.active ? (
+        <div className="mb-4 rounded-xl border border-ok/30 bg-ok/10 px-4 py-3 text-[13.5px] text-ink">
+          💎 You're already Pro — server-verified
+          {ent.expiresAt && <> · until <span className="font-bold">{new Date(ent.expiresAt).toLocaleDateString()}</span></>}
+          {ent.plan && <> · {ent.plan}</>}.
+        </div>
       ) : (
+        <div className="mb-4 grid grid-cols-3 gap-2">
+          {PLANS.map(p => {
+            const was = discount > 0 ? p.price : 0;
+            const now = discountedPrice(p.price, discount);
+            return (
+              <div key={p.id} className={`rounded-xl border p-3 text-center ${p.id === "yearly" ? "border-acc1/50 bg-acc1/10" : "border-line/10 bg-deep/40"}`}>
+                <div className="text-[11px] font-extrabold uppercase tracking-wider text-mut">{p.label}</div>
+                <div className="mt-1 text-[17px] font-extrabold tabular-nums">
+                  {discount > 0 && <span className="mr-1 text-[12px] text-fnt line-through">{fmtMoney(was)}</span>}
+                  {fmtMoney(now)}<span className="text-[11px] font-bold text-mut">{p.per}</span>
+                </div>
+                {discount > 0 && <div className="text-[10.5px] font-bold text-ok">−{discount}% for you</div>}
+                {p.id === "yearly" && <div className="text-[10px] font-bold text-acc1">best value</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!ent?.active && CONFIG.proUrl && !paid && (
+        <p className="mb-4 text-[12.5px] text-fnt">
+          Checkout opens in a new tab. When you're done, come back and tap <span className="font-bold text-ink">“I've paid — unlock”</span> — Pro activates once the payment is confirmed on your account.
+        </p>
+      )}
+      {!ent?.active && CONFIG.proUrl && paid && (
+        <div className="mb-4 rounded-xl border border-ok/30 bg-ok/10 px-4 py-3 text-[13.5px] text-ink">
+          🎉 Payment window — tap below and we'll verify the grant on your account.
+        </div>
+      )}
+      {!ent?.active && !CONFIG.proUrl && (
         <p className="mb-4 text-[12.5px] text-warn">
-          Self-serve checkout isn't wired up yet — email us and we'll set you up manually. (Paste your
-          Lemon Squeezy/Stripe link into <span className="font-mono">CONFIG.proUrl</span> to enable instant checkout.)
+          Self-serve checkout isn't wired up yet. Paste a Lemon Squeezy/Stripe link into <span className="font-mono">CONFIG.proUrl</span> — or ask your admin for a Pro grant code to redeem in Settings.
         </p>
       )}
 
-      <div className="flex flex-wrap gap-3">
-        <button className={btnGhost} onClick={onClose}>{CONFIG.proUrl && !paid ? "Not now" : "Close"}</button>
-        {CONFIG.proUrl ? (
+      <div className="flex flex-wrap items-center gap-3">
+        <button className={btnGhost} onClick={onClose}>{CONFIG.proUrl && !paid && !ent?.active ? "Not now" : "Close"}</button>
+        {ent?.active ? (
+          <button className={btnOk + btnSm} onClick={onClose}>✅ Already Pro</button>
+        ) : CONFIG.proUrl ? (
           paid
-            ? <button className={btnOk + btnSm} onClick={unlock}>✅ I've paid — unlock Pro</button>
+            ? <button className={btnOk + btnSm} disabled={verifying} onClick={unlock}>{verifying ? "Verifying…" : "✅ I've paid — unlock Pro"}</button>
             : <button className={btnPrimary + btnSm} onClick={getPro}>💳 Buy Pro</button>
         ) : (
           <>
             <button className={btnPrimary + btnSm} onClick={getPro}>📬 Email to purchase</button>
-            <button className={btnOk + btnSm} onClick={unlock}>I've already paid — unlock</button>
+            <button className={btnOk + btnSm} disabled={verifying} onClick={unlock}>{verifying ? "Verifying…" : "Check my account"}</button>
           </>
         )}
       </div>
-      {getTier() === "pro" && <p className="mt-3 text-[12.5px] text-ok">You're already Pro — this modal shouldn't have appeared.</p>}
+      {!ent?.active && (
+        <p className="mt-3 text-[11.5px] text-fnt">
+          Access is tied to your <span className="font-bold">signed-in account</span> — grants and codes are server-verified, not a local flag.
+        </p>
+      )}
+      {ent?.active && getTier() !== "pro" && <p className="mt-3 text-[11.5px] text-fnt">Sync status: {tierSource()}</p>}
+      {getTier() === "pro" && !ent?.active && <Chip tone="warn">local {tierSource()} tier — server says free</Chip>}
     </Modal>
   );
 }

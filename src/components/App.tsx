@@ -24,6 +24,7 @@ import { getTheme, setTheme, type Theme } from "../services/theme";
 import { getAdminState, subscribeAdmin, type AdminState } from "../services/admin";
 import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
+import { refreshEntitlement } from "../services/entitlement";
 import { Chip } from "./ui";
 
 const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
@@ -58,6 +59,18 @@ export function App() {
 
   /* keep the header avatar in sync with sign-in state */
   useEffect(() => subscribeCloud(setCloud), []);
+
+  /* server-verified Pro — refresh the entitlement whenever the sign-in state
+     changes (login, logout, sync) and once on boot, so grants/revokes from
+     the admin billing dashboard apply without a redeploy */
+  useEffect(() => {
+    const ref = () => { void refreshEntitlement(); };
+    ref();
+    const un = subscribeCloud(() => { if (getCloudState().user) ref(); });
+    const t = window.setTimeout(ref, 1500);
+    return () => { un(); window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleTheme = () => {
     const next: Theme = theme === "light" ? "dark" : "light";

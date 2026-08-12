@@ -34,17 +34,22 @@ import {
 } from "../services/scraper";
 import { CONFIG } from "../config";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
+import {
+  adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
+  type AdminEntitlementRow
+} from "../services/entitlement";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "teams";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
   { id: "users", label: "Users", icon: "👥" },
+  { id: "billing", label: "Billing", icon: "💰" },
   { id: "announcements", label: "Announcements", icon: "📣" },
   { id: "questions", label: "Question bank", icon: "📚" },
   { id: "review", label: "Review inbox", icon: "🛂" },
@@ -63,6 +68,197 @@ const FEATURE_LABELS: Record<string, string> = {
   jd: "Job-description tailoring",
   drill: "Drill mode"
 };
+
+/* Billing — server-verified Pro entitlements, grants, discounts and codes.
+   All writes go through admin RPCs that enforce is_admin() server-side, so a
+   non-admin can never self-grant. Grant Pro on a test account to try the
+   gating end-to-end: sign in as that user and the paywall opens instantly. */
+function BillingSection() {
+  const [rows, setRows] = useState<AdminEntitlementRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState<Record<string, "grant" | "discount" | undefined>>({});
+  /* create-grant form */
+  const [cPlan, setCPlan] = useState<string>("monthly");
+  const [cDays, setCDays] = useState(30);
+  const [cPct, setCPct] = useState(0);
+  const [code, setCode] = useState<string>("");
+  /* per-row grant form */
+  const [gPlan, setGPlan] = useState<string>("monthly");
+  const [gDays, setGDays] = useState(30);
+  /* per-row discount form */
+  const [dPct, setDPct] = useState(30);
+  const [dDays, setDDays] = useState(90);
+
+  const load = () => {
+    setLoading(true);
+    void adminListEntitlements().then(setRows).catch(() => {}).finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const grant = async (u: AdminEntitlementRow) => {
+    setBusy(true);
+    try {
+      await adminSetEntitlement(u.userId, "pro", gPlan, gPlan === "lifetime" ? null : new Date(Date.now() + gDays * 86400000).toISOString());
+      toast(`💎 Granted Pro (${gPlan}) to ${u.email || u.userId.slice(0, 8)}`);
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Grant failed")); }
+    finally { setBusy(false); }
+  };
+
+  const revoke = async (u: AdminEntitlementRow) => {
+    setBusy(true);
+    try {
+      await adminSetEntitlement(u.userId, "free", null, null);
+      toast(`⛔ Revoked Pro from ${u.email || u.userId.slice(0, 8)}`);
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Revoke failed")); }
+    finally { setBusy(false); }
+  };
+
+  const discount = async (u: AdminEntitlementRow) => {
+    setBusy(true);
+    try {
+      await adminIssueDiscount(u.userId, dPct, dDays);
+      toast(dPct > 0 ? `🏷️ Issued −${dPct}% for ${dDays}d to ${u.email || u.userId.slice(0, 8)}` : "Discount cleared");
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Discount failed")); }
+    finally { setBusy(false); }
+  };
+
+  const createCode = async () => {
+    setBusy(true);
+    try {
+      const c = await adminCreateGrant(cPlan, cDays, cPct);
+      setCode(c);
+      toast("🎟️ Grant code created — copy it to your user");
+    } catch (e) { toast("✗ " + ((e as Error).message || "Create failed")); }
+    finally { setBusy(false); }
+  };
+
+  const planLabel = (p: string | null) => (PLANS as readonly { id: string; label: string }[]).find(x => x.id === p)?.label ?? p ?? "—";
+
+  return (
+    <div className="space-y-4">
+      <div className={`${cardCls} p-5`}>
+        <h2 className="text-[16px] font-extrabold">💰 Billing — server-verified Pro</h2>
+        <p className="mt-1 text-[12.5px] text-mut">
+          Pro is an <span className="font-bold">account property</span>, not a local flag: only admins (and single-use grant codes)
+          can write it, and the app checks it on every sign-in. Grant Pro to a test account to try the gating end-to-end —
+          sign in as that user and the paywall opens instantly; revoke it and the limits come right back.
+        </p>
+      </div>
+
+      {/* create a shareable grant code */}
+      <div className={`${cardCls} p-5`}>
+        <h3 className="text-[14.5px] font-extrabold">🎟️ Create a grant code</h3>
+        <p className="mb-3 text-[12px] text-mut">Single-use, server-verified. The user signs in and redeems it in Settings — no storefront needed.</p>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <select value={cPlan} onChange={e => setCPlan(e.target.value)} className="inp w-32">
+            {PLANS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+          <label className="flex items-center gap-1.5 text-[12px] font-bold text-mut">
+            days
+            <input type="number" min={1} value={cDays} onChange={e => setCDays(Math.max(1, Number(e.target.value) || 30))} className="inp w-20 py-1.5 text-center" />
+          </label>
+          <label className="flex items-center gap-1.5 text-[12px] font-bold text-mut">
+            −% off
+            <input type="number" min={0} max={100} value={cPct} onChange={e => setCPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} className="inp w-20 py-1.5 text-center" />
+          </label>
+          <button className={btnPrimary + btnSm} disabled={busy} onClick={createCode}>Create code</button>
+        </div>
+        {code && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-ok/30 bg-ok/10 px-3 py-2">
+            <span className="font-mono text-[13px] font-extrabold">{code}</span>
+            <button
+              className={btnGhost + btnSm}
+              onClick={() => { navigator.clipboard?.writeText(code).then(() => toast("📋 Copied"), () => {}); }}
+            >
+              Copy
+            </button>
+            <button className={btnGhost + btnSm} onClick={() => setCode("")}>✕</button>
+          </div>
+        )}
+      </div>
+
+      {/* per-user grants + discounts */}
+      <div className={`${cardCls} overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">👥 Entitlements ({rows.length})</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-line/10 bg-wht/[.04] text-[11px] uppercase tracking-wider text-mut">
+                <th className="px-4 py-2.5 font-bold">User</th>
+                <th className="px-3 py-2.5 font-bold">Tier</th>
+                <th className="px-3 py-2.5 font-bold">Plan</th>
+                <th className="px-3 py-2.5 font-bold">Expires</th>
+                <th className="px-3 py-2.5 font-bold">Discount</th>
+                <th className="px-3 py-2.5 font-bold">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {!loading && rows.length === 0 && (
+                <tr><td colSpan={6} className="px-4 py-8 text-center text-mut">No users yet — they appear after the first sign-up.</td></tr>
+              )}
+              {rows.map(u => (
+                <tr key={u.userId} className="border-b border-line/5 align-top last:border-0 hover:bg-wht/5">
+                  <td className="px-4 py-3">
+                    <div className="font-bold">{u.email || "—"}</div>
+                    <div className="text-[11px] text-fnt">{u.userId.slice(0, 8)}… · {u.source ?? "none"}</div>
+                  </td>
+                  <td className="px-3 py-3">
+                    {u.active ? <Chip tone="ok">PRO</Chip> : <Chip>free</Chip>}
+                  </td>
+                  <td className="px-3 py-3">{u.tier === "pro" ? planLabel(u.plan) : "—"}</td>
+                  <td className="px-3 py-3 text-[12px] text-fnt">
+                    {u.tier === "pro" ? (u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : "never") : "—"}
+                  </td>
+                  <td className="px-3 py-3">
+                    {u.discountPct > 0 ? (
+                      <Chip tone="lvl">−{u.discountPct}%{u.discountExpiresAt ? ` · ${new Date(u.discountExpiresAt).toLocaleDateString()}` : ""}</Chip>
+                    ) : <span className="text-[12px] text-fnt">—</span>}
+                  </td>
+                  <td className="px-3 py-3">
+                    <div className="flex flex-wrap gap-1.5">
+                      {u.active ? (
+                        <button className={btnDanger + btnSm} disabled={busy} onClick={() => revoke(u)}>⛔ Revoke</button>
+                      ) : (
+                        <button className={btnOk + btnSm} disabled={busy} onClick={() => setOpen(o => ({ ...o, [u.userId]: o[u.userId] === "grant" ? undefined : "grant" }))}>
+                          💎 Grant Pro
+                        </button>
+                      )}
+                      <button className={btnGhost + btnSm} disabled={busy} onClick={() => setOpen(o => ({ ...o, [u.userId]: o[u.userId] === "discount" ? undefined : "discount" }))}>
+                        🏷️ Discount
+                      </button>
+                    </div>
+                    {open[u.userId] === "grant" && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <select value={gPlan} onChange={e => setGPlan(e.target.value)} className="inp w-28 py-1 text-[12px]">
+                          {PLANS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                        </select>
+                        <input type="number" min={1} value={gDays} onChange={e => setGDays(Math.max(1, Number(e.target.value) || 30))} className="inp w-16 py-1 text-center text-[12px]" title="days (lifetime ignores this)" />
+                        <button className={btnOk + btnSm} disabled={busy} onClick={() => grant(u)}>Grant</button>
+                      </div>
+                    )}
+                    {open[u.userId] === "discount" && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <input type="number" min={0} max={100} value={dPct} onChange={e => setDPct(Math.max(0, Math.min(100, Number(e.target.value) || 0)))} className="inp w-16 py-1 text-center text-[12px]" title="percent off" />
+                        <input type="number" min={1} value={dDays} onChange={e => setDDays(Math.max(1, Number(e.target.value) || 90))} className="inp w-16 py-1 text-center text-[12px]" title="days the discount is valid" />
+                        <button className={btnGhost + btnSm} disabled={busy} onClick={() => discount(u)}>Apply</button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function Admin() {
   const [admin, setAdmin] = useState(getAdminState());
@@ -156,6 +352,7 @@ export function Admin() {
         {section === "scraper" && <ScraperSection busy={busy} setBusy={setBusy} />}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
         {section === "activity" && <Activity busy={busy} setBusy={setBusy} />}
+        {section === "billing" && <BillingSection />}
         {section === "quality" && (
           <QualitySection
             busy={busy}

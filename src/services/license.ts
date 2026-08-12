@@ -1,8 +1,11 @@
-/* Pro license keys. For now keys are validated client-side with a checksum
-   format (IQPRO-XXXX-XXXX-XXXX) — a placeholder until a real storefront
-   (Lemon Squeezy / Stripe) provides server-side verification. */
+/* Pro license keys — TEST MODE ONLY.
+   The IQPRO-XXXX checksum format is forgeable, so it is gated behind
+   CONFIG.features.testLicensing and must be off in production. Real Pro is
+   server-verified: admin grants, single-use grant codes (redeem_grant) and
+   Stripe webhooks write the entitlements table; the client only reads it. */
 
 import { setTier } from "./entitlements";
+import { testLicensing } from "./entitlement";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./storage";
 import { queueEvent } from "./events";
 
@@ -35,6 +38,12 @@ export function getStoredKey(): string {
 }
 
 export function activatePro(key: string): { ok: boolean; error?: string } {
+  if (!testLicensing()) {
+    return {
+      ok: false,
+      error: "Format keys aren't accepted anymore — Pro is issued to your account. Sign in and redeem a grant code, or ask your admin for one."
+    };
+  }
   if (!isValidProKey(key)) {
     return { ok: false, error: "That key doesn't look valid — check the format (IQPRO-XXXX-XXXX-XXXX) and try again." };
   }
