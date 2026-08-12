@@ -76,6 +76,10 @@ export interface RemoteConfig {
       from?: string;
     };
   };
+  /** Admin-published legal policy templates (app_config → policies), keyed
+      by policy id (terms | privacy | refunds | shipping). Absent entries
+      fall back to the baked-in templates in src/data/policies.ts. */
+  policies?: Record<string, string>;
 }
 
 export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {}, rag: {} };
@@ -88,7 +92,8 @@ export function getRemoteConfig(): RemoteConfig {
     limits: { ...REMOTE_CONFIG_DEFAULTS.limits, ...(c?.limits ?? {}) },
     companyFreq: { ...(c?.companyFreq ?? {}) },
     coachVocab: c?.coachVocab,
-    rag: { ...(c?.rag ?? {}) }
+    rag: { ...(c?.rag ?? {}) },
+    policies: { ...(c?.policies ?? {}) }
   };
 }
 

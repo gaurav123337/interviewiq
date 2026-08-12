@@ -18,6 +18,7 @@ import { Playground } from "./Playground";
 import { Admin } from "./Admin";
 import { Landing } from "./Landing";
 import { Team } from "./Team";
+import { Legal } from "./Legal";
 import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
@@ -217,6 +218,7 @@ export function App() {
         { view === "playground" && <Playground /> }
         {view === "admin" && <Admin />}
         {view === "team" && <Team />}
+        {view === "legal" && <Legal />}
       </main>
 
       {/* product announcement banner */}

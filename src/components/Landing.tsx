@@ -183,6 +183,10 @@ export function Landing() {
           <button className="hover:text-ink" onClick={() => nav("onboard")}>Practice</button>
           <button className="hover:text-ink" onClick={() => scrollTo("pricing")}>Pricing</button>
           <button className="hover:text-ink" onClick={() => scrollTo("faq")}>FAQ</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "terms"; nav("legal"); }}>Terms</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "privacy"; nav("legal"); }}>Privacy</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "refunds"; nav("legal"); }}>Refunds</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "shipping"; nav("legal"); }}>Shipping</button>
           <a href="https://github.com/gaurav123337/interviewiq" target="_blank" rel="noreferrer" className="hover:text-ink">GitHub</a>
         </span>
       </footer>
