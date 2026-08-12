@@ -5,6 +5,7 @@ import { isCloudConfigured } from "../services/cloud";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
 import { UpgradeModal } from "./Upgrade";
+import { GapPlanModal } from "./GapPlanModal";
 import {
   defaultCareerProfile, getCareerProfile, lastJobsRefresh, listJobs, loadJobsFromCloud,
   matchJob, refreshJobs, saveCareerProfile, VERDICT_META
@@ -48,6 +49,7 @@ export function Jobs() {
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [upgrade, setUpgrade] = useState<string | null>(null);
+  const [gapJob, setGapJob] = useState<{ job: JobPosting; missing: string[] } | null>(null);
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
@@ -218,6 +220,14 @@ export function Jobs() {
                       {m.missing.length > 0 && (
                         <span>✗ <span className="text-bad">Missing:</span> {m.missing.join(", ")}</span>
                       )}
+                      {m.missing.length > 0 && (
+                        <button
+                          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+                          onClick={() => setGapJob({ job: j, missing: m.missing })}
+                        >
+                          📈 Gap plan
+                        </button>
+                      )}
                       {m.blockers.map((b, i) => (
                         <span key={i} className="text-warn">⚠️ {b}</span>
                       ))}
@@ -234,6 +244,7 @@ export function Jobs() {
       </div>
 
       {upgrade && <UpgradeModal onClose={() => setUpgrade(null)} reason={upgrade} />}
+      {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
     </div>
   );
 }

@@ -39,6 +39,7 @@ export const STORAGE_KEYS = {
   career: "iq.career",
   jobs: "iq.jobs",
   jobsRefreshedAt: "iq.jobsRefreshedAt",
+  gapPlans: "iq.gapPlans",
   announcements: "iq.announcements",
   publishedQ: "iq.publishedQ",
   announceSeen: "iq.announceSeen",
