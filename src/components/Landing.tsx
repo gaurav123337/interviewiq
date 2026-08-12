@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "../store";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
@@ -29,6 +29,18 @@ const FAQS = [
 export function Landing() {
   const { nav } = useApp();
   const [upgrade, setUpgrade] = useState(false);
+  /* admin-published pricing (app_config → pricing) — shows INR when
+     published, falls back to the baked-in USD catalog */
+  const [remotePrice, setRemotePrice] = useState<number | null>(null);
+  const [remoteCurrency, setRemoteCurrency] = useState("");
+  useEffect(() => {
+    let on = true;
+    void import("../services/billing").then(({ getRemotePricing }) =>
+      getRemotePricing().then(rp => { if (on && rp) { setRemotePrice(rp.monthly ?? null); setRemoteCurrency(rp.currency ?? ""); } })
+    ).catch(() => {});
+    return () => { on = false; };
+  }, []);
+  const proPrice = remotePrice != null ? `${remoteCurrency === "INR" ? "₹" : remoteCurrency ? remoteCurrency + " " : "$"}${remotePrice}` : "$9";
 
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -122,7 +134,7 @@ export function Landing() {
             <span className="absolute right-4 top-4"><Chip tone="co">POPULAR</Chip></span>
             <h3 className="text-[16px] font-extrabold">Pro</h3>
             <div className="mt-3 text-[13px] text-mut">Unlimited practice, AI coaching and voice rounds.</div>
-            <div className="mt-4 text-[34px] font-extrabold tracking-tight">$9<span className="text-[14px] font-bold text-mut">/mo</span></div>
+            <div className="mt-4 text-[34px] font-extrabold tracking-tight">{proPrice}<span className="text-[14px] font-bold text-mut">/mo</span></div>
             <ul className="mt-5 space-y-2 text-[13.5px] text-ink">
               <li className="before:content-['✓'] before:mr-2 before:text-ok">Unlimited interview sessions</li>
               <li className="before:content-['✓'] before:mr-2 before:text-ok">Unlimited AI feedback & hints</li>

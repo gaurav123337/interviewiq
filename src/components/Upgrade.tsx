@@ -66,6 +66,14 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
   const effDiscount = Math.max(discount, couponCheck?.valid ? couponCheck.discountPct : 0);
   /* admin-published price wins over the baked-in catalog (dollars) */
   const planPrice = (id: string) => (remote && remote[id as keyof RemotePricing] != null ? remote[id as keyof RemotePricing] as number : PLANS.find(p => p.id === id)!.price);
+  /* currency-aware label — follows the admin-published pricing row (₹ for
+     INR, symbol for USD, code otherwise); falls back to the baked-in $ */
+  const money = (n: number) => {
+    const cur = remote?.currency;
+    if (cur === "INR") return "₹" + (Number.isInteger(n) ? String(n) : n.toFixed(2));
+    if (cur && cur !== "USD") return cur + " " + (Number.isInteger(n) ? String(n) : n.toFixed(2));
+    return fmtMoney(n);
+  };
 
   const applyCoupon = async () => {
     const code = coupon.trim();
@@ -232,8 +240,8 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
               >
                 <div className="text-[11px] font-extrabold uppercase tracking-wider text-mut">{p.label}</div>
                 <div className="mt-1 text-[17px] font-extrabold tabular-nums">
-                  {discount > 0 && <span className="mr-1 text-[12px] text-fnt line-through">{fmtMoney(was)}</span>}
-                  {fmtMoney(now)}<span className="text-[11px] font-bold text-mut">{recurring ? "/mo" : p.per}</span>
+                  {discount > 0 && <span className="mr-1 text-[12px] text-fnt line-through">{money(was)}</span>}
+                  {money(now)}<span className="text-[11px] font-bold text-mut">{recurring ? "/mo" : p.per}</span>
                 </div>
                 {recurring && <div className="text-[10px] font-bold text-acc1">billed {p.id === "yearly" ? "yearly" : "monthly"} · cancel anytime</div>}
                 {effDiscount > 0 && <div className="text-[10.5px] font-bold text-ok">−{effDiscount}%{couponCheck?.valid ? ` (${couponCheck.discountPct}% code)` : " for you"}</div>}
