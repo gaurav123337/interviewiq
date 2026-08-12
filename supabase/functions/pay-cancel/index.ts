@@ -34,9 +34,10 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "Sign in to manage your subscription" }), { status: 401, headers });
     }
 
-    const body = await req.json().catch(() => ({})) as { providerSubscriptionId?: string; targetUserId?: string };
+    const body = await req.json().catch(() => ({})) as { providerSubscriptionId?: string; targetUserId?: string; reason?: string };
     const subId = String(body.providerSubscriptionId ?? "").trim();
     const targetUserId = String(body.targetUserId ?? "").trim() || undefined;
+    const reason = String(body.reason ?? "").trim().slice(0, 200) || undefined;
     if (!subId) {
       return new Response(JSON.stringify({ error: "Missing subscription id" }), { status: 400, headers });
     }
@@ -78,7 +79,8 @@ Deno.serve(async (req) => {
       p_provider_sub_id: subId,
       p_plan: sub.plan,
       p_status: "cancelled",
-      p_period_end: r.currentPeriodEnd
+      p_period_end: r.currentPeriodEnd,
+      p_reason: reason
     });
     if (upErr) throw new Error("upsert_subscription: " + upErr.message);
 

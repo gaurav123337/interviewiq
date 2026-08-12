@@ -38,7 +38,7 @@ import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../services/entitlement";
-import { adminBillingActions, adminCancelSubscription, adminCreateCoupon, adminListCoupons, adminListPayments, adminListSubscriptions, adminRefundPayment, adminSimulatePurchase, fmtMinor, revenueSummary, type AdminCoupon, type AdminPaymentRow, type AdminSubscriptionRow, type BillingActionRow } from "../services/billing";
+import { adminBillingActions, adminCancelSubscription, adminCreateCoupon, adminListCoupons, adminListPayments, adminListSubscriptions, adminRefundPayment, adminSimulatePurchase, fmtMinor, revenueSummary, subscriptionSummary, type AdminCoupon, type AdminPaymentRow, type AdminSubscriptionRow, type BillingActionRow } from "../services/billing";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -110,6 +110,10 @@ function BillingSection() {
   useEffect(load, []);
 
   const revenue = useMemo(() => revenueSummary(payments), [payments]);
+  const subsSummary = useMemo(() => subscriptionSummary(subs), [subs]);
+  /* cancel-with-reason — row being cancelled + its reason input */
+  const [cancelTarget, setCancelTarget] = useState<AdminSubscriptionRow | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   const createCoupon = async () => {
     if (!coCode.trim() || coPct < 1) { toast("Code and a 1–100% discount are required"); return; }
@@ -156,8 +160,9 @@ function BillingSection() {
   const cancelSub = async (s: AdminSubscriptionRow) => {
     setBusy(true);
     try {
-      const r = await adminCancelSubscription(s.providerSubscriptionId, s.userId);
+      const r = await adminCancelSubscription(s.providerSubscriptionId, s.userId, cancelReason);
       toast(`🔁 Cancelled ${s.plan} subscription for ${s.email || s.userId.slice(0, 8)} — access stays until ${r.currentPeriodEnd ? new Date(r.currentPeriodEnd).toLocaleDateString() : "period end"}`);
+      setCancelTarget(null); setCancelReason("");
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Cancel failed")); }
     finally { setBusy(false); }
@@ -274,6 +279,34 @@ function BillingSection() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* subscription health — active/cancelled, renewals, churn */}
+      <div className={`${cardCls} p-5`}>
+        <h3 className="text-[14.5px] font-extrabold">🔁 Subscription health</h3>
+        <p className="mb-3 text-[12px] text-mut">From the subscriptions table — renewals estimate the next 30 days at catalog prices.</p>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Active</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{subsSummary.activeCount}</div>
+            <div className="text-[11px] text-fnt">cancelled {subsSummary.cancelledCount}</div>
+          </div>
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Renewing ≤ 30d</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{subsSummary.renewals30d}</div>
+            <div className="text-[11px] text-fnt">≈ {fmtMinor(subsSummary.renewals30dMinor, "USD")}</div>
+          </div>
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Expired</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{subsSummary.expiredCount}</div>
+            <div className="text-[11px] text-fnt">no longer active</div>
+          </div>
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Churn rate</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{subsSummary.churnRate}%</div>
+            <div className="text-[11px] text-fnt">cancelled ÷ decided</div>
+          </div>
+        </div>
       </div>
 
       {/* reusable coupon codes — storefront discount codes */}
@@ -440,11 +473,25 @@ function BillingSection() {
                   </td>
                   <td className="px-3 py-3 text-[12px] text-fnt">{new Date(s.createdAt).toLocaleDateString()}</td>
                   <td className="px-4 py-3">
-                    {s.status === "active" ? (
+                    {s.status === "active" && cancelTarget?.providerSubscriptionId === s.providerSubscriptionId ? (
+                      <div className="flex flex-col gap-1.5">
+                        <input
+                          value={cancelReason}
+                          onChange={e => setCancelReason(e.target.value)}
+                          placeholder="Reason (recorded in the audit trail)"
+                          className="inp py-1 text-[12px]"
+                          autoFocus
+                        />
+                        <div className="flex gap-1.5">
+                          <button className={btnDanger + btnSm} disabled={busy} onClick={() => cancelSub(s)}>Confirm cancel</button>
+                          <button className={btnGhost + btnSm} disabled={busy} onClick={() => { setCancelTarget(null); setCancelReason(""); }}>Back</button>
+                        </div>
+                      </div>
+                    ) : s.status === "active" ? (
                       <button
                         className={btnDanger + btnSm}
                         disabled={busy}
-                        onClick={() => cancelSub(s)}
+                        onClick={() => { setCancelTarget(s); setCancelReason(""); }}
                         title="Cancel at period end — the user keeps Pro until the next billing date"
                       >
                         🔁 Cancel
@@ -693,6 +740,7 @@ function Users({ users, admins, busy, setBusy, onChanged }: {
   setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
 }) {
   const [grantEmail, setGrantEmail] = useState("");
+  const [billingUser, setBillingUser] = useState<{ id: string; email: string } | null>(null);
 
   const doGrant = async () => {
     if (!grantEmail.trim()) { toast("Enter an email"); return; }
@@ -744,12 +792,13 @@ function Users({ users, admins, busy, setBusy, onChanged }: {
               <th className="px-3 py-3 font-bold">Sessions</th>
               <th className="px-3 py-3 font-bold">AI calls</th>
               <th className="px-3 py-3 font-bold">Joined</th>
-              <th className="px-5 py-3 font-bold">Admin</th>
+              <th className="px-3 py-3 font-bold">Admin</th>
+              <th className="px-5 py-3 font-bold">Billing</th>
             </tr>
           </thead>
           <tbody>
             {users.length === 0 && (
-              <tr><td colSpan={8} className="px-5 py-10 text-center text-mut">No signed-in users yet — when someone creates an account and syncs, they appear here.</td></tr>
+              <tr><td colSpan={9} className="px-5 py-10 text-center text-mut">No signed-in users yet — when someone creates an account and syncs, they appear here.</td></tr>
             )}
             {users.map(u => {
               const st = status(u);
@@ -775,13 +824,121 @@ function Users({ users, admins, busy, setBusy, onChanged }: {
                       <span className="text-fnt">—</span>
                     )}
                   </td>
+                  <td className="px-5 py-3">
+                    <button className={btnGhost + btnSm} onClick={() => setBillingUser({ id: u.id, email: u.email })} title="Entitlements, payments, subscriptions and audit trail for this user">
+                      💰 Billing
+                    </button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+      {billingUser && <UserBillingDrawer userId={billingUser.id} email={billingUser.email} onClose={() => setBillingUser(null)} />}
     </div>
+  );
+}
+
+/* Per-user billing drawer — one account's full billing history in one
+   place: entitlement, payments, subscriptions, and audit actions, all
+   filtered client-side from the admin RPCs (no new read surface). */
+function UserBillingDrawer({ userId, email, onClose }: { userId: string; email: string; onClose: () => void }) {
+  const [state, setState] = useState<{ entitlements: AdminEntitlementRow[]; payments: AdminPaymentRow[]; subs: AdminSubscriptionRow[]; audit: BillingActionRow[] } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void Promise.all([adminListEntitlements(), adminListPayments(), adminListSubscriptions(), adminBillingActions(100)])
+      .then(([e, p, s, a]) => {
+        if (!alive) return;
+        setState({
+          entitlements: e.filter(r => r.userId === userId),
+          payments: p.filter(r => r.userId === userId),
+          subs: s.filter(r => r.userId === userId),
+          audit: a.filter(r => r.userId === userId)
+        });
+      })
+      .catch(() => { if (alive) setState({ entitlements: [], payments: [], subs: [], audit: [] }); });
+    return () => { alive = false; };
+  }, [userId]);
+
+  const ent = state?.entitlements[0];
+  return (
+    <Modal onClose={onClose} title={`💰 Billing — ${email}`} desc="Entitlement, payments, subscriptions and the audit trail for this account.">
+      {!state ? (
+        <p className="py-6 text-center text-mut">Loading billing history…</p>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Entitlement</div>
+            {ent ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/40 p-3 text-[12.5px]">
+                <Chip tone={ent.active ? "ok" : "default"}>{ent.active ? "💎 Pro active" : "free"}</Chip>
+                {ent.plan && <Chip>{ent.plan}</Chip>}
+                <span className="text-fnt">expires {ent.expiresAt ? new Date(ent.expiresAt).toLocaleDateString() : "never"}</span>
+                {ent.source && <Chip tone="lvl">via {ent.source}</Chip>}
+                {ent.discountPct > 0 && <Chip tone="lvl">−{ent.discountPct}%</Chip>}
+              </div>
+            ) : <p className="text-[12.5px] text-fnt">No entitlement row — this account has never been granted Pro.</p>}
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Payments ({state.payments.length})</div>
+            {state.payments.length === 0 ? (
+              <p className="text-[12.5px] text-fnt">No confirmed payments.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {state.payments.map((p, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+                    <Chip tone={p.status === "paid" ? "ok" : "warn"}>{p.status}</Chip>
+                    <span className="font-bold capitalize">{p.plan}</span>
+                    <span className="font-bold tabular-nums">{fmtMinor(p.amountMinor, p.currency)}</span>
+                    {p.discountPct > 0 && <Chip tone="lvl">−{p.discountPct}%</Chip>}
+                    {p.kind === "subscription" && <Chip tone="lvl">🔁 sub</Chip>}
+                    <span className="ml-auto text-[11px] text-fnt">{new Date(p.createdAt).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Subscriptions ({state.subs.length})</div>
+            {state.subs.length === 0 ? (
+              <p className="text-[12.5px] text-fnt">No provider subscriptions.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {state.subs.map((s, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+                    <Chip tone={s.status === "active" ? "ok" : s.status === "cancelled" ? "warn" : "bad"}>{s.status}</Chip>
+                    <span className="font-bold capitalize">{s.plan}</span>
+                    <span className="text-fnt">{s.provider}</span>
+                    <span className="ml-auto text-[11px] text-fnt">next billing {s.currentPeriodEnd ? new Date(s.currentPeriodEnd).toLocaleDateString() : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Audit trail ({state.audit.length})</div>
+            {state.audit.length === 0 ? (
+              <p className="text-[12.5px] text-fnt">No billing actions for this account.</p>
+            ) : (
+              <div className="max-h-[200px] space-y-1.5 overflow-y-auto">
+                {state.audit.map((a, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+                    <Chip tone={a.action === "purchase" ? "ok" : a.action === "revoke" ? "bad" : "default"}>{a.action}</Chip>
+                    {a.detail && <span className="font-mono text-[11px] text-fnt">{JSON.stringify(a.detail).slice(0, 100)}</span>}
+                    <span className="ml-auto text-[11px] text-fnt">{new Date(a.createdAt).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

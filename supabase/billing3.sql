@@ -57,7 +57,8 @@ create policy "coupons admin all" on public.coupons for all using (public.is_adm
    function (verified ownership + provider API) share one code path. */
 create or replace function public.upsert_subscription(
   p_user uuid, p_provider text, p_provider_sub_id text, p_plan text,
-  p_status text, p_period_end timestamptz default null
+  p_status text, p_period_end timestamptz default null,
+  p_reason text default null
 )
 returns void language plpgsql security definer set search_path = public as $$
 begin
@@ -77,7 +78,10 @@ begin
 
   if p_status = 'cancelled' then
     perform public.log_billing_action('cancel_sub', p_user,
-      jsonb_build_object('provider', p_provider, 'sub', p_provider_sub_id, 'plan', p_plan));
+      case when p_reason is not null
+        then jsonb_build_object('provider', p_provider, 'sub', p_provider_sub_id, 'plan', p_plan, 'reason', p_reason)
+        else jsonb_build_object('provider', p_provider, 'sub', p_provider_sub_id, 'plan', p_plan)
+      end);
   end if;
 end $$;
 

@@ -174,6 +174,20 @@ describe("admin subscription management", () => {
     expect(JSON.parse(String(opts.body))).toEqual({ providerSubscriptionId: "sub_1", targetUserId: "u1" });
   });
 
+  it("admin cancel carries the reason into the audit trail", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, status: "cancelled", currentPeriodEnd: null })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { adminCancelSubscription } = await import("../services/billing");
+    await adminCancelSubscription("sub_1", "u1", "  Payment failed twice  ");
+    const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(opts.body))).toEqual({
+      providerSubscriptionId: "sub_1", targetUserId: "u1", reason: "Payment failed twice"
+    });
+  });
+
   it("admin cancel surfaces a server rejection", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: false,

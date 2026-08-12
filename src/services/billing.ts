@@ -258,8 +258,9 @@ export async function adminListSubscriptions(): Promise<AdminSubscriptionRow[]> 
     period. Goes through the same pay-cancel Edge Function as the user's own
     cancel — it verifies server-side (app_admins + target-user match) that
     the caller is allowed, then calls the provider API and persists the
-    cancelled status (audit-logged). */
-export async function adminCancelSubscription(providerSubscriptionId: string, targetUserId: string): Promise<{ status: string; currentPeriodEnd: string | null }> {
+    cancelled status (audit-logged). `reason` is carried into the audit
+    trail so every admin cancel has a paper trail. */
+export async function adminCancelSubscription(providerSubscriptionId: string, targetUserId: string, reason = ""): Promise<{ status: string; currentPeriodEnd: string | null }> {
   const client = await getSupabaseClient();
   if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
   const { data: session } = await client.auth.getSession();
@@ -269,7 +270,7 @@ export async function adminCancelSubscription(providerSubscriptionId: string, ta
   const res = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-cancel`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ providerSubscriptionId, targetUserId })
+    body: JSON.stringify({ providerSubscriptionId, targetUserId, reason: reason.trim() || undefined })
   });
   const body = (await res.json().catch(() => ({}))) as { ok?: boolean; status?: string; currentPeriodEnd?: string | null; error?: string };
   if (!res.ok || !body.ok) throw new Error(body.error ?? "Cancel failed — try again.");
@@ -330,6 +331,52 @@ export async function adminCreateCoupon(code: string, discountPct: number, maxUs
   });
   if (error) throw new Error(error.message);
   return String(data ?? "");
+}
+
+/* ------------------------------------------------------------------ */
+/* Subscription summary (pure — unit-tested)                           */
+/* ------------------------------------------------------------------ */
+
+/* Catalog amounts (minor units) used for renewal estimates — mirror the
+   server's PLAN_CATALOG defaults. */
+const SUB_PLAN_AMOUNT_MINOR: Record<string, number> = { monthly: 900, yearly: 7900 };
+
+export interface SubscriptionSummary {
+  activeCount: number;
+  cancelledCount: number;
+  expiredCount: number;
+  /** Active subscriptions whose next billing date falls within 30 days. */
+  renewals30d: number;
+  /** Estimated value of renewals30d (catalog prices). */
+  renewals30dMinor: number;
+  /** cancelled / (active + cancelled), rounded. 0 when no decided subs. */
+  churnRate: number;
+}
+
+/** Aggregates the subscriptions table for the admin dashboard — how many
+    active/cancelled subs, what's renewing this month, and the churn rate.
+    Pure and deterministic so the numbers are unit-testable. */
+export function subscriptionSummary(subs: AdminSubscriptionRow[]): SubscriptionSummary {
+  const s: SubscriptionSummary = { activeCount: 0, cancelledCount: 0, expiredCount: 0, renewals30d: 0, renewals30dMinor: 0, churnRate: 0 };
+  const now = Date.now();
+  const soon = now + 30 * 86400000;
+  for (const sub of subs) {
+    if (sub.status === "active") {
+      s.activeCount++;
+      const end = sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).getTime() : null;
+      if (end && end > now && end <= soon) {
+        s.renewals30d++;
+        s.renewals30dMinor += SUB_PLAN_AMOUNT_MINOR[sub.plan] ?? 0;
+      }
+    } else if (sub.status === "cancelled") {
+      s.cancelledCount++;
+    } else if (sub.status === "expired") {
+      s.expiredCount++;
+    }
+  }
+  const decided = s.activeCount + s.cancelledCount;
+  s.churnRate = decided > 0 ? Math.round((s.cancelledCount / decided) * 100) : 0;
+  return s;
 }
 
 /* ------------------------------------------------------------------ */

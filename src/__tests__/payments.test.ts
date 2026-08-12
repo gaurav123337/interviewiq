@@ -8,7 +8,7 @@ import {
   extendExpiry, getPaymentProvider, isCancelEvent, isPaidEvent, isRefundEvent, planDays, priceWithDiscount,
   RazorpayProvider, StripeProvider
 } from "../../supabase/functions/_shared/payment";
-import { revenueSummary, type AdminPaymentRow } from "../services/billing";
+import { revenueSummary, subscriptionSummary, type AdminPaymentRow, type AdminSubscriptionRow } from "../services/billing";
 
 /* WebCrypto helpers — no node builtins needed */
 const hmac = async (secret: string, data: string) => {
@@ -360,5 +360,44 @@ describe("revenue summary (admin analytics)", () => {
     expect(s.paidCount).toBe(0);
     expect(s.mrrMinor).toBe(0);
     expect(Object.keys(s.byPlan)).toHaveLength(0);
+  });
+});
+
+describe("subscription summary (admin analytics)", () => {
+  const sub = (over: Partial<AdminSubscriptionRow>): AdminSubscriptionRow => ({
+    userId: "u1", email: "a@x.com", provider: "razorpay", providerSubscriptionId: "sub_1",
+    plan: "monthly", status: "active", currentPeriodEnd: null, cancelledAt: null,
+    createdAt: "2026-01-01T00:00:00Z", ...over
+  });
+  const daysFromNow = (d: number) => new Date(Date.now() + d * 86400000).toISOString();
+
+  it("counts active/cancelled/expired and renewals in the next 30 days", () => {
+    const s = subscriptionSummary([
+      sub({ plan: "monthly", currentPeriodEnd: daysFromNow(10) }),          /* renews soon: 900 */
+      sub({ userId: "u2", plan: "yearly", currentPeriodEnd: daysFromNow(20) }), /* renews soon: 7900 */
+      sub({ userId: "u3", plan: "monthly", currentPeriodEnd: daysFromNow(60) }), /* active, not soon */
+      sub({ userId: "u4", status: "cancelled", plan: "monthly" }),
+      sub({ userId: "u5", status: "expired", plan: "monthly" })
+    ]);
+    expect(s.activeCount).toBe(3);
+    expect(s.cancelledCount).toBe(1);
+    expect(s.expiredCount).toBe(1);
+    expect(s.renewals30d).toBe(2);
+    expect(s.renewals30dMinor).toBe(900 + 7900);
+    /* cancelled ÷ decided = 1/4 → 25% */
+    expect(s.churnRate).toBe(25);
+  });
+
+  it("ignores past period ends and unknown plans, zero churn when undecided", () => {
+    const s = subscriptionSummary([
+      sub({ currentPeriodEnd: daysFromNow(-5) }),      /* overdue — not a renewal */
+      sub({ userId: "u2", plan: "lifetime", status: "cancelled" }),
+      sub({ userId: "u3", plan: "yearly", currentPeriodEnd: daysFromNow(5) })
+    ]);
+    expect(s.renewals30d).toBe(1);
+    expect(s.renewals30dMinor).toBe(7900);
+    /* cancelled 1 of 3 decided (2 active + 1 cancelled) = 33% */
+    expect(s.churnRate).toBe(33);
+    expect(subscriptionSummary([]).churnRate).toBe(0);
   });
 });
