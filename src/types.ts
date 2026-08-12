@@ -1,6 +1,6 @@
 export type LevelId = "junior" | "mid" | "senior" | "staff" | "principal" | "cto" | "ceo";
 
-export type View = "landing" | "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner" | "roadmap" | "playground" | "admin" | "progress" | "team" | "account" | "legal";
+export type View = "landing" | "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner" | "roadmap" | "playground" | "admin" | "progress" | "team" | "account" | "legal" | "jobs";
 
 export interface Level {
   id: LevelId;
@@ -144,6 +144,56 @@ export interface SkillProfile {
   skills: SkillRating[];
   diagnostic?: DiagnosticResult;
   skippedAt?: number; // set when the user skipped the diagnostic
+}
+
+/* ------------------------------------------------------------------ */
+/* Jobs & career profile (Phase 1 — the apply-kit foundation)          */
+/* ------------------------------------------------------------------ */
+
+/** The user's professional profile — the single source of truth for the
+    job matcher and, later, resume/cover-letter generation. */
+export interface CareerProfile {
+  headline: string;
+  years: number;
+  location: string;
+  /** Prefers remote-only roles. */
+  remote: boolean;
+  workAuth: string;
+  targetTitles: string[];
+  /** Skill names the user claims (prefilled from the diagnostic/roadmap). */
+  skills: string[];
+  summary: string;
+  updatedAt: number;
+}
+
+/** A job posting pulled from an ATS board (Greenhouse / Lever / Ashby). */
+export interface JobPosting {
+  /** Storage id — `${source}:${externalId}`. */
+  id: string;
+  source: string;
+  externalId: string;
+  title: string;
+  company: string;
+  location: string;
+  remote: boolean;
+  description: string;
+  url: string;
+  /** Skills extracted from the description by the jobs-fetch function. */
+  skills: string[];
+  level: string | null;
+  postedAt: string | null;
+}
+
+/** Match verdict tiers — the "good match or not" suggestion. */
+export type MatchVerdict = "strong" | "good" | "moderate" | "stretch" | "no";
+
+/** Result of matching a career profile against a job. */
+export interface JobMatch {
+  score: number;
+  verdict: MatchVerdict;
+  matched: string[];
+  missing: string[];
+  blockers: string[];
 }
 
 export interface CatStat {

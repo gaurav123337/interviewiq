@@ -23,6 +23,7 @@ export interface RemoteConfig {
     playground?: boolean;
     jd?: boolean;
     drill?: boolean;
+    jobs?: boolean;
   };
   /** AI coaching overrides (server-side defaults the product team can tune). */
   ai: {

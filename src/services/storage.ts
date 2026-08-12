@@ -36,6 +36,8 @@ export const STORAGE_KEYS = {
   uiCode: "iq.uiCode",
   codingTrack: "iq.codingTrack",
   remoteConfig: "iq.remoteConfig",
+  career: "iq.career",
+  jobs: "iq.jobs",
   announcements: "iq.announcements",
   publishedQ: "iq.publishedQ",
   announceSeen: "iq.announceSeen",

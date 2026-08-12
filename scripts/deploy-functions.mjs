@@ -28,15 +28,16 @@ const FUNCTIONS = [
   { slug: "pay-webhook", dir: "pay-webhook", verifyJwt: false },
   { slug: "pay-cancel", dir: "pay-cancel", verifyJwt: true },
   { slug: "pay-refund", dir: "pay-refund", verifyJwt: true },
-  { slug: "pay-verify", dir: "pay-verify", verifyJwt: true }
+  { slug: "pay-verify", dir: "pay-verify", verifyJwt: true },
+  { slug: "jobs-fetch", dir: "jobs-fetch", verifyJwt: true }
 ];
 
 function inline(indexSrc) {
   /* swap the shared-module imports for their contents (payment.ts is always
-     used; email.ts only by pay-refund / pay-verify) */
+     used by pay-*; jobs-fetch is standalone and skips inlining) */
   const paymentMarker = /import\s*\{[^}]*\}\s*from\s*"\.\.\/_shared\/payment\.ts";\s*/;
   const emailMarker = /import\s*\{[^}]*\}\s*from\s*"\.\.\/_shared\/email\.ts";\s*/;
-  if (!paymentMarker.test(indexSrc)) throw new Error("no _shared import found in " + indexSrc.slice(0, 120));
+  if (!paymentMarker.test(indexSrc)) return indexSrc;
   const named = indexSrc.match(paymentMarker)[0].match(/\{([^}]*)\}/)[1].split(",").map(s => s.trim()).filter(Boolean);
   let out = indexSrc.replace(paymentMarker, SHARED + "\n");
   if (emailMarker.test(out)) out = out.replace(emailMarker, SHARED_EMAIL + "\n");

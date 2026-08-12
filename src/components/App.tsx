@@ -18,6 +18,7 @@ import { Playground } from "./Playground";
 import { Admin } from "./Admin";
 import { Landing } from "./Landing";
 import { Team } from "./Team";
+import { Jobs } from "./Jobs";
 import { Legal } from "./Legal";
 import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
@@ -39,6 +40,7 @@ const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
 const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
+  { id: "jobs", label: "Jobs", icon: "💼" },
   { id: "progress", label: "Progress", icon: "📈" },
   { id: "history", label: "History", icon: "🗂️" },
   { id: "settings", label: "Settings", icon: "⚙️" },
@@ -137,7 +139,7 @@ export function App() {
     id === "roadmap" ? "roadmap" : id === "playground" ? "playground" : null;
   const primaryTabs = PRIMARY_TABS.filter(t => { const f = flagForTab(t.id); return f ? featureOn(f) : true; });
   const moreTabs = [
-    ...MORE_TABS.filter(t => t.id !== "drill" || featureOn("drill")),
+    ...MORE_TABS.filter(t => (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs"))),
     ...(isCloudConfigured() ? [{ id: "team" as View, label: "Team", icon: "🏢" }] : []),
     ...(admin.isAdmin ? [{ id: "admin" as View, label: "Admin", icon: "🛡️" }] : [])
   ];
@@ -221,6 +223,7 @@ export function App() {
         {view === "admin" && <Admin />}
         {view === "team" && <Team />}
         {view === "legal" && <Legal />}
+        {view === "jobs" && <Jobs />}
       </main>
 
       {/* app-wide footer — branding + the four legal pages on every view
