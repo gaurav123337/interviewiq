@@ -4,7 +4,7 @@ import { getTier, setTier } from "../services/entitlements";
 import {
   PLANS, discountedPrice, discountLive, fmtMoney, getCachedEntitlement, refreshEntitlement, tierSource
 } from "../services/entitlement";
-import { createCheckout, paymentProviderName } from "../services/billing";
+import { createCheckout, getRemotePricing, paymentProviderName, type RemotePricing } from "../services/billing";
 import { isCloudConfigured } from "../services/cloud";
 import { queueEvent, updateProfile } from "../services/events";
 import { toast } from "../toast";
@@ -31,13 +31,19 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
   const [paid] = useState(() => sessionStorage.getItem(CHECKOUT_KEY) === "pending" || returnedFromCheckout());
   const [verifying, setVerifying] = useState(false);
   const [ent, setEnt] = useState(getCachedEntitlement());
+  const [remote, setRemote] = useState<RemotePricing | null>(null);
+  const [subscribe, setSubscribe] = useState(false);
 
-  /* pull the latest server entitlement (discount + grant status) on open */
+  /* pull the latest server entitlement (discount + grant status) and the
+     admin-published pricing on open */
   useEffect(() => {
     void refreshEntitlement().then(setEnt);
+    void getRemotePricing().then(rp => { if (rp) setRemote(rp); });
   }, []);
 
   const discount = discountLive(ent);
+  /* admin-published price wins over the baked-in catalog (dollars) */
+  const planPrice = (id: string) => (remote && remote[id as keyof RemotePricing] != null ? remote[id as keyof RemotePricing] as number : PLANS.find(p => p.id === id)!.price);
 
   const unlock = async () => {
     /* "I've paid" no longer unlocks blindly — the server must confirm the
@@ -76,9 +82,10 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
       setBuying(true);
       try {
         sessionStorage.setItem(CHECKOUT_KEY, "pending");
-        const r = await createCheckout(plan, discount);
+        const r = await createCheckout(plan, discount, subscribe && plan !== "lifetime");
         window.open(r.url, "_blank", "noopener");
-        toast(`💳 ${paymentProviderName()} checkout opened — complete it, then tap “I've paid” to verify`);
+        const mode = r.mode === "subscription" ? "🔁 subscription" : "one-time";
+        toast(`💳 ${paymentProviderName()} ${mode} checkout opened — complete it, then tap “I've paid” to verify`);
       } catch (e) {
         toast("✗ " + ((e as Error).message || "Checkout unavailable"));
       } finally {
@@ -119,10 +126,13 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
           {ent.plan && <> · {ent.plan}</>}.
         </div>
       ) : (
+        <>
         <div className="mb-4 grid grid-cols-3 gap-2">
           {PLANS.map(p => {
-            const was = discount > 0 ? p.price : 0;
-            const now = discountedPrice(p.price, discount);
+            const base = planPrice(p.id);
+            const was = discount > 0 ? base : 0;
+            const now = discountedPrice(base, discount);
+            const recurring = subscribe && p.id !== "lifetime";
             return (
               <button
                 key={p.id}
@@ -134,15 +144,28 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
                 <div className="text-[11px] font-extrabold uppercase tracking-wider text-mut">{p.label}</div>
                 <div className="mt-1 text-[17px] font-extrabold tabular-nums">
                   {discount > 0 && <span className="mr-1 text-[12px] text-fnt line-through">{fmtMoney(was)}</span>}
-                  {fmtMoney(now)}<span className="text-[11px] font-bold text-mut">{p.per}</span>
+                  {fmtMoney(now)}<span className="text-[11px] font-bold text-mut">{recurring ? "/mo" : p.per}</span>
                 </div>
+                {recurring && <div className="text-[10px] font-bold text-acc1">billed {p.id === "yearly" ? "yearly" : "monthly"} · cancel anytime</div>}
                 {discount > 0 && <div className="text-[10.5px] font-bold text-ok">−{discount}% for you</div>}
-                {p.id === "yearly" && <div className="text-[10px] font-bold text-acc1">best value</div>}
+                {!recurring && p.id === "yearly" && <div className="text-[10px] font-bold text-acc1">best value</div>}
                 <div className="mt-1.5 text-[10.5px] font-bold text-acctxt">{buying ? "Opening…" : "Choose"}</div>
               </button>
             );
           })}
         </div>
+        {checkout() && (
+          <label className="mb-4 flex cursor-pointer items-center gap-2 text-[12.5px] font-bold text-mut select-none">
+            <input
+              type="checkbox"
+              checked={subscribe}
+              onChange={e => setSubscribe(e.target.checked)}
+              className="h-4 w-4 accent-acc1"
+            />
+            🔁 Subscribe (recurring) — monthly/yearly renew automatically; cancel anytime. Off = one-time purchase.
+          </label>
+        )}
+        </>
       )}
 
       {!ent?.active && CONFIG.proUrl && !paid && (

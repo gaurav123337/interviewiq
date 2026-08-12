@@ -38,7 +38,7 @@ import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../services/entitlement";
-import { adminBillingActions, adminListPayments, fmtMinor, type AdminPaymentRow, type BillingActionRow } from "../services/billing";
+import { adminBillingActions, adminListPayments, adminRefundPayment, adminSimulatePurchase, fmtMinor, type AdminPaymentRow, type BillingActionRow } from "../services/billing";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -119,6 +119,26 @@ function BillingSection() {
       toast(`⛔ Revoked Pro from ${u.email || u.userId.slice(0, 8)}`);
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Revoke failed")); }
+    finally { setBusy(false); }
+  };
+
+  const simulate = async (u: AdminEntitlementRow) => {
+    setBusy(true);
+    try {
+      const ext = await adminSimulatePurchase(u.userId, gPlan);
+      toast(`🪙 Simulated ${gPlan} purchase for ${u.email || u.userId.slice(0, 8)} (${ext}) — same grant path as a real webhook`);
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Simulate failed")); }
+    finally { setBusy(false); }
+  };
+
+  const refund = async (p: AdminPaymentRow) => {
+    setBusy(true);
+    try {
+      await adminRefundPayment(p.providerPaymentId);
+      toast(`💸 Refunded ${fmtMinor(p.amountMinor, p.currency)} ${p.plan} for ${p.email || p.userId.slice(0, 8)} — entitlement days subtracted`);
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Refund failed")); }
     finally { setBusy(false); }
   };
 
@@ -238,6 +258,9 @@ function BillingSection() {
                       <button className={btnGhost + btnSm} disabled={busy} onClick={() => setOpen(o => ({ ...o, [u.userId]: o[u.userId] === "discount" ? undefined : "discount" }))}>
                         🏷️ Discount
                       </button>
+                      <button className={btnGhost + btnSm} disabled={busy} onClick={() => simulate(u)} title="Simulate a confirmed purchase — same apply_purchase grant path as the real webhook">
+                        🪙 Sim purchase
+                      </button>
                     </div>
                     {open[u.userId] === "grant" && (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -279,12 +302,13 @@ function BillingSection() {
                 <th className="px-3 py-2.5 font-bold">Amount</th>
                 <th className="px-3 py-2.5 font-bold">Discount</th>
                 <th className="px-3 py-2.5 font-bold">Status</th>
-                <th className="px-4 py-2.5 font-bold">Date</th>
+                <th className="px-3 py-2.5 font-bold">Date</th>
+                <th className="px-4 py-2.5 font-bold">Actions</th>
               </tr>
             </thead>
             <tbody>
               {payments.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-mut">No confirmed payments yet — they appear after the first real purchase completes.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-mut">No confirmed payments yet — they appear after the first real purchase (or a 🪙 Sim purchase) completes.</td></tr>
               )}
               {payments.map((p, i) => (
                 <tr key={i} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
@@ -296,8 +320,18 @@ function BillingSection() {
                   <td className="px-3 py-3 font-bold capitalize">{p.plan}</td>
                   <td className="px-3 py-3 font-bold tabular-nums">{fmtMinor(p.amountMinor, p.currency)}</td>
                   <td className="px-3 py-3">{p.discountPct > 0 ? <Chip tone="lvl">−{p.discountPct}%</Chip> : "—"}</td>
-                  <td className="px-3 py-3"><Chip tone={p.status === "paid" ? "ok" : "warn"}>{p.status}</Chip></td>
-                  <td className="px-4 py-3 text-[12px] text-fnt">{new Date(p.createdAt).toLocaleString()}</td>
+                  <td className="px-3 py-3">
+                    <Chip tone={p.status === "paid" ? "ok" : "warn"}>{p.status}</Chip>
+                    {p.kind === "subscription" && <Chip tone="lvl">🔁 sub</Chip>}
+                  </td>
+                  <td className="px-3 py-3 text-[12px] text-fnt">{new Date(p.createdAt).toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    {p.status === "paid" && (
+                      <button className={btnDanger + btnSm} disabled={busy} onClick={() => refund(p)} title="Refund — marks it refunded and subtracts the plan's days from the entitlement">
+                        💸 Refund
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

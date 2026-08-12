@@ -15,6 +15,8 @@ export interface CheckoutRequest {
   currency: string;
   successUrl: string;
   cancelUrl: string;
+  /** Admin-published price override (minor units) — remote pricing. */
+  amountMinorOverride?: number;
 }
 
 export interface CheckoutResult {
@@ -34,11 +36,18 @@ export interface VerifiedWebhook {
   plan: string | null;
   amountMinor: number | null;
   currency: string | null;
+  /** Provider notes/metadata (user_id, plan) — lets refund events find the
+      original purchase when the payment id differs from the stored one. */
+  notes: Record<string, string> | null;
 }
 
 export interface PaymentProvider {
   name: string;
+  /** One-time purchase checkout URL. */
   createCheckout(r: CheckoutRequest): Promise<CheckoutResult>;
+  /** Recurring subscription checkout URL (monthly/yearly). */
+  createSubscription(r: CheckoutRequest): Promise<CheckoutResult>;
+  supportsSubscriptions: boolean;
   verifyWebhook(rawBody: string, headers: Record<string, string>): Promise<VerifiedWebhook>;
 }
 
@@ -84,7 +93,8 @@ export class RazorpayProvider implements PaymentProvider {
   ) {}
 
   async createCheckout(r: CheckoutRequest): Promise<CheckoutResult> {
-    const amount = priceWithDiscount(PLAN_CATALOG[r.plan].amountMinor, r.discountPct);
+    const base = r.amountMinorOverride ?? PLAN_CATALOG[r.plan].amountMinor;
+    const amount = priceWithDiscount(base, r.discountPct);
     const res = await fetch(`${this.apiBase}/v1/payment_links`, {
       method: "POST",
       headers: {
@@ -125,33 +135,91 @@ export class RazorpayProvider implements PaymentProvider {
     );
     const mac = await crypto.subtle.sign("HMAC", expected, new TextEncoder().encode(rawBody));
     const computed = btoa(String.fromCharCode(...new Uint8Array(mac)));
-    if (computed !== sig) return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null };
+    if (computed !== sig)    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
 
     try {
       const payload = JSON.parse(rawBody) as {
         event: string;
         payload?: {
           payment_link?: { entity?: { id?: string; notes?: Record<string, string>; amount?: number; currency?: string } };
-          payment?: { entity?: { id?: string; notes?: Record<string, string> } };
+          payment?: { entity?: { id?: string; notes?: Record<string, string>; amount?: number; currency?: string } };
+          subscription?: { entity?: { id?: string; notes?: Record<string, string>; plan_id?: string } };
         };
       };
       const link = payload.payload?.payment_link?.entity;
       const pay = payload.payload?.payment?.entity;
-      const notes = link?.notes ?? pay?.notes ?? {};
-      const amount = link?.amount ?? null;
-      const currency = link?.currency ?? "USD";
+      const sub = payload.payload?.subscription?.entity;
+      const notes = link?.notes ?? pay?.notes ?? sub?.notes ?? {};
+      const amount = link?.amount ?? pay?.amount ?? null;
+      const currency = link?.currency ?? pay?.currency ?? "USD";
       return {
         valid: true,
         event: payload.event ?? null,
-        externalId: link?.id ?? pay?.id ?? null,
+        externalId: link?.id ?? pay?.id ?? sub?.id ?? null,
         userId: notes.user_id ?? null,
         plan: notes.plan ?? null,
         amountMinor: amount,
-        currency
+        currency,
+        notes: Object.keys(notes).length ? notes : null
       };
     } catch {
-      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null };
+      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
     }
+  }
+
+  supportsSubscriptions = true;
+
+  async createSubscription(r: CheckoutRequest): Promise<CheckoutResult> {
+    const base = r.amountMinorOverride ?? PLAN_CATALOG[r.plan].amountMinor;
+    const amount = priceWithDiscount(base, r.discountPct);
+    const period = r.plan === "yearly" ? "yearly" : "monthly";
+    /* find a reusable plan, else create one */
+    const plans = await this.rzpGet(`/v1/plans?period=${period}&interval=1`);
+    const existing = (plans.items as { id: string; item?: { amount?: number } }[] | undefined)?.find(
+      p => p.item?.amount === amount
+    );
+    const planId = existing?.id ?? (await this.rzpPost("/v1/plans", {
+      period,
+      interval: 1,
+      item: { name: `InterviewIQ Pro — ${PLAN_CATALOG[r.plan].label}`, amount, currency: r.currency }
+    })).id as string;
+    const sub = await this.rzpPost("/v1/subscriptions", {
+      plan_id: planId,
+      total_count: r.plan === "yearly" ? 1 : 12,
+      customer_notify: 1,
+      notes: { user_id: r.userId, plan: r.plan, mode: "subscription" }
+    });
+    return {
+      provider: this.name,
+      url: sub.short_url as string,
+      externalId: sub.id as string,
+      amountMinor: amount,
+      currency: r.currency
+    };
+  }
+
+  private async rzpGet(path: string): Promise<Record<string, unknown>> {
+    return this.rzp(path, null);
+  }
+
+  private async rzpPost(path: string, body: unknown): Promise<Record<string, unknown>> {
+    return this.rzp(path, body);
+  }
+
+  private async rzp(path: string, body: unknown): Promise<Record<string, unknown>> {
+    const res = await fetch(`${this.apiBase}${path}`, {
+      method: body == null ? "GET" : "POST",
+      headers: {
+        Authorization: "Basic " + btoa(`${this.keyId}:${this.keySecret}`),
+        "Content-Type": "application/json"
+      },
+      body: body == null ? undefined : JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Razorpay ${path} failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+    return (await res.json()) as Record<string, unknown>;
   }
 }
 
@@ -164,7 +232,8 @@ export class StripeProvider implements PaymentProvider {
   constructor(private secretKey: string, private webhookSecret: string) {}
 
   async createCheckout(r: CheckoutRequest): Promise<CheckoutResult> {
-    const amount = priceWithDiscount(PLAN_CATALOG[r.plan].amountMinor, r.discountPct);
+    const base = r.amountMinorOverride ?? PLAN_CATALOG[r.plan].amountMinor;
+    const amount = priceWithDiscount(base, r.discountPct);
     const form = new URLSearchParams({
       mode: "payment",
       "client_reference_id": r.userId,
@@ -202,7 +271,7 @@ export class StripeProvider implements PaymentProvider {
   async verifyWebhook(rawBody: string, headers: Record<string, string>): Promise<VerifiedWebhook> {
     const sig = headers["stripe-signature"] ?? "";
     const m = sig.match(/t=(\d+),v1=([0-9a-f]+)/);
-    if (!m) return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null };
+    if (!m)    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null } as VerifiedWebhook;
     const signed = `${m[1]}.${rawBody}`;
     const key = await crypto.subtle.importKey(
       "raw",
@@ -213,7 +282,7 @@ export class StripeProvider implements PaymentProvider {
     );
     const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signed));
     const hex = [...new Uint8Array(mac)].map(b => b.toString(16).padStart(2, "0")).join("");
-    if (hex !== m[2]) return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null };
+    if (hex !== m[2]) return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
 
     try {
       const payload = JSON.parse(rawBody) as {
@@ -221,6 +290,7 @@ export class StripeProvider implements PaymentProvider {
         data?: { object?: { client_reference_id?: string; metadata?: Record<string, string>; id?: string; amount_total?: number; currency?: string } };
       };
       const obj = payload.data?.object;
+      const notes = obj?.metadata ?? {};
       return {
         valid: true,
         event: payload.type ?? null,
@@ -228,11 +298,18 @@ export class StripeProvider implements PaymentProvider {
         userId: obj?.client_reference_id ?? obj?.metadata?.user_id ?? null,
         plan: obj?.metadata?.plan ?? null,
         amountMinor: obj?.amount_total ?? null,
-        currency: obj?.currency ?? "USD"
+        currency: obj?.currency ?? "USD",
+        notes: Object.keys(notes).length ? notes : null
       };
     } catch {
-      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null };
+      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
     }
+  }
+
+  supportsSubscriptions = false;
+
+  async createSubscription(): Promise<CheckoutResult> {
+    throw new Error("Subscriptions aren't wired for Stripe yet — use Razorpay (set PAYMENT_PROVIDER=razorpay) or buy one-time.");
   }
 }
 
@@ -274,5 +351,12 @@ export function isPaidEvent(provider: string, event: string | null): boolean {
   if (!event) return false;
   if (provider === "stripe") return event === "checkout.session.completed";
   /* razorpay */
-  return ["payment.captured", "payment_link.paid", "order.paid"].includes(event);
+  return ["payment.captured", "payment_link.paid", "order.paid", "subscription.charged"].includes(event);
+}
+
+/** Which events should trigger a refund (subtract the plan days). */
+export function isRefundEvent(provider: string, event: string | null): boolean {
+  if (!event) return false;
+  if (provider === "stripe") return event === "charge.refunded";
+  return event === "payment.refunded";
 }

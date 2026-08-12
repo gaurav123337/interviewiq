@@ -3,9 +3,9 @@
    through: plan pricing, expiry extension, signature verification for
    Razorpay (default) and Stripe (drop-in), and provider selection. */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  extendExpiry, getPaymentProvider, isPaidEvent, planDays, priceWithDiscount,
+  extendExpiry, getPaymentProvider, isPaidEvent, isRefundEvent, planDays, priceWithDiscount,
   RazorpayProvider, StripeProvider
 } from "../../supabase/functions/_shared/payment";
 
@@ -133,5 +133,87 @@ describe("provider selection (the swap point)", () => {
     expect(isPaidEvent("razorpay", "payment_link.paid")).toBe(true);
     expect(isPaidEvent("stripe", "checkout.session.async_payment_failed")).toBe(false);
     expect(isPaidEvent("razorpay", null)).toBe(false);
+  });
+
+  it("maps refund events per provider (and never treats paid as refunded)", () => {
+    expect(isRefundEvent("razorpay", "payment.refunded")).toBe(true);
+    expect(isRefundEvent("stripe", "charge.refunded")).toBe(true);
+    expect(isRefundEvent("razorpay", "payment.captured")).toBe(false);
+    expect(isRefundEvent("stripe", "checkout.session.completed")).toBe(false);
+    expect(isRefundEvent("razorpay", null)).toBe(false);
+  });
+});
+
+describe("razorpay subscriptions + remote pricing (provider core)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const req = {
+    plan: "monthly" as const, discountPct: 30, userId: "u9",
+    currency: "USD", successUrl: "https://app/?pro=success", cancelUrl: "https://app/"
+  };
+
+  it("creates a subscription, discounting the plan amount and binding the user", async () => {
+    /* no reusable plan → create one, then the subscription */
+    const calls: { url: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body });
+      const u = String(url);
+      if (u.includes("/v1/plans?")) return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (u.endsWith("/v1/plans")) return new Response(JSON.stringify({ id: "plan_created" }), { status: 200 });
+      if (u.includes("/v1/subscriptions")) {
+        return new Response(JSON.stringify({ id: "sub_1", short_url: "https://rzp.io/i/sub" }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const provider = new RazorpayProvider("rzp_test", "sec", "wh", "https://api.razorpay.com");
+    const r = await provider.createSubscription(req);
+
+    expect(r.url).toBe("https://rzp.io/i/sub");
+    expect(r.externalId).toBe("sub_1");
+    expect(r.amountMinor).toBe(630); /* 900 − 30% */
+    expect(r.provider).toBe("razorpay");
+    /* plan created at the discounted amount, then subscription binds the user */
+    const planPost = calls.find(c => c.url === "https://api.razorpay.com/v1/plans")!;
+    expect(JSON.parse(String(planPost.body)).item.amount).toBe(630);
+    const subPost = calls.find(c => c.url.includes("/v1/subscriptions"))!;
+    const subBody = JSON.parse(String(subPost.body));
+    expect(subBody.notes).toEqual({ user_id: "u9", plan: "monthly", mode: "subscription" });
+    expect(subBody.plan_id).toBe("plan_created");
+    /* yearly → 1 charge; monthly → 12 */
+  });
+
+  it("reuses an existing plan at the exact discounted amount", async () => {
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      const u = String(url);
+      if (u.includes("/v1/plans?")) return new Response(JSON.stringify({ items: [{ id: "plan_existing", item: { amount: 630 } }] }), { status: 200 });
+      if (u.endsWith("/v1/plans")) { posts.push(u); return new Response(JSON.stringify({ id: "plan_never" }), { status: 200 }); }
+      if (u.includes("/v1/subscriptions")) return new Response(JSON.stringify({ id: "sub_2", short_url: "https://rzp.io/i/s2" }), { status: 200 });
+      return new Response("{}", { status: 404 });
+    });
+
+    const provider = new RazorpayProvider("rzp_test", "sec", "wh", "https://api.razorpay.com");
+    const r = await provider.createSubscription(req);
+    expect(r.externalId).toBe("sub_2");
+    expect(posts).toEqual([]); /* plan reuse — no plan POST */
+  });
+
+  it("remote pricing override wins over the catalog and still applies the discount", async () => {
+    let amount: number | null = null;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/payment_links")) {
+        const body = JSON.parse(String(init?.body));
+        amount = body.amount;
+        return new Response(JSON.stringify({ id: "plink_9", short_url: "https://rzp.io/i/p9" }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const provider = new RazorpayProvider("rzp_test", "sec", "wh", "https://api.razorpay.com");
+    const r = await provider.createCheckout({ ...req, plan: "yearly", amountMinorOverride: 5000 });
+    expect(r.amountMinor).toBe(3500); /* $50 override − 30% (req discount) */
+    expect(amount).toBe(3500);
   });
 });

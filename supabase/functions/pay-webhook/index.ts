@@ -1,11 +1,12 @@
 /* pay-webhook — the ONLY place a payment becomes Pro.
    Provider-agnostic: verifies the provider's signature over the raw body,
-   maps the event to a user+plan, then writes the entitlement + payment row
-   with the service role. Anyone can POST here — without a valid provider
-   signature nothing happens, so self-granting is impossible. */
+   maps the event, then funnels through the shared apply_purchase /
+   apply_refund SQL (gated to service role / admins) so simulated and real
+   payments are indistinguishable. Handles one-time payments, subscription
+   renewals (subscription.charged) and refunds (payment.refunded). */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { extendExpiry, getPaymentProvider, isPaidEvent, planDays } from "../_shared/payment.ts";
+import { getPaymentProvider, isPaidEvent, isRefundEvent } from "../_shared/payment.ts";
 
 Deno.serve(async (req) => {
   try {
@@ -14,16 +15,9 @@ Deno.serve(async (req) => {
     req.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
 
     const provider = getPaymentProvider(Deno.env.toObject());
-    const verified = await provider.verifyWebhook(rawBody, headers);
-    if (!verified.valid) {
+    const v = await provider.verifyWebhook(rawBody, headers);
+    if (!v.valid) {
       return new Response(JSON.stringify({ ok: false, error: "bad signature" }), { status: 400 });
-    }
-    /* acknowledge non-payment events so the provider stops retrying */
-    if (!isPaidEvent(provider.name, verified.event)) {
-      return new Response(JSON.stringify({ ok: true, ignored: verified.event }), { status: 200 });
-    }
-    if (!verified.userId || !verified.plan || !planDays(verified.plan) || verified.plan === null) {
-      return new Response(JSON.stringify({ ok: false, error: "missing user/plan binding" }), { status: 400 });
     }
 
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY");
@@ -32,42 +26,65 @@ Deno.serve(async (req) => {
     }
     const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
 
-    const { data: existing } = await admin
-      .from("entitlements").select("expires_at").eq("user_id", verified.userId).maybeSingle();
-    const newExpiry = extendExpiry(existing?.expires_at ?? null, planDays(verified.plan));
+    /* refunds — subtract the plan's days from the entitlement */
+    if (isRefundEvent(provider.name, v.event)) {
+      if (!v.externalId && !v.notes?.user_id) {
+        return new Response(JSON.stringify({ ok: true, ignored: "refund without binding" }), { status: 200 });
+      }
+      const match = await findPayment(admin, v);
+      if (!match) {
+        return new Response(JSON.stringify({ ok: true, ignored: "refund for unknown payment" }), { status: 200 });
+      }
+      const { error: refErr } = await admin.rpc("apply_refund", { p_provider_payment_id: match.provider_payment_id });
+      if (refErr) throw new Error("apply_refund: " + refErr.message);
+      return new Response(JSON.stringify({ ok: true, refunded: match.provider_payment_id }), { status: 200 });
+    }
 
-    /* record the payment (dedupe by provider id) */
-    const { error: payErr } = await admin.from("payments").upsert({
-      user_id: verified.userId,
-      provider: provider.name,
-      provider_payment_id: verified.externalId,
-      plan: verified.plan,
-      amount_minor: verified.amountMinor ?? 0,
-      currency: verified.currency ?? "USD",
-      status: "paid"
-    }, { onConflict: "provider_payment_id" });
-    if (payErr) throw new Error("payment write: " + payErr.message);
+    /* acknowledge non-payment events so the provider stops retrying */
+    if (!isPaidEvent(provider.name, v.event)) {
+      return new Response(JSON.stringify({ ok: true, ignored: v.event }), { status: 200 });
+    }
+    if (!v.userId || !v.plan) {
+      return new Response(JSON.stringify({ ok: false, error: "missing user/plan binding" }), { status: 400 });
+    }
 
-    /* grant/extend Pro */
-    const { error: entErr } = await admin.from("entitlements").upsert({
-      user_id: verified.userId,
-      tier: "pro",
-      plan: verified.plan,
-      expires_at: newExpiry,
-      source: provider.name,
-      discount_pct: 0
-    }, { onConflict: "user_id" });
-    if (entErr) throw new Error("entitlement write: " + entErr.message);
+    /* one-time or subscription renewal — same grant path */
+    const kind = v.event === "subscription.charged" ? "subscription" : "one_time";
+    const { error: payErr } = await admin.rpc("apply_purchase", {
+      p_user: v.userId,
+      p_provider: provider.name,
+      p_external_id: v.externalId ?? `UNKNOWN-${Date.now()}`,
+      p_plan: v.plan,
+      p_amount_minor: v.amountMinor ?? 0,
+      p_currency: v.currency ?? "USD",
+      p_kind: kind
+    });
+    if (payErr) throw new Error("apply_purchase: " + payErr.message);
 
-    /* audit trail */
-    await admin.from("billing_actions").insert({
-      action: "purchase",
-      user_id: verified.userId,
-      detail: { provider: provider.name, external_id: verified.externalId, plan: verified.plan }
-    }).then(() => {}).catch(() => {});
-
-    return new Response(JSON.stringify({ ok: true, granted: verified.userId, plan: verified.plan }), { status: 200 });
+    return new Response(JSON.stringify({ ok: true, granted: v.userId, plan: v.plan, kind }), { status: 200 });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: (e as Error).message ?? "webhook failed" }), { status: 500 });
   }
 });
+
+/** Finds the stored payment for a refund event: exact id match first, then
+    the user's latest payment for that plan (Razorpay refund events carry the
+    payment id, which differs from the payment-link id we stored). */
+async function findPayment(
+  admin: ReturnType<typeof createClient>,
+  v: { externalId: string | null; notes: Record<string, string> | null; plan: string | null }
+): Promise<{ provider_payment_id: string } | null> {
+  if (v.externalId) {
+    const { data } = await admin.from("payments")
+      .select("provider_payment_id").eq("provider_payment_id", v.externalId).maybeSingle();
+    if (data) return data as { provider_payment_id: string };
+  }
+  if (v.notes?.user_id) {
+    let q = admin.from("payments").select("provider_payment_id")
+      .eq("user_id", v.notes.user_id).order("created_at", { ascending: false }).limit(1);
+    if (v.plan) q = q.eq("plan", v.plan);
+    const { data } = await q;
+    if (data?.[0]) return data[0] as { provider_payment_id: string };
+  }
+  return null;
+}

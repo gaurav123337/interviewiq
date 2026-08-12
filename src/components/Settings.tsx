@@ -268,6 +268,7 @@ export function Settings() {
                   <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
                     <span className="min-w-[110px] flex-1 font-bold capitalize">{p.plan}</span>
                     <Chip tone="ok">{p.status}</Chip>
+                    {p.kind === "subscription" && <Chip tone="lvl">🔁 subscription</Chip>}
                     <Chip>{p.provider}</Chip>
                     <span className="font-bold tabular-nums">{fmtMinor(p.amountMinor, p.currency)}</span>
                     {p.discountPct > 0 && <Chip tone="lvl">−{p.discountPct}%</Chip>}

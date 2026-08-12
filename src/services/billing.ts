@@ -18,11 +18,17 @@ export interface CheckoutResponse {
   externalId: string;
   amountMinor: number;
   currency: string;
+  /** "one_time" | "subscription" — which flow the server picked. */
+  mode?: string;
+  note?: string;
 }
 
 /** Creates a provider checkout URL for the signed-in user and returns it.
-    Throws with a friendly message when not signed in or not configured. */
-export async function createCheckout(plan: string, discountPct = 0): Promise<CheckoutResponse> {
+    Throws with a friendly message when not signed in or not configured.
+    `subscribe` asks the server for the provider's recurring flow (Razorpay
+    subscriptions for monthly/yearly); providers without subscriptions fall
+    back to one-time and say so via `note`. */
+export async function createCheckout(plan: string, discountPct = 0, subscribe = false): Promise<CheckoutResponse> {
   const client = await getSupabaseClient();
   if (!client || !getCloudState().user) {
     throw new Error("Sign in to your cloud account first — purchases are tied to it.");
@@ -34,11 +40,25 @@ export async function createCheckout(plan: string, discountPct = 0): Promise<Che
   const res = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-checkout`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ plan, discountPct })
+    body: JSON.stringify({ plan, discountPct, subscribe })
   });
   const body = (await res.json().catch(() => ({}))) as CheckoutResponse & { error?: string };
   if (!res.ok || !body.url) throw new Error(body.error ?? "Checkout failed — try again.");
   return body;
+}
+
+/** Admin-published pricing (app_config → "pricing", public-read so any
+    client can render the storefront). Values are dollars; currency is
+    optional and defaults to the server's PAYMENT_CURRENCY. Null when the
+    admin hasn't published pricing (fall back to the baked-in catalog). */
+export interface RemotePricing { monthly?: number; yearly?: number; lifetime?: number; currency?: string }
+
+export async function getRemotePricing(): Promise<RemotePricing | null> {
+  const client = await getSupabaseClient();
+  if (!client) return null;
+  const { data, error } = await client.from("app_config").select("value").eq("key", "pricing").maybeSingle();
+  if (error || !data) return null;
+  return (data.value as RemotePricing) ?? null;
 }
 
 export interface MyPayment {
@@ -48,6 +68,8 @@ export interface MyPayment {
   currency: string;
   discountPct: number;
   status: string;
+  /** "one_time" | "subscription" | "refunded"-aware via status — purchase flow kind. */
+  kind: string;
   createdAt: string;
 }
 
@@ -64,6 +86,7 @@ export async function getMyPayments(): Promise<MyPayment[]> {
     currency: String(r.currency ?? "USD"),
     discountPct: Number(r.discount_pct ?? 0),
     status: String(r.status ?? "paid"),
+    kind: String(r.kind ?? "one_time"),
     createdAt: r.created_at as string
   }));
 }
@@ -71,6 +94,8 @@ export async function getMyPayments(): Promise<MyPayment[]> {
 export interface AdminPaymentRow extends MyPayment {
   userId: string;
   email: string | null;
+  /** Provider-side payment/subscription id — used by admin refunds. */
+  providerPaymentId: string;
 }
 
 export async function adminListPayments(): Promise<AdminPaymentRow[]> {
@@ -82,13 +107,35 @@ export async function adminListPayments(): Promise<AdminPaymentRow[]> {
     userId: String(r.user_id ?? ""),
     email: (r.email as string | null) ?? null,
     provider: String(r.provider ?? ""),
+    providerPaymentId: String(r.provider_payment_id ?? ""),
     plan: String(r.plan ?? ""),
     amountMinor: Number(r.amount_minor ?? 0),
     currency: String(r.currency ?? "USD"),
     discountPct: Number(r.discount_pct ?? 0),
     status: String(r.status ?? "paid"),
+    kind: String(r.kind ?? "one_time"),
     createdAt: r.created_at as string
   }));
+}
+
+/** Admin: refund a confirmed payment — marks it refunded and subtracts the
+    plan's days from the user's entitlement (server-side, audit-logged). */
+export async function adminRefundPayment(providerPaymentId: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.rpc("admin_refund_payment", { p_provider_payment_id: providerPaymentId });
+  if (error) throw new Error(error.message);
+}
+
+/** Admin: simulate a confirmed purchase — funnels through the exact same
+    apply_purchase grant as a real webhook, so it's the full test path
+    (grant + payment row + audit entry). Returns the synthetic payment id. */
+export async function adminSimulatePurchase(userId: string, plan: string, kind = "one_time"): Promise<string> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_simulate_purchase", { p_user: userId, p_plan: plan, p_kind: kind });
+  if (error) throw new Error(error.message);
+  return String(data ?? "");
 }
 
 export interface BillingActionRow {
