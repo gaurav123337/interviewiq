@@ -119,13 +119,40 @@ export async function adminListPayments(): Promise<AdminPaymentRow[]> {
   }));
 }
 
-/** Admin: refund a confirmed payment — marks it refunded and subtracts the
-    plan's days from the user's entitlement (server-side, audit-logged). */
-export async function adminRefundPayment(providerPaymentId: string): Promise<void> {
+export interface RefundResult {
+  ok: boolean;
+  providerStatus: string | null;
+  providerRefundId: string | null;
+  note: string;
+}
+
+/** Admin: refund a confirmed payment. Goes through the pay-refund Edge
+    Function, which verifies the caller is an admin server-side (app_admins
+    allow-list, never trusting the client), calls the provider's refund API
+    when its keys are configured, then marks the payment refunded through the
+    shared apply_refund SQL helper — subtracting the plan's days and landing
+    the reason in the audit trail. `reason` gives every refund a paper trail,
+    mirroring cancel-with-reason. */
+export async function adminRefundPayment(providerPaymentId: string, reason = ""): Promise<RefundResult> {
   const client = await getSupabaseClient();
-  if (!client) throw new Error("Cloud not configured");
-  const { error } = await client.rpc("admin_refund_payment", { p_provider_payment_id: providerPaymentId });
-  if (error) throw new Error(error.message);
+  if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
+  const { data: session } = await client.auth.getSession();
+  const token = session?.session?.access_token;
+  if (!token) throw new Error("You're signed out — sign in again.");
+
+  const res = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-refund`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ providerPaymentId, reason: reason.trim() || undefined })
+  });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; providerStatus?: string | null; providerRefundId?: string | null; note?: string; error?: string };
+  if (!res.ok || !body.ok) throw new Error(body.error ?? "Refund failed — try again.");
+  return {
+    ok: true,
+    providerStatus: body.providerStatus ?? null,
+    providerRefundId: body.providerRefundId ?? null,
+    note: body.note ?? "Refunded."
+  };
 }
 
 /** Admin: simulate a confirmed purchase — funnels through the exact same

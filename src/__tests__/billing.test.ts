@@ -198,6 +198,37 @@ describe("admin subscription management", () => {
   });
 });
 
+describe("admin refund flow", () => {
+  it("admin refund calls pay-refund with the auth header and reason", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        providerStatus: "processed",
+        providerRefundId: "rfnd_9",
+        note: "Refunded via razorpay (refund rfnd_9) — entitlement days subtracted."
+      })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { adminRefundPayment } = await import("../services/billing");
+    const r = await adminRefundPayment("pay_1", "  Overcharged  ");
+    expect(r).toMatchObject({ ok: true, providerRefundId: "rfnd_9" });
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/functions/v1/pay-refund");
+    expect(opts.headers).toMatchObject({ Authorization: "Bearer tok-123" });
+    expect(JSON.parse(String(opts.body))).toEqual({ providerPaymentId: "pay_1", reason: "Overcharged" });
+  });
+
+  it("admin refund surfaces a server rejection (e.g. non-admin caller)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ ok: false, error: "Admins only — this account isn't on the admin allow-list" })
+    }));
+    const { adminRefundPayment } = await import("../services/billing");
+    await expect(adminRefundPayment("pay_1")).rejects.toThrow(/Admins only/);
+  });
+});
+
 describe("admin billing actions", () => {
   it("calls the grant, discount and create-code RPCs", async () => {
     rpc.mockClear();

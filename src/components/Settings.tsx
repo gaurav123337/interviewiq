@@ -323,7 +323,7 @@ export function Settings() {
                 {payments.map((p, i) => (
                   <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
                     <span className="min-w-[110px] flex-1 font-bold capitalize">{p.plan}</span>
-                    <Chip tone="ok">{p.status}</Chip>
+                    <Chip tone={p.status === "paid" ? "ok" : "warn"}>{p.status === "refunded" ? "💸 " : ""}{p.status}</Chip>
                     {p.kind === "subscription" && <Chip tone="lvl">🔁 subscription</Chip>}
                     <Chip>{p.provider}</Chip>
                     <span className="font-bold tabular-nums">{fmtMinor(p.amountMinor, p.currency)}</span>

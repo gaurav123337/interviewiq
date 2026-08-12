@@ -5,7 +5,8 @@
    of truth.
 
    Usage: node scripts/deploy-functions.mjs <PAT>
-   Deploys: pay-checkout (verify_jwt) and pay-webhook (no JWT). */
+   Deploys: pay-checkout (verify_jwt), pay-webhook (no JWT), pay-cancel and
+   pay-refund (verify_jwt). */
 
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -24,7 +25,8 @@ const SHARED = readFileSync(join(root, "supabase/functions/_shared/payment.ts"),
 const FUNCTIONS = [
   { slug: "pay-checkout", dir: "pay-checkout", verifyJwt: true },
   { slug: "pay-webhook", dir: "pay-webhook", verifyJwt: false },
-  { slug: "pay-cancel", dir: "pay-cancel", verifyJwt: true }
+  { slug: "pay-cancel", dir: "pay-cancel", verifyJwt: true },
+  { slug: "pay-refund", dir: "pay-refund", verifyJwt: true }
 ];
 
 function inline(indexSrc) {

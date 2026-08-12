@@ -311,6 +311,52 @@ describe("subscription lifecycle (period end, cancel adapters, cancel events)", 
     expect(String(post.url)).toContain("/v1/subscriptions/sub_1");
   });
 
+  it("razorpay full refund posts the payment id (no amount = full)", async () => {
+    const calls: { url: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (u: string, init?: RequestInit) => {
+      calls.push({ url: String(u), body: init?.body });
+      return new Response(JSON.stringify({ id: "rfnd_1", status: "processed" }), { status: 200 });
+    });
+    const provider = new RazorpayProvider("rzp_test", "sec", "wh", "https://api.razorpay.com");
+    const r = await provider.refundPayment("pay_1");
+    expect(r).toEqual({ status: "processed", refundId: "rfnd_1" });
+    expect(calls[0].url).toBe("https://api.razorpay.com/v1/payments/pay_1/refund");
+    expect(JSON.parse(String(calls[0].body))).toEqual({});
+  });
+
+  it("razorpay partial refund sends the amount in minor units", async () => {
+    const calls: { body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (_u: string, init?: RequestInit) => {
+      calls.push({ body: init?.body });
+      return new Response(JSON.stringify({ id: "rfnd_2", status: "processed" }), { status: 200 });
+    });
+    const provider = new RazorpayProvider("rzp_test", "sec", "wh", "https://api.razorpay.com");
+    const r = await provider.refundPayment("pay_1", 500);
+    expect(r.refundId).toBe("rfnd_2");
+    expect(JSON.parse(String(calls[0].body))).toEqual({ amount: 500 });
+  });
+
+  it("stripe refund targets the payment intent (full + partial)", async () => {
+    const calls: { url: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: init?.body });
+      return new Response(JSON.stringify({ id: "re_1", status: "succeeded" }), { status: 200 });
+    });
+    const provider = new StripeProvider("sk_test", "whsec_stripe");
+    const full = await provider.refundPayment("pi_1");
+    expect(full).toEqual({ status: "succeeded", refundId: "re_1" });
+    expect(String(calls[0].url)).toContain("/v1/refunds");
+    expect(String(calls[0].body)).toContain("payment_intent=pi_1");
+    await provider.refundPayment("pi_1", 500);
+    expect(String(calls[1].body)).toContain("amount=500");
+  });
+
+  it("stripe refund surfaces a provider rejection", async () => {
+    vi.stubGlobal("fetch", async () => new Response("no such payment_intent", { status: 404 }));
+    const provider = new StripeProvider("sk_test", "whsec_stripe");
+    await expect(provider.refundPayment("pi_missing")).rejects.toThrow(/Stripe refund failed/);
+  });
+
   it("stripe webhook exposes periodEnd for subscription lifecycle events", async () => {
     const provider = new StripeProvider("sk_test", "whsec_stripe");
     const body = JSON.stringify({

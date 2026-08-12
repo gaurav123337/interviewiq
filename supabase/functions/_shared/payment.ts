@@ -58,6 +58,10 @@ export interface PaymentProvider {
   /** Cancel a subscription at the end of its current period — access is
       kept until currentPeriodEnd, but future billing stops. */
   cancelSubscription(providerSubscriptionId: string): Promise<{ status: string; currentPeriodEnd: string | null }>;
+  /** Refund a one-time payment. `amountMinor` omitted = full refund;
+      provided = partial refund in minor units. Returns the provider refund
+      id so it can be recorded alongside the DB mark. */
+  refundPayment(providerPaymentId: string, amountMinor?: number): Promise<{ status: string; refundId: string | null }>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -219,6 +223,11 @@ export class RazorpayProvider implements PaymentProvider {
     };
   }
 
+  async refundPayment(providerPaymentId: string, amountMinor?: number): Promise<{ status: string; refundId: string | null }> {
+    const refund = await this.rzpPost(`/v1/payments/${providerPaymentId}/refund`, amountMinor ? { amount: amountMinor } : {});
+    return { status: String(refund.status ?? "processed"), refundId: (refund.id as string) ?? null };
+  }
+
   private async rzpGet(path: string): Promise<Record<string, unknown>> {
     return this.rzp(path, null);
   }
@@ -357,6 +366,27 @@ export class StripeProvider implements PaymentProvider {
       status: String(cancelled.status ?? sub.status ?? "cancelled"),
       currentPeriodEnd: end ? new Date(end * 1000).toISOString() : null
     };
+  }
+
+  async refundPayment(providerPaymentId: string, amountMinor?: number): Promise<{ status: string; refundId: string | null }> {
+    /* Stripe refunds are created against the payment_intent (or charge) id. */
+    const form = new URLSearchParams();
+    form.set("payment_intent", providerPaymentId);
+    if (amountMinor) form.set("amount", String(amountMinor));
+    const res = await fetch(`https://api.stripe.com/v1/refunds`, {
+      method: "POST",
+      headers: {
+        Authorization: "Basic " + btoa(`${this.secretKey}:`),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: form
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Stripe refund failed (${res.status}): ${body.slice(0, 200)}`);
+    }
+    const data = (await res.json()) as { status?: string; id?: string };
+    return { status: String(data.status ?? "succeeded"), refundId: data.id ?? null };
   }
 }
 

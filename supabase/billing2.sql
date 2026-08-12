@@ -60,8 +60,10 @@ begin
 end $$;
 
 /* Refund a confirmed payment: marks it refunded and subtracts the plan's
-   days from the entitlement (clamped at now; lifetime → expires now). */
-create or replace function public.apply_refund(p_provider_payment_id text)
+   days from the entitlement (clamped at now; lifetime → expires now).
+   `p_reason` is carried into the audit trail so every refund has a paper
+   trail, mirroring cancel-with-reason. */
+create or replace function public.apply_refund(p_provider_payment_id text, p_reason text default null)
 returns void language plpgsql security definer set search_path = public as $$
 declare
   pay public.payments;
@@ -91,15 +93,17 @@ begin
 
   insert into public.billing_actions (admin_id, action, user_id, detail)
   values (auth.uid(), 'refund', pay.user_id,
-          jsonb_build_object('provider', pay.provider, 'external_id', p_provider_payment_id, 'plan', pay.plan));
+          jsonb_build_object('provider', pay.provider, 'external_id', p_provider_payment_id, 'plan', pay.plan)
+            || case when p_reason is not null and btrim(p_reason) <> ''
+                    then jsonb_build_object('reason', btrim(left(p_reason, 200))) else '{}'::jsonb end);
 end $$;
 
 /* Admin: refund a payment from the dashboard. */
-create or replace function public.admin_refund_payment(p_provider_payment_id text)
+create or replace function public.admin_refund_payment(p_provider_payment_id text, p_reason text default null)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'forbidden'; end if;
-  perform public.apply_refund(p_provider_payment_id);
+  perform public.apply_refund(p_provider_payment_id, p_reason);
 end $$;
 
 /* Admin: simulate a confirmed purchase (the test path — exercises the exact

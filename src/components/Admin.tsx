@@ -114,6 +114,8 @@ function BillingSection() {
   /* cancel-with-reason — row being cancelled + its reason input */
   const [cancelTarget, setCancelTarget] = useState<AdminSubscriptionRow | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [refundTarget, setRefundTarget] = useState<AdminPaymentRow | null>(null);
+  const [refundReason, setRefundReason] = useState("");
 
   const createCoupon = async () => {
     if (!coCode.trim() || coPct < 1) { toast("Code and a 1–100% discount are required"); return; }
@@ -171,8 +173,9 @@ function BillingSection() {
   const refund = async (p: AdminPaymentRow) => {
     setBusy(true);
     try {
-      await adminRefundPayment(p.providerPaymentId);
-      toast(`💸 Refunded ${fmtMinor(p.amountMinor, p.currency)} ${p.plan} for ${p.email || p.userId.slice(0, 8)} — entitlement days subtracted`);
+      const r = await adminRefundPayment(p.providerPaymentId, refundReason);
+      toast(`💸 Refunded ${fmtMinor(p.amountMinor, p.currency)} ${p.plan} for ${p.email || p.userId.slice(0, 8)} — ${r.note}`);
+      setRefundTarget(null); setRefundReason("");
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Refund failed")); }
     finally { setBusy(false); }
@@ -545,11 +548,30 @@ function BillingSection() {
                   </td>
                   <td className="px-3 py-3 text-[12px] text-fnt">{new Date(p.createdAt).toLocaleString()}</td>
                   <td className="px-4 py-3">
-                    {p.status === "paid" && (
-                      <button className={btnDanger + btnSm} disabled={busy} onClick={() => refund(p)} title="Refund — marks it refunded and subtracts the plan's days from the entitlement">
+                    {p.status === "paid" && refundTarget?.providerPaymentId === p.providerPaymentId ? (
+                      <div className="flex flex-col gap-1.5">
+                        <input
+                          value={refundReason}
+                          onChange={e => setRefundReason(e.target.value)}
+                          placeholder="Reason (recorded in the audit trail)"
+                          className="inp py-1 text-[12px]"
+                          autoFocus
+                        />
+                        <div className="flex gap-1.5">
+                          <button className={btnDanger + btnSm} disabled={busy} onClick={() => refund(p)}>Confirm refund</button>
+                          <button className={btnGhost + btnSm} disabled={busy} onClick={() => { setRefundTarget(null); setRefundReason(""); }}>Back</button>
+                        </div>
+                      </div>
+                    ) : p.status === "paid" ? (
+                      <button
+                        className={btnDanger + btnSm}
+                        disabled={busy}
+                        onClick={() => { setRefundTarget(p); setRefundReason(""); }}
+                        title="Refund — calls the provider when its keys are configured, then marks it refunded and subtracts the plan's days from the entitlement"
+                      >
                         💸 Refund
                       </button>
-                    )}
+                    ) : <span className="text-[12px] text-fnt">—</span>}
                   </td>
                 </tr>
               ))}
