@@ -163,6 +163,16 @@ export async function adminCodingQuality(): Promise<CodingQualityRow[]> {
 
 /* ---------- RAG health (knowledge-base retrieval) ---------- */
 
+export interface RagCand {
+  /** Raw vector similarity of one candidate chunk. */
+  s: number;
+  /** Gate state at recording time: 0 below min-sim, 1 grounded, 2 gate-rejected. */
+  st: 0 | 1 | 2;
+  /** Lexical overlap score (0-1) — recorded so the tuning playground can
+      re-derive the grounding decision exactly for any (minSim, hardFloor). */
+  lx?: number;
+}
+
 export interface RagHealthRow {
   query: string;
   hits: number;
@@ -172,6 +182,11 @@ export interface RagHealthRow {
   gateRejects?: number;
   /** Candidates below the similarity cutoff entirely. */
   belowMin?: number;
+  /** The field/level the question was asked in (null for general sessions). */
+  field?: string | null;
+  level?: string | null;
+  /** Per-candidate similarity + gate state — feeds the histogram + playground. */
+  cands?: RagCand[];
   at: string;
 }
 
@@ -188,6 +203,12 @@ export async function adminRagHealth(maxRows = 40): Promise<RagHealthRow[]> {
     grounded: Boolean(r.grounded),
     gateRejects: Number(r.gate_rejects ?? 0),
     belowMin: Number(r.below_min ?? 0),
+    field: (r.field as string | null) ?? null,
+    level: (r.level as string | null) ?? null,
+    cands: ((r.cands as unknown[] | null) ?? []).map(c => {
+      const o = c as Record<string, unknown>;
+      return { s: Number(o.s ?? 0), st: (o.st ?? 0) as 0 | 1 | 2, lx: o.lx == null ? undefined : Number(o.lx) };
+    }),
     at: r.at as string
   }));
 }
@@ -293,6 +314,10 @@ export interface RagDigestOpts {
   maxGateRejects?: number;
   /** Delivery webhook (Slack / email bridge) called once per week on breach. */
   webhook?: string;
+  /** Also send the FULL weekly digest once per week (not just breaches). */
+  sendWeekly?: boolean;
+  /** Recipient emails the webhook / email bridge should deliver the digest to. */
+  email?: string;
 }
 
 export interface RagDigestAlert {
@@ -350,6 +375,119 @@ export function suggestHardFloor(
       : `${gated.length} retrieval(s) had gate rejections but the highest (${highest.toFixed(2)}) is already at/below the floor — the gate is behaving as tuned`,
     changed
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Tuning playground — what WOULD the week look like at other cutoffs   */
+/* ------------------------------------------------------------------ */
+
+/** A single playground cell: the week reclassified at one (minSim, hardFloor). */
+export interface TuningCell {
+  minSim: number;
+  hardFloor: number;
+  total: number;
+  grounded: number;
+  /** Concept-gate rejections that WOULD occur at these thresholds. */
+  gateRejects: number;
+  groundedRate: number;
+}
+
+/** The grounding decision for ONE candidate at arbitrary thresholds — mirrors
+    rag.isGrounded so the simulator stays exact without importing the service
+    (keeps quality.ts free of cycles; rag.ts already imports this module's type).
+    `lx` is the recorded lexical score; when it's missing (pre-upgrade events)
+    we fall back to the recorded state: grounded rows keep grounding (they had
+    concept signal at recording time), gate-rejected rows only ground if the
+    new hard floor covers them. */
+export function simCandidateGrounded(
+  s: number,
+  st: 0 | 1 | 2,
+  lx: number | undefined,
+  minSim: number,
+  hardFloor: number
+): boolean {
+  if (s < minSim) return false;
+  if (lx != null) return lx > 0 || s >= hardFloor;
+  /* no lexical score recorded (older events) — approximate from the state */
+  if (st === 1) return true;
+  return s >= hardFloor;
+}
+
+/** Reclassifies the recent retrieval log against a grid of candidate
+    (minSim, hardFloor) cutoffs — the "tuning playground". For each cell it
+    recomputes which rows would have grounded (any candidate citable) and how
+    many concept-gate rejections would occur, so admins can see where the week
+    lands before publishing a change. Pure — unit-tested. */
+export function simulateTuning(
+  rows: RagHealthRow[],
+  minSims: number[],
+  hardFloors: number[]
+): TuningCell[] {
+  const cells: TuningCell[] = [];
+  for (const minSim of minSims) {
+    for (const hardFloor of hardFloors) {
+      let grounded = 0;
+      let gateRejects = 0;
+      for (const r of rows) {
+        const cands: RagCand[] = (r.cands ?? []).length
+          ? r.cands!
+          /* no per-candidate data (older events) → one synthetic candidate so
+             the row still contributes its recorded outcome */
+          : [{ s: r.topSim, st: r.grounded ? 1 : 2, lx: undefined }];
+        let rowGrounded = false;
+        for (const c of cands) {
+          if (simCandidateGrounded(c.s, c.st, c.lx, minSim, hardFloor)) { rowGrounded = true; break; }
+        }
+        for (const c of cands) {
+          if (c.s >= minSim && !simCandidateGrounded(c.s, c.st, c.lx, minSim, hardFloor)) gateRejects++;
+        }
+        if (rowGrounded) grounded++;
+      }
+      cells.push({
+        minSim,
+        hardFloor,
+        total: rows.length,
+        grounded,
+        gateRejects,
+        groundedRate: rows.length ? Math.round((grounded / rows.length) * 100) : 0
+      });
+    }
+  }
+  return cells;
+}
+
+/* ------------------------------------------------------------------ */
+/* Per-domain breakdown — which fields/levels ground best               */
+/* ------------------------------------------------------------------ */
+
+export interface RagDomainRow {
+  /** "field" or "level" — the aggregation dimension. */
+  dimension: string;
+  /** The field id or level id the retrieval happened in. */
+  name: string;
+  retrievals: number;
+  grounded: number;
+  empty: number;
+  avgTopSim: number;
+  gateRejects: number;
+}
+
+/** Grounding health per field and per level — where the knowledge base
+    answers well and where users' questions miss it. */
+export async function adminRagDomains(): Promise<RagDomainRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.rpc("admin_rag_domains");
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+    dimension: String(r.dimension ?? ""),
+    name: String(r.name ?? ""),
+    retrievals: Number(r.retrievals ?? 0),
+    grounded: Number(r.grounded ?? 0),
+    empty: Number(r.empty ?? 0),
+    avgTopSim: Number(r.avg_top_sim ?? 0),
+    gateRejects: Number(r.gate_rejects ?? 0)
+  }));
 }
 
 /** Weekly RAG digest — last-7-days aggregates + week-over-week deltas + top

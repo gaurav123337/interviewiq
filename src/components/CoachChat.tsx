@@ -202,7 +202,7 @@ export function CoachChat(ctx: CoachContext) {
           "probe with follow-up questions, point out what their approach misses relative to the key points, and " +
           "only reveal the full model answer when they explicitly ask. Keep replies focused, under ~180 words.";
         /* ground the reply in the admin knowledge base (same pipeline as the roadmap tutor) */
-        const { sys: sysGrounded, citations, grounded, checked } = await withGrounding(base, text);
+        const { sys: sysGrounded, citations, grounded, checked } = await withGrounding(base, text, { field: ctx.fieldId, level: ctx.levelId });
         const history: ChatMessage[] = [
           { role: "system", content: sysGrounded },
           ...msgs.map(m => ({ role: m.role, content: m.text }) as ChatMessage),
@@ -216,7 +216,7 @@ export function CoachChat(ctx: CoachContext) {
            retrieves the RAG knowledge base (lexically, no embeddings) so
            replies carry KB citations without any API key. */
         const reply = coachReply(text, ctx, next);
-        const lex = await lexicalSearch(text).catch(() => []);
+        const lex = await lexicalSearch(text, 4, { field: ctx.fieldId, level: ctx.levelId }).catch(() => []);
         let citations: Citation[] = [];
         if (lex.length) {
           const titles = await documentTitles().catch(() => new Map<number, string>());

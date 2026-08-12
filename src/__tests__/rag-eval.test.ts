@@ -11,7 +11,8 @@ import {
 } from "../services/rag";
 import { setRemoteConfig } from "../services/remoteConfig";
 import {
-  evaluateRagDigest, ragHealthSummary, ragHistogram, suggestHardFloor, type RagHealthRow, type RagWeeklyDigest
+  evaluateRagDigest, ragHealthSummary, ragHistogram, simulateTuning, suggestHardFloor,
+  type RagHealthRow, type RagWeeklyDigest
 } from "../services/quality";
 import { contentHash, sectionChunkText } from "../services/embeddings";
 import { STORAGE_KEYS, storageGet, storageRemove } from "../services/storage";
@@ -212,6 +213,20 @@ describe("retrieveContext", () => {
     expect(docs.length).toBeGreaterThan(0);
     expect(docs.every(d => typeof d.id === "number" && typeof d.sim === "number")).toBe(true);
   });
+
+  it("records the field/level context and per-candidate lexical signal", async () => {
+    await retrieveContext("how does the event loop handle promises", { field: "frontend", level: "senior" });
+    const outbox = storageGet<{ kind: string; meta: Record<string, unknown> }[]>(STORAGE_KEYS.eventOutbox, []);
+    const ev = outbox.find(e => e.kind === "rag_event");
+    expect(ev).toBeDefined();
+    /* the per-domain breakdown aggregates on these */
+    expect(ev!.meta.field).toBe("frontend");
+    expect(ev!.meta.level).toBe("senior");
+    /* every candidate carries its lexical score so simulateTuning is exact */
+    const cands = ev!.meta.cands as { s: number; st: number; lx: number }[];
+    expect(cands.length).toBeGreaterThan(0);
+    expect(cands.every(c => typeof c.s === "number" && typeof c.lx === "number" && [0, 1, 2].includes(c.st))).toBe(true);
+  });
 });
 
 describe("lexicalSearch (keyless offline-coach fallback)", () => {
@@ -228,6 +243,15 @@ describe("lexicalSearch (keyless offline-coach fallback)", () => {
     const ev = outbox.find(e => e.kind === "rag_event");
     expect(ev).toBeDefined();
     expect((ev!.meta.docs as { id: number }[]).every(d => d.id === 1)).toBe(true);
+  });
+
+  it("tags the keyless path with field/level context too", async () => {
+    await lexicalSearch("how do closures capture variables", 4, { field: "backend", level: "junior" });
+    const outbox = storageGet<{ kind: string; meta: Record<string, unknown> }[]>(STORAGE_KEYS.eventOutbox, []);
+    const ev = outbox.find(e => e.kind === "rag_event");
+    expect(ev).toBeDefined();
+    expect(ev!.meta.field).toBe("backend");
+    expect(ev!.meta.level).toBe("junior");
   });
 });
 
@@ -361,6 +385,65 @@ describe("hard-floor suggestion", () => {
     expect(opts.webhook).toBe("https://hooks.slack.com/x");
     setRemoteConfig({ rag: undefined });
     expect(getRagDigestOpts()).toEqual({});
+  });
+});
+
+describe("tuning playground", () => {
+  /* one concept-grounded candidate at 0.6 (lex 0.4) + one gate-rejected 0.8-sim distractor (lex 0) */
+  const rows: RagHealthRow[] = [
+    {
+      query: "closures", hits: 1, topSim: 0.6, grounded: true, gateRejects: 1, belowMin: 0,
+      cands: [
+        { s: 0.6, st: 1, lx: 0.4 },
+        { s: 0.8, st: 2, lx: 0 }
+      ],
+      at: "2026-08-01T00:00:00Z"
+    },
+    {
+      query: "styling", hits: 0, topSim: 0.3, grounded: false, gateRejects: 0, belowMin: 1,
+      cands: [{ s: 0.3, st: 0, lx: 0 }],
+      at: "2026-08-01T00:00:00Z"
+    }
+  ];
+  it("reclassifies the log at every candidate pair — grounded rate + gate rejects", () => {
+    const cells = simulateTuning(rows, [0.45, 0.65], [0.85, 0.9]);
+    /* at 0.45 the closures row grounds (0.6 ≥ 0.45, lex 0.4 > 0); the 0.8 distractor is gate-rejected */
+    const at45 = cells.find(c => c.minSim === 0.45 && c.hardFloor === 0.85)!;
+    expect(at45.grounded).toBe(1);
+    expect(at45.groundedRate).toBe(50);
+    expect(at45.gateRejects).toBe(1);
+    /* at 0.65 the 0.6 candidate drops below the cutoff — nothing grounds */
+    const at65 = cells.find(c => c.minSim === 0.65 && c.hardFloor === 0.85)!;
+    expect(at65.grounded).toBe(0);
+    expect(at65.groundedRate).toBe(0);
+    /* the hard floor rescues the concept-free 0.8 distractor at 0.75 */
+    const floor = simulateTuning([rows[0]], [0.45], [0.75]);
+    expect(floor[0].grounded).toBe(1);
+    expect(floor[0].gateRejects).toBe(0);
+  });
+  it("handles rows without per-candidate data via the recorded outcome", () => {
+    const legacy: RagHealthRow[] = [{ query: "x", hits: 2, topSim: 0.6, grounded: true, at: "2026-08-01T00:00:00Z" }];
+    const cells = simulateTuning(legacy, [0.45], [0.85]);
+    expect(cells[0].grounded).toBe(1);
+    expect(cells[0].groundedRate).toBe(100);
+    const strict = simulateTuning(legacy, [0.7], [0.85]);
+    expect(strict[0].grounded).toBe(0);
+  });
+  it("is empty-safe", () => {
+    const cells = simulateTuning([], [0.45], [0.85]);
+    expect(cells).toEqual([{ minSim: 0.45, hardFloor: 0.85, total: 0, grounded: 0, gateRejects: 0, groundedRate: 0 }]);
+  });
+});
+
+describe("user-facing knowledge-gap notification", () => {
+  afterEach(() => storageRemove(STORAGE_KEYS.ragGapNotif));
+  it("reports a gap once per day (rate-limited), then goes quiet", async () => {
+    const { notifyKnowledgeGap } = await import("../services/rag");
+    /* window is undefined in node — the notification itself no-ops, but the
+       rate limit still gates the in-app note */
+    expect(notifyKnowledgeGap("how do closures capture variables")).toBe(true);
+    expect(notifyKnowledgeGap("how do closures capture variables")).toBe(false);
+    expect(notifyKnowledgeGap("what is caching")).toBe(false);
   });
 });
 

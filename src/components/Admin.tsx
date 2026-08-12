@@ -10,10 +10,10 @@ import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
   adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminQuestionQuality, adminRagDocuments,
-  adminRagHealth, adminRagWeeklyDigest, evaluateRagDigest, mergeQuality, ragHealthSummary, ragHistogram,
-  suggestHardFloor, touchQuestion,
+  adminRagDomains, adminRagHealth, adminRagWeeklyDigest, evaluateRagDigest, mergeQuality, ragHealthSummary,
+  ragHistogram, simulateTuning, suggestHardFloor, touchQuestion,
   type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type QualityRow,
-  type RagDocRow, type RagHealthRow, type RagWeeklyDigest
+  type RagDocRow, type RagDomainRow, type RagHealthRow, type RagWeeklyDigest
 } from "../services/quality";
 import { getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
@@ -163,6 +163,10 @@ export function Admin() {
               setConfig(c => ({ ...c, rag: { ...c.rag, hardFloor: v } }));
               setSection("config");
               toast(`🎚️ Hard floor staged at ${v.toFixed(2)} — hit “Publish config to all clients” to ship it`);
+            }}
+            onStageTuning={(minSim, hardFloor) => {
+              setConfig(c => ({ ...c, rag: { ...c.rag, minSim, hardFloor } }));
+              toast(`🎚️ Playground pick staged — cutoff ${minSim.toFixed(2)}, hard floor ${hardFloor.toFixed(2)}. Publish config to ship it.`);
             }}
           />
         )}
@@ -1360,7 +1364,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, limits: { ...config.limits, [k]: v } });
   const setRag = (k: keyof NonNullable<RemoteConfig["rag"]>, v: number) =>
     setConfig({ ...config, rag: { ...config.rag, [k]: v } });
-  const setRagDigest = (k: keyof NonNullable<NonNullable<RemoteConfig["rag"]>["digest"]>, v: number | string) =>
+  const setRagDigest = (k: keyof NonNullable<NonNullable<RemoteConfig["rag"]>["digest"]>, v: number | string | boolean) =>
     setConfig({ ...config, rag: { ...config.rag, digest: { ...config.rag?.digest, [k]: v } } });
   /* coach vocabulary JSON editor (families + misconceptions) */
   const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
@@ -1608,6 +1612,31 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
         <p className="mt-2 text-[11.5px] text-fnt">
           💡 Leave the webhook empty for in-app alerts only — the banner shows whenever an alert fires.
         </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-[12.5px] font-bold">
+            <Switch
+              checked={config.rag?.digest?.sendWeekly ?? false}
+              onChange={v => setRagDigest("sendWeekly", v)}
+            />
+            Send the full weekly digest (not just breaches) once per week
+          </label>
+          <span className="text-[11px] text-mut">— delivered to the webhook each Monday with metrics, top queries and top documents.</span>
+        </div>
+        <label className="mt-2 block">
+          <span className="mb-1 block text-[12px] font-bold text-mut">
+            Digest recipients (emails the bridge should mail) — {config.rag?.digest?.email ? "set" : "not set"}
+          </span>
+          <input
+            type="text"
+            placeholder="ops@company.com, you@company.com"
+            value={config.rag?.digest?.email ?? ""}
+            onChange={e => setRagDigest("email", e.target.value)}
+            className="inp w-full"
+          />
+        </label>
+        <p className="mt-1 text-[11.5px] text-fnt">
+          Passed to the bridge as <span className="font-mono">to</span> — point the webhook at an email bridge (e.g. Zapier → Gmail) to receive the digest by mail.
+        </p>
       </div>
 
       {/* coach vocabulary — concept families + misconception corrections the
@@ -1773,13 +1802,19 @@ function QualityBar({ score }: { score: number }) {
   );
 }
 
+/* playground grid — candidate (cutoff, hard floor) pairs to simulate */
+const PLAY_MINSIMS = [0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75];
+const PLAY_FLOORS = [0.75, 0.8, 0.85, 0.9, 0.95];
+
 function QualitySection({
-  busy, setBusy, onApplyHardFloor
+  busy, setBusy, onApplyHardFloor, onStageTuning
 }: {
   busy: boolean;
   setBusy: (b: boolean) => void;
   /** Stages a suggested hard floor into the Product config draft (auto-tune). */
   onApplyHardFloor: (v: number) => void;
+  /** Stages a playground pick (cutoff + hard floor) into the config draft. */
+  onStageTuning: (minSim: number, hardFloor: number) => void;
 }) {
   const [rows, setRows] = useState<QualityRow[]>([]);
   const [feed, setFeed] = useState<FeedbackFeedRow[]>([]);
@@ -1792,6 +1827,9 @@ function QualitySection({
   const [ragRows, setRagRows] = useState<RagHealthRow[]>([]);
   const [ragDigest, setRagDigest] = useState<RagWeeklyDigest | null>(null);
   const [ragDocs, setRagDocs] = useState<RagDocRow[]>([]);
+  const [ragDomains, setRagDomains] = useState<RagDomainRow[]>([]);
+  /* weekly digest delivery — which week the full digest was last sent */
+  const [digestSentWeek, setDigestSentWeek] = useState<string | null>(() => storageGet<string>(STORAGE_KEYS.ragDigestWeek, "") || null);
   const [kbDocs, setKbDocs] = useState<PdfDocumentRow[]>([]);
   /* threshold explorer — reclassify recent retrievals against any cutoff */
   const [ragThreshold, setRagThreshold] = useState<number>(() => effectiveGroundingMinSim());
@@ -1836,8 +1874,8 @@ Practice questions:
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), adminRagWeeklyDigest(), listPdfDocuments()])
-      .then(([q, f, c, g, r, d, dig, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setRagDigest(dig); setKbDocs(k); })
+    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), adminRagWeeklyDigest(), adminRagDomains(), listPdfDocuments()])
+      .then(([q, f, c, g, r, d, dig, dom, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setRagDigest(dig); setRagDomains(dom); setKbDocs(k); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -1847,6 +1885,8 @@ Practice questions:
     () => (ragDigest && ragDigest.total > 0 ? evaluateRagDigest(ragDigest, getRagDigestOpts()).filter(a => a.fired) : []),
     [ragDigest]
   );
+  /* tuning playground — the recent log reclassified at every candidate pair */
+  const playCells = useMemo(() => simulateTuning(ragRows, PLAY_MINSIMS, PLAY_FLOORS), [ragRows]);
   useEffect(() => {
     if (!ragAlerts.length || alertSent) return;
     const wk = weekKey();
@@ -1873,6 +1913,62 @@ Practice questions:
       })
     }).catch(() => { /* webhook delivery is best-effort */ });
   }, [ragAlerts, alertSent]);
+
+  /* Sends the FULL weekly digest (metrics + top queries + top documents) to
+     the configured webhook / email bridge. Shared by the scheduled effect
+     and the manual “Send now” button. */
+  const deliverDigest = (wk: string) => {
+    const opts = getRagDigestOpts();
+    const dig = ragDigest;
+    if (!opts.webhook || !dig) return;
+    void fetch(opts.webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "rag_weekly_digest",
+        week: wk,
+        to: (opts.email ?? "").split(",").map(s => s.trim()).filter(Boolean),
+        digest: {
+          total: dig.total,
+          grounded: dig.grounded,
+          groundedRate: Math.round((dig.grounded / Math.max(1, dig.total)) * 100),
+          empty: dig.empty,
+          emptyRate: Math.round((dig.empty / Math.max(1, dig.total)) * 100),
+          avgTopSim: dig.avgTopSim,
+          gateRejects: dig.gateRejects,
+          prevTotal: dig.prevTotal,
+          prevGrounded: dig.prevGrounded,
+          topQueries: dig.topQueries,
+          topDocs: dig.topDocs
+        },
+        sentAt: new Date().toISOString()
+      })
+    }).catch(() => { /* delivery is best-effort — the in-app digest stays visible */ });
+  };
+
+  /* scheduled weekly digest — once per week when enabled, no repeated sends */
+  useEffect(() => {
+    if (!ragDigest || ragDigest.total <= 0 || digestSentWeek) return;
+    const opts = getRagDigestOpts();
+    if (!opts.sendWeekly || !opts.webhook) return;
+    const wk = weekKey();
+    if (storageGet<string>(STORAGE_KEYS.ragDigestWeek, "") === wk) { setDigestSentWeek(wk); return; }
+    storageSet(STORAGE_KEYS.ragDigestWeek, wk);
+    setDigestSentWeek(wk);
+    deliverDigest(wk);
+  }, [ragDigest, digestSentWeek]);
+
+  /* manual digest send — same payload, no weekly gate */
+  const sendDigestNow = () => {
+    if (!ragDigest || ragDigest.total <= 0) { toast("Nothing to send yet — the digest fills once signed-in users ask the tutor/coach"); return; }
+    const opts = getRagDigestOpts();
+    if (!opts.webhook) { toast("Set a delivery webhook in Product config → 🔔 RAG digest alerts first"); return; }
+    const wk = weekKey();
+    storageSet(STORAGE_KEYS.ragDigestWeek, wk);
+    setDigestSentWeek(wk);
+    deliverDigest(wk);
+    toast("📧 Weekly digest queued to the webhook / email bridge");
+  };
 
   const touch = async (question: string) => {
     const q = bank.find(b => b.question === question);
@@ -2314,6 +2410,19 @@ Practice questions:
                   ))}
                 </div>
               )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button className={btnGhost + btnSm} disabled={busy} onClick={sendDigestNow} title="Deliver this week's digest to the configured webhook / email bridge now">
+                  📧 Send digest now
+                </button>
+                {digestSentWeek === weekKey() ? (
+                  <Chip tone="ok">sent this week</Chip>
+                ) : getRagDigestOpts().sendWeekly ? (
+                  <Chip tone="lvl">scheduled — sends once this week</Chip>
+                ) : (
+                  <Chip>auto-send off (enable in Product config)</Chip>
+                )}
+                {digestSentWeek && <span className="text-[11px] text-fnt">last sent: week {digestSentWeek}</span>}
+              </div>
             </div>
           )}
           {/* threshold explorer — reclassify the recent log against any cutoff */}
@@ -2439,6 +2548,103 @@ Practice questions:
                     <span>— publish a new cutoff in <span className="font-bold">Product config → 🗄️ RAG retrieval</span> to apply it.</span>
                   </div>
                 )}
+
+                {/* tuning playground — reclassify the week against any cutoff/hard-floor combo */}
+                <div className="mt-4">
+                  <div className="mb-1.5 text-[12px] font-extrabold uppercase tracking-wider text-mut">🎚️ Tuning playground — what WOULD the week look like?</div>
+                  <p className="mb-2 text-[11.5px] text-fnt">
+                    Each cell reclassifies the {ragRows.length} recent retrieval(s) at that cutoff + hard floor.
+                    <span className="text-ok"> % </span>= grounded rate, <span className="text-warn">🚫n</span> = concept-gate rejections. Click a cell to stage the pair.
+                  </p>
+                  <div className="overflow-x-auto rounded-xl border border-line/10 bg-deep/40 p-3">
+                    <table className="w-full min-w-[620px] text-center text-[12px]">
+                      <thead>
+                        <tr className="text-[10.5px] uppercase tracking-wider text-mut">
+                          <th className="px-2 py-1.5 text-left font-bold">cutoff ↓ / floor →</th>
+                          {PLAY_FLOORS.map(f => <th key={f} className="px-1 py-1.5 font-bold tabular-nums">{f.toFixed(2)}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {PLAY_MINSIMS.map(ms => {
+                          const liveRow = ms === effectiveGroundingMinSim();
+                          return (
+                            <tr key={ms}>
+                              <td className={`px-2 py-1 text-left font-bold tabular-nums ${liveRow ? "text-co" : ""}`}>{ms.toFixed(2)}</td>
+                              {PLAY_FLOORS.map(hf => {
+                                const cell = playCells.find(c => c.minSim === ms && c.hardFloor === hf);
+                                if (!cell) return <td key={hf} />;
+                                const live = liveRow && hf === effectiveHardFloor();
+                                const tone = cell.groundedRate >= 60 ? "text-ok" : cell.groundedRate >= 30 ? "text-warn" : "text-bad";
+                                return (
+                                  <td key={hf} className="p-0.5">
+                                    <button
+                                      type="button"
+                                      title={`cutoff ${ms.toFixed(2)} · floor ${hf.toFixed(2)} → ${cell.groundedRate}% grounded${cell.gateRejects ? ` · 🚫${cell.gateRejects}` : ""}`}
+                                      onClick={() => onStageTuning(ms, hf)}
+                                      className={`w-full rounded-md px-1 py-1.5 font-bold tabular-nums transition-colors ${live ? "bg-co/25 ring-1 ring-co" : "bg-wht/5 hover:bg-wht/10"} ${tone}`}
+                                    >
+                                      {cell.groundedRate}%{cell.gateRejects > 0 ? <span className="text-warn"> 🚫{cell.gateRejects}</span> : ""}
+                                    </button>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-fnt">
+                    <span className="font-bold text-co">Highlighted</span> = today's live pair ({effectiveGroundingMinSim().toFixed(2)} / {effectiveHardFloor().toFixed(2)}).
+                    Simulated only — click to stage, then publish from Product config.
+                  </p>
+                </div>
+
+                {/* per-domain breakdown — which fields/levels ground best */}
+                <div className="mt-4">
+                  <div className="mb-1.5 text-[12px] font-extrabold uppercase tracking-wider text-mut">🌐 Per-field & level</div>
+                  <p className="mb-2 text-[11.5px] text-fnt">
+                    Retrievals tagged with the goal / interview context they happened in — see where the KB answers well
+                    and which domains' questions miss it. Untagged (general) sessions roll up under <span className="font-mono">general</span>.
+                  </p>
+                  <div className="overflow-x-auto rounded-xl border border-line/10">
+                    <table className="w-full min-w-[560px] text-left text-[13px]">
+                      <thead>
+                        <tr className="border-b border-line/10 bg-wht/[.04] text-[11px] uppercase tracking-wider text-mut">
+                          <th className="px-3 py-2 font-bold">Dimension</th>
+                          <th className="px-3 py-2 font-bold">Domain</th>
+                          <th className="px-3 py-2 font-bold">Retrievals</th>
+                          <th className="px-3 py-2 font-bold">Grounded</th>
+                          <th className="px-3 py-2 font-bold">Empty</th>
+                          <th className="px-3 py-2 font-bold">Avg sim</th>
+                          <th className="px-3 py-2 font-bold">Gate rejects</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ragDomains.length === 0 && (
+                          <tr><td colSpan={7} className="px-3 py-6 text-center text-mut">No domain-tagged retrievals yet — they appear once signed-in users ask the tutor/coach inside a goal or interview.</td></tr>
+                        )}
+                        {ragDomains.map((d, i) => (
+                          <tr key={i} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
+                            <td className="px-3 py-2.5"><Chip tone={d.dimension === "field" ? "lvl" : "ok"}>{d.dimension === "field" ? "field" : "level"}</Chip></td>
+                            <td className="px-3 py-2.5 font-bold">{d.name}</td>
+                            <td className="px-3 py-2.5 tabular-nums">{d.retrievals}</td>
+                            <td className="px-3 py-2.5">
+                              <span className={`font-bold tabular-nums ${d.retrievals ? (d.grounded / d.retrievals >= 0.6 ? "text-ok" : d.grounded / d.retrievals >= 0.3 ? "text-warn" : "text-bad") : ""}`}>
+                                {d.retrievals ? Math.round((d.grounded / d.retrievals) * 100) + "%" : "—"}
+                              </span>
+                              <span className="text-[11px] text-fnt"> ({d.grounded})</span>
+                            </td>
+                            <td className="px-3 py-2.5 tabular-nums">{d.empty}</td>
+                            <td className="px-3 py-2.5 tabular-nums">{d.avgTopSim.toFixed(2)}</td>
+                            <td className="px-3 py-2.5">{d.gateRejects > 0 ? <Chip tone="warn">🚫 {d.gateRejects}</Chip> : <span className="text-[12px] text-fnt">0</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
                 {/* per-document breakdown — which uploaded PDF actually answers */}
                 <div className="mt-4">
                   <div className="mb-1.5 text-[12px] font-extrabold uppercase tracking-wider text-mut">📄 Per-document</div>

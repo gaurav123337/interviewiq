@@ -5,7 +5,7 @@ import { chat } from "../ai";
 import type { CareerGoal } from "../types";
 import { fieldById, levelById } from "../data";
 import { aiCallsLeft, isPaywallEnabled, recordAiCall } from "./entitlements";
-import { documentTitles, groundingPrompt, retrieveContext } from "./rag";
+import { documentTitles, groundingPrompt, notifyKnowledgeGap, retrieveContext, type RagContext } from "./rag";
 
 async function guard(): Promise<void> {
   if (isPaywallEnabled() && aiCallsLeft() <= 0) {
@@ -29,10 +29,15 @@ export interface Citation {
     replies through the same pipeline (and shows the same citation chips). */
 export async function withGrounding(
   sys: string,
-  query: string
+  query: string,
+  ragCtx?: RagContext
 ): Promise<{ sys: string; citations: Citation[]; grounded: boolean; checked: boolean }> {
-  const { hits, checked } = await retrieveContext(query);
+  const { hits, checked } = await retrieveContext(query, ragCtx);
   if (!hits.length) {
+    /* checked + nothing grounded → the user's question wasn't in the KB;
+       surface a rate-limited notification so they know the answer is from
+       general knowledge and can suggest adding the topic */
+    if (checked) notifyKnowledgeGap(query);
     return { sys: checked ? groundingPrompt(sys, false, "") : sys, citations: [], grounded: false, checked };
   }
   const titles = await documentTitles();
@@ -63,7 +68,7 @@ export async function explainTopic(topic: string, goal: CareerGoal): Promise<str
     `3) The 3 most common traps or misunderstandings.\n` +
     `4) A model-answer skeleton they could use in an interview.\n` +
     `Keep it under ~220 words.`;
-  const { sys: sysGrounded } = await withGrounding(sys, topic);
+  const { sys: sysGrounded } = await withGrounding(sys, topic, { field: goal.fieldId, level: goal.targetLevel });
   const out = await chat([{ role: "system", content: sysGrounded }, { role: "user", content: usr }], { maxTokens: 650 });
   recordAiCall();
   return out;
@@ -100,7 +105,7 @@ export async function tutorChat(topic: string, goal: CareerGoal, history: TutorM
     `speak about it in an interview at ${lvl.name} level. If they ask something off-topic, gently steer back. ` +
     `Under ~180 words per reply.`;
   const lastUser = [...history].reverse().find(m => m.role === "user")?.content ?? "";
-  const { sys: sysGrounded, citations, grounded, checked } = await withGrounding(sys, lastUser || topic);
+  const { sys: sysGrounded, citations, grounded, checked } = await withGrounding(sys, lastUser || topic, { field: goal.fieldId, level: goal.targetLevel });
   const msgs: { role: "system" | "user" | "assistant"; content: string }[] = [
     { role: "system", content: sysGrounded },
     ...history.map(m => ({ role: m.role, content: m.content }))

@@ -66,6 +66,10 @@ export interface RemoteConfig {
       maxGateRejects?: number;
       /** Delivery webhook (Slack incoming webhook / email bridge). */
       webhook?: string;
+      /** Also send the FULL weekly digest (not just breaches) once per week. */
+      sendWeekly?: boolean;
+      /** Recipient emails the webhook/email bridge should deliver the digest to. */
+      email?: string;
     };
   };
 }
@@ -127,6 +131,8 @@ export function getRagDefaults(): {
     maxEmptyRate?: number;
     maxGateRejects?: number;
     webhook?: string;
+    sendWeekly?: boolean;
+    email?: string;
   };
 } {
   return { ...(getRemoteConfig().rag ?? {}) };

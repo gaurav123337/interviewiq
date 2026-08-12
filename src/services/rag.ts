@@ -22,6 +22,8 @@ import { embed } from "./embeddings";
 import { listPdfDocuments, searchPdfChunks, type PdfHit } from "./admin";
 import { queueEvent } from "./events";
 import { getRagDefaults } from "./remoteConfig";
+import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
+import { fire } from "./notifications";
 import type { RagDigestOpts } from "./quality";
 
 export interface RagHit {
@@ -68,6 +70,38 @@ export function effectiveHardFloor(): number {
     change applies without a deploy. */
 export function getRagDigestOpts(): RagDigestOpts {
   return getRagDefaults().digest ?? {};
+}
+
+/** The field/level a retrieval happened in — recorded on every rag_event so
+    the admin RAG health tab can break grounding down per domain. Optional:
+    anonymous sessions and general questions have no context and stay null. */
+export interface RagContext {
+  field?: string | null;
+  level?: string | null;
+}
+
+/* local calendar date (yyyy-mm-dd) for the once-per-day gap notification */
+const dayOf = (t: number) => {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+/** User-facing "no knowledge-base match" notification — fires at most once
+    per day, only when the answer came from general knowledge because the KB
+    had no strong match (never when retrieval was skipped). Uses the PWA
+    notification path when the user granted permission; silently no-ops
+    otherwise. Returns true when the note should ALSO surface in-app. */
+export function notifyKnowledgeGap(query: string): boolean {
+  if (typeof window === "undefined") return false;
+  const today = dayOf(Date.now());
+  if (storageGet<string>(STORAGE_KEYS.ragGapNotif, "") === today) return false;
+  storageSet(STORAGE_KEYS.ragGapNotif, today);
+  const q = String(query || "").slice(0, 90);
+  void fire(
+    "🧠 No knowledge-base match",
+    `“${q}” isn't in the product knowledge base — this answer comes from general knowledge. Suggest adding it and it'll show up after review.`
+  );
+  return true;
 }
 
 /** The tuning values actually in effect — surfaced to users in the tutor/coach
@@ -220,7 +254,7 @@ export interface RetrievalResult {
 
 /** Retrieves and re-ranks the top knowledge-base chunks for a query.
     Best-effort: any failure returns empty hits (grounding never breaks a chat). */
-export async function retrieveContext(query: string): Promise<RetrievalResult> {
+export async function retrieveContext(query: string, ctx?: RagContext): Promise<RetrievalResult> {
   try {
     const client = await getSupabaseClient();
     if (!client || !getCloudState().user) return { hits: [], checked: false };
@@ -241,10 +275,15 @@ export async function retrieveContext(query: string): Promise<RetrievalResult> {
       checked: true,
       gateRejects: gs.gateRejects,
       belowMin: gs.belowMin,
-      /* per-candidate similarity + gate state → the admin histogram */
+      /* the field/level the question was asked in — per-domain breakdown */
+      field: ctx?.field ?? null,
+      level: ctx?.level ?? null,
+      /* per-candidate similarity + gate state (+ lexical signal for the admin
+         tuning playground) → the admin histogram + simulateTuning */
       cands: raw.slice(0, 24).map(h => ({
         s: Math.round(h.similarity * 100) / 100,
-        st: h.similarity < minSim ? 0 : isGrounded(h.similarity, lexicalScore(expanded, h.content), minSim, hardFloor) ? 1 : 2
+        st: h.similarity < minSim ? 0 : isGrounded(h.similarity, lexicalScore(expanded, h.content), minSim, hardFloor) ? 1 : 2,
+        lx: Math.round(lexicalScore(expanded, h.content) * 100) / 100
       })),
       /* per-document attribution for the admin RAG health tab */
       docs: hits.map(h => ({ id: h.documentId, sim: Math.round(h.similarity * 100) / 100 }))
@@ -275,7 +314,7 @@ export interface LexicalHit {
     RPC, no embeddings, no API key). Lets the offline coach ground replies in
     admin PDFs whenever the network is up — the no-key experience, plus
     citations. Best-effort: any failure returns []. */
-export async function lexicalSearch(query: string, matchCount = RANK_TOP_N): Promise<LexicalHit[]> {
+export async function lexicalSearch(query: string, matchCount = RANK_TOP_N, ctx?: RagContext): Promise<LexicalHit[]> {
   try {
     const client = await getSupabaseClient();
     if (!client) return [];
@@ -291,6 +330,8 @@ export async function lexicalSearch(query: string, matchCount = RANK_TOP_N): Pro
       topSim: 0,
       grounded: hits.length > 0,
       checked: true,
+      field: ctx?.field ?? null,
+      level: ctx?.level ?? null,
       docs: hits.map(h => ({ id: h.documentId, sim: 0 }))
     });
     return hits;

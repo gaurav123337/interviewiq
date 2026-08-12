@@ -27,6 +27,8 @@ export const STORAGE_KEYS = {
   theme: "iq.theme",
   notifLastWeekly: "iq.notifLastWeekly",
   ragAlertWeek: "iq.ragAlertWeek",
+  ragDigestWeek: "iq.ragDigestWeek",
+  ragGapNotif: "iq.ragGapNotif",
   code: "iq.code",
   uiCode: "iq.uiCode",
   codingTrack: "iq.codingTrack",

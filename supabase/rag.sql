@@ -12,7 +12,8 @@ drop function if exists public.admin_rag_health(integer);
 create function public.admin_rag_health(max_rows integer default 40)
 returns table (
   query text, hits bigint, top_sim double precision, grounded boolean,
-  gate_rejects bigint, below_min bigint, at timestamptz
+  gate_rejects bigint, below_min bigint, field text, level text,
+  cands jsonb, at timestamptz
 )
 language plpgsql security definer set search_path = public as $$
 begin
@@ -24,6 +25,9 @@ begin
            coalesce((e.meta->>'grounded')::boolean, false) as grounded,
            coalesce((e.meta->>'gateRejects')::bigint, 0) as gate_rejects,
            coalesce((e.meta->>'belowMin')::bigint, 0) as below_min,
+           e.meta->>'field' as field,
+           e.meta->>'level' as level,
+           coalesce(e.meta->'cands', '[]'::jsonb) as cands,
            e.created_at as at
     from public.usage_events e
     where e.kind = 'rag_event' and e.meta->>'q' is not null and e.meta->>'q' <> ''
@@ -51,6 +55,41 @@ begin
     where e.kind = 'rag_event'
     group by (d.value->>'id')::bigint
     order by retrievals desc;
+end $$;
+
+/* Per-domain breakdown — grounding health per field and per level. Every
+   rag_event carries meta.field / meta.level (recorded by the client from the
+   goal / interview context), so admins see where the KB answers well and
+   where users' questions miss it. */
+create or replace function public.admin_rag_domains()
+returns table (
+  dimension text, name text, retrievals bigint, grounded bigint,
+  empty bigint, avg_top_sim double precision, gate_rejects bigint
+)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  return query
+    select 'field' as dimension, coalesce(nullif(e.meta->>'field', ''), 'general') as name,
+           count(*)::bigint as retrievals,
+           count(*) filter (where coalesce((e.meta->>'grounded')::boolean, false))::bigint as grounded,
+           count(*) filter (where coalesce((e.meta->>'hits')::bigint, 0) = 0)::bigint as empty,
+           round(coalesce(avg(coalesce((e.meta->>'topSim')::double precision, 0)), 0)::numeric, 3)::double precision as avg_top_sim,
+           coalesce(sum(coalesce((e.meta->>'gateRejects')::bigint, 0)), 0)::bigint as gate_rejects
+    from public.usage_events e
+    where e.kind = 'rag_event'
+    group by 2
+  union all
+    select 'level' as dimension, coalesce(nullif(e.meta->>'level', ''), 'general') as name,
+           count(*)::bigint as retrievals,
+           count(*) filter (where coalesce((e.meta->>'grounded')::boolean, false))::bigint as grounded,
+           count(*) filter (where coalesce((e.meta->>'hits')::bigint, 0) = 0)::bigint as empty,
+           round(coalesce(avg(coalesce((e.meta->>'topSim')::double precision, 0)), 0)::numeric, 3)::double precision as avg_top_sim,
+           coalesce(sum(coalesce((e.meta->>'gateRejects')::bigint, 0)), 0)::bigint as gate_rejects
+    from public.usage_events e
+    where e.kind = 'rag_event'
+    group by 2
+  order by dimension, retrievals desc;
 end $$;
 
 /* Keyless knowledge-base search — term overlap over chunk contents, no
