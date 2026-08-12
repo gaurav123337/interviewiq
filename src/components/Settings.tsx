@@ -6,7 +6,7 @@ import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import {
   clearServerEntitlement, getCachedEntitlement, redeemGrant, refreshEntitlement, testLicensing, tierSource, type ServerEntitlement
 } from "../services/entitlement";
-import { fmtMinor, getMyPayments, type MyPayment } from "../services/billing";
+import { cancelSubscription, fmtMinor, getMyPayments, getMySubscription, type MyPayment, type MySubscription } from "../services/billing";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
 import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
@@ -33,6 +33,9 @@ export function Settings() {
   const [proCode, setProCode] = useState("");
   const [redeemBusy, setRedeemBusy] = useState(false);
   const [payments, setPayments] = useState<MyPayment[]>([]);
+  const [sub, setSub] = useState<MySubscription | null>(null);
+  const [subBusy, setSubBusy] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const [cloud, setCloud] = useState(getCloudState());
   const [cloudMode, setCloudMode] = useState<"in" | "up">("in");
   const [cloudEmail, setCloudEmail] = useState("");
@@ -76,12 +79,30 @@ export function Settings() {
     let live = true;
     const loadAll = () => {
       void refreshEntitlement().then(e => { if (live) setEnt(e); });
-      if (getCloudState().user) void getMyPayments().then(p => { if (live) setPayments(p); }).catch(() => {});
+      if (getCloudState().user) {
+        void getMyPayments().then(p => { if (live) setPayments(p); }).catch(() => {});
+        void getMySubscription().then(s => { if (live) setSub(s); }).catch(() => {});
+      }
     };
     loadAll();
     const un = subscribeCloud(() => { setCloud(getCloudState()); loadAll(); });
     return () => { live = false; un(); };
   }, []);
+
+  const doCancelSub = async () => {
+    if (!sub) return;
+    setSubBusy(true);
+    try {
+      const r = await cancelSubscription(sub.providerSubscriptionId);
+      setSub({ ...sub, status: "cancelled", currentPeriodEnd: r.currentPeriodEnd });
+      setConfirmCancel(false);
+      toast(`🔁 Subscription cancelled — you keep Pro until ${r.currentPeriodEnd ? new Date(r.currentPeriodEnd).toLocaleDateString() : "the end of the billing period"}.`);
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Cancel failed"));
+    } finally {
+      setSubBusy(false);
+    }
+  };
 
   const doRedeem = async () => {
     if (!proCode.trim()) return;
@@ -254,6 +275,41 @@ export function Settings() {
             </div>
           )}
         </section>
+
+        {/* subscription — next billing date + cancel (access continues until period end) */}
+        {cloud.user && sub && (
+          <section className={`${cardCls} p-6`}>
+            <div className="mb-1 flex items-center gap-2">
+              <h2 className="text-[16px] font-extrabold">🔁 Subscription</h2>
+              {sub.status === "active" ? <Chip tone="ok">ACTIVE</Chip> : <Chip tone="warn">{sub.status.toUpperCase()}</Chip>}
+              {sub.status === "cancelled" && <Chip tone="warn">ends {sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "at period end"}</Chip>}
+            </div>
+            <p className="mb-4 text-[13px] text-mut">
+              {sub.plan} plan via <span className="font-bold">{sub.provider}</span>
+              {sub.currentPeriodEnd && (
+                <> · next billing date <span className="font-bold text-ink">{new Date(sub.currentPeriodEnd).toLocaleDateString()}</span></>
+              )}
+              {sub.status === "cancelled" && <> · no more charges — access continues until the period ends.</>}
+            </p>
+            {sub.status === "active" ? (
+              confirmCancel ? (
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <span className="text-[12.5px] font-bold text-warn">Stop future billing? You keep Pro until {sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "period end"}.</span>
+                  <button className={btnDanger + btnSm} disabled={subBusy} onClick={() => void doCancelSub()}>
+                    {subBusy ? "Cancelling…" : "Yes, cancel subscription"}
+                  </button>
+                  <button className={btnGhost + btnSm} disabled={subBusy} onClick={() => setConfirmCancel(false)}>Keep it</button>
+                </div>
+              ) : (
+                <button className={btnDanger + btnSm} onClick={() => setConfirmCancel(true)}>
+                  Cancel subscription
+                </button>
+              )
+            ) : (
+              <p className="text-[12.5px] text-fnt">Cancelled — your access ends on {sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleDateString() : "the billing period end"}. You can re-subscribe from the Pro modal anytime.</p>
+            )}
+          </section>
+        )}
 
         {/* purchase history — confirmed payments on this account */}
         {cloud.user && (

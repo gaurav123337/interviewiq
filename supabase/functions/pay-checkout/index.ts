@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({})) as {
-      plan?: string; discountPct?: number; subscribe?: boolean; successUrl?: string; cancelUrl?: string;
+      plan?: string; discountPct?: number; subscribe?: boolean; successUrl?: string; cancelUrl?: string; coupon?: string;
     };
     const plan = body.plan ?? "monthly";
     if (!PLAN_CATALOG[plan]) {
@@ -50,15 +50,31 @@ Deno.serve(async (req) => {
     /* admin-published price (dollars → minor units) or the baked-in catalog */
     const amountMinorOverride = pricing[plan] != null ? Math.round(pricing[plan] * 100) : undefined;
 
+    /* coupon codes are validated server-side — the client's word is not
+       trusted. The better of the user discount and the coupon wins, and the
+       coupon rides in the provider notes so the webhook can consume it only
+       after the payment confirms. */
+    let effectiveDiscount = Number(body.discountPct ?? 0);
+    let coupon = String(body.coupon ?? "").trim().toUpperCase();
+    if (coupon) {
+      const { data: cData, error: cErr } = await supabase.rpc("validate_coupon", { p_code: coupon });
+      const row = (cData as Record<string, unknown>[] | null)?.[0];
+      if (cErr || !row?.valid) {
+        return new Response(JSON.stringify({ error: String(row?.message ?? cErr?.message ?? "Invalid code") }), { status: 400, headers });
+      }
+      effectiveDiscount = Math.max(effectiveDiscount, Number(row.discount_pct ?? 0));
+    }
+
     const provider = getPaymentProvider(Deno.env.toObject());
     const r = {
       plan: plan as "monthly" | "yearly" | "lifetime",
-      discountPct: Number(body.discountPct ?? 0),
+      discountPct: effectiveDiscount,
       userId: data.user.id,
       currency,
       successUrl: body.successUrl ?? `${appUrl}?pro=success`,
       cancelUrl: body.cancelUrl ?? appUrl,
-      amountMinorOverride
+      amountMinorOverride,
+      coupon: coupon || undefined
     };
 
     /* subscriptions: monthly/yearly via the provider's recurring flow */

@@ -5,9 +5,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  extendExpiry, getPaymentProvider, isPaidEvent, isRefundEvent, planDays, priceWithDiscount,
+  extendExpiry, getPaymentProvider, isCancelEvent, isPaidEvent, isRefundEvent, planDays, priceWithDiscount,
   RazorpayProvider, StripeProvider
 } from "../../supabase/functions/_shared/payment";
+import { revenueSummary, type AdminPaymentRow } from "../services/billing";
 
 /* WebCrypto helpers — no node builtins needed */
 const hmac = async (secret: string, data: string) => {
@@ -215,5 +216,149 @@ describe("razorpay subscriptions + remote pricing (provider core)", () => {
     const r = await provider.createCheckout({ ...req, plan: "yearly", amountMinorOverride: 5000 });
     expect(r.amountMinor).toBe(3500); /* $50 override − 30% (req discount) */
     expect(amount).toBe(3500);
+  });
+
+  it("carries a coupon code in the provider notes so the webhook can consume it", async () => {
+    const captured: { notes: Record<string, string> | null } = { notes: null };
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/payment_links")) {
+        captured.notes = JSON.parse(String(init?.body)).notes;
+        return new Response(JSON.stringify({ id: "plink_c", short_url: "https://rzp.io/i/c" }), { status: 200 });
+      }
+      if (u.includes("/v1/plans?")) return new Response(JSON.stringify({ items: [] }), { status: 200 });
+      if (u.endsWith("/v1/plans")) return new Response(JSON.stringify({ id: "plan_c" }), { status: 200 });
+      if (u.includes("/v1/subscriptions")) {
+        captured.notes = JSON.parse(String(init?.body)).notes;
+        return new Response(JSON.stringify({ id: "sub_c", short_url: "https://rzp.io/i/sc" }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const provider = new RazorpayProvider("rzp_test", "sec", "wh", "https://api.razorpay.com");
+    await provider.createCheckout({ ...req, coupon: "LAUNCH20" });
+    expect(captured.notes?.coupon).toBe("LAUNCH20");
+    await provider.createSubscription({ ...req, coupon: "LAUNCH20" });
+    expect(captured.notes?.coupon).toBe("LAUNCH20");
+  });
+});
+
+describe("subscription lifecycle (period end, cancel adapters, cancel events)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("extracts periodEnd (ISO) from razorpay subscription events", async () => {
+    const provider = new RazorpayProvider("rzp_test", "secret", "whsec_rzp");
+    const body = JSON.stringify({
+      event: "subscription.cancelled",
+      payload: {
+        subscription: {
+          entity: { id: "sub_9", current_end: 1799999999, notes: { user_id: "u5", plan: "monthly" } }
+        }
+      }
+    });
+    const sig = await hmacBase64("whsec_rzp", body);
+    const v = await provider.verifyWebhook(body, { "x-razorpay-signature": sig });
+    expect(v.valid).toBe(true);
+    expect(v.periodEnd).toBe(new Date(1799999999 * 1000).toISOString());
+    expect(isCancelEvent("razorpay", v.event)).toBe(true);
+    expect(isCancelEvent("razorpay", "payment.captured")).toBe(false);
+  });
+
+  it("maps stripe customer.subscription.deleted as a cancel event", () => {
+    expect(isCancelEvent("stripe", "customer.subscription.deleted")).toBe(true);
+    expect(isCancelEvent("stripe", "checkout.session.completed")).toBe(false);
+    expect(isCancelEvent("razorpay", null)).toBe(false);
+  });
+
+  it("razorpay cancel keeps access until period end (at_period_end: 1)", async () => {
+    const calls: { url: string; method?: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body });
+      const u = String(url);
+      if (u.includes("/cancel")) {
+        return new Response(JSON.stringify({ status: "cancelled", current_end: 1800000000 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ status: "active", current_end: 1800000000 }), { status: 200 });
+    });
+
+    const provider = new RazorpayProvider("rzp_test", "sec", "wh", "https://api.razorpay.com");
+    const r = await provider.cancelSubscription("sub_1");
+    expect(r.status).toBe("cancelled");
+    expect(r.currentPeriodEnd).toBe(new Date(1800000000 * 1000).toISOString());
+    const cancel = calls.find(c => c.url.includes("/cancel"))!;
+    expect(JSON.parse(String(cancel.body))).toEqual({ at_period_end: 1 });
+  });
+
+  it("stripe cancel requests cancel_at_period_end and keeps the period end", async () => {
+    const calls: { url: string; method?: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method });
+      const u = String(url);
+      if (init?.method === "POST") {
+        return new Response(JSON.stringify({ status: "canceled", current_period_end: 1800000000 }), { status: 200 });
+      }
+      if (u.includes("/v1/subscriptions/")) {
+        return new Response(JSON.stringify({ status: "active", current_period_end: 1800000000 }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const provider = new StripeProvider("sk_test", "whsec_stripe");
+    const r = await provider.cancelSubscription("sub_1");
+    expect(r.status).toBe("canceled");
+    expect(r.currentPeriodEnd).toBe(new Date(1800000000 * 1000).toISOString());
+    const post = calls.find(c => c.method === "POST")!;
+    expect(String(post.url)).toContain("/v1/subscriptions/sub_1");
+  });
+
+  it("stripe webhook exposes periodEnd for subscription lifecycle events", async () => {
+    const provider = new StripeProvider("sk_test", "whsec_stripe");
+    const body = JSON.stringify({
+      type: "customer.subscription.deleted",
+      data: { object: { id: "sub_9", current_period_end: 1799999999, metadata: { user_id: "u6", plan: "monthly" } } }
+    });
+    const ts = Math.floor(Date.now() / 1000);
+    const v1 = await hmacHex("whsec_stripe", `${ts}.${body}`);
+    const v = await provider.verifyWebhook(body, { "stripe-signature": `t=${ts},v1=${v1}` });
+    expect(v.valid).toBe(true);
+    expect(v.periodEnd).toBe(new Date(1799999999 * 1000).toISOString());
+    expect(isCancelEvent("stripe", v.event)).toBe(true);
+  });
+});
+
+describe("revenue summary (admin analytics)", () => {
+  const row = (over: Partial<AdminPaymentRow>): AdminPaymentRow => ({
+    userId: "u1", email: "a@x.com", provider: "razorpay", providerPaymentId: "p1",
+    plan: "monthly", amountMinor: 900, currency: "USD", discountPct: 0, status: "paid", kind: "one_time",
+    createdAt: "2026-01-01T00:00:00Z", ...over
+  });
+
+  it("totals paid revenue, refunds, MRR and per-plan splits", () => {
+    const rows: AdminPaymentRow[] = [
+      row({ plan: "monthly", kind: "subscription", amountMinor: 900 }),
+      row({ userId: "u2", plan: "yearly", kind: "subscription", amountMinor: 7900 }),
+      row({ userId: "u3", plan: "monthly", amountMinor: 900 }),
+      row({ userId: "u1", plan: "monthly", amountMinor: 900, status: "refunded" })
+    ];
+    const s = revenueSummary(rows);
+    expect(s.paidCount).toBe(3);
+    expect(s.totalPaidMinor).toBe(9700);
+    expect(s.refundedCount).toBe(1);
+    expect(s.refundedMinor).toBe(900);
+    /* monthly 900 + yearly 7900/12 = 658 → 1558 */
+    expect(s.mrrMinor).toBe(900 + Math.round(7900 / 12));
+    expect(s.activeSubscriberUsers).toBe(2);
+    expect(s.oneTimeRevenueMinor).toBe(900);
+    expect(s.subscriptionRevenueMinor).toBe(8800);
+    /* refunded rows are excluded from paid splits (byProvider counts all) */
+    expect(s.byPlan.monthly).toEqual({ count: 2, amountMinor: 1800 });
+    expect(s.byProvider.razorpay).toBe(4);
+  });
+
+  it("handles an empty ledger", () => {
+    const s = revenueSummary([]);
+    expect(s.paidCount).toBe(0);
+    expect(s.mrrMinor).toBe(0);
+    expect(Object.keys(s.byPlan)).toHaveLength(0);
   });
 });

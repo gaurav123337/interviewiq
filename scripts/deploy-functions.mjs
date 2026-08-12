@@ -23,7 +23,8 @@ const SHARED = readFileSync(join(root, "supabase/functions/_shared/payment.ts"),
 
 const FUNCTIONS = [
   { slug: "pay-checkout", dir: "pay-checkout", verifyJwt: true },
-  { slug: "pay-webhook", dir: "pay-webhook", verifyJwt: false }
+  { slug: "pay-webhook", dir: "pay-webhook", verifyJwt: false },
+  { slug: "pay-cancel", dir: "pay-cancel", verifyJwt: true }
 ];
 
 function inline(indexSrc) {

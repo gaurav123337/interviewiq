@@ -38,7 +38,7 @@ import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../services/entitlement";
-import { adminBillingActions, adminListPayments, adminRefundPayment, adminSimulatePurchase, fmtMinor, type AdminPaymentRow, type BillingActionRow } from "../services/billing";
+import { adminBillingActions, adminCreateCoupon, adminListCoupons, adminListPayments, adminRefundPayment, adminSimulatePurchase, fmtMinor, revenueSummary, type AdminCoupon, type AdminPaymentRow, type BillingActionRow } from "../services/billing";
 import { effectiveGroundingMinSim, effectiveHardFloor, getRagDigestOpts } from "../services/rag";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
@@ -78,6 +78,7 @@ function BillingSection() {
   const [rows, setRows] = useState<AdminEntitlementRow[]>([]);
   const [payments, setPayments] = useState<AdminPaymentRow[]>([]);
   const [audit, setAudit] = useState<BillingActionRow[]>([]);
+  const [coupons, setCoupons] = useState<AdminCoupon[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Record<string, "grant" | "discount" | undefined>>({});
@@ -86,6 +87,11 @@ function BillingSection() {
   const [cDays, setCDays] = useState(30);
   const [cPct, setCPct] = useState(0);
   const [code, setCode] = useState<string>("");
+  /* coupon form */
+  const [coCode, setCoCode] = useState("");
+  const [coPct, setCoPct] = useState(20);
+  const [coMax, setCoMax] = useState(0);
+  const [coExp, setCoExp] = useState("");
   /* per-row grant form */
   const [gPlan, setGPlan] = useState<string>("monthly");
   const [gDays, setGDays] = useState(30);
@@ -95,12 +101,26 @@ function BillingSection() {
 
   const load = () => {
     setLoading(true);
-    void Promise.all([adminListEntitlements(), adminListPayments(), adminBillingActions(50)])
-      .then(([e, p, a]) => { setRows(e); setPayments(p); setAudit(a); })
+    void Promise.all([adminListEntitlements(), adminListPayments(), adminBillingActions(50), adminListCoupons()])
+      .then(([e, p, a, c]) => { setRows(e); setPayments(p); setAudit(a); setCoupons(c); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
+
+  const revenue = useMemo(() => revenueSummary(payments), [payments]);
+
+  const createCoupon = async () => {
+    if (!coCode.trim() || coPct < 1) { toast("Code and a 1–100% discount are required"); return; }
+    setBusy(true);
+    try {
+      const code = await adminCreateCoupon(coCode, coPct, coMax, coExp ? new Date(coExp + "T23:59:59").toISOString() : undefined);
+      toast(`🎟️ Coupon ${code} created — users can apply it at checkout`);
+      setCoCode(""); setCoExp("");
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Create failed")); }
+    finally { setBusy(false); }
+  };
 
   const grant = async (u: AdminEntitlementRow) => {
     setBusy(true);
@@ -203,6 +223,90 @@ function BillingSection() {
               Copy
             </button>
             <button className={btnGhost + btnSm} onClick={() => setCode("")}>✕</button>
+          </div>
+        )}
+      </div>
+
+      {/* revenue snapshot — the storefront's scoreboard */}
+      <div className={`${cardCls} p-5`}>
+        <h3 className="text-[14.5px] font-extrabold">📈 Revenue snapshot</h3>
+        <p className="mb-3 text-[12px] text-mut">Computed from confirmed payments. MRR counts recurring subscription revenue (yearly ÷ 12).</p>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Total paid</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{fmtMinor(revenue.totalPaidMinor, "USD")}</div>
+            <div className="text-[11px] text-fnt">{revenue.paidCount} payments</div>
+          </div>
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">MRR</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{fmtMinor(revenue.mrrMinor, "USD")}</div>
+            <div className="text-[11px] text-fnt">{revenue.activeSubscriberUsers} subscriber{revenue.activeSubscriberUsers === 1 ? "" : "s"}</div>
+          </div>
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">One-time</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{fmtMinor(revenue.oneTimeRevenueMinor, "USD")}</div>
+            <div className="text-[11px] text-fnt">recurring {fmtMinor(revenue.subscriptionRevenueMinor, "USD")}</div>
+          </div>
+          <div className="rounded-xl border border-line/10 bg-deep/40 p-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Refunded</div>
+            <div className="mt-0.5 text-[17px] font-extrabold tabular-nums">{fmtMinor(revenue.refundedMinor, "USD")}</div>
+            <div className="text-[11px] text-fnt">{revenue.refundedCount} payment{revenue.refundedCount === 1 ? "" : "s"}</div>
+          </div>
+        </div>
+        {Object.keys(revenue.byPlan).length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {Object.entries(revenue.byPlan).map(([plan, v]) => (
+              <Chip key={plan} tone="lvl">{plan} ×{v.count} · {fmtMinor(v.amountMinor, "USD")}</Chip>
+            ))}
+            {Object.entries(revenue.byProvider).map(([p, n]) => (
+              <Chip key={p}>{p} ×{n}</Chip>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* reusable coupon codes — storefront discount codes */}
+      <div className={`${cardCls} p-5`}>
+        <h3 className="text-[14.5px] font-extrabold">🎟️ Coupon codes</h3>
+        <p className="mb-3 text-[12px] text-mut">Reusable discount codes users apply at checkout (LAUNCH20…). Usage is consumed only when a payment confirms — an abandoned checkout doesn't burn a use.</p>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <input
+            value={coCode}
+            onChange={e => setCoCode(e.target.value.toUpperCase())}
+            placeholder="LAUNCH20"
+            className="inp w-36 font-mono uppercase"
+          />
+          <label className="flex items-center gap-1.5 text-[12px] font-bold text-mut">
+            −%
+            <input type="number" min={1} max={100} value={coPct} onChange={e => setCoPct(Math.max(1, Math.min(100, Number(e.target.value) || 20)))} className="inp w-20 py-1.5 text-center" />
+          </label>
+          <label className="flex items-center gap-1.5 text-[12px] font-bold text-mut">
+            max uses (0 = ∞)
+            <input type="number" min={0} value={coMax} onChange={e => setCoMax(Math.max(0, Number(e.target.value) || 0))} className="inp w-20 py-1.5 text-center" />
+          </label>
+          <label className="flex items-center gap-1.5 text-[12px] font-bold text-mut">
+            expires
+            <input type="date" value={coExp} onChange={e => setCoExp(e.target.value)} className="inp py-1.5" />
+          </label>
+          <button className={btnPrimary + btnSm} disabled={busy || !coCode.trim() || coPct < 1} onClick={() => void createCoupon()}>Create</button>
+        </div>
+        {coupons.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {coupons.map(c => (
+              <div key={c.code} className="flex items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-3 py-1.5 text-[12px]">
+                <span className="font-mono font-extrabold">{c.code}</span>
+                <Chip tone="lvl">−{c.discountPct}%</Chip>
+                <Chip tone={c.maxUses > 0 && c.usedCount >= c.maxUses ? "bad" : "default"}>{c.usedCount}/{c.maxUses || "∞"}</Chip>
+                {c.expiresAt && <Chip tone={new Date(c.expiresAt) < new Date() ? "bad" : "default"}>until {new Date(c.expiresAt).toLocaleDateString()}</Chip>}
+                <button
+                  className={btnGhost + btnSm}
+                  title="Copy code"
+                  onClick={() => { navigator.clipboard?.writeText(c.code).then(() => toast(`📋 ${c.code} copied`), () => {}); }}
+                >
+                  📋
+                </button>
+              </div>
+            ))}
           </div>
         )}
       </div>

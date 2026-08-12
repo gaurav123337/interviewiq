@@ -17,6 +17,9 @@ export interface CheckoutRequest {
   cancelUrl: string;
   /** Admin-published price override (minor units) — remote pricing. */
   amountMinorOverride?: number;
+  /** Applied coupon code — carried in the provider notes so the webhook
+      can consume it only after the payment confirms. */
+  coupon?: string;
 }
 
 export interface CheckoutResult {
@@ -39,6 +42,9 @@ export interface VerifiedWebhook {
   /** Provider notes/metadata (user_id, plan) — lets refund events find the
       original purchase when the payment id differs from the stored one. */
   notes: Record<string, string> | null;
+  /** Billing-period end (ISO) — set for subscription events, so the client
+      can show the next billing date and cancellation keeps access until it. */
+  periodEnd: string | null;
 }
 
 export interface PaymentProvider {
@@ -49,6 +55,9 @@ export interface PaymentProvider {
   createSubscription(r: CheckoutRequest): Promise<CheckoutResult>;
   supportsSubscriptions: boolean;
   verifyWebhook(rawBody: string, headers: Record<string, string>): Promise<VerifiedWebhook>;
+  /** Cancel a subscription at the end of its current period — access is
+      kept until currentPeriodEnd, but future billing stops. */
+  cancelSubscription(providerSubscriptionId: string): Promise<{ status: string; currentPeriodEnd: string | null }>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -107,7 +116,7 @@ export class RazorpayProvider implements PaymentProvider {
         description: `InterviewIQ Pro — ${PLAN_CATALOG[r.plan].label}`,
         callback_url: r.successUrl,
         callback_method: "get",
-        notes: { user_id: r.userId, plan: r.plan, discount_pct: String(r.discountPct) }
+        notes: { user_id: r.userId, plan: r.plan, discount_pct: String(r.discountPct), ...(r.coupon ? { coupon: r.coupon } : {}) }
       })
     });
     if (!res.ok) {
@@ -135,7 +144,7 @@ export class RazorpayProvider implements PaymentProvider {
     );
     const mac = await crypto.subtle.sign("HMAC", expected, new TextEncoder().encode(rawBody));
     const computed = btoa(String.fromCharCode(...new Uint8Array(mac)));
-    if (computed !== sig)    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
+    if (computed !== sig)    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null, periodEnd: null };
 
     try {
       const payload = JSON.parse(rawBody) as {
@@ -143,7 +152,7 @@ export class RazorpayProvider implements PaymentProvider {
         payload?: {
           payment_link?: { entity?: { id?: string; notes?: Record<string, string>; amount?: number; currency?: string } };
           payment?: { entity?: { id?: string; notes?: Record<string, string>; amount?: number; currency?: string } };
-          subscription?: { entity?: { id?: string; notes?: Record<string, string>; plan_id?: string } };
+          subscription?: { entity?: { id?: string; notes?: Record<string, string>; plan_id?: string; current_end?: number; status?: string } };
         };
       };
       const link = payload.payload?.payment_link?.entity;
@@ -152,6 +161,7 @@ export class RazorpayProvider implements PaymentProvider {
       const notes = link?.notes ?? pay?.notes ?? sub?.notes ?? {};
       const amount = link?.amount ?? pay?.amount ?? null;
       const currency = link?.currency ?? pay?.currency ?? "USD";
+      const periodEnd = sub?.current_end ? new Date(sub.current_end * 1000).toISOString() : null;
       return {
         valid: true,
         event: payload.event ?? null,
@@ -160,10 +170,11 @@ export class RazorpayProvider implements PaymentProvider {
         plan: notes.plan ?? null,
         amountMinor: amount,
         currency,
-        notes: Object.keys(notes).length ? notes : null
+        notes: Object.keys(notes).length ? notes : null,
+        periodEnd
       };
     } catch {
-      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
+      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null, periodEnd: null };
     }
   }
 
@@ -187,7 +198,7 @@ export class RazorpayProvider implements PaymentProvider {
       plan_id: planId,
       total_count: r.plan === "yearly" ? 1 : 12,
       customer_notify: 1,
-      notes: { user_id: r.userId, plan: r.plan, mode: "subscription" }
+      notes: { user_id: r.userId, plan: r.plan, mode: "subscription", ...(r.coupon ? { coupon: r.coupon } : {}) }
     });
     return {
       provider: this.name,
@@ -195,6 +206,16 @@ export class RazorpayProvider implements PaymentProvider {
       externalId: sub.id as string,
       amountMinor: amount,
       currency: r.currency
+    };
+  }
+
+  async cancelSubscription(providerSubscriptionId: string): Promise<{ status: string; currentPeriodEnd: string | null }> {
+    const sub = await this.rzpGet(`/v1/subscriptions/${providerSubscriptionId}`);
+    const cancelled = await this.rzpPost(`/v1/subscriptions/${providerSubscriptionId}/cancel`, { at_period_end: 1 });
+    const end = (cancelled.current_end as number | undefined) ?? (sub.current_end as number | undefined);
+    return {
+      status: String(cancelled.status ?? sub.status ?? "cancelled"),
+      currentPeriodEnd: end ? new Date(end * 1000).toISOString() : null
     };
   }
 
@@ -244,7 +265,8 @@ export class StripeProvider implements PaymentProvider {
       "line_items[0][quantity]": "1",
       "line_items[0][price_data][currency]": r.currency,
       "line_items[0][price_data][unit_amount]": String(amount),
-      "line_items[0][price_data][product_data][name]": `InterviewIQ Pro — ${PLAN_CATALOG[r.plan].label}`
+      "line_items[0][price_data][product_data][name]": `InterviewIQ Pro — ${PLAN_CATALOG[r.plan].label}`,
+      ...(r.coupon ? { "metadata[coupon]": r.coupon } : {})
     });
     const res = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
@@ -271,7 +293,7 @@ export class StripeProvider implements PaymentProvider {
   async verifyWebhook(rawBody: string, headers: Record<string, string>): Promise<VerifiedWebhook> {
     const sig = headers["stripe-signature"] ?? "";
     const m = sig.match(/t=(\d+),v1=([0-9a-f]+)/);
-    if (!m)    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null } as VerifiedWebhook;
+    if (!m)    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null, periodEnd: null } as VerifiedWebhook;
     const signed = `${m[1]}.${rawBody}`;
     const key = await crypto.subtle.importKey(
       "raw",
@@ -282,12 +304,12 @@ export class StripeProvider implements PaymentProvider {
     );
     const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signed));
     const hex = [...new Uint8Array(mac)].map(b => b.toString(16).padStart(2, "0")).join("");
-    if (hex !== m[2]) return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
+    if (hex !== m[2]) return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null, periodEnd: null };
 
     try {
       const payload = JSON.parse(rawBody) as {
         type?: string;
-        data?: { object?: { client_reference_id?: string; metadata?: Record<string, string>; id?: string; amount_total?: number; currency?: string } };
+        data?: { object?: { client_reference_id?: string; metadata?: Record<string, string>; id?: string; amount_total?: number; currency?: string; current_period_end?: number } };
       };
       const obj = payload.data?.object;
       const notes = obj?.metadata ?? {};
@@ -299,10 +321,11 @@ export class StripeProvider implements PaymentProvider {
         plan: obj?.metadata?.plan ?? null,
         amountMinor: obj?.amount_total ?? null,
         currency: obj?.currency ?? "USD",
-        notes: Object.keys(notes).length ? notes : null
+        notes: Object.keys(notes).length ? notes : null,
+        periodEnd: obj?.current_period_end ? new Date(obj.current_period_end * 1000).toISOString() : null
       };
     } catch {
-      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null };
+      return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null, periodEnd: null };
     }
   }
 
@@ -310,6 +333,30 @@ export class StripeProvider implements PaymentProvider {
 
   async createSubscription(): Promise<CheckoutResult> {
     throw new Error("Subscriptions aren't wired for Stripe yet — use Razorpay (set PAYMENT_PROVIDER=razorpay) or buy one-time.");
+  }
+
+  async cancelSubscription(providerSubscriptionId: string): Promise<{ status: string; currentPeriodEnd: string | null }> {
+    const get = await fetch(`https://api.stripe.com/v1/subscriptions/${providerSubscriptionId}`, {
+      headers: { Authorization: "Basic " + btoa(`${this.secretKey}:`) }
+    });
+    if (!get.ok) throw new Error(`Stripe subscription lookup failed (${get.status})`);
+    const sub = (await get.json()) as { status?: string; current_period_end?: number };
+    const form = new URLSearchParams({ cancel_at_period_end: "true" });
+    const post = await fetch(`https://api.stripe.com/v1/subscriptions/${providerSubscriptionId}`, {
+      method: "POST",
+      headers: {
+        Authorization: "Basic " + btoa(`${this.secretKey}:`),
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: form
+    });
+    if (!post.ok) throw new Error(`Stripe subscription cancel failed (${post.status})`);
+    const cancelled = (await post.json()) as { status?: string; current_period_end?: number };
+    const end = cancelled.current_period_end ?? sub.current_period_end;
+    return {
+      status: String(cancelled.status ?? sub.status ?? "cancelled"),
+      currentPeriodEnd: end ? new Date(end * 1000).toISOString() : null
+    };
   }
 }
 
@@ -359,4 +406,12 @@ export function isRefundEvent(provider: string, event: string | null): boolean {
   if (!event) return false;
   if (provider === "stripe") return event === "charge.refunded";
   return event === "payment.refunded";
+}
+
+/** Which events mean the subscription was cancelled (access continues until
+    current_period_end; future billing stops). */
+export function isCancelEvent(provider: string, event: string | null): boolean {
+  if (!event) return false;
+  if (provider === "stripe") return event === "customer.subscription.deleted";
+  return event === "subscription.cancelled";
 }

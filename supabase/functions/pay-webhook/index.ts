@@ -1,12 +1,15 @@
 /* pay-webhook — the ONLY place a payment becomes Pro.
    Provider-agnostic: verifies the provider's signature over the raw body,
-   maps the event, then funnels through the shared apply_purchase /
-   apply_refund SQL (gated to service role / admins) so simulated and real
-   payments are indistinguishable. Handles one-time payments, subscription
-   renewals (subscription.charged) and refunds (payment.refunded). */
+   maps the event, then funnels through the shared SQL (apply_purchase /
+   apply_refund / upsert_subscription / consume_coupon) so simulated and
+   real payments are indistinguishable. Handles one-time payments,
+   subscription renewals (subscription.charged), cancellations
+   (subscription.cancelled — access continues until period end), and
+   refunds (payment.refunded). Coupons are consumed ONLY here, after the
+   payment confirms, so an abandoned checkout never burns a use. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { getPaymentProvider, isPaidEvent, isRefundEvent } from "../_shared/payment.ts";
+import { getPaymentProvider, isCancelEvent, isPaidEvent, isRefundEvent } from "../_shared/payment.ts";
 
 Deno.serve(async (req) => {
   try {
@@ -40,12 +43,47 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, refunded: match.provider_payment_id }), { status: 200 });
     }
 
+    /* cancellations — keep access until period end, stop future billing */
+    if (isCancelEvent(provider.name, v.event)) {
+      if (!v.userId || !v.externalId) {
+        return new Response(JSON.stringify({ ok: true, ignored: "cancel without binding" }), { status: 200 });
+      }
+      const { error: upErr } = await admin.rpc("upsert_subscription", {
+        p_user: v.userId,
+        p_provider: provider.name,
+        p_provider_sub_id: v.externalId,
+        p_plan: v.plan ?? "monthly",
+        p_status: "cancelled",
+        p_period_end: v.periodEnd
+      });
+      if (upErr) throw new Error("upsert_subscription: " + upErr.message);
+      return new Response(JSON.stringify({ ok: true, cancelled: v.externalId, access_until: v.periodEnd }), { status: 200 });
+    }
+
     /* acknowledge non-payment events so the provider stops retrying */
     if (!isPaidEvent(provider.name, v.event)) {
       return new Response(JSON.stringify({ ok: true, ignored: v.event }), { status: 200 });
     }
     if (!v.userId || !v.plan) {
       return new Response(JSON.stringify({ ok: false, error: "missing user/plan binding" }), { status: 400 });
+    }
+
+    /* idempotency: a retried webhook for an already-processed payment must
+       not double-grant (or double-consume a coupon) */
+    if (v.externalId) {
+      const { data: dup } = await admin.from("payments")
+        .select("provider_payment_id").eq("provider_payment_id", v.externalId).maybeSingle();
+      if (dup) {
+        return new Response(JSON.stringify({ ok: true, already_processed: v.externalId }), { status: 200 });
+      }
+    }
+
+    /* consume the coupon now that the payment is confirmed */
+    let couponPct = 0;
+    if (v.notes?.coupon) {
+      const { data: pct, error: cErr } = await admin.rpc("consume_coupon", { p_code: v.notes.coupon });
+      if (cErr) throw new Error("consume_coupon: " + cErr.message);
+      couponPct = Number(pct ?? 0);
     }
 
     /* one-time or subscription renewal — same grant path */
@@ -57,9 +95,24 @@ Deno.serve(async (req) => {
       p_plan: v.plan,
       p_amount_minor: v.amountMinor ?? 0,
       p_currency: v.currency ?? "USD",
+      p_discount_pct: couponPct || Number(v.notes?.discount_pct ?? 0),
       p_kind: kind
     });
     if (payErr) throw new Error("apply_purchase: " + payErr.message);
+
+    /* keep the subscription entity in sync (period end for the client's
+       next-billing-date display) */
+    if (v.event === "subscription.charged" && v.externalId) {
+      const { error: upErr } = await admin.rpc("upsert_subscription", {
+        p_user: v.userId,
+        p_provider: provider.name,
+        p_provider_sub_id: v.externalId,
+        p_plan: v.plan,
+        p_status: "active",
+        p_period_end: v.periodEnd
+      });
+      if (upErr) throw new Error("upsert_subscription: " + upErr.message);
+    }
 
     return new Response(JSON.stringify({ ok: true, granted: v.userId, plan: v.plan, kind }), { status: 200 });
   } catch (e) {

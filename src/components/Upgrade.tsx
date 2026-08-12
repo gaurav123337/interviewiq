@@ -4,7 +4,7 @@ import { getTier, setTier } from "../services/entitlements";
 import {
   PLANS, discountedPrice, discountLive, fmtMoney, getCachedEntitlement, refreshEntitlement, tierSource
 } from "../services/entitlement";
-import { createCheckout, getRemotePricing, paymentProviderName, type RemotePricing } from "../services/billing";
+import { createCheckout, getRemotePricing, paymentProviderName, validateCoupon, type CouponCheck, type RemotePricing } from "../services/billing";
 import { isCloudConfigured } from "../services/cloud";
 import { queueEvent, updateProfile } from "../services/events";
 import { toast } from "../toast";
@@ -33,6 +33,9 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
   const [ent, setEnt] = useState(getCachedEntitlement());
   const [remote, setRemote] = useState<RemotePricing | null>(null);
   const [subscribe, setSubscribe] = useState(false);
+  const [coupon, setCoupon] = useState("");
+  const [couponCheck, setCouponCheck] = useState<CouponCheck | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
 
   /* pull the latest server entitlement (discount + grant status) and the
      admin-published pricing on open */
@@ -42,8 +45,25 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
   }, []);
 
   const discount = discountLive(ent);
+  /* the better of the per-user discount and a validated coupon code wins */
+  const effDiscount = Math.max(discount, couponCheck?.valid ? couponCheck.discountPct : 0);
   /* admin-published price wins over the baked-in catalog (dollars) */
   const planPrice = (id: string) => (remote && remote[id as keyof RemotePricing] != null ? remote[id as keyof RemotePricing] as number : PLANS.find(p => p.id === id)!.price);
+
+  const applyCoupon = async () => {
+    const code = coupon.trim();
+    if (!code) { setCouponCheck(null); return; }
+    setCouponBusy(true);
+    try {
+      const c = await validateCoupon(code);
+      setCouponCheck(c);
+      toast(c.valid ? `🎟️ Code applied — ${c.discountPct}% off at checkout` : "✗ " + (c.message || "Invalid code"));
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Couldn't check that code"));
+    } finally {
+      setCouponBusy(false);
+    }
+  };
 
   const unlock = async () => {
     /* "I've paid" no longer unlocks blindly — the server must confirm the
@@ -82,7 +102,7 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
       setBuying(true);
       try {
         sessionStorage.setItem(CHECKOUT_KEY, "pending");
-        const r = await createCheckout(plan, discount, subscribe && plan !== "lifetime");
+        const r = await createCheckout(plan, effDiscount, subscribe && plan !== "lifetime", coupon);
         window.open(r.url, "_blank", "noopener");
         const mode = r.mode === "subscription" ? "🔁 subscription" : "one-time";
         toast(`💳 ${paymentProviderName()} ${mode} checkout opened — complete it, then tap “I've paid” to verify`);
@@ -130,8 +150,8 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
         <div className="mb-4 grid grid-cols-3 gap-2">
           {PLANS.map(p => {
             const base = planPrice(p.id);
-            const was = discount > 0 ? base : 0;
-            const now = discountedPrice(base, discount);
+            const was = effDiscount > 0 ? base : 0;
+            const now = discountedPrice(base, effDiscount);
             const recurring = subscribe && p.id !== "lifetime";
             return (
               <button
@@ -147,7 +167,7 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
                   {fmtMoney(now)}<span className="text-[11px] font-bold text-mut">{recurring ? "/mo" : p.per}</span>
                 </div>
                 {recurring && <div className="text-[10px] font-bold text-acc1">billed {p.id === "yearly" ? "yearly" : "monthly"} · cancel anytime</div>}
-                {discount > 0 && <div className="text-[10.5px] font-bold text-ok">−{discount}% for you</div>}
+                {effDiscount > 0 && <div className="text-[10.5px] font-bold text-ok">−{effDiscount}%{couponCheck?.valid ? ` (${couponCheck.discountPct}% code)` : " for you"}</div>}
                 {!recurring && p.id === "yearly" && <div className="text-[10px] font-bold text-acc1">best value</div>}
                 <div className="mt-1.5 text-[10.5px] font-bold text-acctxt">{buying ? "Opening…" : "Choose"}</div>
               </button>
@@ -155,7 +175,7 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
           })}
         </div>
         {checkout() && (
-          <label className="mb-4 flex cursor-pointer items-center gap-2 text-[12.5px] font-bold text-mut select-none">
+          <label className="mb-3 flex cursor-pointer items-center gap-2 text-[12.5px] font-bold text-mut select-none">
             <input
               type="checkbox"
               checked={subscribe}
@@ -164,6 +184,27 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
             />
             🔁 Subscribe (recurring) — monthly/yearly renew automatically; cancel anytime. Off = one-time purchase.
           </label>
+        )}
+        {checkout() && (
+          <div className="mb-4">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
+              <div className="text-[12px] font-bold text-mut">🎟️ Have a discount code?</div>
+              {couponCheck?.valid && <Chip tone="ok">−{couponCheck.discountPct}% applied</Chip>}
+              {couponCheck && !couponCheck.valid && <Chip tone="bad">{couponCheck.message}</Chip>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={coupon}
+                onChange={e => { setCoupon(e.target.value); setCouponCheck(null); }}
+                onKeyDown={e => { if (e.key === "Enter") void applyCoupon(); }}
+                placeholder="LAUNCH20"
+                className="min-w-[160px] flex-1 rounded-xl border border-line/15 bg-deep/80 px-3 py-2 font-mono text-[13px] uppercase placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+              />
+              <button className={btnGhost + btnSm} disabled={couponBusy || !coupon.trim()} onClick={() => void applyCoupon()}>
+                {couponBusy ? "Checking…" : "Apply"}
+              </button>
+            </div>
+          </div>
         )}
         </>
       )}
