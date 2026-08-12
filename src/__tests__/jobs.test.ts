@@ -101,6 +101,49 @@ describe("matchJob verdicts", () => {
     const m = matchJob(PROFILE, job({ title: "Junior Developer", level: "junior" }));
     expect(m.score).toBeLessThan(75);
   });
+
+  it("domain gate: a Sales role can never be a Good fit for an engineer", async () => {
+    const { matchJob } = await import("../services/jobs");
+    const m = matchJob(PROFILE, job({ title: "Director, Sales Compensation", company: "Dropbox", level: "lead", skills: [] }));
+    expect(m.verdict).toBe("no");
+    expect(m.score).toBeLessThanOrEqual(20);
+    expect(m.blockers.some(b => /Outside your field/i.test(b))).toBe(true);
+  });
+
+  it("domain gate: a Legal role with prose-looking skills gets no skill credit", async () => {
+    const { matchJob } = await import("../services/jobs");
+    const m = matchJob(PROFILE, job({ title: "Senior Counsel, Litigation", level: "senior", skills: ["express", "rust"] }));
+    expect(m.verdict).toBe("no");
+    expect(m.matched).toEqual([]);
+    expect(m.blockers.some(b => /Outside your field/i.test(b))).toBe(true);
+  });
+
+  it("compound profile labels match raw job tokens (JavaScript / TypeScript ↔ typescript)", async () => {
+    const { matchJob } = await import("../services/jobs");
+    const m = matchJob({ ...PROFILE, skills: ["JavaScript / TypeScript", "React · Vue · Angular", "CSS & accessibility"] }, job({ skills: ["typescript", "react", "css"] }));
+    expect(m.matched.sort()).toEqual(["css", "react", "typescript"]);
+    expect(m.missing).toEqual([]);
+  });
+
+  it("seniority words never count as a title match", async () => {
+    const { matchJob } = await import("../services/jobs");
+    const m = matchJob(PROFILE, job({ title: "Senior Account Manager", skills: [], level: "lead" }));
+    expect(m.matched).toEqual([]);
+    /* the "Senior" word in the title gives no points — domain mismatch caps it */
+    expect(m.verdict).toBe("no");
+  });
+});
+
+describe("inferDomain", () => {
+  it("classifies engineering, data, design and sales titles", async () => {
+    const { inferDomain } = await import("../services/jobs");
+    expect(inferDomain("Senior Frontend Engineer")).toBe("software");
+    expect(inferDomain("Staff Data Scientist")).toBe("data");
+    expect(inferDomain("Product Designer")).toBe("design");
+    expect(inferDomain("Account Executive")).toBe("sales");
+    expect(inferDomain("Tax Manager")).toBe("finance");
+    expect(inferDomain("Recruiter")).toBe("hr");
+  });
 });
 
 describe("career profile persistence", () => {

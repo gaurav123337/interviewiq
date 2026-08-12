@@ -81,6 +81,11 @@ export interface RemoteConfig {
       by policy id (terms | privacy | refunds | shipping). Absent entries
       fall back to the baked-in templates in src/data/policies.ts. */
   policies?: Record<string, string>;
+  /** Job feed (Apply Kit) — auto-refresh interval + ATS sources. */
+  jobs?: {
+    refreshHours?: number;
+    sources?: { provider: string; board: string }[];
+  };
 }
 
 export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {}, rag: {} };
@@ -94,7 +99,8 @@ export function getRemoteConfig(): RemoteConfig {
     companyFreq: { ...(c?.companyFreq ?? {}) },
     coachVocab: c?.coachVocab,
     rag: { ...(c?.rag ?? {}) },
-    policies: { ...(c?.policies ?? {}) }
+    policies: { ...(c?.policies ?? {}) },
+    jobs: c?.jobs
   };
 }
 

@@ -5,7 +5,7 @@
    works offline — Pro gating happens in the UI layer. */
 
 import type { CareerProfile, JobMatch, JobPosting, MatchVerdict } from "../types";
-import { LEVELS } from "../data";
+import { LEVELS, fieldById } from "../data";
 import { getCloudState, getSupabaseClient } from "./cloud";
 import { getGoal, getProfile } from "./goal";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
@@ -33,13 +33,19 @@ export function defaultCareerProfile(): CareerProfile {
     .map(s => s.skill))]
     .slice(0, 30);
   const levelName = LEVELS.find(l => l.id === goal?.targetLevel)?.name;
+  /* target titles = the full "Senior Frontend Engineer" pattern, so title
+     matching keys on the field, not the seniority word alone */
+  const fieldName = fieldById(goal?.fieldId)?.name;
+  const titles = levelName
+    ? [fieldName ? `${levelName} ${fieldName}` : levelName]
+    : fieldName ? [fieldName] : [];
   return {
     headline: "",
     years: 0,
     location: "",
     remote: true,
     workAuth: "",
-    targetTitles: levelName ? [levelName] : [],
+    targetTitles: titles,
     skills,
     summary: "",
     updatedAt: Date.now()
@@ -120,6 +126,15 @@ export async function loadJobsFromCloud(): Promise<JobPosting[]> {
   return jobs;
 }
 
+/** Last successful feed refresh (epoch ms) — drives the auto-refresh. */
+export function lastJobsRefresh(): number {
+  return storageGet<number>(STORAGE_KEYS.jobsRefreshedAt, 0);
+}
+
+function markJobsRefreshed(): void {
+  storageSet(STORAGE_KEYS.jobsRefreshedAt, Date.now());
+}
+
 /** Trigger the jobs-fetch Edge Function (signed-in only). */
 export async function refreshJobs(): Promise<{ added: number; updated: number; total: number }> {
   const client = await getSupabaseClient();
@@ -134,6 +149,7 @@ export async function refreshJobs(): Promise<{ added: number; updated: number; t
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string }).error ?? "Refresh failed");
   await loadJobsFromCloud();
+  markJobsRefreshed();
   return { added: (body as { added?: number }).added ?? 0, updated: (body as { updated?: number }).updated ?? 0, total: (body as { total?: number }).total ?? 0 };
 }
 
@@ -154,6 +170,58 @@ export const VERDICT_META: Record<MatchVerdict, { label: string; tone: "ok" | "c
   stretch: { label: "Stretch", tone: "bad" },
   no: { label: "Not recommended", tone: "default" }
 };
+
+/* ------------------------------------------------------------------ */
+/* Domain classification — the gate that keeps Sales roles from ever    */
+/* looking like "Good fit" for an engineer. Same table drives the       */
+/* server-side title extraction so both ends agree.                    */
+/* ------------------------------------------------------------------ */
+
+const DOMAIN_RULES: [string, string, RegExp][] = [
+  ["data", "Data", /data scientist|data analyst|data engineer|analytics|machine learning|business intelligence|bi engineer/],
+  ["design", "Design", /product designer|ux designer|ui designer|designer|creative/],
+  ["product", "Product & Program", /product manager|product owner|program manager|technical program manager/],
+  ["marketing", "Marketing", /marketing|growth|brand|content|seo|campaign|media|social|communications|comms/],
+  ["finance", "Finance", /finance|accounting|controller|compensation|payroll|audit|tax|fp&a|financial/],
+  ["legal", "Legal", /legal|counsel|paralegal|compliance|privacy|litigation/],
+  ["hr", "People & HR", /recruit|people|talent|human resources|employee|hr/],
+  ["sales", "Sales & BD", /sales|business development|account executive|account manager|partnerships|revenue|go.to.market/],
+  ["ops", "Operations", /operations|vendor|support|logistics|procurement|facilities/],
+  ["software", "Engineering", /software|engineer|developer|programmer|front.?end|back.?end|full.?stack|devops|sre|site reliability|platform|infrastructure|security|mobile|ios|android|qa|quality|automation|sdet|test|web/]
+];
+
+const DOMAIN_LABELS: Record<string, string> = Object.fromEntries(DOMAIN_RULES.map(([id, label]) => [id, label]));
+
+/** Classify a title/headline into a domain family ("software", "sales"…). */
+export function inferDomain(text: string): string {
+  const t = (text ?? "").toLowerCase();
+  for (const [id, , re] of DOMAIN_RULES) if (re.test(t)) return id;
+  return "other";
+}
+
+export const domainLabel = (id: string): string => DOMAIN_LABELS[id] ?? "Other";
+
+/* ------------------------------------------------------------------ */
+/* Skill normalization — profile skills are display labels like         */
+/* "JavaScript / TypeScript" or "React · Vue · Angular"; jobs store raw */
+/* tokens. Tokenize both sides (plus basic singularization) so          */
+/* "typescript" matches "JavaScript / TypeScript".                     */
+/* ------------------------------------------------------------------ */
+
+const tokens = (s: string): string[] =>
+  s.toLowerCase().replace(/[^a-z0-9+#]/g, " ").trim().split(/\s+/).filter(Boolean);
+
+const matchSkill = (a: string, b: string): boolean => {
+  const at = tokens(a);
+  const bt = tokens(b);
+  if (at.some(t => bt.includes(t))) return true;
+  /* plural tolerance: "APIs" ≈ "api", "databases" ≈ "database" */
+  const singular = (arr: string[]) => arr.map(t => (t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t));
+  return singular(at).some(t => singular(bt).includes(t));
+};
+
+/** Seniority words never count as a title match. */
+const LEVEL_WORDS = new Set(["senior", "junior", "staff", "lead", "principal", "director", "manager", "head", "intern", "mid", "entry", "sr"]);
 
 /** Seniority fit + the below-level blocker. Returns [points, blocker?]. */
 function levelFit(profile: CareerProfile, level: string | null): [number, string | null] {
@@ -176,22 +244,44 @@ export function matchJob(profile: CareerProfile | null, job: JobPosting): JobMat
       blockers: ["Complete your career profile to see a match verdict."]
     };
   }
-  const own = new Set(profile.skills.map(s => s.trim().toLowerCase()).filter(Boolean));
-  const required = new Set(job.skills.map(s => s.trim().toLowerCase()).filter(Boolean));
-  const matched = job.skills.filter(s => own.has(s.toLowerCase()));
-  const missing = job.skills.filter(s => !own.has(s.toLowerCase()));
+
+  const own = profile.skills.map(s => s.trim()).filter(Boolean);
+  const matched = job.skills.filter(s => own.some(p => matchSkill(p, s)));
+  const missing = job.skills.filter(s => !own.some(p => matchSkill(p, s)));
 
   const blockers: string[] = [];
   let score = 0;
+  let limited = false;
 
-  /* skill overlap — the biggest signal */
-  if (required.size > 0) score += (matched.length / required.size) * 55;
-  else score += 30; /* no extracted skills → neutral */
+  /* domain gate — the biggest correctness lever */
+  const profileDomain = inferDomain([profile.headline, ...profile.targetTitles].join(" "));
+  const jobDomain = inferDomain(job.title);
+  const known = profileDomain !== "other" && jobDomain !== "other";
+  const sameDomain = known && profileDomain === jobDomain;
+  if (known && !sameDomain) {
+    blockers.push(`Outside your field — this is a ${domainLabel(jobDomain)} role`);
+  }
 
-  /* title fit — does the role mention your target titles? */
+  /* skill overlap — the biggest positive signal */
+  if (job.skills.length > 0) {
+    score += (matched.length / job.skills.length) * 55;
+  } else if (sameDomain) {
+    score += 40; /* domain-only evidence for sparse descriptions */
+  } else if (known) {
+    limited = true; /* different domain AND no skills → no signal */
+  } else {
+    score += 18;
+    limited = true;
+    blockers.push("Limited info — no skills extracted for this role");
+  }
+
+  /* title fit — target words (field words, not seniority words) */
   const title = job.title.toLowerCase();
-  const targetWords = new Set(profile.targetTitles.flatMap(t => t.split(/\s+/)).map(w => w.toLowerCase()).filter(w => w.length > 3));
-  score += [...targetWords].some(w => title.includes(w)) ? 20 : 8;
+  const targetWords = new Set(profile.targetTitles
+    .flatMap(t => t.split(/\s+/))
+    .map(w => w.toLowerCase())
+    .filter(w => w.length > 3 && !LEVEL_WORDS.has(w)));
+  score += [...targetWords].some(w => title.includes(w)) ? 12 : 0;
 
   /* seniority fit against the extracted level */
   const [lvlPts, lvlBlocker] = levelFit(profile, job.level);
@@ -210,12 +300,16 @@ export function matchJob(profile: CareerProfile | null, job: JobPosting): JobMat
     }
   }
 
+  /* integrity caps: a domain mismatch or no-skill role can never look good */
+  if (known && !sameDomain) score = Math.min(score, 20);
+  if (limited) score = Math.min(score, 40);
+
   /* blockers knock the score down but never below zero */
-  score -= blockers.length * 12;
+  score -= blockers.length * 6;
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   const verdict: MatchVerdict =
-    score >= 75 ? "strong" : score >= 55 ? "good" : score >= 35 ? "moderate" : score >= 15 ? "stretch" : "no";
+    score >= 75 ? "strong" : score >= 58 ? "good" : score >= 38 ? "moderate" : score >= 18 ? "stretch" : "no";
 
   return { score, verdict, matched, missing, blockers };
 }

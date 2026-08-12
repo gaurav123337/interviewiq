@@ -6,9 +6,10 @@ import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
 import { UpgradeModal } from "./Upgrade";
 import {
-  defaultCareerProfile, getCareerProfile, listJobs, loadJobsFromCloud,
+  defaultCareerProfile, getCareerProfile, lastJobsRefresh, listJobs, loadJobsFromCloud,
   matchJob, refreshJobs, saveCareerProfile, VERDICT_META
 } from "../services/jobs";
+import { getRemoteConfig } from "../services/remoteConfig";
 
 /* small comma/Enter-driven tag input */
 function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder: string }) {
@@ -58,6 +59,12 @@ export function Jobs() {
     void import("../services/jobs").then(({ loadCareerProfileFromCloud }) =>
       loadCareerProfileFromCloud().then(p => { if (p) { setProfile(p); saveCareerProfile(p); } }).catch(() => {})
     );
+    /* scheduled refresh — if the feed is older than the admin-tunable
+       interval (default 24h), re-ingest so matches never go stale */
+    const refreshHours = getRemoteConfig().jobs?.refreshHours ?? 24;
+    if (Date.now() - lastJobsRefresh() > refreshHours * 3_600_000) {
+      void refresh().catch(() => {});
+    }
   }, [cloud]);
 
   const refresh = async () => {

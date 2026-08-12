@@ -2146,6 +2146,11 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, rag: { ...config.rag, digest: { ...config.rag?.digest, [k]: v } } });
   /* coach vocabulary JSON editor (families + misconceptions) */
   const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
+  /* job feed (Apply Kit): auto-refresh interval + ATS sources */
+  const [jobsHours, setJobsHours] = useState<number>(() => config.jobs?.refreshHours ?? 24);
+  const [jobsSources, setJobsSources] = useState<string>(() =>
+    (config.jobs?.sources ?? []).map(s => `${s.provider}:${s.board}`).join("\n")
+  );
   /* native digest email keys — stored locally only (never published to clients) */
   const [secret, setSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailSecret, ""));
   const [key, setKey] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailKey, ""));
@@ -2176,7 +2181,14 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     try {
       await saveRemoteConfig({
         features: config.features, ai: config.ai, limits: config.limits,
-        companyFreq: config.companyFreq ?? {}, coachVocab: config.coachVocab, rag: config.rag
+        companyFreq: config.companyFreq ?? {}, coachVocab: config.coachVocab, rag: config.rag,
+        jobs: {
+          refreshHours: Math.max(1, Math.round(jobsHours) || 24),
+          sources: jobsSources.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => {
+            const [provider, ...rest] = l.split(":");
+            return { provider: provider.trim(), board: rest.join(":").trim() };
+          })
+        }
       });
       /* record what changed since the last publish for the weekly digest */
       const prev = audit[0]?.snapshot ?? {};
@@ -2245,6 +2257,25 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           <NumField label="Free sessions / month" value={config.limits.sessionsPerMonth ?? 3} onChange={v => setLimit("sessionsPerMonth", v)} />
           <NumField label="Free AI calls / day" value={config.limits.aiPerDay ?? 5} onChange={v => setLimit("aiPerDay", v)} />
         </div>
+      </div>
+
+      <div className={`${cardCls} p-5`}>
+        <h2 className="mb-1 text-[16px] font-extrabold">💼 Job feed (Apply Kit)</h2>
+        <p className="mb-3 text-[12.5px] text-mut">How often the app auto-refreshes job postings, and which ATS boards to pull from (one <code>provider:board</code> per line — greenhouse, ashby, lever).</p>
+        <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <NumField label="Auto-refresh every (hours)" value={jobsHours} onChange={v => setJobsHours(Math.max(1, Math.round(v)))} />
+        </div>
+        <label className="block">
+          <span className="mb-1 block text-[12px] font-bold text-mut">Sources</span>
+          <textarea
+            value={jobsSources}
+            onChange={e => setJobsSources(e.target.value)}
+            rows={5}
+            placeholder={"greenhouse:lyft\ngreenhouse:airbnb\ngreenhouse:dropbox\nashby:linear\nashby:notion"}
+            className="inp w-full font-mono text-[12px]"
+          />
+        </label>
+        <p className="mt-2 text-[11.5px] text-mut">Clients refresh on mount when the feed is older than the interval. The refresh button in the app also re-ingests on demand.</p>
       </div>
 
       <div className={`${cardCls} p-5`}>

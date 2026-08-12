@@ -19,35 +19,65 @@ const DEFAULT_SOURCES = [
   { provider: "ashby", board: "notion" }
 ];
 
-/* skill dictionary — tokens >= 4 chars match by substring; short/ambiguous
-   tokens (go, c# …) use word-boundary matching. */
+/* Skill dictionary. Two tiers so ordinary prose can't fake a tech role:
+   - SKILLS: distinctive tokens, safe on a word boundary ("kubernetes" never
+     appears in a sales blurb).
+   - AMBIGUOUS: also words in everyday English ("rest", "express", "go",
+     "rust", "ml") — they only count when the description shows technical
+     context, which kills false positives like "express your interest". */
 const SKILLS = [
-  "react", "vue", "angular", "typescript", "javascript", "node", "node.js", "python",
-  "java", "golang", "ruby", "php", "sql", "postgres", "postgresql", "mysql", "mongodb",
-  "redis", "graphql", "rest", "microservices", "microservice", "docker", "kubernetes",
-  "k8s", "terraform", "aws", "gcp", "azure", "ci/cd", "git", "linux", "html", "css",
-  "sass", "tailwind", "webpack", "next.js", "express", "django", "flask", "spring",
-  "kafka", "rabbitmq", "elasticsearch", "spark", "hadoop", "airflow", "pandas", "numpy",
-  "tensorflow", "pytorch", "machine learning", "ml", "data engineering", "etl", "tableau",
-  "figma", "ux", "ui", "accessibility", "a11y", "jest", "cypress", "playwright",
-  "selenium", "oauth", "jwt", "encryption", "grpc", "websockets", "redux",
-  "react native", "swift", "kotlin", "flutter", "dart", "rust", "scala", "bash",
-  "serverless", "lambda", "dynamodb", "s3", "ec2", "helm", "prometheus", "grafana",
-  "jenkins", "github actions", "agile", "scrum", "product management", "seo",
-  "observability", "event-driven", "webassembly", "postgresql", "django"
+  "react", "react native", "vue", "angular", "redux", "typescript", "javascript",
+  "node", "node.js", "python", "java", "golang", "ruby", "php", "sql", "postgres",
+  "postgresql", "mysql", "mongodb", "redis", "graphql", "restful", "rest api",
+  "microservices", "microservice", "docker", "kubernetes", "k8s", "terraform", "aws",
+  "gcp", "azure", "ci/cd", "git", "linux", "html", "css", "sass", "tailwind",
+  "webpack", "next.js", "django", "flask", "spring", "kafka", "rabbitmq",
+  "elasticsearch", "spark", "hadoop", "airflow", "pandas", "numpy", "tensorflow",
+  "pytorch", "machine learning", "data engineering", "etl", "tableau", "figma", "ux",
+  "ui", "accessibility", "a11y", "jest", "cypress", "playwright", "selenium",
+  "oauth", "jwt", "encryption", "grpc", "websockets", "swift", "kotlin", "flutter",
+  "dart", "scala", "bash", "serverless", "lambda", "dynamodb", "s3", "ec2", "helm",
+  "prometheus", "grafana", "jenkins", "github actions", "agile", "scrum",
+  "product management", "seo", "observability", "event-driven", "webassembly",
+  "security"
+];
+
+const AMBIGUOUS = ["rest", "express", "go", "rust", "ml"];
+
+/* Any of these in the description means "this is a technical role" — the
+   precondition for counting an ambiguous token. */
+const TECH_CONTEXT = /(software|engineering|engineer|developer|stack|framework|api|code|backend|frontend|systems|technical|infrastructure|language|deployment|platform|program|server|client|application)/;
+
+/* Title-inferred skills — high confidence stack signals so technical roles
+   with sparse descriptions still get a sensible required-skill list. */
+const TITLE_SKILLS: [RegExp, string[]][] = [
+  [/(front.?end|ui engineer|web developer)/i, ["typescript", "javascript", "react", "css", "html"]],
+  [/(back.?end)/i, ["sql", "node", "microservices"]],
+  [/(full.?stack)/i, ["typescript", "javascript", "sql", "react"]],
+  [/(data scientist)/i, ["python", "sql", "machine learning"]],
+  [/(data analyst)/i, ["sql", "python", "tableau"]],
+  [/(data engineer)/i, ["sql", "python", "data engineering", "etl"]],
+  [/(machine learning|ml engineer)/i, ["python", "machine learning"]],
+  [/(devops|site reliability|sre|platform engineer|infrastructure engineer|cloud engineer)/i, ["aws", "docker", "kubernetes", "terraform", "linux"]],
+  [/(security engineer|application security)/i, ["aws", "encryption", "security"]],
+  [/(qa engineer|quality engineer|sdet|test engineer|automation engineer)/i, ["jest", "cypress", "playwright", "selenium"]],
+  [/(product designer|ux designer|ui designer|designer)/i, ["figma", "ui", "ux"]]
 ];
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-function extractSkills(text: string): string[] {
-  const lower = text.toLowerCase();
+const hasWord = (s: string, lower: string): boolean =>
+  new RegExp(`\\b${escapeRe(s)}\\b`).test(lower);
+
+function extractSkills(title: string, desc: string): string[] {
+  const lower = desc.toLowerCase();
+  const hasTech = TECH_CONTEXT.test(lower);
   const found = new Set<string>();
-  /* word-boundary matching for every token — "rust" must be a standalone word,
-     not a substring of "rustacean", and "ml" must not match inside "html" */
-  for (const s of SKILLS) {
-    const re = new RegExp(`\\b${escapeRe(s)}\\b`);
-    if (re.test(lower)) found.add(s);
-  }
+  for (const s of SKILLS) if (hasWord(s, lower)) found.add(s);
+  for (const s of AMBIGUOUS) if (hasTech && hasWord(s, lower)) found.add(s);
+  /* stack-inference from the title itself */
+  const t = title.toLowerCase();
+  for (const [re, skills] of TITLE_SKILLS) if (re.test(t)) skills.forEach(s => found.add(s));
   return [...found].slice(0, 14);
 }
 
@@ -84,7 +114,7 @@ async function fetchGreenhouse(board: string): Promise<{ company: string; jobs: 
       description: desc,
       url: j.absolute_url ?? "",
       postedAt: j.updated_at ?? null,
-      skills: extractSkills(desc),
+      skills: extractSkills(j.title, desc),
       level: guessLevel(j.title)
     };
   });
@@ -111,7 +141,7 @@ async function fetchAshby(board: string): Promise<{ company: string; jobs: unkno
       description: desc,
       url: j.jobUrl ?? "",
       postedAt: j.publishedAt ?? null,
-      skills: extractSkills(desc),
+      skills: extractSkills(j.title, desc),
       level: guessLevel(j.title)
     };
   });
@@ -138,7 +168,7 @@ async function fetchLever(org: string): Promise<{ company: string; jobs: unknown
       description: desc,
       url: j.hostedUrl ?? "",
       postedAt: j.createdAt ? new Date(j.createdAt * 1000).toISOString() : null,
-      skills: extractSkills(desc),
+      skills: extractSkills(j.text ?? "", desc),
       level: guessLevel(j.text ?? "")
     };
   });
