@@ -6,6 +6,7 @@ import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
 import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
+import { ResumeKitModal } from "./ResumeKitModal";
 import {
   defaultCareerProfile, getCareerProfile, lastJobsRefresh, listJobs, loadJobsFromCloud,
   matchJob, refreshJobs, saveCareerProfile, VERDICT_META
@@ -50,6 +51,7 @@ export function Jobs() {
   const [saving, setSaving] = useState(false);
   const [upgrade, setUpgrade] = useState<string | null>(null);
   const [gapJob, setGapJob] = useState<{ job: JobPosting; missing: string[] } | null>(null);
+  const [kitJob, setKitJob] = useState<JobPosting | null>(null);
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
@@ -228,6 +230,12 @@ export function Jobs() {
                           📈 Gap plan
                         </button>
                       )}
+                      <button
+                        className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+                        onClick={() => (locked ? setUpgrade("Tailored resumes and cover letters are Pro features.") : setKitJob(j))}
+                      >
+                        📄 Resume & letter
+                      </button>
                       {m.blockers.map((b, i) => (
                         <span key={i} className="text-warn">⚠️ {b}</span>
                       ))}
@@ -245,6 +253,7 @@ export function Jobs() {
 
       {upgrade && <UpgradeModal onClose={() => setUpgrade(null)} reason={upgrade} />}
       {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
+      {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onClose={() => setKitJob(null)} />}
     </div>
   );
 }
