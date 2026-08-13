@@ -125,6 +125,30 @@ export function buildCoverLetter(profile: CareerProfile, job: JobPosting, match:
 }
 
 /* ------------------------------------------------------------------ */
+/* ATS keyword coverage                                                */
+/* ------------------------------------------------------------------ */
+
+/** Normalize a skill name into lowercase word tokens (for matching). */
+function skillTokens(skill: string): string[] {
+  return skill.toLowerCase().split(/[^a-z0-9+#.]+/).filter(Boolean);
+}
+
+/** What fraction of the posting's required skills appear verbatim (as
+    normalized word sets) in the generated document. Pure + testable. */
+export function atsCoverage(text: string, job: JobPosting): { score: number; found: string[]; missing: string[] } {
+  const lower = text.toLowerCase();
+  const found: string[] = [];
+  const missing: string[] = [];
+  for (const skill of job.skills) {
+    const tokens = skillTokens(skill);
+    const present = tokens.length > 0 && tokens.every(t => lower.includes(t));
+    (present ? found : missing).push(skill);
+  }
+  const total = job.skills.length;
+  return { score: total ? Math.round((found.length / total) * 100) : 0, found, missing };
+}
+
+/* ------------------------------------------------------------------ */
 /* Persistence (offline-first, per job)                                */
 /* ------------------------------------------------------------------ */
 

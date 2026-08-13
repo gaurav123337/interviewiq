@@ -12,6 +12,10 @@ import {
   matchJob, refreshJobs, saveCareerProfile, VERDICT_META
 } from "../services/jobs";
 import { getRemoteConfig } from "../services/remoteConfig";
+import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
+import { dueFollowUps, getTrack, listTracks, markFollowUpNotified, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, type ApplyStatus, type ApplyTrack } from "../services/applyTrack";
+import { fire } from "../services/notifications";
+import { downloadZip } from "../services/zip";
 
 /* small comma/Enter-driven tag input */
 function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder: string }) {
@@ -52,6 +56,12 @@ export function Jobs() {
   const [upgrade, setUpgrade] = useState<string | null>(null);
   const [gapJob, setGapJob] = useState<{ job: JobPosting; missing: string[] } | null>(null);
   const [kitJob, setKitJob] = useState<JobPosting | null>(null);
+  const [tracks, setTracks] = useState<Record<string, ApplyTrack>>(() => {
+    const m: Record<string, ApplyTrack> = {};
+    for (const t of listTracks()) m[t.jobId] = t;
+    return m;
+  });
+  const [due, setDue] = useState<ApplyTrack[]>(() => dueFollowUps());
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
@@ -101,6 +111,54 @@ export function Jobs() {
     for (const j of jobs) m.set(j.id, matchJob(profile, j));
     return m;
   }, [profile, jobs]);
+
+  /* due follow-up reminders — surface once per job via notification + banner */
+  useEffect(() => {
+    const d = dueFollowUps();
+    setDue(d);
+    if (d.length) {
+      void fire("📬 InterviewIQ — follow-up due", `${d.length} job${d.length === 1 ? "" : "s"} waiting on you — tap to review.`);
+      d.forEach(t => markFollowUpNotified(t.jobId));
+    }
+  }, [tracks]);
+
+  const setJobStatus = (jobId: string, status: ApplyStatus) => {
+    setStatus(jobId, status);
+    setTracks(m => ({ ...m, [jobId]: getTrack(jobId)! }));
+    const meta = STATUS_META[status];
+    toast(`${meta.emoji} Marked ${meta.label.toLowerCase()}`);
+  };
+
+  const setJobFollowUp = (jobId: string, iso: string) => {
+    setFollowUp(jobId, iso ? new Date(iso + "T09:00:00").getTime() : null);
+    setTracks(m => ({ ...m, [jobId]: getTrack(jobId)! }));
+    toast(iso ? `📅 Follow-up set for ${new Date(iso + "T09:00:00").toLocaleDateString()}` : "🗑️ Follow-up cleared");
+  };
+
+  /* batch export — generate a kit for every tracked job and ship as a zip */
+  const batchExport = () => {
+    const ids = Object.keys(tracks);
+    if (!ids.length) { toast("Track at least one job first — set its status on the card."); return; }
+    if (!profile) { toast("Save your career profile first."); return; }
+    const entries: { name: string; content: string }[] = [];
+    let n = 0;
+    for (const id of ids) {
+      const job = jobs.find(j => j.id === id);
+      if (!job) continue;
+      const m = matchOf.get(id) ?? null;
+      const existing = getApplyKit(id);
+      const resume = existing?.resume ?? buildResume(profile, job, m);
+      const cover = existing?.coverLetter ?? buildCoverLetter(profile, job, m);
+      if (!existing) saveApplyKit({ jobId: id, jobTitle: job.title, company: job.company, resume, coverLetter: cover, ai: false, createdAt: Date.now() });
+      const safe = job.company.replace(/[^\w-]+/g, "-");
+      entries.push({ name: `${safe}/${job.title.replace(/[^\w-]+/g, "-")}-resume.txt`, content: resume });
+      entries.push({ name: `${safe}/${job.title.replace(/[^\w-]+/g, "-")}-cover-letter.txt`, content: cover });
+      n++;
+    }
+    if (!n) { toast("No tracked jobs found in the current feed."); return; }
+    downloadZip(entries, `interviewiq-apply-kit-${new Date().toISOString().slice(0, 10)}.zip`);
+    toast(`📦 ${n} job kit${n === 1 ? "" : "s"} exported (${entries.length} files)`);
+  };
 
   return (
     <div className="anim-view mx-auto w-full max-w-[980px]">
@@ -167,6 +225,46 @@ export function Jobs() {
           <span className="text-[11.5px] text-fnt">{profile ? `${profile.skills.length} skills · ${profile.targetTitles.length} target titles` : "No profile yet — prefill from your diagnostic or fill it in."}</span>
           <button className={btnPrimary + btnSm} onClick={save} disabled={saving || !profile}>💾 Save profile</button>
         </div>
+      </div>
+
+      {/* tracker strip */}
+      <div className={`${cardCls} mt-5 overflow-hidden`}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 p-5">
+          <div>
+            <h3 className="text-[14.5px] font-extrabold">🗂️ Apply tracker</h3>
+            <p className="mt-0.5 text-[11.5px] text-fnt">Statuses + follow-up dates per job. {proGated ? "Pro feature." : "Set a status on any card to start."}</p>
+          </div>
+          <button className={btnGhost + btnSm} onClick={batchExport} disabled={proGated}>
+            📦 Export all kits (.zip)
+          </button>
+        </div>
+        {proGated ? (
+          <div className="p-5">
+            <button className="w-full rounded-xl border border-acc1/30 bg-acc1/5 px-4 py-3 text-[13px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+              onClick={() => setUpgrade("The apply tracker and batch export are Pro features.")}>
+              🔒 Unlock the tracker to manage every application
+            </button>
+          </div>
+        ) : (
+          <div className="p-5">
+            <div className="flex flex-wrap gap-2">
+              {STATUS_ORDER.map(s => {
+                const c = trackSummary()[s];
+                return (
+                  <Chip key={s} tone={STATUS_META[s].tone}>
+                    {STATUS_META[s].emoji} {STATUS_META[s].label}: {c}
+                  </Chip>
+                );
+              })}
+            </div>
+            {due.length > 0 && (
+              <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 px-4 py-3">
+                <p className="text-[13px] font-extrabold text-warn">📬 {due.length} follow-up{due.length === 1 ? "" : "s"} due</p>
+                <p className="mt-0.5 text-[12px] text-fnt">{due.map(d => d.jobId).join(", ")} — open the card, update the status, or snooze the date.</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* match feed */}
@@ -239,6 +337,28 @@ export function Jobs() {
                       {m.blockers.map((b, i) => (
                         <span key={i} className="text-warn">⚠️ {b}</span>
                       ))}
+                    </div>
+                  )}
+                  {!locked && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/10 pt-2.5">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Track:</span>
+                      <select
+                        className="cursor-pointer rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-fnt outline-none transition-all hover:text-ink"
+                        value={tracks[j.id]?.status ?? "saved"}
+                        onChange={e => setJobStatus(j.id, e.target.value as ApplyStatus)}
+                        title="Application status"
+                      >
+                        {STATUS_ORDER.map(s => (
+                          <option key={s} value={s}>{STATUS_META[s].emoji} {STATUS_META[s].label}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="date"
+                        className="cursor-pointer rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-fnt outline-none transition-all hover:text-ink"
+                        value={tracks[j.id]?.followUpAt ? new Date(tracks[j.id]!.followUpAt!).toISOString().slice(0, 10) : ""}
+                        onChange={e => setJobFollowUp(j.id, e.target.value)}
+                        title="Follow-up date — you'll be reminded when it's due"
+                      />
                     </div>
                   )}
                   {locked && (

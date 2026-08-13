@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
-import { aiTailorCoverLetter, aiTailorResume, buildCoverLetter, buildResume, getApplyKit, saveApplyKit, type ApplyKit } from "../services/applyKit";
+import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, saveApplyKit, type ApplyKit } from "../services/applyKit";
+import { downloadResumePdf } from "../services/pdfGen";
 import { toast } from "../toast";
 import { Chip, Modal } from "./ui";
 
@@ -104,6 +105,10 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
           ))}
         </div>
         <Chip tone={kit?.ai ? "ok" : "default"}>{kit?.ai ? "✨ AI-tailored" : "Template"}</Chip>
+        {tab === "resume" && (() => {
+          const cov = atsCoverage(kit?.resume ?? "", job);
+          return <Chip tone={cov.score >= 80 ? "ok" : cov.score >= 50 ? "co" : "warn"}>⚡ ATS {cov.score}%</Chip>;
+        })()}
         <div className="ml-auto flex gap-2">
           <button
             className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
@@ -111,11 +116,20 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
           >
             📋 Copy
           </button>
+          {tab === "resume" && (
+            <button
+              className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
+              onClick={() => { downloadResumePdf(text, job.title, job.company); toast("⬇️ PDF downloaded"); }}
+              title="Download as a styled PDF"
+            >
+              ⬇️ PDF
+            </button>
+          )}
           <button
             className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
             onClick={() => { downloadText(tab === "resume" ? "resume" : "cover-letter", text, job); toast("⬇️ Downloaded"); }}
           >
-            ⬇️ Download
+            ⬇️ .txt
           </button>
           <button
             className="rounded-xl bg-acc1/15 px-3 py-1.5 text-[12px] font-extrabold text-acctxt transition-all hover:bg-acc1/25 disabled:opacity-50"
@@ -131,6 +145,15 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         {text}
       </pre>
 
+      {tab === "resume" && (() => {
+        const cov = atsCoverage(kit?.resume ?? "", job);
+        return cov.missing.length > 0 ? (
+          <p className="mt-3 text-[11.5px] text-mut">
+            ATS tip: <b>{cov.missing.join(", ")}</b> {cov.missing.length === 1 ? "appears" : "appear"} in the posting but not in this
+            resume — add them where true (skills or highlights) to clear automated filters.
+          </p>
+        ) : null;
+      })()}
       <p className="mt-3 text-[11.5px] text-mut">
         Template mode works offline and never sends data anywhere. “Polish with AI” uses <b>your own API key</b> (Settings) and
         rewrites the same facts — it never invents employers or credentials, so review before sending.
