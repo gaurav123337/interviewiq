@@ -2167,6 +2167,30 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
   /* resume branding (Apply Kit): per-company accent + font for the designed one-pager */
   const [brandJson, setBrandJson] = useState<string>(() => JSON.stringify(config.resumeBranding ?? {}, null, 2));
+  const [brandCo, setBrandCo] = useState<string>("_default");
+  const [brandAccent, setBrandAccent] = useState<string>(() => config.resumeBranding?._default?.accent ?? "#4f46e5");
+  const [brandFont, setBrandFont] = useState<string>(() => config.resumeBranding?._default?.fontFamily ?? "system");
+  /* companies seen in the configured job sources (boards), plus _default */
+  const brandList = () => [
+    "_default",
+    ...jobsSources.split(/\n/).map(l => l.trim()).filter(Boolean)
+      .map(l => l.split(":").slice(1).join(":").trim())
+      .filter(Boolean)
+  ].filter((v, i, a) => a.indexOf(v) === i);
+  const pickBrand = (co: string) => {
+    setBrandCo(co);
+    setBrandAccent(config.resumeBranding?.[co]?.accent ?? "#4f46e5");
+    setBrandFont(config.resumeBranding?.[co]?.fontFamily ?? "system");
+  };
+  const setBrandField = (co: string, accent: string, font: string) => {
+    const next = { ...(config.resumeBranding ?? {}) };
+    const entry: { accent?: string; fontFamily?: string } = { accent, fontFamily: font === "system" ? undefined : font };
+    if (accent === "#4f46e5" && !entry.fontFamily) delete next[co];
+    else next[co] = entry;
+    setConfig({ ...config, resumeBranding: next });
+    /* keep the raw-JSON editor in sync so publish never loses a picker edit */
+    setBrandJson(JSON.stringify(next, null, 2));
+  };
   /* job feed (Apply Kit): auto-refresh interval + ATS sources */
   const [jobsHours, setJobsHours] = useState<number>(() => config.jobs?.refreshHours ?? 24);
   const [jobsSources, setJobsSources] = useState<string>(() =>
@@ -2202,8 +2226,10 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     try {
       await saveRemoteConfig({
         features: config.features, ai: config.ai, limits: config.limits,
-        companyFreq: config.companyFreq ?? {}, coachVocab: config.coachVocab, rag: config.rag,
-        resumeBranding: parseBrandJson(brandJson),
+        companyFreq: config.companyFreq ?? {},        coachVocab: config.coachVocab, rag: config.rag,
+        /* visual picker writes straight into config.resumeBranding; the raw
+           JSON textarea is a merge-on-top override for advanced edits */
+        resumeBranding: { ...(config.resumeBranding ?? {}), ...parseBrandJson(brandJson) },
         jobs: {
           refreshHours: Math.max(1, Math.round(jobsHours) || 24),
           sources: jobsSources.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => {
@@ -2283,15 +2309,68 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">🎨 Resume branding (Apply Kit)</h2>
-        <p className="mb-3 text-[12.5px] text-mut">Brand the designed resume PDF per company — <code>accent</code> (hex color) and optional <code>fontFamily</code>. Keyed by company name; a <code>_default</code> entry covers the rest. JSON, one company per key.</p>
-        <textarea
-          value={brandJson}
-          onChange={e => setBrandJson(e.target.value)}
-          rows={6}
-          placeholder={'{\n  "_default": { "accent": "#4f46e5" },\n  "Airbnb": { "accent": "#ff5a5f" }\n}'}
-          className="inp w-full font-mono text-[12px]"
-        />
-        <p className="mt-2 text-[11.5px] text-mut">Clients pick this up on their next sync — the resume's PDF + print buttons apply it instantly, no deploy.</p>
+        <p className="mb-3 text-[12.5px] text-mut">Brand the designed resume per company — accent color + font. <code>_default</code> covers every company without its own entry. Clients apply it on their next sync, no deploy.</p>
+
+        <div className="flex flex-wrap gap-2">
+          {brandList().map(co => (
+            <button
+              key={co}
+              onClick={() => pickBrand(co)}
+              className={`rounded-full border px-3 py-1 text-[12px] font-extrabold transition-all ${brandCo === co ? "border-acc1/50 bg-acc1/15 text-acctxt" : "border-line/20 bg-deep/40 text-mut hover:text-ink"}`}
+            >
+              {co === "_default" ? "🌐 Default" : co}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div>
+            <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-mut">Accent color — {brandCo === "_default" ? "default" : brandCo}</span>
+            <div className="flex flex-wrap gap-2">
+              {["#4f46e5", "#0ea5e9", "#16a34a", "#f59e0b", "#ef4444", "#ec4899", "#8b5cf6", "#111827"].map(hex => (
+                <button
+                  key={hex}
+                  onClick={() => { setBrandAccent(hex); setBrandField(brandCo, hex, brandFont); }}
+                  className={`h-8 w-8 rounded-full border-2 transition-all ${brandAccent === hex ? "scale-110 border-ink" : "border-transparent opacity-80 hover:opacity-100"}`}
+                  style={{ backgroundColor: hex }}
+                  title={hex}
+                  aria-label={`Accent ${hex}`}
+                />
+              ))}
+              <label className="relative flex h-8 cursor-pointer items-center gap-1 rounded-full border border-line/25 bg-deep/40 px-2 text-[10.5px] font-bold text-mut" title="Custom color">
+                🎨
+                <input type="color" className="h-5 w-7 cursor-pointer border-0 bg-transparent p-0" value={/^#[0-9a-f]{6}$/i.test(brandAccent) ? brandAccent : "#4f46e5"}
+                  onChange={e => { setBrandAccent(e.target.value); setBrandField(brandCo, e.target.value, brandFont); }} />
+              </label>
+            </div>
+          </div>
+          <div>
+            <span className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider text-mut">Font family</span>
+            <select
+              className="inp w-full cursor-pointer"
+              value={brandFont}
+              onChange={e => { setBrandFont(e.target.value); setBrandField(brandCo, brandAccent, e.target.value); }}
+            >
+              <option value="system">System default</option>
+              <option value="Georgia, 'Times New Roman', serif">Serif (classic)</option>
+              <option value="'Segoe UI', Arial, sans-serif">Sans (modern)</option>
+              <option value="'Courier New', monospace">Mono (technical)</option>
+            </select>
+            <p className="mt-1 text-[10.5px] text-mut">Applied to the HTML one-pager; the PDF renderer uses its built-in typefaces.</p>
+          </div>
+        </div>
+
+        <details className="mt-3">
+          <summary className="cursor-pointer text-[11.5px] font-bold text-mut hover:text-ink">Raw JSON (advanced)</summary>
+          <textarea
+            value={brandJson}
+            onChange={e => setBrandJson(e.target.value)}
+            rows={5}
+            placeholder={'{\n  "_default": { "accent": "#4f46e5" },\n  "Airbnb": { "accent": "#ff5a5f" }\n}'}
+            className="inp mt-2 w-full font-mono text-[12px]"
+          />
+        </details>
+        <p className="mt-2 text-[11.5px] text-mut">Pick a company above to edit its entry — swatches + font dropdown write back to the same config the publish button sends.</p>
       </div>
 
       <div className={`${cardCls} p-5`}>

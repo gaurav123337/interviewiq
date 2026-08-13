@@ -16,6 +16,8 @@ import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../ser
 import { dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
 import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
+import { practiceForRound, type DrillCard } from "../services/drill";
+import { getGoal } from "../services/goal";
 
 /* small comma/Enter-driven tag input */
 function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder: string }) {
@@ -489,6 +491,29 @@ function ReportModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
+      <div className="mt-5">
+        <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-mut">Momentum — last 8 weeks</div>
+        <div className="flex h-24 items-end gap-1.5">
+          {(() => {
+            const max = Math.max(1, ...r.momentum.map(w => w.applied));
+            return r.momentum.map(w => (
+              <div key={w.label} className="flex flex-1 flex-col items-center gap-1" title={`${w.label}: ${w.applied} applied, ${w.interviews} interviews`}>
+                <span className="text-[10px] font-extrabold text-acc1">{w.applied > 0 ? w.applied : ""}</span>
+                <div className="flex w-full flex-1 items-end justify-center gap-0.5">
+                  <div className="w-1/2 rounded-t bg-acc1/40" style={{ height: `${(w.applied / max) * 100}%` }} />
+                  <div className="w-1/2 rounded-t bg-ok/50" style={{ height: `${((w.interviews || 0) / max) * 100}%` }} />
+                </div>
+                <span className="w-full truncate text-center text-[9px] font-bold text-mut">{w.label}</span>
+              </div>
+            ));
+          })()}
+        </div>
+        <div className="mt-1.5 flex justify-center gap-4 text-[10.5px] text-mut">
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-acc1/50" /> Applied</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-ok/60" /> Interviews</span>
+        </div>
+      </div>
+
       <button className="mt-5 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
         Done — close
       </button>
@@ -505,6 +530,8 @@ function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
   onChanged: (t: ApplyTrack) => void;
 }) {
   const [rounds, setRounds] = useState<InterviewRound[]>(() => track.rounds);
+  const [practice, setPractice] = useState<{ round: InterviewRound; cards: DrillCard[] } | null>(null);
+  const [flipped, setFlipped] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<InterviewRound | null>(null);
   const [label, setLabel] = useState("");
   const [at, setAt] = useState(() => new Date().toISOString().slice(0, 10));
@@ -513,7 +540,8 @@ function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
   const [outcome, setOutcome] = useState<InterviewRound["outcome"]>("pending");
 
   const startEdit = (r: InterviewRound | null) => {
-    setEditing(r);
+    /* null = create a new round; editing must hold a truthy stub so the form opens */
+    setEditing(r ?? { id: "", label: "", at: Date.now(), questions: "", went: null, outcome: "pending" });
     setLabel(r?.label ?? `Round ${rounds.length + 1}`);
     setAt(r ? new Date(r.at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
     setQuestions(r?.questions ?? "");
@@ -546,6 +574,15 @@ function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
     toast("🗑️ Round removed");
   };
 
+  /* a failed/low-rated round → a targeted drill deck from its own notes */
+  const startPractice = (r: InterviewRound) => {
+    const field = getGoal()?.fieldId ?? "frontend";
+    const cards = practiceForRound(r.questions || r.label, field);
+    if (!cards.length) { toast("No practice cards found for those topics — try more specific round notes."); return; }
+    setPractice({ round: r, cards });
+    setFlipped({});
+  };
+
   return (
     <Modal onClose={onClose} title="🎤 Interview rounds" desc={`What was asked, how it went, and what to review next — for ${jobTitle}${company ? ` at ${company}` : ""}.`}>
       {rounds.length === 0 && !editing && (
@@ -569,16 +606,48 @@ function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
               <span className="text-[11px] text-mut">{new Date(r.at).toLocaleDateString()}</span>
             </div>
             {r.questions && <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">{r.questions}</p>}
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex gap-3">
               <button className="text-[11.5px] font-bold text-acctxt hover:underline" onClick={() => startEdit(r)}>✏️ Edit</button>
               <button className="text-[11.5px] font-bold text-bad hover:underline" onClick={() => del(r.id)}>🗑️ Remove</button>
+              {(r.outcome === "failed" || (r.went !== null && r.went <= 2)) && r.questions.trim() && (
+                <button className="text-[11.5px] font-extrabold text-ok hover:underline" onClick={() => startPractice(r)}>🎯 Practice these</button>
+              )}
             </div>
           </div>
         ))}
       </div>
 
-      {rounds.length > 0 && !editing && (
+      {rounds.length > 0 && !editing && !practice && (
         <button className={`${btnGhost} ${btnSm} mt-3 w-full`} onClick={() => startEdit(null)}>+ Add round</button>
+      )}
+
+      {practice && (
+        <div className="mt-3 rounded-xl border border-ok/25 bg-ok/5 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] font-extrabold text-ok">🎯 Practice deck — “{practice.round.label}”</p>
+            <button className="text-[11.5px] font-bold text-mut hover:text-ink" onClick={() => setPractice(null)}>✕ Close</button>
+          </div>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Rehearse exactly what this round covered — {practice.cards.length} cards pulled from the question bank by your round's notes.</p>
+          <div className="mt-3 space-y-2">
+            {practice.cards.map(c => {
+              const show = flipped[c.q];
+              return (
+                <div key={c.q} className="rounded-xl border border-line/15 bg-deep/30 p-3">
+                  <button className="w-full text-left" onClick={() => setFlipped(f => ({ ...f, [c.q]: !f[c.q] }))}>
+                    <span className="text-[12.5px] font-bold text-ink">{c.q}</span>
+                    {show && (
+                      <span className="mt-1.5 block whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">
+                        <span className="font-bold text-ok">Answer:</span> {c.a}
+                        {c.kp?.length ? <span className="mt-1 block text-[11px] text-mut">Key points: {c.kp.join(" · ")}</span> : null}
+                      </span>
+                    )}
+                  </button>
+                  <p className="mt-1 text-[10.5px] font-bold uppercase tracking-wider text-mut">{show ? "Tap question to hide" : "Tap to reveal the answer"}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {editing && (

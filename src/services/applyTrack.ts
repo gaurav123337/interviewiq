@@ -166,6 +166,8 @@ export function weeklyReport(now = Date.now()): {
   /** follow-ups due in the window that were actioned (moved past applied). */
   followUpsDone: number;
   byWeek: { label: string; applied: number; interviews: number; offers: number }[];
+  /** Trailing 8 weeks for the momentum chart (oldest first). */
+  momentum: { label: string; applied: number; interviews: number; offers: number }[];
 } {
   const tracks = listTracks();
   const cutoff = now - 7 * WEEK_MS;
@@ -195,6 +197,23 @@ export function weeklyReport(now = Date.now()): {
     });
   }
 
+  /* 8-week momentum: applied + interview counts per week, oldest first */
+  const momentum: { label: string; applied: number; interviews: number; offers: number }[] = [];
+  for (let w = 7; w >= 0; w--) {
+    const start = now - (w + 1) * WEEK_MS;
+    /* +1 epsilon so an application timestamped exactly `now` still lands in
+       the newest bucket (`< end` would otherwise exclude it) */
+    const end = w === 0 ? now + 1 : now - w * WEEK_MS;
+    const wk = tracks.filter(t => (t.appliedAt ?? 0) >= start && (t.appliedAt ?? 0) < end);
+    const label = new Date(end).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    momentum.push({
+      label,
+      applied: wk.length,
+      interviews: wk.filter(t => t.status === "interview" || t.status === "offer").length,
+      offers: wk.filter(t => t.status === "offer").length
+    });
+  }
+
   return {
     windowDays: 7,
     applied,
@@ -204,7 +223,8 @@ export function weeklyReport(now = Date.now()): {
     responseRate: applied ? Math.round((interviews / applied) * 100) : 0,
     followUpsDue,
     followUpsDone,
-    byWeek
+    byWeek,
+    momentum
   };
 }
 

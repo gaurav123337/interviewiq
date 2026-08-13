@@ -4,6 +4,7 @@ import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, saveApplyKit, type ApplyKit } from "../services/applyKit";
 import { openResumePrint } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
+import { downloadResumeDocx } from "../services/docx";
 import { resumeBrandFor } from "../services/remoteConfig";
 import { toast } from "../toast";
 import { Chip, Modal } from "./ui";
@@ -133,6 +134,13 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
                 title="Download the designed resume as a PDF (one click)"
               >
                 ⬇️ PDF
+              </button>
+              <button
+                className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
+                onClick={() => { downloadResumeDocx(profile, job, match); toast("⬇️ .docx downloaded — ATS-safe single column"); }}
+                title="Download as .docx (text-first, best for ATS parsing)"
+              >
+                ⬇️ .docx
               </button>
               <button
                 className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"

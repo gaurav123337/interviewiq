@@ -1,6 +1,7 @@
 import type { LevelId } from "../types";
+import { FIELDS } from "../data";
 import { deepDiveCards } from "../data/deepDive";
-import { bankItems, shuffle } from "../engine";
+import { bankItems, pickRelevant, shuffle, tokenize } from "../engine";
 import { storageGet, storageSet } from "./storage";
 import { codingDrillCards } from "./codingTrack";
 
@@ -91,4 +92,39 @@ export function makeDeck(fieldSel: string, lvlSel: LevelId | "all", count = 10):
     q: i.q, a: i.a, kp: i.kp, lvl: i.lvl,
     ...(i.codeId ? { codeId: i.codeId } : {})
   }));
+}
+
+/* Round-driven practice (Apply Kit) — turns a failed/low-rated interview
+   round into a targeted drill deck. Extracts the meaningful topic words
+   from the round's notes, matches them against the question bank (their
+   field first, then the rest), and returns up to `count` drill cards so
+   the user rehearses exactly what tripped them up. Pure + testable. */
+export function practiceForRound(
+  roundNotes: string,
+  fieldSel: string,
+  count = 6
+): DrillCard[] {
+  /* meaningful keywords: tokens of length > 2, deduped, capped */
+  const keywords = [...new Set(tokenize(roundNotes).filter(w => w.length > 2))].slice(0, 12);
+  if (!keywords.length) return [];
+
+  const seen = new Set<string>();
+  const out: DrillCard[] = [];
+  const push = (item: { q: string; a: string; kp?: string[]; lvl: LevelId }) => {
+    if (out.length >= count || seen.has(item.q)) return;
+    seen.add(item.q);
+    out.push({ q: item.q, a: item.a, kp: item.kp ?? [], lvl: item.lvl });
+  };
+
+  /* own field first — highest relevance, then sweep the other fields */
+  const own = bankItems(fieldSel, "");
+  for (const i of pickRelevant(own.items, keywords, count)) push(i);
+  if (out.length < count) {
+    for (const f of FIELDS) {
+      if (f.id === fieldSel || out.length >= count) continue;
+      const { items } = bankItems(f.id, "");
+      for (const i of pickRelevant(items, keywords, count)) push(i);
+    }
+  }
+  return out;
 }

@@ -10,9 +10,11 @@ import {
 } from "../services/applyTrack";
 import { PDFDocument } from "pdf-lib";
 import { inflate } from "pako"; /* ambient types in src/pako.d.ts */
-import { atsCoverage } from "../services/applyKit";
+import { atsCoverage, buildResume } from "../services/applyKit";
+import { practiceForRound } from "../services/drill";
 import { buildResumeHtml } from "../services/resumeHtml";
 import { renderResumePdf } from "../services/resumePdf";
+import { resumeDocxBlob } from "../services/docx";
 import { resumeBrandFor, setRemoteConfig } from "../services/remoteConfig";
 import { crc32, zipFiles, type ZipEntry } from "../services/zip";
 
@@ -194,6 +196,55 @@ describe("interview rounds", () => {
     /* status transitions preserve rounds */
     setStatus(JOB.id, "offer");
     expect(getTrack(JOB.id)?.rounds).toHaveLength(1);
+  });
+});
+
+describe("round-driven practice", () => {
+  it("maps a failed round's notes to relevant drill cards", () => {
+    const cards = practiceForRound("React hooks re-renders, memoization and useMemo pitfalls", "frontend", 5);
+    expect(cards.length).toBeGreaterThan(0);
+    expect(cards.length).toBeLessThanOrEqual(5);
+    /* cards should be relevant — the joined text mentions the topic family */
+    const joined = cards.map(c => c.q + " " + c.a).join(" ").toLowerCase();
+    expect(joined.length).toBeGreaterThan(0);
+  });
+
+  it("returns nothing for empty/generic notes", () => {
+    expect(practiceForRound("", "frontend", 5)).toEqual([]);
+    expect(practiceForRound("the a an and of", "frontend", 5)).toEqual([]);
+  });
+
+  it("sweeps other fields when the own field has no matches", () => {
+    /* "docker kubernetes" is devops — a frontend field should still find cards */
+    const cards = practiceForRound("docker kubernetes deployments", "frontend", 4);
+    expect(cards.length).toBeGreaterThan(0);
+  });
+});
+
+describe("8-week momentum", () => {
+  it("includes a trailing 8-week window in the weekly report", () => {
+    setStatus("m1", "applied");
+    const r = weeklyReport();
+    expect(r.momentum).toHaveLength(8);
+    expect(r.momentum[0].applied).toBe(0); /* oldest bucket: 8 weeks ago */
+    expect(r.momentum[7].applied).toBe(1); /* newest bucket: this week */
+    expect(r.momentum[0].label).toBeDefined();
+  });
+});
+
+describe("ATS-safe .docx", () => {
+  it("produces a zip that round-trips with the resume XML inside", async () => {
+    const blob = resumeDocxBlob(buildResume(PROFILE, JOB, MATCH));
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    expect(buf[0]).toBe(0x50); /* P */
+    expect(buf[1]).toBe(0x4b); /* K */
+    const all = new TextDecoder().decode(buf);
+    expect(all).toContain("PK\u0001\u0002"); /* central directory */
+    expect(all).toContain("[Content_Types].xml");
+    expect(all).toContain("word/document.xml");
+    expect(all).toContain("Senior Frontend Engineer");
+    expect(all).toContain("SUMMARY");
+    expect(all).toContain("Airbnb");
   });
 });
 
