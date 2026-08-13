@@ -10,6 +10,7 @@ import { addToBank, listBank, practiceDeck, weakestBankEntries } from "../servic
 import { salaryLabel } from "../services/jobs";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../../supabase/functions/_shared/salary";
 import { composeDigest, type Track } from "../../supabase/functions/_shared/applyDigest";
+import { BENCHMARK, benchLevelForYears, companyBands, fmtBand, type BenchLevel } from "../services/salaryBench";
 
 const JOB: JobPosting = {
   id: "greenhouse:1",
@@ -155,6 +156,40 @@ describe("weekly cron digest composer (server-side)", () => {
     ], NOW)!;
     expect(d).toContain("Portfolio: 3 tracked · 1 applied · 1 interviewing · 1 offers · 0 rejected");
     expect(d).toContain("This week: 2 applied, 1 interviews, 0 offers · response rate 50%");
+  });
+
+  it("benchmark level maps years to the same ladder as the matcher", () => {
+    expect(benchLevelForYears(1)).toBe("junior");
+    expect(benchLevelForYears(3)).toBe("mid");
+    expect(benchLevelForYears(6)).toBe("senior");
+    expect(benchLevelForYears(9)).toBe("principal");
+    expect(benchLevelForYears(20)).toBe("principal");
+  });
+
+  it("formats bands compactly and keeps every benchmark level sane", () => {
+    expect(fmtBand(150_000, 220_000)).toBe("$150k–$220k");
+    expect(fmtBand(2_500_000, 3_000_000)).toBe("$2.5M–$3.0M");
+    for (const l of Object.keys(BENCHMARK) as BenchLevel[]) {
+      expect(BENCHMARK[l].max).toBeGreaterThan(BENCHMARK[l].min);
+      expect(BENCHMARK[l].min).toBeGreaterThan(0);
+    }
+  });
+
+  it("aggregates real feed bands by company with a median", () => {
+    const bands = companyBands([
+      { ...JOB, company: "Airbnb", salary: { min: 120000, max: 150000, currency: "USD", source: "posting" } },
+      { ...JOB, company: "Airbnb", salary: { min: 160000, max: 200000, currency: "USD", source: "estimate" } },
+      { ...JOB, company: "Lyft", salary: null }
+    ]);
+    expect(bands).toHaveLength(1); /* Lyft has no salary → omitted, never invented */
+    expect(bands[0].company).toBe("Airbnb");
+    expect(bands[0].bands).toHaveLength(2);
+    expect(bands[0].median?.min).toBe(160000); /* median of [120000, 160000] */
+    expect(bands[0].median?.max).toBe(200000);
+  });
+
+  it("returns no live bands when the feed has no salary data", () => {
+    expect(companyBands([{ ...JOB, salary: null }])).toEqual([]);
   });
 
   it("lists due follow-ups and interview-stage reminders", () => {

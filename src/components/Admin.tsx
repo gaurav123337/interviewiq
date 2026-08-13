@@ -2202,6 +2202,29 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [enrCap, setEnrCap] = useState<number>(() => config.jobs?.salaryEnrichment?.cap ?? 30);
   /* apply digest email — shared secret (stored locally only, never published) */
   const [applySecret, setApplySecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.applyEmailSecret, ""));
+  const [digestTesting, setDigestTesting] = useState(false);
+  const testDigest = async () => {
+    setDigestTesting(true);
+    try {
+      const headers: Record<string, string> = {
+        apikey: CONFIG.supabase.anonKey,
+        "Content-Type": "application/json"
+      };
+      if (applySecret) headers["x-apply-secret"] = applySecret;
+      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
+      if (key) headers["x-resend-key"] = key;
+      const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-apply-digest`, {
+        method: "POST", headers, body: "{}"
+      });
+      const body = await res.json().catch(() => ({})) as { sent?: boolean; reason?: string; emailsSent?: number };
+      if (body.sent) toast(`📬 Digest broadcast OK — ${body.emailsSent ?? 0} email${body.emailsSent === 1 ? "" : "s"} sent`);
+      else toast("✗ " + (body.reason ?? "Broadcast failed"));
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Digest test failed"));
+    } finally {
+      setDigestTesting(false);
+    }
+  };
   /* native digest email keys — stored locally only (never published to clients) */
   const [secret, setSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailSecret, ""));
   const [key, setKey] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailKey, ""));
@@ -2446,6 +2469,12 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             (<span className="font-mono">x-resend-key</span>) or the function secret <span className="font-mono">RESEND_API_KEY</span> — set it in
             Supabase dashboard → Edge Functions → send-apply-digest → Secrets.
           </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button className={btnGhost + btnSm} disabled={digestTesting} onClick={testDigest}>
+              {digestTesting ? "⏳ Testing…" : "📬 Test weekly digest (broadcast)"}
+            </button>
+            <span className="text-[11px] text-mut">Sends the same empty-body request the pg_cron job fires every Monday — checks the secret guard and, if a Resend key exists, emails every active user.</span>
+          </div>
         </div>
       </div>
 

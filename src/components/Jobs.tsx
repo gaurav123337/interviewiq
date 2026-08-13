@@ -15,6 +15,7 @@ import {
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
 import { applyDigest, dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
+import { BENCHMARK, BENCH_LEVELS, benchLevelForYears, companyBands, fmtBand, type BenchLevel } from "../services/salaryBench";
 import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
 import { practiceForRound, type DrillCard } from "../services/drill";
@@ -71,6 +72,9 @@ export function Jobs() {
   const [draftJob, setDraftJob] = useState<ApplyTrack | null>(null);
   const [roundJob, setRoundJob] = useState<ApplyTrack | null>(null);
   const [filters, setFilters] = useState<JobFilters>(EMPTY_FILTERS);
+  const [benchLvl, setBenchLvl] = useState<BenchLevel>(() => benchLevelForYears(profile?.years ?? 0));
+  const [benchCo, setBenchCo] = useState("");
+  const [benchOpen, setBenchOpen] = useState(false);
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
@@ -236,6 +240,92 @@ export function Jobs() {
           <span className="text-[11.5px] text-fnt">{profile ? `${profile.skills.length} skills · ${profile.targetTitles.length} target titles` : "No profile yet — prefill from your diagnostic or fill it in."}</span>
           <button className={btnPrimary + btnSm} onClick={save} disabled={saving || !profile}>💾 Save profile</button>
         </div>
+      </div>
+
+      {/* salary benchmark — market ranges by level + live feed bands */}
+      <div className={`${cardCls} mt-5 overflow-hidden`}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 p-5">
+          <div>
+            <h3 className="text-[14.5px] font-extrabold">📊 Salary benchmark</h3>
+            <p className="mt-0.5 text-[11.5px] text-fnt">Indicative annual ranges for your seniority, plus real bands from the live feed.</p>
+          </div>
+          <button className={btnGhost + btnSm} onClick={() => setBenchOpen(o => !o)}>
+            {benchOpen ? "Hide" : "Show"}
+          </button>
+        </div>
+        {benchOpen && (
+          <div className="p-5">
+            {/* level chips + per-company filter */}
+            <div className="flex flex-wrap items-center gap-2">
+              {BENCH_LEVELS.map(l => (
+                <button
+                  key={l}
+                  className={`rounded-full px-2.5 py-1 text-[11.5px] font-bold transition-all ${benchLvl === l ? "bg-acc1/25 text-acctxt" : "bg-deep/40 text-mut hover:text-ink"}`}
+                  onClick={() => setBenchLvl(l)}
+                >
+                  {BENCHMARK[l].label}
+                </button>
+              ))}
+              <input
+                className="inp ml-auto w-[150px] py-1.5 text-[12px]"
+                placeholder="Filter by company…"
+                value={benchCo}
+                onChange={e => setBenchCo(e.target.value)}
+              />
+            </div>
+
+            {/* the user's level band + all levels for context */}
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {BENCH_LEVELS.map(l => {
+                const active = l === benchLvl;
+                const band = BENCHMARK[l];
+                return (
+                  <div key={l} className={`rounded-xl border p-3.5 ${active ? "border-acc1/40 bg-acc1/10" : "border-line/15 bg-deep/30"}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[12px] font-extrabold">{band.label}</span>
+                      {active && <Chip tone="co">your level</Chip>}
+                    </div>
+                    <div className="mt-1 text-[15px] font-extrabold text-acc1">{fmtBand(band.min, band.max)}</div>
+                    <div className="text-[10.5px] text-mut">USD · indicative market range</div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* live bands from the feed — real data, never invented */}
+            {(() => {
+              const live = companyBands(jobs).filter(c => !benchCo || c.company.toLowerCase().includes(benchCo.toLowerCase()));
+              const postingCount = live.reduce((n, c) => n + c.bands.filter(b => b.source === "posting").length, 0);
+              const estCount = live.reduce((n, c) => n + c.bands.filter(b => b.source === "estimate").length, 0);
+              if (!live.length) {
+                return (
+                  <div className="mt-3 rounded-xl border border-dashed border-line/20 p-4 text-center">
+                    <p className="text-[12px] font-bold">No live salary data{benchCo ? ` for “${benchCo}”` : " in the feed"} yet</p>
+                    <p className="mt-0.5 text-[11px] text-mut">Postings rarely list bands. Add the Adzuna keys in Admin → Salary enrichment and re-ingest to fill estimates (labelled “est.”).</p>
+                  </div>
+                );
+              }
+              return (
+                <div className="mt-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Live feed bands</span>
+                    <Chip tone="lvl">{postingCount} posting{postingCount === 1 ? "" : "s"} · {estCount} est.</Chip>
+                  </div>
+                  <div className="mt-2 space-y-1.5">
+                    {live.map(c => (
+                      <div key={c.company} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/30 px-3 py-2 text-[12px]">
+                        <span className="min-w-[120px] font-extrabold">{c.company}</span>
+                        {c.median && <span className="font-bold text-acc1">{fmtBand(c.median.min, c.median.max, c.median.currency)}</span>}
+                        <span className="text-[10.5px] text-mut">median of {c.bands.length} band{c.bands.length === 1 ? "" : "s"} {c.bands.some(b => b.source === "estimate") ? "(incl. est.)" : ""}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+            <p className="mt-3 text-[10.5px] text-mut">Static ranges are indicative US-market baselines from public salary research — your real offer depends on location, equity and negotiation. Live bands come straight from the feed.</p>
+          </div>
+        )}
       </div>
 
       {/* tracker strip */}
