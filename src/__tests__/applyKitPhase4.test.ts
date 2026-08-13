@@ -3,13 +3,13 @@
    self-contained round-trip parser so no unzip binary is needed). */
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { JobPosting } from "../types";
+import type { CareerProfile, JobPosting } from "../types";
 import { STORAGE_KEYS, storageRemove } from "../services/storage";
 import {
-  dueFollowUps, getTrack, listTracks, markFollowUpNotified, setFollowUp, setStatus, trackSummary
+  dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, setFollowUp, setStatus, trackSummary, weeklyReport
 } from "../services/applyTrack";
 import { atsCoverage } from "../services/applyKit";
-import { renderResumePdf } from "../services/pdfGen";
+import { buildResumeHtml } from "../services/resumeHtml";
 import { crc32, zipFiles, type ZipEntry } from "../services/zip";
 
 const JOB: JobPosting = {
@@ -98,29 +98,80 @@ describe("atsCoverage", () => {
   });
 });
 
-describe("pdf generation", () => {
-  it("produces a parseable PDF with the expected structure", async () => {
-    const blob = renderResumePdf("Senior Frontend Engineer\nAirbnb\n\nSUMMARY\nI build things.\n\nSKILLS\nreact · typescript");
-    expect(blob.type).toBe("application/pdf");
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    const head = new TextDecoder().decode(buf.slice(0, 8));
-    expect(head).toBe("%PDF-1.4");
-    const tail = new TextDecoder().decode(buf.slice(-64));
-    expect(tail).toContain("%%EOF");
-    /* xref table exists with at least the 6 objects we write */
-    const all = new TextDecoder().decode(buf);
-    expect(all).toContain("xref");
-    expect(all).toContain("/Type /Catalog");
-    expect(all).toContain("/BaseFont /Helvetica");
-    expect(all).toContain("startxref");
+const PROFILE: CareerProfile = {
+  headline: "Senior Frontend Engineer",
+  years: 6,
+  location: "Bengaluru, India",
+  remote: true,
+  workAuth: "India citizen",
+  targetTitles: ["Frontend Engineer"],
+  skills: ["react", "typescript", "css"],
+  summary: "Built design systems used by millions.",
+  updatedAt: 1
+};
+
+const MATCH = { score: 72, verdict: "good" as const, matched: ["react"], missing: ["accessibility"], blockers: [] as string[] };
+
+describe("weekly report", () => {
+  it("computes response rate and follow-up completion over the window", () => {
+    const now = Date.now();
+    setStatus("a", "applied"); /* applied in window, no movement */
+    setFollowUp("a", now - 1000);
+    setStatus("b", "applied");
+    setFollowUp("b", now - 1000);
+    setStatus("b", "interview"); /* actioned the follow-up */
+    const r = weeklyReport(now);
+    expect(r.applied).toBe(2);
+    expect(r.interviews).toBe(1);
+    expect(r.responseRate).toBe(50);
+    expect(r.followUpsDue).toBe(1);
+    expect(r.followUpsDone).toBe(1);
+    expect(r.byWeek).toHaveLength(4);
   });
 
-  it("escapes parentheses in resume text so the stream stays valid", async () => {
-    const blob = renderResumePdf("Role (Senior) — 100% match (so far)");
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    const all = new TextDecoder().decode(buf);
-    expect(all).toContain("Role \\(Senior\\)");
-    expect(all).not.toContain("Role (Senior)");
+  it("is safe with no tracked jobs", () => {
+    const r = weeklyReport();
+    expect(r.applied).toBe(0);
+    expect(r.responseRate).toBe(0);
+  });
+});
+
+describe("follow-up drafts", () => {
+  it("writes a polite applied-stage nudge mentioning role + company", () => {
+    const d = followUpDraft("applied", "Senior Frontend Engineer", "Airbnb", 10);
+    expect(d).toContain("Senior Frontend Engineer at Airbnb");
+    expect(d).toContain("check in");
+  });
+
+  it("writes a post-interview thank-you", () => {
+    const d = followUpDraft("interview", "Engineer", "Lyft", 3);
+    expect(d).toContain("interview");
+    expect(d).toContain("Lyft");
+  });
+
+  it("writes an offer-stage acknowledgement", () => {
+    const d = followUpDraft("offer", "Engineer", "Dropbox", 1);
+    expect(d).toContain("offer");
+    expect(d).toContain("Dropbox");
+  });
+});
+
+describe("designed resume HTML", () => {
+  it("renders sections with the accent color and print hook", () => {
+    const html = buildResumeHtml(PROFILE, JOB, MATCH);
+    expect(html).toContain("<!doctype html>");
+    expect(html).toContain("window.print");
+    expect(html).toContain("#4f46e5"); /* default accent */
+    expect(html).toContain("SUMMARY");
+    expect(html).toContain("Airbnb");
+    expect(html).toContain("Senior Frontend Engineer");
+  });
+
+  it("honors a brand accent override and escapes HTML", () => {
+    const html = buildResumeHtml(PROFILE, { ...JOB, company: "A&B Corp" }, MATCH, { accent: "#16a34a" });
+    expect(html).toContain("#16a34a");
+    expect(html).not.toContain("A&B Corp");
+    expect(html).toContain("A&amp;B Corp");
   });
 });
 

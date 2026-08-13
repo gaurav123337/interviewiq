@@ -84,6 +84,7 @@ export interface RemoteStore {
 export const SYNC_POLICIES: Record<string, SyncPolicy> = {
   [STORAGE_KEYS.sessions]: "merge",   // history — union by session id
   [STORAGE_KEYS.drillSrs]: "merge",   // SRS queue — union per question
+  [STORAGE_KEYS.applyTrack]: "merge", // apply tracker — per-job latest wins
   [STORAGE_KEYS.onboard]: "lww",
   [STORAGE_KEYS.settings]: "lww",
   [STORAGE_KEYS.tier]: "lww",
@@ -138,9 +139,22 @@ function mergeSrs(local: unknown, remote: unknown): unknown {
   return out;
 }
 
+/** Apply tracker: a map keyed by jobId — per-job last-write-wins. */
+function mergeTracks(local: unknown, remote: unknown): unknown {
+  const l = (local && typeof local === "object") ? local as Record<string, { updatedAt?: number }> : {};
+  const r = (remote && typeof remote === "object") ? remote as Record<string, { updatedAt?: number }> : {};
+  const out: Record<string, unknown> = { ...l };
+  for (const [jobId, e] of Object.entries(r)) {
+    const cur = out[jobId] as { updatedAt?: number } | undefined;
+    if (!cur || (e.updatedAt ?? 0) > (cur.updatedAt ?? 0)) out[jobId] = e;
+  }
+  return out;
+}
+
 function mergeFor(key: string, local: unknown, remote: unknown): unknown {
   if (key === STORAGE_KEYS.sessions) return mergeSessions(local, remote);
   if (key === STORAGE_KEYS.drillSrs) return mergeSrs(local, remote);
+  if (key === STORAGE_KEYS.applyTrack) return mergeTracks(local, remote);
   return remote; /* lww default: remote wins a tie */
 }
 

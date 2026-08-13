@@ -12,6 +12,7 @@ describe("sync policies", () => {
   it("classifies every key: merge / lww / local", () => {
     expect(policyFor(STORAGE_KEYS.sessions)).toBe("merge");
     expect(policyFor(STORAGE_KEYS.drillSrs)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.applyTrack)).toBe("merge");
     expect(policyFor(STORAGE_KEYS.settings)).toBe("lww");
     expect(policyFor(STORAGE_KEYS.onboard)).toBe("lww");
     expect(policyFor(STORAGE_KEYS.tier)).toBe("lww");
@@ -160,5 +161,37 @@ describe("sync engine — ongoing sync", () => {
     storageSet(STORAGE_KEYS.settings, { count: 8 });
     const snap = await remote.pull();
     expect(snap[STORAGE_KEYS.settings]).toBeUndefined();
+  });
+});
+
+describe("sync engine — apply tracker per-job merge", () => {
+  it("unions local + remote trackers by job, latest write wins per job", async () => {
+    storageSet(STORAGE_KEYS.applyTrack, {
+      jobA: { jobId: "jobA", status: "applied", appliedAt: 1, followUpAt: null, followUpNotified: false, notes: "", updatedAt: 100 },
+      jobB: { jobId: "jobB", status: "applied", appliedAt: 2, followUpAt: null, followUpNotified: false, notes: "local", updatedAt: 50 }
+    });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.applyTrack]: {
+        value: {
+          jobB: { jobId: "jobB", status: "interview", appliedAt: 2, followUpAt: null, followUpNotified: false, notes: "remote", updatedAt: 200 },
+          jobC: { jobId: "jobC", status: "offer", appliedAt: 3, followUpAt: null, followUpNotified: false, notes: "", updatedAt: 300 }
+        },
+        updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const merged = storageGet<Record<string, { updatedAt: number; status: string; notes: string }>>(STORAGE_KEYS.applyTrack, {});
+    /* jobA: local-only survives; jobB: remote newer wins; jobC: remote-only pulled */
+    expect(Object.keys(merged).sort()).toEqual(["jobA", "jobB", "jobC"]);
+    expect(merged.jobA.status).toBe("applied");
+    expect(merged.jobB.status).toBe("interview");
+    expect(merged.jobB.notes).toBe("remote");
+    expect(merged.jobC.status).toBe("offer");
+    /* merged result pushed back up so both sides converge */
+    const snap = await remote.pull();
+    const pushed = snap[STORAGE_KEYS.applyTrack]?.value as Record<string, { status: string }>;
+    expect(Object.keys(pushed).sort()).toEqual(["jobA", "jobB", "jobC"]);
   });
 });

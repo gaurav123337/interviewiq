@@ -97,3 +97,108 @@ export function trackSummary(): Record<ApplyStatus, number> {
   for (const t of listTracks()) s[t.status] += 1;
   return s;
 }
+
+/* ------------------------------------------------------------------ */
+/* Weekly report                                                       */
+/* ------------------------------------------------------------------ */
+
+const WEEK_MS = 7 * 24 * 3_600_000;
+
+/** Aggregated tracker activity over the trailing window — for the weekly
+    application report. Pure + testable. */
+export function weeklyReport(now = Date.now()): {
+  windowDays: number;
+  applied: number;
+  interviews: number;
+  offers: number;
+  rejections: number;
+  /** interviews + offers ÷ applications in the window (0 when none). */
+  responseRate: number;
+  /** follow-ups due in the window that haven't been actioned (still applied). */
+  followUpsDue: number;
+  /** follow-ups due in the window that were actioned (moved past applied). */
+  followUpsDone: number;
+  byWeek: { label: string; applied: number; interviews: number; offers: number }[];
+} {
+  const tracks = listTracks();
+  const cutoff = now - 7 * WEEK_MS;
+  const inWindow = tracks.filter(t => (t.appliedAt ?? 0) >= cutoff);
+  const applied = inWindow.length;
+  const interviews = inWindow.filter(t => t.status === "interview" || t.status === "offer").length;
+  const offers = inWindow.filter(t => t.status === "offer").length;
+  const rejections = inWindow.filter(t => t.status === "rejected").length;
+
+  /* follow-up completion: any track with a due follow-up in the window */
+  const hadFollowUp = tracks.filter(t => t.followUpAt !== null && t.followUpAt >= cutoff && t.followUpAt <= now);
+  const followUpsDone = hadFollowUp.filter(t => t.status !== "applied" && t.status !== "saved").length;
+  const followUpsDue = hadFollowUp.length - followUpsDone;
+
+  /* per-week buckets (last 4 weeks, oldest first) */
+  const byWeek: { label: string; applied: number; interviews: number; offers: number }[] = [];
+  for (let w = 3; w >= 0; w--) {
+    const start = now - (w + 1) * WEEK_MS;
+    const end = now - w * WEEK_MS;
+    const wk = tracks.filter(t => (t.appliedAt ?? 0) >= start && (t.appliedAt ?? 0) < end);
+    const label = new Date(end).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    byWeek.push({
+      label,
+      applied: wk.length,
+      interviews: wk.filter(t => t.status === "interview" || t.status === "offer").length,
+      offers: wk.filter(t => t.status === "offer").length
+    });
+  }
+
+  return {
+    windowDays: 7,
+    applied,
+    interviews,
+    offers,
+    rejections,
+    responseRate: applied ? Math.round((interviews / applied) * 100) : 0,
+    followUpsDue,
+    followUpsDone,
+    byWeek
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Follow-up message drafts                                            */
+/* ------------------------------------------------------------------ */
+
+/** A short, professional follow-up message for a given stage. Pure + testable. */
+export function followUpDraft(status: ApplyStatus, jobTitle: string, company: string, daysSince: number): string {
+  const role = `${jobTitle} at ${company}`;
+  if (status === "interview") {
+    return [
+      `Hi there,`,
+      ``,
+      `Thank you again for the opportunity to interview for the ${role} role. I really enjoyed learning more about the team and the problems you're solving.`,
+      ``,
+      `I wanted to follow up on the next steps — I remain very interested in the position and would be glad to provide anything further that would help with the decision.`,
+      ``,
+      `Best regards,`
+    ].join("\n");
+  }
+  if (status === "offer") {
+    return [
+      `Hi there,`,
+      ``,
+      `Thank you for the offer for the ${role} role — I'm genuinely excited about the opportunity.`,
+      ``,
+      `I'm reviewing the details and will get back to you by [date]. Please let me know if there's anything else you need from my side in the meantime.`,
+      ``,
+      `Best regards,`
+    ].join("\n");
+  }
+  /* applied — a gentle nudge after a week or two */
+  const time = daysSince >= 14 ? "a couple of weeks" : "a week or so";
+  return [
+    `Hi there,`,
+    ``,
+    `I applied for the ${role} role about ${time} ago and wanted to check in on the status of my application.`,
+    ``,
+    `I'm very excited about the opportunity to join ${company} and would welcome the chance to discuss how my background could contribute to the team.`,
+    ``,
+    `Best regards,`
+  ].join("\n");
+}

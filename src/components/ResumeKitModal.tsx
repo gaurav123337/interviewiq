@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, saveApplyKit, type ApplyKit } from "../services/applyKit";
-import { downloadResumePdf } from "../services/pdfGen";
+import { openResumePrint } from "../services/resumeHtml";
 import { toast } from "../toast";
 import { Chip, Modal } from "./ui";
 
@@ -119,10 +119,13 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
           {tab === "resume" && (
             <button
               className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
-              onClick={() => { downloadResumePdf(text, job.title, job.company); toast("⬇️ PDF downloaded"); }}
-              title="Download as a styled PDF"
+              onClick={() => {
+                const ok = openResumePrint(profile, job, match);
+                toast(ok ? "🖨️ Designed resume opened — choose “Save as PDF” in the print dialog" : "✗ Popup blocked — allow popups for this site");
+              }}
+              title="Open the designed one-pager and save as PDF"
             >
-              ⬇️ PDF
+              🖨️ PDF
             </button>
           )}
           <button

@@ -3,7 +3,7 @@ import type { CareerProfile, JobPosting } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { isCloudConfigured } from "../services/cloud";
 import { toast } from "../toast";
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
+import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
 import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
@@ -13,7 +13,7 @@ import {
 } from "../services/jobs";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
-import { dueFollowUps, getTrack, listTracks, markFollowUpNotified, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, type ApplyStatus, type ApplyTrack } from "../services/applyTrack";
+import { dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack } from "../services/applyTrack";
 import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
 
@@ -62,6 +62,8 @@ export function Jobs() {
     return m;
   });
   const [due, setDue] = useState<ApplyTrack[]>(() => dueFollowUps());
+  const [reportOpen, setReportOpen] = useState(false);
+  const [draftJob, setDraftJob] = useState<ApplyTrack | null>(null);
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
@@ -234,9 +236,14 @@ export function Jobs() {
             <h3 className="text-[14.5px] font-extrabold">🗂️ Apply tracker</h3>
             <p className="mt-0.5 text-[11.5px] text-fnt">Statuses + follow-up dates per job. {proGated ? "Pro feature." : "Set a status on any card to start."}</p>
           </div>
-          <button className={btnGhost + btnSm} onClick={batchExport} disabled={proGated}>
-            📦 Export all kits (.zip)
-          </button>
+          <div className="flex gap-2">
+            <button className={btnGhost + btnSm} onClick={() => setReportOpen(true)} disabled={proGated}>
+              📊 Weekly report
+            </button>
+            <button className={btnGhost + btnSm} onClick={batchExport} disabled={proGated}>
+              📦 Export all kits (.zip)
+            </button>
+          </div>
         </div>
         {proGated ? (
           <div className="p-5">
@@ -359,6 +366,15 @@ export function Jobs() {
                         onChange={e => setJobFollowUp(j.id, e.target.value)}
                         title="Follow-up date — you'll be reminded when it's due"
                       />
+                      {tracks[j.id] && (tracks[j.id]!.status === "applied" || tracks[j.id]!.status === "interview" || tracks[j.id]!.status === "offer") && (
+                        <button
+                          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-1 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+                          onClick={() => setDraftJob(tracks[j.id]!)}
+                          title="Copy a professional follow-up message"
+                        >
+                          ✍️ Follow-up
+                        </button>
+                      )}
                     </div>
                   )}
                   {locked && (
@@ -374,6 +390,101 @@ export function Jobs() {
       {upgrade && <UpgradeModal onClose={() => setUpgrade(null)} reason={upgrade} />}
       {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
       {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onClose={() => setKitJob(null)} />}
+      {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
+      {draftJob && (
+        <DraftModal
+          track={draftJob}
+          job={jobs.find(j => j.id === draftJob.jobId) ?? null}
+          onClose={() => setDraftJob(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/* weekly application report — activity, response rate, follow-up completion */
+function ReportModal({ onClose }: { onClose: () => void }) {
+  const r = weeklyReport();
+  const maxApplied = Math.max(1, ...r.byWeek.map(w => w.applied));
+  return (
+    <Modal onClose={onClose} title="📊 Weekly report" desc="Your last 7 days of application activity — where the funnel moves, and where it stalls.">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        {[
+          { label: "Applied", value: r.applied, tone: "text-acc3" },
+          { label: "Interviews", value: r.interviews, tone: "text-ok" },
+          { label: "Offers", value: r.offers, tone: "text-ok" },
+          { label: "Rejections", value: r.rejections, tone: "text-bad" }
+        ].map(c => (
+          <div key={c.label} className="rounded-xl border border-line/15 bg-deep/30 p-3 text-center">
+            <div className={`text-2xl font-extrabold ${c.tone}`}>{c.value}</div>
+            <div className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-mut">{c.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2.5">
+        <div className="rounded-xl border border-line/15 bg-deep/30 p-3.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Response rate</div>
+          <div className="mt-1 text-xl font-extrabold text-acc1">{r.responseRate}%</div>
+          <p className="mt-0.5 text-[11px] text-mut">{r.interviews} of {r.applied} applications advanced to an interview.</p>
+        </div>
+        <div className="rounded-xl border border-line/15 bg-deep/30 p-3.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Follow-ups</div>
+          <div className="mt-1 text-xl font-extrabold">{r.followUpsDone}<span className="text-mut">/{r.followUpsDue + r.followUpsDone} done</span></div>
+          <p className="mt-0.5 text-[11px] text-mut">{r.followUpsDue > 0 ? `${r.followUpsDue} still due — use the ✍️ Follow-up drafts on each card.` : "All caught up — nice."}</p>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-mut">Applications — last 4 weeks</div>
+        <div className="space-y-1.5">
+          {r.byWeek.map(w => (
+            <div key={w.label} className="flex items-center gap-2">
+              <span className="w-16 text-[11px] font-bold text-mut">{w.label}</span>
+              <div className="h-5 flex-1 overflow-hidden rounded-md bg-deep/40">
+                <div className="flex h-full items-center gap-1 rounded-md bg-acc1/30 px-1.5" style={{ width: `${(w.applied / maxApplied) * 100}%` }}>
+                  <span className="text-[10px] font-extrabold text-acctxt">{w.applied}</span>
+                </div>
+              </div>
+              <span className="w-16 text-right text-[10.5px] text-mut">{w.interviews} 📞</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <button className="mt-5 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
+        Done — close
+      </button>
+    </Modal>
+  );
+}
+
+/* follow-up message draft — stage-specific, copy-ready */
+function DraftModal({ track, job, onClose }: { track: ApplyTrack; job: JobPosting | null; onClose: () => void }) {
+  const title = job?.title ?? track.jobId;
+  const company = job?.company ?? "";
+  const daysSince = track.appliedAt ? Math.max(1, Math.round((Date.now() - track.appliedAt) / 86_400_000)) : 7;
+  const draft = followUpDraft(track.status, title, company, daysSince);
+  const copy = () => {
+    navigator.clipboard?.writeText(draft).then(
+      () => toast("📋 Draft copied — paste it into your email"),
+      () => toast("✗ Clipboard blocked — copy manually")
+    );
+  };
+  return (
+    <Modal onClose={onClose} title="✍️ Follow-up draft" desc={`A ${STATUS_META[track.status].label.toLowerCase()}-stage nudge for ${title}${company ? ` at ${company}` : ""}.`}>
+      <pre className="max-h-[44vh] overflow-y-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/40 p-4 font-sans text-[13px] leading-relaxed text-fnt">
+        {draft}
+      </pre>
+      <p className="mt-3 text-[11.5px] text-mut">Customize the placeholders (names, dates) before sending — then mark the stage on the card so the tracker stays honest.</p>
+      <div className="mt-4 flex gap-2">
+        <button className="flex-1 rounded-xl bg-acc1/15 py-2.5 text-[13px] font-extrabold text-acctxt transition-all hover:bg-acc1/25" onClick={copy}>
+                          📋 Copy draft
+        </button>
+        <button className="flex-1 rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
+                          Close
+        </button>
+      </div>
+    </Modal>
   );
 }
