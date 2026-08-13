@@ -43,6 +43,8 @@ const job = (over: Partial<JobPosting> = {}): JobPosting => ({
   url: "https://careers.example.com/1",
   skills: ["react", "typescript", "graphql", "kubernetes"],
   level: "senior",
+  salary: null,
+  companySize: null,
   postedAt: null,
   ...over
 });

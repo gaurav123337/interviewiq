@@ -5,6 +5,7 @@ import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, bui
 import { openResumePrint } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
 import { downloadResumeDocx } from "../services/docx";
+import { atsParsePreview } from "../services/atsPreview";
 import { resumeBrandFor } from "../services/remoteConfig";
 import { toast } from "../toast";
 import { Chip, Modal } from "./ui";
@@ -29,6 +30,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
   const [kit, setKit] = useState<ApplyKit | null>(() => getApplyKit(job.id));
   const [tab, setTab] = useState<"resume" | "cover">("resume");
   const [aiBusy, setAiBusy] = useState(false);
+  const [atsOpen, setAtsOpen] = useState(false);
 
   /* Build the template kit on first open if not already saved. */
   if (!kit) {
@@ -119,8 +121,18 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
           >
             📋 Copy
           </button>
+          {tab === "resume" && atsOpen && (
+            <AtsPreviewModal text={kit?.resume ?? ""} job={job} onClose={() => setAtsOpen(false)} />
+          )}
           {tab === "resume" && (
             <>
+              <button
+                className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
+                onClick={() => setAtsOpen(true)}
+                title="See how an ATS would parse this resume"
+              >
+                🔍 ATS preview
+              </button>
               <button
                 className="rounded-xl bg-acc1/15 px-3 py-1.5 text-[12px] font-extrabold text-acctxt transition-all hover:bg-acc1/25 disabled:opacity-50"
                 onClick={async () => {
@@ -187,6 +199,65 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         Template mode works offline and never sends data anywhere. “Polish with AI” uses <b>your own API key</b> (Settings) and
         rewrites the same facts — it never invents employers or credentials, so review before sending.
       </p>
+      <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
+        Done — close
+      </button>
+    </Modal>
+  );
+}
+
+/* how an ATS would read this export — sections, contact, flags, coverage */
+function AtsPreviewModal({ text, job, onClose }: { text: string; job: JobPosting; onClose: () => void }) {
+  const p = atsParsePreview(text, job);
+  return (
+    <Modal onClose={onClose} title="🔍 ATS parse preview" desc="A simulation of how applicant-tracking software would read this resume — what it keeps, what it stumbles on.">
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+        {[
+          { label: "Words", value: p.wordCount, tone: "text-ink" },
+          { label: "Sections", value: p.sections.length, tone: "text-acc1" },
+          { label: "Keywords", value: `${p.coverage.found.length}/${job.skills.length}`, tone: "text-ok" },
+          { label: "ATS score", value: `${p.coverage.score}%`, tone: p.coverage.score >= 80 ? "text-ok" : p.coverage.score >= 50 ? "text-acc3" : "text-warn" }
+        ].map(c => (
+          <div key={c.label} className="rounded-xl border border-line/15 bg-deep/30 p-3 text-center">
+            <div className={`text-xl font-extrabold ${c.tone}"`}>{c.value}</div>
+            <div className="mt-0.5 text-[10.5px] font-bold uppercase tracking-wider text-mut">{c.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-mut">What the parser keeps</div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {p.sections.map(s => <Chip key={s} tone="co">{s}</Chip>)}
+          {p.header.slice(1).map(h => <Chip key={h} tone="default">{h.slice(0, 32)}{h.length > 32 ? "…" : ""}</Chip>)}
+        </div>
+        <div className="mt-2 text-[12px] text-fnt">
+          {p.contact.email ? `📧 ${p.contact.email} · ` : ""}
+          {p.contact.phone ? `📱 ${p.contact.phone} · ` : ""}
+          {p.contact.linkedin ? "💼 LinkedIn ✓" : ""}
+          {!p.contact.email && !p.contact.phone && !p.contact.linkedin && <span className="text-warn">No email/phone detected — add them to the header.</span>}
+        </div>
+      </div>
+
+      {p.flags.length > 0 && (
+        <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-warn">⚠️ Parse flags</div>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[12px] text-fnt">
+            {p.flags.map((f, i) => <li key={i}>{f}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Keyword coverage vs {job.company}</div>
+        {p.coverage.missing.length > 0 ? (
+          <p className="mt-1 text-[12px] text-fnt">Missing: <b>{p.coverage.missing.join(", ")}</b> — add them where true to clear automated filters.</p>
+        ) : (
+          <p className="mt-1 text-[12px] text-ok">All required keywords present — this would clear a keyword filter.</p>
+        )}
+        {p.coverage.found.length > 0 && <p className="mt-1 text-[12px] text-fnt">Found: <b className="text-ok">{p.coverage.found.join(", ")}</b></p>}
+      </div>
+
       <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
         Done — close
       </button>

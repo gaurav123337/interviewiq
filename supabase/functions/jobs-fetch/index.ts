@@ -94,6 +94,41 @@ function guessLevel(title: string): string | null {
 
 const isRemoteText = (s: string): boolean => /remote|hybrid/.test((s ?? "").toLowerCase());
 
+/* Salary extraction — parses explicit ranges like "$120k–$150k", "₹15-25 LPA",
+   "£60,000" etc. into a normalized { min, max, currency } or null. Conservative:
+   no match → null, so filters never show fabricated bands. */
+function extractSalary(text: string): { min: number; max: number; currency: string } | null {
+  const t = (text ?? "").toLowerCase();
+  const m = t.match(/([$£€₹])\s*(\d{2,3}(?:[k,]\d{2}|\d{3})?)\s*[-–to]+\s*([$£€₹]?)\s*(\d{2,3}(?:[k,]\d{2}|\d{3})?)\s*(k|k\b|lpa|lakh|cr|\/yr|\/year|per year|annum)?/);
+  if (!m) return null;
+  const num = (raw: string): number => {
+    const n = raw.replace(/[^0-9.]/g, "");
+    return parseFloat(n);
+  };
+  let min = num(m[2]);
+  let max = num(m[4]);
+  const scale = m[5] ?? "";
+  /* k suffix → thousands; LPA/lakh → 100k INR; cr → 10M INR; plain digits = annual */
+  if (/k\b|k$/.test(scale) || m[2].toLowerCase().endsWith("k")) { min *= 1000; max *= 1000; }
+  else if (/lpa|lakh/.test(scale)) { min *= 100000; max *= 100000; }
+  else if (/cr/.test(scale)) { min *= 10000000; max *= 10000000; }
+  if (!min || !max || max < min) return null;
+  const currency = m[1] === "£" ? "GBP" : m[1] === "€" ? "EUR" : m[1] === "₹" ? "INR" : "USD";
+  return { min: Math.round(min), max: Math.round(max), currency };
+}
+
+/* Company size — explicit "N+ employees/people" mentions only (rare in ATS
+   postings, but when present it powers the client filter honestly). */
+function extractCompanySize(text: string): string | null {
+  const t = (text ?? "").toLowerCase();
+  const m = t.match(/(\d{2,4}[,.]?\d{0,3})\s*\+?\s*(employees?|people|teammates?|staff)\b/);
+  if (!m) return null;
+  const n = parseFloat(m[1].replace(/[^0-9]/g, ""));
+  if (n >= 1000) return "large";
+  if (n >= 50) return "mid";
+  return "small";
+}
+
 async function fetchGreenhouse(board: string): Promise<{ company: string; jobs: unknown[] }> {
   const info = await fetch(`https://boards-api.greenhouse.io/v1/boards/${board}`).then(r => r.json()).catch(() => null);
   const company = (info?.name as string) ?? board;
@@ -115,7 +150,9 @@ async function fetchGreenhouse(board: string): Promise<{ company: string; jobs: 
       url: j.absolute_url ?? "",
       postedAt: j.updated_at ?? null,
       skills: extractSkills(j.title, desc),
-      level: guessLevel(j.title)
+      level: guessLevel(j.title),
+      salary: extractSalary(desc),
+      companySize: extractCompanySize(desc)
     };
   });
   return { company, jobs };
@@ -142,7 +179,9 @@ async function fetchAshby(board: string): Promise<{ company: string; jobs: unkno
       url: j.jobUrl ?? "",
       postedAt: j.publishedAt ?? null,
       skills: extractSkills(j.title, desc),
-      level: guessLevel(j.title)
+      level: guessLevel(j.title),
+      salary: extractSalary(desc),
+      companySize: extractCompanySize(desc)
     };
   });
   return { company: board, jobs };
@@ -169,17 +208,20 @@ async function fetchLever(org: string): Promise<{ company: string; jobs: unknown
       url: j.hostedUrl ?? "",
       postedAt: j.createdAt ? new Date(j.createdAt * 1000).toISOString() : null,
       skills: extractSkills(j.text ?? "", desc),
-      level: guessLevel(j.text ?? "")
+      level: guessLevel(j.text ?? ""),
+      salary: extractSalary(desc),
+      companySize: extractCompanySize(desc)
     };
   });
   return { company: org, jobs };
 }
 
-async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { provider: string; board: string }[]): Promise<{ added: number; updated: number; total: number; perSource: Record<string, number> }> {
+async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { provider: string; board: string }[]): Promise<{ added: number; updated: number; total: number; perSource: Record<string, number>; errors: Record<string, string> }> {
   let added = 0;
   let updated = 0;
   let total = 0;
   const perSource: Record<string, number> = {};
+  const errors: Record<string, string> = {};
   for (const src of sources) {
     try {
       const { jobs } = src.provider === "lever"
@@ -198,6 +240,8 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
         url: String(j.url ?? ""),
         skills: (j.skills as string[]) ?? [],
         level: (j.level as string) ?? null,
+        salary: (j.salary as { min: number; max: number; currency: string } | null) ?? null,
+        company_size: (j.companySize as string | null) ?? null,
         posted_at: j.postedAt ? new Date(String(j.postedAt)).toISOString() : null
       }));
       /* PostgREST upsert count = ALL affected rows, so measure new vs existing
@@ -214,10 +258,11 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
       console.log(`[jobs-fetch] ${src.provider}:${src.board} → ${rows.length} jobs (${addedHere} new)`);
     } catch (e) {
       console.warn(`[jobs-fetch] ${src.provider}:${src.board} failed:`, (e as Error).message);
+      errors[`${src.provider}:${src.board}`] = (e as Error).message ?? String(e);
       perSource[`${src.provider}:${src.board}`] = 0;
     }
   }
-  return { added, updated, total, perSource };
+  return { added, updated, total, perSource, errors };
 }
 
 async function getSources(admin: ReturnType<typeof createClient>): Promise<{ provider: string; board: string }[]> {

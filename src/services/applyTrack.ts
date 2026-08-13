@@ -232,6 +232,38 @@ export function weeklyReport(now = Date.now()): {
 /* Follow-up message drafts                                            */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Weekly digest                                                        */
+/* ------------------------------------------------------------------ */
+
+/** Plain-text weekly digest of tracker activity — the body for email or
+    clipboard sharing. Pure + testable. */
+export function applyDigest(now = Date.now()): string {
+  const r = weeklyReport(now);
+  const summary = trackSummary();
+  const due = dueFollowUps(now);
+  const tracks = listTracks();
+  const lines = [
+    `InterviewIQ — Weekly application digest (${new Date(now).toLocaleDateString()})`,
+    "",
+    `Portfolio: ${summary.saved + summary.applied + summary.interview + summary.offer + summary.rejected} tracked · ` +
+      `${summary.applied} applied · ${summary.interview} interviewing · ${summary.offer} offers · ${summary.rejected} rejected`,
+    `This week: ${r.applied} applied, ${r.interviews} interviews, ${r.offers} offers · response rate ${r.responseRate}%`,
+    `Follow-ups: ${r.followUpsDone} done, ${r.followUpsDue} due`
+  ];
+  if (due.length) {
+    lines.push("", `Follow-up due now (${due.length}):`);
+    for (const d of due) lines.push(`  - ${d.jobId}`);
+  }
+  const active = tracks.filter(t => t.status === "interview").length;
+  if (active) {
+    lines.push("", `${active} application${active === 1 ? " is" : "s are"} in the interview stage — keep the round checklists current.`);
+  }
+  const byWeek = r.momentum.map(w => `${w.label}: ${w.applied} applied / ${w.interviews} interviews`).join(" · ");
+  if (byWeek) lines.push("", `Momentum (8 wk): ${byWeek}`);
+  return lines.join("\n");
+}
+
 /** A short, professional follow-up message for a given stage. Pure + testable. */
 export function followUpDraft(status: ApplyStatus, jobTitle: string, company: string, daysSince: number): string {
   const role = `${jobTitle} at ${company}`;

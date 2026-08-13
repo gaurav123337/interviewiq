@@ -94,6 +94,8 @@ interface DbJobRow {
   url: string;
   skills: string[];
   level: string | null;
+  salary: { min: number; max: number; currency: string } | null;
+  company_size: string | null;
   posted_at: string | null;
 }
 
@@ -109,6 +111,8 @@ const toJobPosting = (r: DbJobRow): JobPosting => ({
   url: r.url,
   skills: r.skills ?? [],
   level: r.level ?? null,
+  salary: r.salary ?? null,
+  companySize: r.company_size ?? null,
   postedAt: r.posted_at
 });
 
@@ -117,13 +121,67 @@ export async function loadJobsFromCloud(): Promise<JobPosting[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
   const { data, error } = await client.from("jobs")
-    .select("source, external_id, title, company, location, remote, description, url, skills, level, posted_at")
+    .select("source, external_id, title, company, location, remote, description, url, skills, level, salary, company_size, posted_at")
     .order("posted_at", { ascending: false })
     .limit(80);
   if (error || !data) return [];
   const jobs = (data as unknown as DbJobRow[]).map(toJobPosting);
   setJobs(jobs);
   return jobs;
+}
+
+/* ------------------------------------------------------------------ */
+/* Feed filters (Apply Kit) — salary band, company size, remote, text   */
+/* ------------------------------------------------------------------ */
+
+export interface JobFilters {
+  query: string;
+  remote: boolean | null;
+  companySize: string | null;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  currency: string | null;
+}
+
+export const EMPTY_FILTERS: JobFilters = {
+  query: "",
+  remote: null,
+  companySize: null,
+  salaryMin: null,
+  salaryMax: null,
+  currency: null
+};
+
+/** Pure filter over the feed — testable, keeps the view dumb. */
+export function filterJobs(jobs: JobPosting[], f: JobFilters): JobPosting[] {
+  const q = f.query.trim().toLowerCase();
+  return jobs.filter(j => {
+    if (f.remote === true && !j.remote) return false;
+    if (f.remote === false && j.remote) return false;
+    if (f.companySize && j.companySize !== f.companySize) return false;
+    if (f.currency && j.salary?.currency && j.salary.currency !== f.currency) return false;
+    if (f.salaryMin !== null) {
+      if (!j.salary || j.salary.max < f.salaryMin) return false;
+    }
+    if (f.salaryMax !== null) {
+      if (!j.salary || j.salary.min > f.salaryMax) return false;
+    }
+    if (q) {
+      const hay = `${j.title} ${j.company} ${j.location} ${j.description}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+/** Human-readable salary band for a job (e.g. "$120k–$150k") or null. */
+export function salaryLabel(j: JobPosting): string | null {
+  if (!j.salary) return null;
+  const { min, max, currency } = j.salary;
+  const sym: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", INR: "₹" };
+  const s = sym[currency] ?? (currency + " ");
+  const fmt = (n: number) => n >= 1000000 ? `${s}${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${s}${Math.round(n / 1000)}k` : `${s}${n}`;
+  return `${fmt(min)}–${fmt(max)} ${currency}`;
 }
 
 /** Last successful feed refresh (epoch ms) — drives the auto-refresh. */

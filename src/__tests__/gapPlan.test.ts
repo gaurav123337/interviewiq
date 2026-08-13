@@ -17,6 +17,8 @@ const JOB: JobPosting = {
   url: "https://x/1",
   skills: [],
   level: "senior",
+  salary: null,
+  companySize: null,
   postedAt: null
 };
 

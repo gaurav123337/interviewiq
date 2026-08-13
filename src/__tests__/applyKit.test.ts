@@ -30,6 +30,8 @@ const JOB: JobPosting = {
   url: "https://x/1",
   skills: ["react", "typescript", "accessibility"],
   level: "senior",
+  salary: { min: 120000, max: 150000, currency: "USD" },
+  companySize: "large",
   postedAt: null
 };
 

@@ -15,7 +15,11 @@ import { practiceForRound } from "../services/drill";
 import { buildResumeHtml } from "../services/resumeHtml";
 import { renderResumePdf } from "../services/resumePdf";
 import { resumeDocxBlob } from "../services/docx";
+import { atsParsePreview } from "../services/atsPreview";
 import { resumeBrandFor, setRemoteConfig } from "../services/remoteConfig";
+import { applyDigest } from "../services/applyTrack";
+import { addToBank, bankFromRound, listBank, removeFromBank, stableId } from "../services/questionBank";
+import { filterJobs, salaryLabel } from "../services/jobs";
 import { crc32, zipFiles, type ZipEntry } from "../services/zip";
 
 const JOB: JobPosting = {
@@ -30,6 +34,8 @@ const JOB: JobPosting = {
   url: "https://x/1",
   skills: ["react", "typescript", "accessibility"],
   level: "senior",
+  salary: { min: 120000, max: 150000, currency: "USD" },
+  companySize: "large",
   postedAt: null
 };
 
@@ -218,6 +224,84 @@ describe("round-driven practice", () => {
     /* "docker kubernetes" is devops — a frontend field should still find cards */
     const cards = practiceForRound("docker kubernetes deployments", "frontend", 4);
     expect(cards.length).toBeGreaterThan(0);
+  });
+});
+
+describe("question bank", () => {
+  it("adds questions from round notes and dedupes by text", () => {
+    const n1 = bankFromRound("How do you optimize React re-renders? What is useMemo?", "Airbnb", "Frontend", "Round 1");
+    expect(n1).toBeGreaterThan(0);
+    const n2 = bankFromRound("How do you optimize React re-renders?", "Lyft", "Frontend", "Round 1");
+    expect(n2).toBe(0); /* duplicate — no new questions */
+    expect(listBank()).toHaveLength(2);
+  });
+
+  it("round-trips add / list / remove with a stable id", () => {
+    const { id } = addToBank({ question: "What is memoization?", company: "A", jobTitle: "FE", roundLabel: "R1" });
+    expect(id).toBe(stableId("What is memoization?"));
+    expect(listBank().some(b => b.id === id)).toBe(true);
+    removeFromBank(id);
+    expect(listBank().some(b => b.id === id)).toBe(false);
+  });
+
+  it("ignores too-short fragments", () => {
+    expect(bankFromRound("hi there", "A", "B", "R")).toBe(0);
+  });
+});
+
+describe("job feed filters", () => {
+  const mk = (over: Partial<JobPosting>): JobPosting => ({ ...JOB, ...over });
+  const a = mk({ id: "a", salary: { min: 100000, max: 120000, currency: "USD" }, companySize: "large", remote: true });
+  const b = mk({ id: "b", salary: { min: 20000, max: 30000, currency: "INR" }, companySize: "small", remote: false });
+
+  it("filters by remote, size, and currency", () => {
+    expect(filterJobs([a, b], { query: "", remote: true, companySize: null, salaryMin: null, salaryMax: null, currency: null }).map(j => j.id)).toEqual(["a"]);
+    expect(filterJobs([a, b], { query: "", remote: null, companySize: "small", salaryMin: null, salaryMax: null, currency: null }).map(j => j.id)).toEqual(["b"]);
+    expect(filterJobs([a, b], { query: "", remote: null, companySize: null, salaryMin: null, salaryMax: null, currency: "INR" }).map(j => j.id)).toEqual(["b"]);
+  });
+
+  it("filters by salary band with null-salary jobs excluded when a band is set", () => {
+    const noSal = mk({ id: "c", salary: null });
+    const r = filterJobs([a, b, noSal], { query: "", remote: null, companySize: null, salaryMin: 90000, salaryMax: null, currency: null });
+    expect(r.map(j => j.id)).toEqual(["a"]);
+  });
+
+  it("formats a salary label per currency", () => {
+    expect(salaryLabel(a)).toBe("$100k–$120k USD");
+    expect(salaryLabel(mk({ id: "x", salary: null }))).toBeNull();
+  });
+});
+
+describe("ATS parse preview", () => {
+  it("extracts sections, contact, and coverage", () => {
+    const p = atsParsePreview(
+      "Jane Dev\nBangalore · 6+ years\njane@dev.io · +91 98765 43210\n\nSUMMARY\nI build frontends.\n\nSKILLS\nreact typescript",
+      { ...JOB, skills: ["react", "typescript", "kubernetes"] }
+    );
+    expect(p.sections).toContain("SUMMARY");
+    expect(p.contact.email).toBe("jane@dev.io");
+    expect(p.contact.phone).not.toBeNull();
+    expect(p.coverage.score).toBe(67);
+    expect(p.coverage.missing).toContain("kubernetes");
+  });
+
+  it("flags very short documents", () => {
+    const p = atsParsePreview("Hi", JOB);
+    expect(p.flags.some(f => f.includes("words"))).toBe(true);
+  });
+});
+
+describe("weekly digest", () => {
+  it("composes a readable digest from tracker state", () => {
+    setStatus("d1", "applied");
+    const d = applyDigest();
+    expect(d).toContain("Weekly application digest");
+    expect(d).toContain("applied");
+    expect(d).toContain("Momentum");
+  });
+
+  it("is safe with an empty tracker", () => {
+    expect(applyDigest()).toContain("Weekly application digest");
   });
 });
 

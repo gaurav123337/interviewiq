@@ -30,10 +30,15 @@ create table if not exists public.jobs (
   url text not null default '',
   skills jsonb not null default '[]'::jsonb,
   level text,
+  salary jsonb,
+  company_size text,
   posted_at timestamptz,
   created_at timestamptz not null default now(),
   unique (source, external_id)
 );
+
+alter table public.jobs add column if not exists salary jsonb;
+alter table public.jobs add column if not exists company_size text;
 
 alter table public.jobs enable row level security;
 drop policy if exists "jobs public read" on public.jobs;

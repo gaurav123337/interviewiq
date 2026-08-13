@@ -8,16 +8,17 @@ import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
 import {
-  defaultCareerProfile, getCareerProfile, lastJobsRefresh, listJobs, loadJobsFromCloud,
-  matchJob, refreshJobs, saveCareerProfile, VERDICT_META
+  defaultCareerProfile, EMPTY_FILTERS, filterJobs, getCareerProfile, lastJobsRefresh, listJobs, loadJobsFromCloud,
+  matchJob, refreshJobs, salaryLabel, saveCareerProfile, VERDICT_META, type JobFilters
 } from "../services/jobs";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
-import { dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
+import { applyDigest, dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
 import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
 import { practiceForRound, type DrillCard } from "../services/drill";
 import { getGoal } from "../services/goal";
+import { bankFromRound, listBank, removeFromBank, type BankEntry } from "../services/questionBank";
 
 /* small comma/Enter-driven tag input */
 function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder: string }) {
@@ -67,6 +68,7 @@ export function Jobs() {
   const [reportOpen, setReportOpen] = useState(false);
   const [draftJob, setDraftJob] = useState<ApplyTrack | null>(null);
   const [roundJob, setRoundJob] = useState<ApplyTrack | null>(null);
+  const [filters, setFilters] = useState<JobFilters>(EMPTY_FILTERS);
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
@@ -116,6 +118,8 @@ export function Jobs() {
     for (const j of jobs) m.set(j.id, matchJob(profile, j));
     return m;
   }, [profile, jobs]);
+
+  const visible = useMemo(() => filterJobs(jobs, filters), [jobs, filters]);
 
   /* due follow-up reminders — surface once per job via notification + banner */
   useEffect(() => {
@@ -277,11 +281,55 @@ export function Jobs() {
         )}
       </div>
 
+      {/* feed filters */}
+      <div className={`${cardCls} mt-5`}>
+        <div className="flex flex-wrap items-center gap-2 p-4">
+          <input
+            className="inp min-w-[160px] flex-1"
+            placeholder="🔍 Search title, company, skill…"
+            value={filters.query}
+            onChange={e => setFilters(f => ({ ...f, query: e.target.value }))}
+          />
+          <select className="inp w-auto cursor-pointer" value={filters.remote === null ? "" : String(filters.remote)}
+            onChange={e => setFilters(f => ({ ...f, remote: e.target.value === "" ? null : e.target.value === "true" }))}>
+            <option value="">📍 Any location</option>
+            <option value="true">🏠 Remote only</option>
+            <option value="false">🏢 On-site only</option>
+          </select>
+          <select className="inp w-auto cursor-pointer" value={filters.companySize ?? ""}
+            onChange={e => setFilters(f => ({ ...f, companySize: e.target.value || null }))}>
+            <option value="">🏢 Any size</option>
+            <option value="large">Large (1,000+ employees)</option>
+            <option value="mid">Mid (50–999)</option>
+            <option value="small">Small (&lt;50)</option>
+          </select>
+          <select className="inp w-auto cursor-pointer" value={filters.currency ?? ""}
+            onChange={e => setFilters(f => ({ ...f, currency: e.target.value || null }))}>
+            <option value="">💱 Any currency</option>
+            <option value="USD">$ USD</option>
+            <option value="INR">₹ INR</option>
+            <option value="EUR">€ EUR</option>
+            <option value="GBP">£ GBP</option>
+          </select>
+          <input
+            type="number" min={0} step={5000}
+            className="inp w-[110px]"
+            placeholder="Min salary"
+            value={filters.salaryMin ?? ""}
+            onChange={e => setFilters(f => ({ ...f, salaryMin: e.target.value ? Number(e.target.value) : null }))}
+            title="Minimum annual salary (in the chosen currency)"
+          />
+          {(filters.query || filters.remote !== null || filters.companySize || filters.currency || filters.salaryMin !== null || filters.salaryMax !== null) && (
+            <button className={btnGhost + btnSm} onClick={() => setFilters(EMPTY_FILTERS)}>✕ Clear</button>
+          )}
+        </div>
+      </div>
+
       {/* match feed */}
       <div className={`${cardCls} mt-5 overflow-hidden`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 p-5">
           <div>
-            <h3 className="text-[14.5px] font-extrabold">🎯 Match feed ({jobs.length})</h3>
+            <h3 className="text-[14.5px] font-extrabold">🎯 Match feed ({visible.length}{visible.length !== jobs.length ? ` of ${jobs.length}` : ""})</h3>
             <p className="mt-0.5 text-[11.5px] text-fnt">Verdicts compare the job's required skills against your profile. {proGated ? "Unlock Pro for the full reasons." : ""}</p>
           </div>
           <button className={btnGhost + btnSm} onClick={refresh} disabled={refreshing || !cloud}>
@@ -299,7 +347,7 @@ export function Jobs() {
           </div>
         ) : (
           <ul className="divide-y divide-line/10">
-            {jobs.map(j => {
+            {visible.map(j => {
               const m = matchOf.get(j.id);
               const locked = proGated;
               return (
@@ -319,6 +367,7 @@ export function Jobs() {
                     {j.location && <span>📍 {j.location}</span>}
                     {j.remote && <Chip tone="ok">REMOTE</Chip>}
                     {j.level && <span>· {j.level}</span>}
+                    {(() => { const s = salaryLabel(j); return s ? <span className="font-bold text-ok">💰 {s}</span> : null; })()}
                     <span className="text-[11px]">{j.source}</span>
                     {j.url && <a href={j.url} target="_blank" rel="noreferrer" className="font-bold text-acctxt hover:underline">View →</a>}
                   </div>
@@ -426,6 +475,17 @@ export function Jobs() {
 function ReportModal({ onClose }: { onClose: () => void }) {
   const r = weeklyReport();
   const maxApplied = Math.max(1, ...r.byWeek.map(w => w.applied));
+  const digest = applyDigest();
+  const copyDigest = () => {
+    navigator.clipboard?.writeText(digest).then(
+      () => toast("📋 Digest copied — paste it into your email or notes"),
+      () => toast("✗ Clipboard blocked — copy manually")
+    );
+  };
+  const mailDigest = () => {
+    const url = `mailto:?subject=${encodeURIComponent("InterviewIQ — weekly application digest")}&body=${encodeURIComponent(digest)}`;
+    window.location.href = url;
+  };
   return (
     <Modal onClose={onClose} title="📊 Weekly report" desc="Your last 7 days of application activity — where the funnel moves, and where it stalls.">
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
@@ -514,6 +574,18 @@ function ReportModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
+      <div className="mt-5 rounded-xl border border-acc1/25 bg-acc1/5 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[13px] font-extrabold text-acc1">📬 Weekly digest</p>
+          <div className="flex gap-2">
+            <button className={btnGhost + btnSm} onClick={copyDigest}>📋 Copy</button>
+            <button className={btnGhost + btnSm} onClick={mailDigest}>✉️ Email</button>
+          </div>
+        </div>
+        <pre className="mt-2 max-h-[180px] overflow-y-auto whitespace-pre-wrap rounded-lg bg-deep/40 p-3 font-sans text-[11.5px] leading-relaxed text-fnt">{digest}</pre>
+        <p className="mt-2 text-[10.5px] text-mut">A weekly summary you can share or email — your numbers, follow-ups, and 8-week momentum.</p>
+      </div>
+
       <button className="mt-5 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
         Done — close
       </button>
@@ -530,6 +602,8 @@ function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
   onChanged: (t: ApplyTrack) => void;
 }) {
   const [rounds, setRounds] = useState<InterviewRound[]>(() => track.rounds);
+  const [bank, setBank] = useState<BankEntry[]>(() => listBank());
+  const [bankOpen, setBankOpen] = useState(false);
   const [practice, setPractice] = useState<{ round: InterviewRound; cards: DrillCard[] } | null>(null);
   const [flipped, setFlipped] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<InterviewRound | null>(null);
@@ -563,7 +637,14 @@ function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
     setRounds(next.rounds);
     onChanged(next);
     setEditing(null);
-    toast("🎤 Round saved");
+    /* auto-collect the round's questions into the personal bank */
+    if (round.questions.trim()) {
+      const added = bankFromRound(round.questions, company, jobTitle, round.label);
+      setBank(listBank());
+      toast(added > 0 ? `🎤 Round saved — ${added} question${added === 1 ? "" : "s"} added to your bank` : "🎤 Round saved");
+    } else {
+      toast("🎤 Round saved");
+    }
   };
 
   const del = (id: string) => {
@@ -689,6 +770,38 @@ function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
           </div>
         </div>
       )}
+
+      <div className="mt-4 rounded-xl border border-line/15 bg-deep/30 p-3.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[12.5px] font-extrabold">📚 My question bank ({bank.length})</p>
+          <button className="text-[11px] font-bold text-acctxt hover:underline" onClick={() => setBankOpen(o => !o)}>
+            {bankOpen ? "Hide" : "Browse"}
+          </button>
+        </div>
+        <p className="mt-0.5 text-[11px] text-mut">Every question you record in a round lands here — reuse them across applications or practice the ones you struggled with.</p>
+        {bankOpen && (
+          <div className="mt-2 max-h-[220px] space-y-1.5 overflow-y-auto">
+            {bank.length === 0 ? (
+              <p className="text-[11.5px] text-mut">Nothing yet — save a round with notes and questions get collected automatically.</p>
+            ) : (
+              bank.map(b => (
+                <div key={b.id} className="rounded-lg border border-line/15 bg-deep/40 p-2.5">
+                  <p className="text-[12px] font-bold text-ink">{b.question}</p>
+                  <p className="mt-0.5 text-[10.5px] text-mut">{b.company} · {b.jobTitle} · {b.roundLabel}</p>
+                  <div className="mt-1.5 flex gap-2">
+                    <button className="text-[11px] font-bold text-ok hover:underline" onClick={() => {
+                      const cards = practiceForRound(b.question, getGoal()?.fieldId ?? "frontend");
+                      if (!cards.length) { toast("No cards found for that question — try a more specific one"); return; }
+                      setPractice({ round: { id: b.id, label: "Bank question", at: b.at, questions: b.question, went: null, outcome: "pending" }, cards });
+                    }}>🎯 Practice</button>
+                    <button className="text-[11px] font-bold text-bad hover:underline" onClick={() => { removeFromBank(b.id); setBank(listBank()); toast("🗑️ Removed from bank"); }}>Remove</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
 
       <p className="mt-4 text-[11.5px] text-mut">Rounds sync to your account like the rest of the tracker — review this checklist before each round and you'll walk in knowing exactly what to brush up.</p>
       <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
