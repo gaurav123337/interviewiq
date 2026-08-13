@@ -17,18 +17,17 @@ export interface ResumeBrand {
   fontFamily?: string;
 }
 
-export function buildResumeHtml(
-  profile: CareerProfile,
-  job: JobPosting,
-  match: JobMatch | null,
-  brand: ResumeBrand = {}
-): string {
-  const accent = brand.accent ?? ACCENT;
-  const font = brand.fontFamily ?? "'Segoe UI', -apple-system, 'Helvetica Neue', Arial, sans-serif";
-  const text = buildResume(profile, job, match);
+/** Parsed resume sections: the header block plus ALL-CAPS sections with items. */
+export interface ResumeSections {
+  header: string[];
+  sections: { title: string; items: string[] }[];
+}
 
-  /* parse the plain-text template into sections for styled rendering */
+/** Parse the plain-text resume template into sections for styled rendering.
+    Shared by the HTML one-pager and the pdf-lib renderer. */
+export function parseResumeSections(text: string): ResumeSections {
   const lines = text.split("\n");
+  const header: string[] = [];
   const sections: { title: string; items: string[] }[] = [];
   let cur: { title: string; items: string[] } | null = null;
   for (const raw of lines) {
@@ -38,30 +37,34 @@ export function buildResumeHtml(
       sections.push(cur);
     } else if (cur && t) {
       cur.items.push(t);
-    } else if (cur && !t) {
-      /* blank line inside a section — keep going */
     } else if (!cur && t) {
-      /* pre-header lines (name/headline/contact) */
-      if (!sections.length || sections[0].title !== "") {
-        sections.unshift({ title: "", items: [t] });
-      } else {
-        sections[0].items.push(t);
-      }
+      header.push(t);
     }
   }
+  return { header, sections };
+}
+
+export function buildResumeHtml(
+  profile: CareerProfile,
+  job: JobPosting,
+  match: JobMatch | null,
+  brand: ResumeBrand = {}
+): string {
+  const accent = brand.accent ?? ACCENT;
+  const font = brand.fontFamily ?? "'Segoe UI', -apple-system, 'Helvetica Neue', Arial, sans-serif";
+  const text = buildResume(profile, job, match);
+  const { header, sections } = parseResumeSections(text);
 
   const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  const body = sections.map(sec => {
-    if (sec.title === "") {
-      /* header block */
-      const [headline, ...rest] = sec.items;
-      return `
+  const headerBlock = header.length
+    ? `
         <div class="header">
-          <div class="name">${esc(headline || profile.headline || job.title)}</div>
-          <div class="sub">${esc(rest.join(" · "))}</div>
-        </div>`;
-    }
+          <div class="name">${esc(header[0] || profile.headline || job.title)}</div>
+          <div class="sub">${esc(header.slice(1).join(" · "))}</div>
+        </div>`
+    : "";
+  const body = headerBlock + sections.map(sec => {
     return `
       <section>
         <h2>${esc(sec.title)}</h2>

@@ -13,7 +13,7 @@ import {
 } from "../services/jobs";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
-import { dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack } from "../services/applyTrack";
+import { dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
 import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
 
@@ -64,6 +64,7 @@ export function Jobs() {
   const [due, setDue] = useState<ApplyTrack[]>(() => dueFollowUps());
   const [reportOpen, setReportOpen] = useState(false);
   const [draftJob, setDraftJob] = useState<ApplyTrack | null>(null);
+  const [roundJob, setRoundJob] = useState<ApplyTrack | null>(null);
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
@@ -365,16 +366,24 @@ export function Jobs() {
                         value={tracks[j.id]?.followUpAt ? new Date(tracks[j.id]!.followUpAt!).toISOString().slice(0, 10) : ""}
                         onChange={e => setJobFollowUp(j.id, e.target.value)}
                         title="Follow-up date — you'll be reminded when it's due"
-                      />
-                      {tracks[j.id] && (tracks[j.id]!.status === "applied" || tracks[j.id]!.status === "interview" || tracks[j.id]!.status === "offer") && (
-                        <button
-                          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-1 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
-                          onClick={() => setDraftJob(tracks[j.id]!)}
-                          title="Copy a professional follow-up message"
-                        >
-                          ✍️ Follow-up
-                        </button>
-                      )}
+                      />      {tracks[j.id] && (tracks[j.id]!.status === "applied" || tracks[j.id]!.status === "interview" || tracks[j.id]!.status === "offer") && (
+        <button
+          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-1 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+          onClick={() => setDraftJob(tracks[j.id]!)}
+          title="Copy a professional follow-up message"
+        >
+          ✍️ Follow-up
+        </button>
+      )}
+      {tracks[j.id]?.status === "interview" && (
+        <button
+          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-1 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+          onClick={() => setRoundJob(tracks[j.id]!)}
+          title="Track interview rounds — what was asked and how it went"
+        >
+          🎤 Rounds {tracks[j.id]!.rounds.length > 0 ? `(${tracks[j.id]!.rounds.length})` : ""}
+        </button>
+      )}
                     </div>
                   )}
                   {locked && (
@@ -396,6 +405,15 @@ export function Jobs() {
           track={draftJob}
           job={jobs.find(j => j.id === draftJob.jobId) ?? null}
           onClose={() => setDraftJob(null)}
+        />
+      )}
+      {roundJob && (
+        <RoundModal
+          track={roundJob}
+          jobTitle={jobs.find(j => j.id === roundJob.jobId)?.title ?? roundJob.jobId}
+          company={jobs.find(j => j.id === roundJob.jobId)?.company ?? ""}
+          onClose={() => setRoundJob(null)}
+          onChanged={t => setTracks(m => ({ ...m, [t.jobId]: t }))}
         />
       )}
     </div>
@@ -429,6 +447,25 @@ function ReportModal({ onClose }: { onClose: () => void }) {
           <p className="mt-0.5 text-[11px] text-mut">{r.interviews} of {r.applied} applications advanced to an interview.</p>
         </div>
         <div className="rounded-xl border border-line/15 bg-deep/30 p-3.5">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Pipeline funnel</div>
+          <div className="mt-2 space-y-1.5">
+            {[
+              { label: "Applied", n: r.applied, w: 100 },
+              { label: "Interviews", n: r.interviews, w: r.applied ? Math.max(8, (r.interviews / r.applied) * 100) : 0 },
+              { label: "Offers", n: r.offers, w: r.applied ? Math.max(4, (r.offers / r.applied) * 100) : 0 }
+            ].map(s => (
+              <div key={s.label} className="flex items-center gap-2">
+                <span className="w-[64px] text-[10.5px] font-bold text-mut">{s.label}</span>
+                <div className="h-4 flex-1 overflow-hidden rounded bg-deep/40">
+                  <div className="flex h-full items-center justify-end rounded bg-acc1/40 px-1" style={{ width: `${s.w}%` }}>
+                    <span className="text-[10px] font-extrabold text-acctxt">{s.n}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-line/15 bg-deep/30 p-3.5">
           <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Follow-ups</div>
           <div className="mt-1 text-xl font-extrabold">{r.followUpsDone}<span className="text-mut">/{r.followUpsDue + r.followUpsDone} done</span></div>
           <p className="mt-0.5 text-[11px] text-mut">{r.followUpsDue > 0 ? `${r.followUpsDue} still due — use the ✍️ Follow-up drafts on each card.` : "All caught up — nice."}</p>
@@ -453,6 +490,139 @@ function ReportModal({ onClose }: { onClose: () => void }) {
       </div>
 
       <button className="mt-5 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
+        Done — close
+      </button>
+    </Modal>
+  );
+}
+
+/* interview rounds — per-round checklist: what was asked, how it went, next-round review */
+function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
+  track: ApplyTrack;
+  jobTitle: string;
+  company: string;
+  onClose: () => void;
+  onChanged: (t: ApplyTrack) => void;
+}) {
+  const [rounds, setRounds] = useState<InterviewRound[]>(() => track.rounds);
+  const [editing, setEditing] = useState<InterviewRound | null>(null);
+  const [label, setLabel] = useState("");
+  const [at, setAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [questions, setQuestions] = useState("");
+  const [went, setWent] = useState<number | null>(null);
+  const [outcome, setOutcome] = useState<InterviewRound["outcome"]>("pending");
+
+  const startEdit = (r: InterviewRound | null) => {
+    setEditing(r);
+    setLabel(r?.label ?? `Round ${rounds.length + 1}`);
+    setAt(r ? new Date(r.at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
+    setQuestions(r?.questions ?? "");
+    setWent(r?.went ?? null);
+    setOutcome(r?.outcome ?? "pending");
+  };
+
+  const save = () => {
+    if (!label.trim()) { toast("Name the round (e.g. Phone screen, System design)"); return; }
+    const round: InterviewRound = {
+      id: editing?.id ?? `r${Date.now()}`,
+      label: label.trim(),
+      at: new Date(at + "T12:00:00").getTime(),
+      questions: questions.trim(),
+      went,
+      outcome
+    };
+    const next = saveRound(track.jobId, round);
+    setRounds(next.rounds);
+    onChanged(next);
+    setEditing(null);
+    toast("🎤 Round saved");
+  };
+
+  const del = (id: string) => {
+    const next = removeRound(track.jobId, id);
+    if (!next) return;
+    setRounds(next.rounds);
+    onChanged(next);
+    toast("🗑️ Round removed");
+  };
+
+  return (
+    <Modal onClose={onClose} title="🎤 Interview rounds" desc={`What was asked, how it went, and what to review next — for ${jobTitle}${company ? ` at ${company}` : ""}.`}>
+      {rounds.length === 0 && !editing && (
+        <div className="rounded-xl border border-line/15 bg-deep/30 p-4 text-center">
+          <p className="text-[12.5px] text-mut">No rounds yet. Add the first one — the prep checklist lives here so you walk into each round knowing what to review.</p>
+          <button className={`${btnGhost} ${btnSm} mt-3`} onClick={() => startEdit(null)}>+ Add round</button>
+        </div>
+      )}
+
+      <div className="space-y-2.5">
+        {rounds.map(r => (
+          <div key={r.id} className="rounded-xl border border-line/15 bg-deep/30 p-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-extrabold">{r.label}</span>
+                <Chip tone={r.outcome === "passed" ? "ok" : r.outcome === "failed" ? "bad" : "default"}>
+                  {r.outcome === "passed" ? "✅ Passed" : r.outcome === "failed" ? "❌ Failed" : "⏳ Pending"}
+                </Chip>
+                {r.went !== null && <Chip tone="co">{"⭐".repeat(Math.max(1, Math.min(5, r.went)))}</Chip>}
+              </div>
+              <span className="text-[11px] text-mut">{new Date(r.at).toLocaleDateString()}</span>
+            </div>
+            {r.questions && <p className="mt-1.5 whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">{r.questions}</p>}
+            <div className="mt-2 flex gap-2">
+              <button className="text-[11.5px] font-bold text-acctxt hover:underline" onClick={() => startEdit(r)}>✏️ Edit</button>
+              <button className="text-[11.5px] font-bold text-bad hover:underline" onClick={() => del(r.id)}>🗑️ Remove</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {rounds.length > 0 && !editing && (
+        <button className={`${btnGhost} ${btnSm} mt-3 w-full`} onClick={() => startEdit(null)}>+ Add round</button>
+      )}
+
+      {editing && (
+        <div className="mt-3 space-y-3 rounded-xl border border-acc1/25 bg-acc1/5 p-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Round name</span>
+              <input className="inp" value={label} onChange={e => setLabel(e.target.value)} placeholder="Phone screen" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Date</span>
+              <input type="date" className="inp" value={at} onChange={e => setAt(e.target.value)} />
+            </label>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">What was asked / what to review</span>
+            <textarea className="inp h-20 resize-y" value={questions} onChange={e => setQuestions(e.target.value)} placeholder="Questions asked, topics to review before the next round…" />
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-mut">How it went</span>
+            {[1, 2, 3, 4, 5].map(n => (
+              <button key={n} className={`text-[16px] transition-all ${went === n ? "scale-125" : "opacity-40 hover:opacity-80"}`} onClick={() => setWent(went === n ? null : n)}>⭐</button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(["pending", "passed", "failed"] as const).map(o => (
+              <button
+                key={o}
+                className={`rounded-full px-3 py-1 text-[12px] font-extrabold transition-all ${outcome === o ? "bg-acc1/20 text-acctxt" : "bg-deep/40 text-mut hover:text-ink"}`}
+                onClick={() => setOutcome(o)}
+              >
+                {o === "pending" ? "⏳ Pending" : o === "passed" ? "✅ Passed" : "❌ Failed"}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button className={btnPrimary + btnSm} onClick={save}>💾 Save round</button>
+            <button className={btnGhost + btnSm} onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <p className="mt-4 text-[11.5px] text-mut">Rounds sync to your account like the rest of the tracker — review this checklist before each round and you'll walk in knowing exactly what to brush up.</p>
+      <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
         Done — close
       </button>
     </Modal>

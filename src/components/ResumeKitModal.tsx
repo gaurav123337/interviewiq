@@ -3,6 +3,8 @@ import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, saveApplyKit, type ApplyKit } from "../services/applyKit";
 import { openResumePrint } from "../services/resumeHtml";
+import { downloadResumePdf } from "../services/resumePdf";
+import { resumeBrandFor } from "../services/remoteConfig";
 import { toast } from "../toast";
 import { Chip, Modal } from "./ui";
 
@@ -117,16 +119,32 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
             📋 Copy
           </button>
           {tab === "resume" && (
-            <button
-              className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
-              onClick={() => {
-                const ok = openResumePrint(profile, job, match);
-                toast(ok ? "🖨️ Designed resume opened — choose “Save as PDF” in the print dialog" : "✗ Popup blocked — allow popups for this site");
-              }}
-              title="Open the designed one-pager and save as PDF"
-            >
-              🖨️ PDF
-            </button>
+            <>
+              <button
+                className="rounded-xl bg-acc1/15 px-3 py-1.5 text-[12px] font-extrabold text-acctxt transition-all hover:bg-acc1/25 disabled:opacity-50"
+                onClick={async () => {
+                  try {
+                    await downloadResumePdf(profile, job, match, resumeBrandFor(job.company));
+                    toast("⬇️ PDF downloaded — one click, styled per company");
+                  } catch (e) {
+                    toast("✗ PDF failed — " + ((e as Error).message || "unknown error"));
+                  }
+                }}
+                title="Download the designed resume as a PDF (one click)"
+              >
+                ⬇️ PDF
+              </button>
+              <button
+                className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
+                onClick={() => {
+                  const ok = openResumePrint(profile, job, match, resumeBrandFor(job.company));
+                  toast(ok ? "🖨️ Print view opened" : "✗ Popup blocked — allow popups for this site");
+                }}
+                title="Open the designed resume in a print window"
+              >
+                🖨️ Print
+              </button>
+            </>
           )}
           <button
             className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"

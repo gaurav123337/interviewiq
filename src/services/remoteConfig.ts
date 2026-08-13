@@ -86,6 +86,17 @@ export interface RemoteConfig {
     refreshHours?: number;
     sources?: { provider: string; board: string }[];
   };
+  /** Resume branding — per-company accent color + font for the designed
+      one-pager. Keyed by company name (case-insensitive); a "_default"
+      entry applies to companies without their own override. */
+  resumeBranding?: Record<string, { accent?: string; fontFamily?: string }>;
+}
+
+/** Brand lookup for the designed resume — per-company override, then default. */
+export function resumeBrandFor(company: string): { accent?: string; fontFamily?: string } {
+  const all = getRemoteConfig().resumeBranding ?? {};
+  const key = Object.keys(all).find(k => k.toLowerCase() === company.toLowerCase());
+  return key ? all[key] ?? {} : all._default ?? {};
 }
 
 export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {}, rag: {} };
@@ -100,7 +111,8 @@ export function getRemoteConfig(): RemoteConfig {
     coachVocab: c?.coachVocab,
     rag: { ...(c?.rag ?? {}) },
     policies: { ...(c?.policies ?? {}) },
-    jobs: c?.jobs
+    jobs: c?.jobs,
+    resumeBranding: { ...(c?.resumeBranding ?? {}) }
   };
 }
 

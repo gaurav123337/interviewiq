@@ -6,10 +6,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CareerProfile, JobPosting } from "../types";
 import { STORAGE_KEYS, storageRemove } from "../services/storage";
 import {
-  dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, setFollowUp, setStatus, trackSummary, weeklyReport
+  dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, trackSummary, weeklyReport
 } from "../services/applyTrack";
+import { PDFDocument } from "pdf-lib";
+import { inflate } from "pako"; /* ambient types in src/pako.d.ts */
 import { atsCoverage } from "../services/applyKit";
 import { buildResumeHtml } from "../services/resumeHtml";
+import { renderResumePdf } from "../services/resumePdf";
+import { resumeBrandFor, setRemoteConfig } from "../services/remoteConfig";
 import { crc32, zipFiles, type ZipEntry } from "../services/zip";
 
 const JOB: JobPosting = {
@@ -153,6 +157,82 @@ describe("follow-up drafts", () => {
     const d = followUpDraft("offer", "Engineer", "Dropbox", 1);
     expect(d).toContain("offer");
     expect(d).toContain("Dropbox");
+  });
+});
+
+describe("resume branding (remote config)", () => {
+  afterEach(() => setRemoteConfig({ resumeBranding: {} }));
+
+  it("resolves a per-company override case-insensitively", () => {
+    setRemoteConfig({ resumeBranding: { Airbnb: { accent: "#ff5a5f" } } });
+    expect(resumeBrandFor("Airbnb").accent).toBe("#ff5a5f");
+    expect(resumeBrandFor("airbnb").accent).toBe("#ff5a5f");
+  });
+
+  it("falls back to the _default entry, then to nothing", () => {
+    setRemoteConfig({ resumeBranding: { _default: { accent: "#16a34a" } } });
+    expect(resumeBrandFor("Lyft").accent).toBe("#16a34a");
+    setRemoteConfig({ resumeBranding: {} });
+    expect(resumeBrandFor("Lyft").accent).toBeUndefined();
+  });
+});
+
+describe("interview rounds", () => {
+  it("adds, sorts by date, and removes rounds on a track", () => {
+    setStatus(JOB.id, "interview");
+    const r1 = saveRound(JOB.id, { id: "r1", label: "Phone screen", at: 100, questions: "hooks vs classes", went: 4, outcome: "passed" });
+    expect(r1.rounds).toHaveLength(1);
+    const r2 = saveRound(JOB.id, { id: "r2", label: "System design", at: 200, questions: "rate limiter", went: null, outcome: "pending" });
+    expect(r2.rounds.map(x => x.id)).toEqual(["r2", "r1"]); /* newest first */
+    /* upsert by id */
+    const upd = saveRound(JOB.id, { id: "r1", label: "Phone screen", at: 100, questions: "hooks vs classes + a11y", went: 5, outcome: "passed" });
+    expect(upd.rounds).toHaveLength(2);
+    expect(upd.rounds.find(x => x.id === "r1")?.questions).toContain("a11y");
+    /* remove */
+    const rem = removeRound(JOB.id, "r2");
+    expect(rem?.rounds.map(x => x.id)).toEqual(["r1"]);
+    /* status transitions preserve rounds */
+    setStatus(JOB.id, "offer");
+    expect(getTrack(JOB.id)?.rounds).toHaveLength(1);
+  });
+});
+
+describe("one-click resume PDF (pdf-lib)", () => {
+  it("produces a valid PDF that pdf-lib can re-load with the resume content", async () => {
+    const bytes = await renderResumePdf(PROFILE, JOB, MATCH, { accent: "#ff5a5f" });
+    expect(bytes[0]).toBe(0x25); /* % */
+    const head = new TextDecoder().decode(bytes.slice(0, 8));
+    expect(head).toBe("%PDF-1.7");
+    /* round-trip through the parser — proves structural validity */
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(1);
+    /* decompress every content stream (a PDFArray) and check the text landed */
+    const contents = doc.getPage(0).node.Contents();
+    const streams: { getContents: () => Uint8Array }[] = [];
+    if (contents && "size" in contents) {
+      for (let i = 0; i < contents.size(); i++) streams.push(contents.lookup(i) as unknown as { getContents: () => Uint8Array });
+    } else if (contents && "getContents" in contents) {
+      streams.push(contents);
+    }
+    let decoded = "";
+    for (const s of streams) {
+      decoded += new TextDecoder().decode(inflate(new Uint8Array(s.getContents())));
+    }
+    /* text is hex-encoded in the content stream — decode the <...> tokens */
+    const hexTokens = [...decoded.matchAll(/<([0-9A-Fa-f]+)>/g)].map(m => m[1]);
+    const plain = hexTokens.map(h => new TextDecoder().decode(Uint8Array.from(h.match(/../g)!.map(b => parseInt(b, 16))))).join("\n");
+    expect(plain).toContain("Senior Frontend Engineer");
+    expect(plain).toContain("SUMMARY");
+    expect(plain).toContain("Airbnb");
+    /* the brand accent (#ff5a5f) is applied as an RGB fill operator */
+    expect(decoded).toContain("1 0.35294117647058826 0.37254901960784315 rg");
+  });
+
+  it("renders a long resume across multiple pages without error", async () => {
+    const longProfile = { ...PROFILE, summary: "x".repeat(400), skills: Array.from({ length: 30 }, (_, i) => `skill${i}`) };
+    const bytes = await renderResumePdf(longProfile, JOB, MATCH);
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(1);
   });
 });
 

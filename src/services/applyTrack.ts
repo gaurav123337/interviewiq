@@ -7,6 +7,19 @@ import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 
 export type ApplyStatus = "saved" | "applied" | "interview" | "offer" | "rejected";
 
+/** One interview round for a tracked application — a per-round checklist. */
+export interface InterviewRound {
+  id: string;
+  label: string;
+  /** Epoch ms the round happened (or is scheduled). */
+  at: number;
+  /** What was asked / what to review before the next round. */
+  questions: string;
+  /** How it went (1-5). */
+  went: number | null;
+  outcome: "pending" | "passed" | "failed";
+}
+
 export interface ApplyTrack {
   jobId: string;
   status: ApplyStatus;
@@ -17,6 +30,8 @@ export interface ApplyTrack {
   /** True once a due follow-up has been surfaced, to avoid re-notifying. */
   followUpNotified: boolean;
   notes: string;
+  /** Interview rounds for this application (empty unless status is interview). */
+  rounds: InterviewRound[];
   updatedAt: number;
 }
 
@@ -59,6 +74,7 @@ export function setStatus(jobId: string, status: ApplyStatus): ApplyTrack {
     followUpAt: prev?.followUpAt ?? null,
     followUpNotified: prev?.followUpNotified ?? false,
     notes: prev?.notes ?? "",
+    rounds: prev?.rounds ?? [],
     updatedAt: Date.now()
   };
   saveTrack(t);
@@ -74,8 +90,39 @@ export function setFollowUp(jobId: string, followUpAt: number | null): ApplyTrac
     followUpAt,
     followUpNotified: false,
     notes: prev?.notes ?? "",
+    rounds: prev?.rounds ?? [],
     updatedAt: Date.now()
   };
+  saveTrack(t);
+  return t;
+}
+
+/** Upsert one interview round (by id) on a job's track. Pure + testable. */
+export function saveRound(jobId: string, round: InterviewRound): ApplyTrack {
+  const prev = getTrack(jobId);
+  const rounds = [...(prev?.rounds ?? [])];
+  const idx = rounds.findIndex(r => r.id === round.id);
+  if (idx >= 0) rounds[idx] = round;
+  else rounds.push(round);
+  rounds.sort((a, b) => b.at - a.at);
+  const t: ApplyTrack = {
+    jobId,
+    status: prev?.status ?? "saved",
+    appliedAt: prev?.appliedAt ?? null,
+    followUpAt: prev?.followUpAt ?? null,
+    followUpNotified: prev?.followUpNotified ?? false,
+    notes: prev?.notes ?? "",
+    rounds,
+    updatedAt: Date.now()
+  };
+  saveTrack(t);
+  return t;
+}
+
+export function removeRound(jobId: string, roundId: string): ApplyTrack | null {
+  const prev = getTrack(jobId);
+  if (!prev) return null;
+  const t: ApplyTrack = { ...prev, rounds: prev.rounds.filter(r => r.id !== roundId), updatedAt: Date.now() };
   saveTrack(t);
   return t;
 }

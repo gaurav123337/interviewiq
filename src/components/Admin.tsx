@@ -2131,6 +2131,25 @@ function saveFreqAudit(a: FreqAuditEntry[]): void {
   localStorage.setItem(FREQ_AUDIT_KEY, JSON.stringify(a));
 }
 
+/** Parse the resume-branding JSON editor, dropping malformed entries. */
+function parseBrandJson(json: string): Record<string, { accent?: string; fontFamily?: string }> {
+  try {
+    const v = JSON.parse(json || "{}");
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return {};
+    const out: Record<string, { accent?: string; fontFamily?: string }> = {};
+    for (const [k, entry] of Object.entries(v)) {
+      const e = entry as { accent?: unknown; fontFamily?: unknown };
+      out[k] = {
+        accent: typeof e.accent === "string" && /^#[0-9a-fA-F]{3,6}$/.test(e.accent) ? e.accent : undefined,
+        fontFamily: typeof e.fontFamily === "string" ? e.fontFamily : undefined
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function ConfigSection({ config, setConfig, busy, setBusy }: {
   config: RemoteConfig; setConfig: (c: RemoteConfig) => void; busy: boolean; setBusy: (b: boolean) => void;
 }) {
@@ -2146,6 +2165,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setConfig({ ...config, rag: { ...config.rag, digest: { ...config.rag?.digest, [k]: v } } });
   /* coach vocabulary JSON editor (families + misconceptions) */
   const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
+  /* resume branding (Apply Kit): per-company accent + font for the designed one-pager */
+  const [brandJson, setBrandJson] = useState<string>(() => JSON.stringify(config.resumeBranding ?? {}, null, 2));
   /* job feed (Apply Kit): auto-refresh interval + ATS sources */
   const [jobsHours, setJobsHours] = useState<number>(() => config.jobs?.refreshHours ?? 24);
   const [jobsSources, setJobsSources] = useState<string>(() =>
@@ -2182,6 +2203,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
       await saveRemoteConfig({
         features: config.features, ai: config.ai, limits: config.limits,
         companyFreq: config.companyFreq ?? {}, coachVocab: config.coachVocab, rag: config.rag,
+        resumeBranding: parseBrandJson(brandJson),
         jobs: {
           refreshHours: Math.max(1, Math.round(jobsHours) || 24),
           sources: jobsSources.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => {
@@ -2257,6 +2279,19 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           <NumField label="Free sessions / month" value={config.limits.sessionsPerMonth ?? 3} onChange={v => setLimit("sessionsPerMonth", v)} />
           <NumField label="Free AI calls / day" value={config.limits.aiPerDay ?? 5} onChange={v => setLimit("aiPerDay", v)} />
         </div>
+      </div>
+
+      <div className={`${cardCls} p-5`}>
+        <h2 className="mb-1 text-[16px] font-extrabold">🎨 Resume branding (Apply Kit)</h2>
+        <p className="mb-3 text-[12.5px] text-mut">Brand the designed resume PDF per company — <code>accent</code> (hex color) and optional <code>fontFamily</code>. Keyed by company name; a <code>_default</code> entry covers the rest. JSON, one company per key.</p>
+        <textarea
+          value={brandJson}
+          onChange={e => setBrandJson(e.target.value)}
+          rows={6}
+          placeholder={'{\n  "_default": { "accent": "#4f46e5" },\n  "Airbnb": { "accent": "#ff5a5f" }\n}'}
+          className="inp w-full font-mono text-[12px]"
+        />
+        <p className="mt-2 text-[11.5px] text-mut">Clients pick this up on their next sync — the resume's PDF + print buttons apply it instantly, no deploy.</p>
       </div>
 
       <div className={`${cardCls} p-5`}>
