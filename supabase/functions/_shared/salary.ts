@@ -89,7 +89,32 @@ const adzuna: EnrichmentProvider = {
   }
 };
 
-const PROVIDERS: Record<string, EnrichmentProvider> = { adzuna };
+/** Adzuna Jobsworth adapter — the salary predictor endpoint. Takes a title +
+    description and returns ONE predicted annual salary (no search hit needed),
+    so it can enrich roles that never appear in current postings. Same free
+    keys as the search adapter — no new account. */
+const adzunaJobsworth: EnrichmentProvider = {
+  id: "adzuna-jobsworth",
+  label: "Adzuna Jobsworth (title-based prediction)",
+  async fetch(job, opts) {
+    const appId = opts.appId;
+    const appKey = opts.appKey;
+    if (!appId || !appKey) return null;
+    const country = opts.country ?? "us";
+    const title = encodeURIComponent(job.title.slice(0, 80));
+    /* keywords from the description (first 400 chars, alphanumeric tokens) */
+    const desc = encodeURIComponent(job.description.slice(0, 400).replace(/[^a-zA-Z0-9 ]+/g, " ").trim());
+    const url = `https://api.adzuna.com/v1/api/jobs/${country}/jobsworth?app_id=${appId}&app_key=${appKey}&title=${title}&description=${desc}&content-type=application/json`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    const salary = (data as { salary?: number })?.salary;
+    if (typeof salary !== "number" || !salary || salary < 1000) return null;
+    return { min: Math.round(salary), max: Math.round(salary), currency: "USD" };
+  }
+};
+
+const PROVIDERS: Record<string, EnrichmentProvider> = { adzuna, "adzuna-jobsworth": adzunaJobsworth };
 
 /** Enrich a job with a provider band, or null when no provider is configured /
     has data. Pure-ish (fetch is the only side effect) and testable with a

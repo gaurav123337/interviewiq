@@ -9,6 +9,7 @@ import { setStatus, saveRound } from "../services/applyTrack";
 import { addToBank, listBank, practiceDeck, weakestBankEntries } from "../services/questionBank";
 import { salaryLabel } from "../services/jobs";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../../supabase/functions/_shared/salary";
+import { composeDigest, type Track } from "../../supabase/functions/_shared/applyDigest";
 
 const JOB: JobPosting = {
   id: "greenhouse:1",
@@ -78,6 +79,20 @@ describe("salary enrichment (shared edge module)", () => {
     const band = await enrichSalary("adzuna", { appId: "a", appKey: "k" }, { title: "Eng", company: "Acme", location: "", description: "" });
     expect(band).toBeNull();
   });
+
+  it("adzuna-jobsworth predicts a single salary from title + description", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ "__CLASS__": "Adzuna::API::Response::Jobsworth", salary: 31073 }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const band = await enrichSalary("adzuna-jobsworth", { appId: "a", appKey: "k", country: "gb" }, { title: "Javascript developer", company: "Acme", location: "", description: "Backbone HTML5 CSS3" });
+    expect(band).toEqual({ min: 31073, max: 31073, currency: "USD", source: "estimate" });
+  });
+
+  it("adzuna-jobsworth stays silent without keys or implausible predictions", async () => {
+    expect(await enrichSalary("adzuna-jobsworth", { appId: "", appKey: "" }, { title: "x", company: "y", location: "", description: "" })).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ salary: 500 }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    expect(await enrichSalary("adzuna-jobsworth", { appId: "a", appKey: "k" }, { title: "x", company: "y", location: "", description: "" })).toBeNull();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not json", { status: 200 })));
+    expect(await enrichSalary("adzuna-jobsworth", { appId: "a", appKey: "k" }, { title: "x", company: "y", location: "", description: "" })).toBeNull();
+  });
 });
 
 describe("estimate salary labels", () => {
@@ -120,5 +135,37 @@ describe("bank-driven practice", () => {
   it("keeps the honest SalaryBand shape for DB round-trips", () => {
     const band: SalaryBand = { min: 1, max: 2, currency: "USD", source: "posting" };
     expect(JSON.parse(JSON.stringify(band))).toEqual({ min: 1, max: 2, currency: "USD", source: "posting" });
+  });
+});
+
+describe("weekly cron digest composer (server-side)", () => {
+  const NOW = new Date("2026-08-13T09:00:00Z").getTime();
+  const track = (jobId: string, status: Track["status"], appliedAt: number | null, followUpAt: number | null = null): Track =>
+    ({ jobId, status, appliedAt, followUpAt });
+
+  it("returns null with no tracked jobs (nothing to email)", () => {
+    expect(composeDigest([], NOW)).toBeNull();
+  });
+
+  it("matches the client report numbers: portfolio, weekly, response rate", () => {
+    const d = composeDigest([
+      track("j1", "applied", NOW - 86_400_000),
+      track("j2", "interview", NOW - 2 * 86_400_000),
+      track("j3", "offer", NOW - 60 * 86_400_000) /* outside the report window (mirrors the client's 49d cutoff) */
+    ], NOW)!;
+    expect(d).toContain("Portfolio: 3 tracked · 1 applied · 1 interviewing · 1 offers · 0 rejected");
+    expect(d).toContain("This week: 2 applied, 1 interviews, 0 offers · response rate 50%");
+  });
+
+  it("lists due follow-ups and interview-stage reminders", () => {
+    const d = composeDigest([
+      track("j1", "applied", NOW - 86_400_000, NOW - 3_600_000),
+      track("j2", "interview", NOW - 2 * 86_400_000),
+      track("j3", "offer", NOW - 60 * 86_400_000, NOW - 3_600_000) /* offer: excluded from due list */
+    ], NOW)!;
+    expect(d).toContain("Follow-up due now (1):");
+    expect(d).toContain("  - j1");
+    expect(d).not.toContain("  - j3");
+    expect(d).toContain("1 application is in the interview stage");
   });
 });

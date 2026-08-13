@@ -2243,7 +2243,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             return { provider: provider.trim(), board: rest.join(":").trim() };
           }),
           salaryEnrichment: {
-            provider: enrProvider === "none" ? "none" : (enrProvider as "adzuna"),
+            provider: enrProvider === "none" ? "none" : (enrProvider as "adzuna" | "adzuna-jobsworth"),
             country: enrCountry || "us",
             cap: Math.max(1, Math.min(200, enrCap || 30))
           }
@@ -2412,7 +2412,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
               <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Salary enrichment</span>
               <select className="inp w-auto cursor-pointer" value={enrProvider} onChange={e => setEnrProvider(e.target.value)}>
                 <option value="none">Off — only explicit posting ranges</option>
-                <option value="adzuna">Adzuna (free tier)</option>
+                <option value="adzuna">Adzuna search (posting data)</option>
+                <option value="adzuna-jobsworth">Adzuna Jobsworth (title prediction)</option>
               </select>
             </label>
             <label className="block">

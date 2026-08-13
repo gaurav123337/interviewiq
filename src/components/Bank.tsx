@@ -1,13 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { FIELDS, LEVELS, levelById } from "../data";
 import type { LevelId } from "../types";
 import { bankItems } from "../engine";
 import { useApp } from "../store";
 import { listBank, practiceDeck, removeFromBank, weakestBankEntries, type BankEntry } from "../services/questionBank";
-import { practiceForRound, type DrillCard } from "../services/drill";
+import { getSrs, learnedCount, practiceForRound, rate, type DrillCard, type Rating } from "../services/drill";
 import { toast } from "../toast";
-import { btnPrimary, btnSoft, btnSm, cardCls, Chip, KpNeutral } from "./ui";
+import { btnGhost, btnPrimary, btnSoft, btnSm, cardCls, Chip, KpNeutral } from "./ui";
+
+/* per-card thinking time in the timed session */
+const THINK_SECONDS = 45;
 
 export function Bank() {
   const { state, practice } = useApp();
@@ -17,20 +20,74 @@ export function Bank() {
   /* personal bank (Apply Kit) — questions collected from your interview rounds */
   const [bank, setBank] = useState<BankEntry[]>(() => listBank());
   const [weakOnly, setWeakOnly] = useState(false);
+  /* timed practice session state */
   const [deck, setDeck] = useState<DrillCard[] | null>(null);
-  const [flipped, setFlipped] = useState<Record<string, boolean>>({});
+  const [idx, setIdx] = useState(0);
+  const [flipped, setFlipped] = useState(false);
+  const [secondsLeft, setSecondsLeft] = useState(THINK_SECONDS);
+  const [score, setScore] = useState(0);
+  const [rated, setRated] = useState(0);
+  const [learned, setLearned] = useState(learnedCount(getSrs()));
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { field, items } = useMemo(() => bankItems(fieldSel, q), [fieldSel, q]);
   const shown = lvlSel === "all" ? items : items.filter(i => i.lvl === lvlSel);
   const bankShown = useMemo(() => (weakOnly ? weakestBankEntries() : listBank()), [weakOnly, bank]);
   const weakCount = useMemo(() => weakestBankEntries().length, [bank]);
 
+  /* countdown: runs while a card is showing face-down; hits 0 → auto-reveal */
+  useEffect(() => {
+    if (!deck || deck.length === 0) return;
+    if (flipped) { if (timer.current) { clearInterval(timer.current); timer.current = null; } return; }
+    setSecondsLeft(THINK_SECONDS);
+    timer.current = setInterval(() => {
+      setSecondsLeft(s => {
+        if (s <= 1) {
+          if (timer.current) { clearInterval(timer.current); timer.current = null; }
+          setFlipped(true);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+    return () => { if (timer.current) { clearInterval(timer.current); timer.current = null; } };
+  }, [deck, idx, flipped]);
+
   const startDeck = (opts: { weakest?: boolean }) => {
     const cards = practiceDeck(fieldSel, lvlSel, { weakest: opts.weakest, count: 10 });
     if (!cards.length) { toast(opts.weakest ? "No weak-topic cards yet — mark a round failed or ⭐⭐ and it'll land here." : "Add questions to your bank first — save an interview round with notes."); return; }
-    setDeck(cards);
-    setFlipped({});
+    beginSession(cards);
   };
+
+  const beginSession = (cards: DrillCard[]) => {
+    setDeck(cards);
+    setIdx(0);
+    setFlipped(false);
+    setScore(0);
+    setRated(0);
+    setSecondsLeft(THINK_SECONDS);
+    setLearned(learnedCount(getSrs()));
+  };
+
+  /* SRS rating — same ladder as Drill mode; again keeps the card in-session */
+  const rateCard = (r: Rating) => {
+    if (!deck) return;
+    const card = deck[idx];
+    rate(card.q, r);
+    const pts = r === "easy" ? 1 : r === "good" ? 0.8 : r === "hard" ? 0.5 : 0;
+    setScore(s => s + pts);
+    setRated(n => n + 1);
+    if (r === "again") {
+      setDeck(d => (d ? [...d.slice(1), d[0]] : d));
+    } else {
+      setDeck(d => (d ? d.slice(0, idx).concat(d.slice(idx + 1)) : d));
+      setLearned(learnedCount(getSrs()));
+    }
+    setIdx(0);
+    setFlipped(false);
+  };
+
+  const card = deck && deck.length > 0 ? deck[Math.min(idx, deck.length - 1)] : null;
 
   return (
     <div className="anim-view">
@@ -92,31 +149,75 @@ export function Bank() {
             Weakest only — from rounds marked failed or ⭐⭐ or lower
           </label>
 
-          {deck && (
+          {/* timed session */}
+          {deck && card && (
             <div className="mb-4 rounded-xl border border-ok/25 bg-ok/5 p-4">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[13px] font-extrabold text-ok">🎯 Practice deck — {deck.length} cards{weakOnly ? " (weakest topics)" : " from your bank"}</p>
-                <button className="text-[11.5px] font-bold text-mut hover:text-ink" onClick={() => setDeck(null)}>✕ Close</button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[13px] font-extrabold text-ok">⚡ Timed session{weakOnly ? " — weakest topics" : " — from your bank"}</p>
+                <div className="flex items-center gap-3 text-[11.5px] font-bold text-mut">
+                  <span>Card {Math.min(idx + 1, deck.length)} of {deck.length}</span>
+                  <span>{rated} rated · score {deck.length ? Math.round((score / deck.length) * 100) : 0}%</span>
+                  <span>{learned} learned</span>
+                  <button className="font-bold text-mut hover:text-ink" onClick={() => setDeck(null)}>✕ End</button>
+                </div>
               </div>
-              <p className="mt-0.5 text-[11.5px] text-fnt">Matched against the {field?.name ?? fieldSel} bank by the keywords in your recorded questions.</p>
-              <div className="mt-3 space-y-2">
-                {deck.map(c => {
-                  const show = flipped[c.q];
-                  return (
-                    <div key={c.q} className="rounded-xl border border-line/15 bg-deep/30 p-3">
-                      <button className="w-full text-left" onClick={() => setFlipped(f => ({ ...f, [c.q]: !f[c.q] }))}>
-                        <span className="text-[12.5px] font-bold text-ink">{c.q}</span>
-                        {show && (
-                          <span className="mt-1.5 block whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">
-                            <span className="font-bold text-ok">Answer:</span> {c.a}
-                            {c.kp?.length ? <span className="mt-1 block text-[11px] text-mut">Key points: {c.kp.join(" · ")}</span> : null}
-                          </span>
-                        )}
-                      </button>
-                      <p className="mt-1 text-[10.5px] font-bold uppercase tracking-wider text-mut">{show ? "Tap question to hide" : "Tap to reveal the answer"}</p>
+              <p className="mt-0.5 text-[11.5px] text-fnt">Matched against the {field?.name ?? fieldSel} bank by the keywords in your recorded questions. Think it through before the timer hits zero — answers feed the same spaced-repetition schedule as Drill mode.</p>
+
+              {/* flashcard + countdown */}
+              <button
+                type="button"
+                onClick={() => { setFlipped(f => !f); if (timer.current) { clearInterval(timer.current); timer.current = null; } }}
+                className="mt-3 block w-full min-h-[200px] rounded-xl border border-line/15 bg-deep/40 p-5 text-left transition-transform hover:-translate-y-0.5"
+              >
+                {!flipped ? (
+                  <>
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <Chip tone="lvl">{levelById(card.lvl).icon} {levelById(card.lvl).name}</Chip>
+                      <Chip tone={secondsLeft <= 10 ? "bad" : "default"}>{secondsLeft}s to answer</Chip>
+                      <Chip>Tap to reveal</Chip>
                     </div>
-                  );
-                })}
+                    <p className="text-[16px] font-bold leading-[1.5] tracking-tight">{card.q}</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      <Chip tone="cat">Model answer</Chip>
+                      <Chip tone="ok">Key points</Chip>
+                    </div>
+                    <p className="whitespace-pre-wrap text-[13.5px] leading-[1.7] text-ink">{card.a}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {(card.kp || []).map(k => <KpNeutral key={k}>{k}</KpNeutral>)}
+                    </div>
+                  </>
+                )}
+              </button>
+
+              <div className="mt-3 flex flex-wrap justify-center gap-2.5">
+                {!flipped ? (
+                  <button className={btnGhost} onClick={() => { setFlipped(true); if (timer.current) { clearInterval(timer.current); timer.current = null; } }}>👁 Reveal answer</button>
+                ) : (
+                  <>
+                    <button className={btnGhost + btnSm} onClick={() => rateCard("again")} title="Review again soon">🔄 Again</button>
+                    <button className={btnGhost + btnSm} onClick={() => rateCard("hard")} title="Review again tomorrow">😓 Hard</button>
+                    <button className={btnSoft + btnSm} onClick={() => rateCard("good")} title="Review again in 3 days">🙂 Good</button>
+                    <button className={btnPrimary + btnSm} onClick={() => rateCard("easy")} title="Review again in a week">✅ Easy</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* session complete */}
+          {deck && !card && (
+            <div className="mb-4 rounded-xl border border-ok/25 bg-ok/5 p-6 text-center">
+              <div className="text-[32px]">🎉</div>
+              <p className="mt-1 text-[15px] font-extrabold text-ok">Session complete!</p>
+              <p className="mt-1 text-[12.5px] text-mut">
+                {rated} cards rated · score <span className="font-extrabold text-ink">{rated ? Math.round((score / rated) * 100) : 0}%</span> · {learned} total learned
+              </p>
+              <div className="mt-3 flex justify-center gap-2">
+                <button className={btnPrimary + btnSm} onClick={() => startDeck({ weakest: weakOnly })}>🔁 New session</button>
+                <button className={btnGhost + btnSm} onClick={() => setDeck(null)}>Done</button>
               </div>
             </div>
           )}
@@ -140,9 +241,9 @@ export function Bank() {
                   <div className="mt-2 flex gap-3">
                     <button
                       className="text-[11.5px] font-bold text-ok hover:underline"
-                      onClick={() => { const c = practiceForRound(b.question, fieldSel, 4).filter(x => lvlSel === "all" || x.lvl === lvlSel); if (!c.length) { toast("No cards matched that question — try another field"); return; } setDeck(c); setFlipped({}); }}
+                      onClick={() => { const c = practiceForRound(b.question, fieldSel, 4).filter(x => lvlSel === "all" || x.lvl === lvlSel); if (!c.length) { toast("No cards matched that question — try another field"); return; } beginSession(c); }}
                     >
-                      🎯 Practice
+                      ⚡ Practice
                     </button>
                     <button className="text-[11.5px] font-bold text-bad hover:underline" onClick={() => { removeFromBank(b.id); setBank(listBank()); toast("🗑️ Removed from bank"); }}>
                       Remove
@@ -157,8 +258,8 @@ export function Bank() {
 
       {shown.length ? (
         <div className="space-y-3">
-          {shown.map((i, idx) => (
-            <details key={idx} className={`${cardCls} group px-5 py-4`}>
+          {shown.map((i, idx2) => (
+            <details key={idx2} className={`${cardCls} group px-5 py-4`}>
               <summary className="flex cursor-pointer list-none items-center gap-2.5">
                 <Chip tone="lvl">{levelById(i.lvl).icon} {levelById(i.lvl).name}</Chip>
                 <span className="min-w-[140px] flex-1 text-[14.5px] font-bold leading-snug">{i.q}</span>
