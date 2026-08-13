@@ -9,6 +9,7 @@
    the feed. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
 
 /* default ATS sources — verified live; admins can override via app_config */
 const DEFAULT_SOURCES = [
@@ -94,39 +95,14 @@ function guessLevel(title: string): string | null {
 
 const isRemoteText = (s: string): boolean => /remote|hybrid/.test((s ?? "").toLowerCase());
 
-/* Salary extraction — parses explicit ranges like "$120k–$150k", "₹15-25 LPA",
-   "£60,000" etc. into a normalized { min, max, currency } or null. Conservative:
-   no match → null, so filters never show fabricated bands. */
-function extractSalary(text: string): { min: number; max: number; currency: string } | null {
-  const t = (text ?? "").toLowerCase();
-  const m = t.match(/([$£€₹])\s*(\d{2,3}(?:[k,]\d{2}|\d{3})?)\s*[-–to]+\s*([$£€₹]?)\s*(\d{2,3}(?:[k,]\d{2}|\d{3})?)\s*(k|k\b|lpa|lakh|cr|\/yr|\/year|per year|annum)?/);
-  if (!m) return null;
-  const num = (raw: string): number => {
-    const n = raw.replace(/[^0-9.]/g, "");
-    return parseFloat(n);
-  };
-  let min = num(m[2]);
-  let max = num(m[4]);
-  const scale = m[5] ?? "";
-  /* k suffix → thousands; LPA/lakh → 100k INR; cr → 10M INR; plain digits = annual */
-  if (/k\b|k$/.test(scale) || m[2].toLowerCase().endsWith("k")) { min *= 1000; max *= 1000; }
-  else if (/lpa|lakh/.test(scale)) { min *= 100000; max *= 100000; }
-  else if (/cr/.test(scale)) { min *= 10000000; max *= 10000000; }
-  if (!min || !max || max < min) return null;
-  const currency = m[1] === "£" ? "GBP" : m[1] === "€" ? "EUR" : m[1] === "₹" ? "INR" : "USD";
-  return { min: Math.round(min), max: Math.round(max), currency };
-}
-
-/* Company size — explicit "N+ employees/people" mentions only (rare in ATS
-   postings, but when present it powers the client filter honestly). */
-function extractCompanySize(text: string): string | null {
-  const t = (text ?? "").toLowerCase();
-  const m = t.match(/(\d{2,4}[,.]?\d{0,3})\s*\+?\s*(employees?|people|teammates?|staff)\b/);
-  if (!m) return null;
-  const n = parseFloat(m[1].replace(/[^0-9]/g, ""));
-  if (n >= 1000) return "large";
-  if (n >= 50) return "mid";
-  return "small";
+/* Enrichment config — read from app_config (admin-published), absent = off.
+   Provider keys stay in function secrets; only the provider + country ship
+   in config. */
+interface EnrichConfig {
+  provider?: string;
+  country?: string;
+  /** max jobs to enrich per refresh — provider APIs are rate-limited */
+  cap?: number;
 }
 
 async function fetchGreenhouse(board: string): Promise<{ company: string; jobs: unknown[] }> {
@@ -216,7 +192,7 @@ async function fetchLever(org: string): Promise<{ company: string; jobs: unknown
   return { company: org, jobs };
 }
 
-async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { provider: string; board: string }[]): Promise<{ added: number; updated: number; total: number; perSource: Record<string, number>; errors: Record<string, string> }> {
+async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { provider: string; board: string }[], enrich: EnrichConfig): Promise<{ added: number; updated: number; total: number; perSource: Record<string, number>; errors: Record<string, string> }> {
   let added = 0;
   let updated = 0;
   let total = 0;
@@ -240,10 +216,24 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
         url: String(j.url ?? ""),
         skills: (j.skills as string[]) ?? [],
         level: (j.level as string) ?? null,
-        salary: (j.salary as { min: number; max: number; currency: string } | null) ?? null,
+        salary: (j.salary as SalaryBand | null) ?? null,
         company_size: (j.companySize as string | null) ?? null,
         posted_at: j.postedAt ? new Date(String(j.postedAt)).toISOString() : null
       }));
+      /* compensation enrichment — only fills jobs the posting didn't price
+         (honest: never overwrites an explicit range), capped per refresh */
+      if (enrich.provider) {
+        let done = 0;
+        for (const row of rows) {
+          if (done >= (enrich.cap ?? 30) || row.salary) continue;
+          const band = await enrichSalary(enrich.provider, {
+            appId: Deno.env.get("ADZUNA_APP_ID") ?? "",
+            appKey: Deno.env.get("ADZUNA_APP_KEY") ?? "",
+            country: enrich.country ?? "us"
+          }, { title: row.title, company: row.company, location: row.location ?? "", description: row.description });
+          if (band) { row.salary = band; done++; }
+        }
+      }
       /* PostgREST upsert count = ALL affected rows, so measure new vs existing
          with a lightweight existence check to report honest added/updated */
       const { data: existingRows } = await supabase.from("jobs").select("external_id").eq("source", src.provider);
@@ -265,10 +255,15 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
   return { added, updated, total, perSource, errors };
 }
 
-async function getSources(admin: ReturnType<typeof createClient>): Promise<{ provider: string; board: string }[]> {
-  const { data } = await admin.from("app_config").select("value").eq("key", "job_sources").maybeSingle();
-  const v = data?.value as { provider: string; board: string }[] | undefined;
-  return (v && Array.isArray(v) && v.length ? v : DEFAULT_SOURCES);
+async function getConfig(admin: ReturnType<typeof createClient>): Promise<{ sources: { provider: string; board: string }[]; enrich: EnrichConfig }> {
+  const { data: srcRow } = await admin.from("app_config").select("value").eq("key", "job_sources").maybeSingle();
+  const v = srcRow?.value as { provider: string; board: string }[] | undefined;
+  const { data: enRow } = await admin.from("app_config").select("value").eq("key", "job_salary_enrichment").maybeSingle();
+  const en = (enRow?.value ?? {}) as EnrichConfig;
+  return {
+    sources: (v && Array.isArray(v) && v.length ? v : DEFAULT_SOURCES),
+    enrich: { provider: en.provider, country: en.country, cap: en.cap }
+  };
 }
 
 const cors = (req: Request): Record<string, string> => ({
@@ -282,8 +277,8 @@ async function handle(req: Request): Promise<Response> {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY");
   if (!serviceKey) return new Response(JSON.stringify({ error: "service role key not configured" }), { status: 500, headers });
   const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
-  const sources = await getSources(admin);
-  const result = await refreshAll(admin, sources);
+  const { sources, enrich } = await getConfig(admin);
+  const result = await refreshAll(admin, sources, enrich);
   return new Response(JSON.stringify({ ok: true, ...result }), { status: 200, headers });
 }
 

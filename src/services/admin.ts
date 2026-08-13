@@ -193,6 +193,18 @@ export async function saveRemoteConfig(patch: Partial<RemoteConfig>): Promise<vo
   await refreshAdminData();
 }
 
+/** Job salary enrichment — separate app_config row so jobs-fetch can read it
+    server-side (the RemoteConfig "jobs" row is client-cached only). */
+export async function saveJobSalaryEnrichment(cfg: { provider: string; country: string; cap: number }): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("app_config").upsert(
+    { key: "job_salary_enrichment", value: cfg, updated_at: Date.now() },
+    { onConflict: "key" }
+  );
+  if (error) throw new Error(error.message);
+}
+
 export async function createAnnouncement(a: { title: string; body: string; badge?: string; published?: boolean }): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");

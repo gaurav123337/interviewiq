@@ -85,6 +85,9 @@ export interface RemoteConfig {
   jobs?: {
     refreshHours?: number;
     sources?: { provider: string; board: string }[];
+    /** Compensation enrichment — provider + country for jobs the posting
+        didn't price. Provider keys live in the edge-function secrets. */
+    salaryEnrichment?: { provider: "none" | "adzuna"; country: string; cap: number };
   };
   /** Resume branding — per-company accent color + font for the designed
       one-pager. Keyed by company name (case-insensitive); a "_default"

@@ -181,8 +181,9 @@ export interface JobPosting {
   /** Skills extracted from the description by the jobs-fetch function. */
   skills: string[];
   level: string | null;
-  /** Explicit salary band parsed from the posting (null when not stated). */
-  salary: { min: number; max: number; currency: string } | null;
+  /** Salary band — "posting" = explicit range in the posting, "estimate" =
+      provider lookup (labelled "est." in the UI, never fabricated). */
+  salary: { min: number; max: number; currency: string; source?: "posting" | "estimate" } | null;
   /** Company size tier from explicit employee counts (small/mid/large or null). */
   companySize: string | null;
   postedAt: string | null;

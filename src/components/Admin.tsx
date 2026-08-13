@@ -23,7 +23,7 @@ import {
   adminListUsers, adminMetrics, adminMissCandidates, batchDeleteQuestions, batchSetQuestionsPublished,
   createAnnouncement, createPdfDocument, createQuestion, deleteAnnouncement, deletePdfDocument,
   deleteQuestion, grantAdmin, listAdmins, listPdfChunks, listPdfDocuments, listQuestionAudit,
-  revokeAdmin, saveRemoteConfig, setAnnouncementPublished, setQuestionPublished,
+  revokeAdmin, saveJobSalaryEnrichment, saveRemoteConfig, setAnnouncementPublished, setQuestionPublished,
   updatePdfDocument, updateQuestion,
   type AdminMetrics, type AdminUserRow, type AuditEntry, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
@@ -2196,6 +2196,12 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [jobsSources, setJobsSources] = useState<string>(() =>
     (config.jobs?.sources ?? []).map(s => `${s.provider}:${s.board}`).join("\n")
   );
+  /* compensation enrichment — provider + country for jobs the posting didn't price */
+  const [enrProvider, setEnrProvider] = useState<string>(() => config.jobs?.salaryEnrichment?.provider ?? "none");
+  const [enrCountry, setEnrCountry] = useState<string>(() => config.jobs?.salaryEnrichment?.country ?? "us");
+  const [enrCap, setEnrCap] = useState<number>(() => config.jobs?.salaryEnrichment?.cap ?? 30);
+  /* apply digest email — shared secret (stored locally only, never published) */
+  const [applySecret, setApplySecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.applyEmailSecret, ""));
   /* native digest email keys — stored locally only (never published to clients) */
   const [secret, setSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailSecret, ""));
   const [key, setKey] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailKey, ""));
@@ -2235,9 +2241,19 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           sources: jobsSources.split(/\n/).map(l => l.trim()).filter(Boolean).map(l => {
             const [provider, ...rest] = l.split(":");
             return { provider: provider.trim(), board: rest.join(":").trim() };
-          })
+          }),
+          salaryEnrichment: {
+            provider: enrProvider === "none" ? "none" : (enrProvider as "adzuna"),
+            country: enrCountry || "us",
+            cap: Math.max(1, Math.min(200, enrCap || 30))
+          }
         }
       });
+      /* the enrichment row is server-read by jobs-fetch (client cache only
+         holds the RemoteConfig copy) */
+      if (enrProvider !== "none") {
+        await saveJobSalaryEnrichment({ provider: enrProvider, country: enrCountry || "us", cap: Math.max(1, Math.min(200, enrCap || 30)) });
+      }
       /* record what changed since the last publish for the weekly digest */
       const prev = audit[0]?.snapshot ?? {};
       const next = config.companyFreq ?? {};
@@ -2390,6 +2406,46 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           />
         </label>
         <p className="mt-2 text-[11.5px] text-mut">Clients refresh on mount when the feed is older than the interval. The refresh button in the app also re-ingests on demand.</p>
+        <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Salary enrichment</span>
+              <select className="inp w-auto cursor-pointer" value={enrProvider} onChange={e => setEnrProvider(e.target.value)}>
+                <option value="none">Off — only explicit posting ranges</option>
+                <option value="adzuna">Adzuna (free tier)</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Country code</span>
+              <input className="inp w-20" value={enrCountry} onChange={e => setEnrCountry(e.target.value)} placeholder="us" disabled={enrProvider === "none"} />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Max jobs / refresh</span>
+              <input type="number" min={1} max={200} className="inp w-24" value={enrCap} onChange={e => setEnrCap(Number(e.target.value) || 30)} disabled={enrProvider === "none"} />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-mut">
+            Fills salary bands only for postings that didn't state one — explicit ranges are never overwritten, and estimates show
+            as “est.” in the app. Provider keys go in the function secrets: <span className="font-mono">ADZUNA_APP_ID</span> + <span className="font-mono">ADZUNA_APP_KEY</span> (Supabase dashboard → Edge Functions → jobs-fetch → Secrets).
+          </p>
+        </div>
+        <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Apply digest email — function secret (x-apply-secret) — {storageGet(STORAGE_KEYS.applyEmailSecret, "") ? "saved in this browser" : "not set"}</span>
+            <input
+              type="password"
+              className="inp w-full font-mono"
+              value={applySecret}
+              onChange={e => { setApplySecret(e.target.value); storageSet(STORAGE_KEYS.applyEmailSecret, e.target.value); }}
+              placeholder="leave empty if the send-apply-digest function has no secret"
+            />
+          </label>
+          <p className="mt-2 text-[11px] text-mut">
+            Used by the weekly report's ✉️ Email button. The Resend key comes from the RAG digest card
+            (<span className="font-mono">x-resend-key</span>) or the function secret <span className="font-mono">RESEND_API_KEY</span> — set it in
+            Supabase dashboard → Edge Functions → send-apply-digest → Secrets.
+          </p>
+        </div>
       </div>
 
       <div className={`${cardCls} p-5`}>

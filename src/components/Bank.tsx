@@ -4,16 +4,33 @@ import { FIELDS, LEVELS, levelById } from "../data";
 import type { LevelId } from "../types";
 import { bankItems } from "../engine";
 import { useApp } from "../store";
-import { btnSoft, btnSm, cardCls, Chip, KpNeutral } from "./ui";
+import { listBank, practiceDeck, removeFromBank, weakestBankEntries, type BankEntry } from "../services/questionBank";
+import { practiceForRound, type DrillCard } from "../services/drill";
+import { toast } from "../toast";
+import { btnPrimary, btnSoft, btnSm, cardCls, Chip, KpNeutral } from "./ui";
 
 export function Bank() {
   const { state, practice } = useApp();
   const [q, setQ] = useState("");
   const [fieldSel, setFieldSel] = useState(state.ob.field ?? FIELDS[0].id);
   const [lvlSel, setLvlSel] = useState<LevelId | "all">("all");
+  /* personal bank (Apply Kit) — questions collected from your interview rounds */
+  const [bank, setBank] = useState<BankEntry[]>(() => listBank());
+  const [weakOnly, setWeakOnly] = useState(false);
+  const [deck, setDeck] = useState<DrillCard[] | null>(null);
+  const [flipped, setFlipped] = useState<Record<string, boolean>>({});
 
   const { field, items } = useMemo(() => bankItems(fieldSel, q), [fieldSel, q]);
   const shown = lvlSel === "all" ? items : items.filter(i => i.lvl === lvlSel);
+  const bankShown = useMemo(() => (weakOnly ? weakestBankEntries() : listBank()), [weakOnly, bank]);
+  const weakCount = useMemo(() => weakestBankEntries().length, [bank]);
+
+  const startDeck = (opts: { weakest?: boolean }) => {
+    const cards = practiceDeck(fieldSel, lvlSel, { weakest: opts.weakest, count: 10 });
+    if (!cards.length) { toast(opts.weakest ? "No weak-topic cards yet — mark a round failed or ⭐⭐ and it'll land here." : "Add questions to your bank first — save an interview round with notes."); return; }
+    setDeck(cards);
+    setFlipped({});
+  };
 
   return (
     <div className="anim-view">
@@ -54,6 +71,89 @@ export function Bank() {
       {shown.length > 0 && (
         <div className="mb-3 mt-4"><Chip>{shown.length} question{shown.length === 1 ? "" : "s"} · {field?.name ?? ""}</Chip></div>
       )}
+
+      {/* personal bank — questions you recorded from real interview rounds */}
+      <div className={`${cardCls} mt-6 overflow-hidden`}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 p-5">
+          <div>
+            <h2 className="text-[16px] font-extrabold">📚 My question bank ({bank.length})</h2>
+            <p className="mt-0.5 text-[12px] text-mut">Every question you record in an interview round (Jobs → Rounds) lands here — practice the ones you struggled with, or drill everything.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button className={btnSoft + btnSm} disabled={!bank.length} onClick={() => startDeck({})}>🎯 Practice all</button>
+            <button className={btnPrimary + btnSm} disabled={!weakCount} onClick={() => startDeck({ weakest: true })} title={`${weakCount} question${weakCount === 1 ? "" : "s"} from failed/⭐⭐ rounds`}>
+              🎯 Practice weakest{weakCount > 0 ? ` (${weakCount})` : ""}
+            </button>
+          </div>
+        </div>
+        <div className="p-5">
+          <label className="mb-3 inline-flex cursor-pointer items-center gap-2 text-[12.5px] font-bold">
+            <input type="checkbox" className="h-4 w-4 accent-[#6366f1]" checked={weakOnly} onChange={e => setWeakOnly(e.target.checked)} />
+            Weakest only — from rounds marked failed or ⭐⭐ or lower
+          </label>
+
+          {deck && (
+            <div className="mb-4 rounded-xl border border-ok/25 bg-ok/5 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[13px] font-extrabold text-ok">🎯 Practice deck — {deck.length} cards{weakOnly ? " (weakest topics)" : " from your bank"}</p>
+                <button className="text-[11.5px] font-bold text-mut hover:text-ink" onClick={() => setDeck(null)}>✕ Close</button>
+              </div>
+              <p className="mt-0.5 text-[11.5px] text-fnt">Matched against the {field?.name ?? fieldSel} bank by the keywords in your recorded questions.</p>
+              <div className="mt-3 space-y-2">
+                {deck.map(c => {
+                  const show = flipped[c.q];
+                  return (
+                    <div key={c.q} className="rounded-xl border border-line/15 bg-deep/30 p-3">
+                      <button className="w-full text-left" onClick={() => setFlipped(f => ({ ...f, [c.q]: !f[c.q] }))}>
+                        <span className="text-[12.5px] font-bold text-ink">{c.q}</span>
+                        {show && (
+                          <span className="mt-1.5 block whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">
+                            <span className="font-bold text-ok">Answer:</span> {c.a}
+                            {c.kp?.length ? <span className="mt-1 block text-[11px] text-mut">Key points: {c.kp.join(" · ")}</span> : null}
+                          </span>
+                        )}
+                      </button>
+                      <p className="mt-1 text-[10.5px] font-bold uppercase tracking-wider text-mut">{show ? "Tap question to hide" : "Tap to reveal the answer"}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {bankShown.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-line/20 p-6 text-center">
+              <div className="text-[26px]">🗒️</div>
+              <p className="mt-1 text-[13px] font-bold">{weakOnly ? "No weak-topic questions yet" : "No questions recorded yet"}</p>
+              <p className="mx-auto mt-1 max-w-[400px] text-[12px] text-mut">
+                {weakOnly
+                  ? "Mark an interview round as failed or ⭐⭐ and its questions get flagged here automatically."
+                  : "Open a job → 🎤 Rounds → add a round with the questions that were asked — they land here, deduped across applications."}
+              </p>
+            </div>
+          ) : (
+            <ul className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
+              {bankShown.map(b => (
+                <li key={b.id} className="rounded-xl border border-line/15 bg-deep/30 p-3">
+                  <p className="text-[13px] font-bold text-ink">{b.question}</p>
+                  <p className="mt-0.5 text-[11px] text-mut">{b.company} · {b.jobTitle} · {b.roundLabel} · {new Date(b.at).toLocaleDateString()}</p>
+                  <div className="mt-2 flex gap-3">
+                    <button
+                      className="text-[11.5px] font-bold text-ok hover:underline"
+                      onClick={() => { const c = practiceForRound(b.question, fieldSel, 4).filter(x => lvlSel === "all" || x.lvl === lvlSel); if (!c.length) { toast("No cards matched that question — try another field"); return; } setDeck(c); setFlipped({}); }}
+                    >
+                      🎯 Practice
+                    </button>
+                    <button className="text-[11.5px] font-bold text-bad hover:underline" onClick={() => { removeFromBank(b.id); setBank(listBank()); toast("🗑️ Removed from bank"); }}>
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
 
       {shown.length ? (
         <div className="space-y-3">

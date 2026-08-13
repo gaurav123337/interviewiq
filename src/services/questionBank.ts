@@ -3,7 +3,11 @@
    be re-practiced later or reused across applications. Pure + persisted
    so it works offline and syncs like the rest of the tracker. */
 
+import type { LevelId } from "../types";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
+import { listTracks } from "./applyTrack";
+import { practiceForRound, type DrillCard } from "./drill";
+import { getGoal } from "./goal";
 
 export interface BankEntry {
   /** Stable id — hash of the question text (dedupe across applications). */
@@ -61,4 +65,52 @@ export function stableId(text: string): string {
   let h = 5381;
   for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
   return "q" + h.toString(36);
+}
+
+/* ------------------------------------------------------------------ */
+/* Bank-driven practice                                                */
+/* ------------------------------------------------------------------ */
+
+/** Bank entries whose question came from a failed or low-rated (≤ 2★) round
+    anywhere in the tracker — "what actually tripped you up". Pure. */
+export function weakestBankEntries(): BankEntry[] {
+  const weak = new Set<string>();
+  for (const t of listTracks()) {
+    for (const r of t.rounds) {
+      if (r.outcome === "failed" || (r.went !== null && r.went <= 2)) {
+        for (const line of r.questions.split(/\n|(?<=[?…!])\s+/).map(s => s.trim()).filter(Boolean)) {
+          if (line.length > 8) weak.add(stableId(line));
+        }
+      }
+    }
+  }
+  return listBank().filter(b => weak.has(b.id));
+}
+
+/** Build a practice deck from the personal bank: every bank question is
+    matched against the curated bank for `fieldSel` (own field first, then a
+    sweep), deduped, optionally restricted to weakest-round entries, and
+    filtered to `lvl` when not "all". Returns up to `count` drill cards. */
+export function practiceDeck(
+  fieldSel: string,
+  lvl: LevelId | "all" = "all",
+  opts: { weakest?: boolean; count?: number } = {}
+): DrillCard[] {
+  const count = opts.count ?? 10;
+  const entries = opts.weakest ? weakestBankEntries() : listBank();
+  if (!entries.length) return [];
+  const field = fieldSel || getGoal()?.fieldId || "frontend";
+  const seen = new Set<string>();
+  const out: DrillCard[] = [];
+  /* join every bank question into one notes blob so practiceForRound can
+     keyword-match across all of them at once */
+  const notes = entries.map(e => e.question).join("\n");
+  for (const c of practiceForRound(notes, field, count)) {
+    if (lvl !== "all" && c.lvl !== lvl) continue;
+    if (seen.has(c.q)) continue;
+    seen.add(c.q);
+    out.push(c);
+    if (out.length >= count) break;
+  }
+  return out;
 }

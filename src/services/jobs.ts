@@ -181,7 +181,7 @@ export function salaryLabel(j: JobPosting): string | null {
   const sym: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", INR: "₹" };
   const s = sym[currency] ?? (currency + " ");
   const fmt = (n: number) => n >= 1000000 ? `${s}${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${s}${Math.round(n / 1000)}k` : `${s}${n}`;
-  return `${fmt(min)}–${fmt(max)} ${currency}`;
+  return `${fmt(min)}–${fmt(max)} ${currency}${j.salary.source === "estimate" ? " est." : ""}`;
 }
 
 /** Last successful feed refresh (epoch ms) — drives the auto-refresh. */

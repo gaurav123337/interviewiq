@@ -32,6 +32,7 @@ export const STORAGE_KEYS = {
   /* admin-local (never published) keys for native digest email */
   ragEmailSecret: "iq.ragEmailSecret",
   ragEmailKey: "iq.ragEmailKey",
+  applyEmailSecret: "iq.applyEmailSecret",
   code: "iq.code",
   uiCode: "iq.uiCode",
   codingTrack: "iq.codingTrack",

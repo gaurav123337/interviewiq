@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CareerProfile, JobPosting } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
-import { isCloudConfigured } from "../services/cloud";
+import { getCloudState, getSupabaseClient, isCloudConfigured } from "../services/cloud";
+import { CONFIG } from "../config";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
 import { UpgradeModal } from "./Upgrade";
@@ -18,6 +19,7 @@ import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
 import { practiceForRound, type DrillCard } from "../services/drill";
 import { getGoal } from "../services/goal";
+import { STORAGE_KEYS, storageGet } from "../services/storage";
 import { bankFromRound, listBank, removeFromBank, type BankEntry } from "../services/questionBank";
 
 /* small comma/Enter-driven tag input */
@@ -482,9 +484,48 @@ function ReportModal({ onClose }: { onClose: () => void }) {
       () => toast("✗ Clipboard blocked — copy manually")
     );
   };
-  const mailDigest = () => {
-    const url = `mailto:?subject=${encodeURIComponent("InterviewIQ — weekly application digest")}&body=${encodeURIComponent(digest)}`;
-    window.location.href = url;
+  const [sending, setSending] = useState(false);
+  const mailDigest = async () => {
+    const user = getCloudState().user;
+    /* real email via the send-apply-digest Edge Function when signed in;
+       falls back to a mailto link so the flow always works */
+    const fallback = () => {
+      const url = `mailto:?subject=${encodeURIComponent("InterviewIQ — weekly application digest")}&body=${encodeURIComponent(digest)}`;
+      window.location.href = url;
+    };
+    if (!user?.email) { fallback(); return; }
+    setSending(true);
+    try {
+      const client = await getSupabaseClient();
+      const { data: session } = await client!.auth.getSession();
+      const token = session?.session?.access_token;
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        apikey: CONFIG.supabase.anonKey,
+        "Content-Type": "application/json"
+      };
+      const secret = storageGet<string>(STORAGE_KEYS.applyEmailSecret, "");
+      if (secret) headers["x-apply-secret"] = secret;
+      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
+      if (key) headers["x-resend-key"] = key;
+      const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-apply-digest`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ to: user.email, subject: "InterviewIQ — weekly application digest", text: digest })
+      });
+      const body = await res.json().catch(() => ({}));
+      if ((body as { sent?: boolean }).sent) {
+        toast(`📧 Digest emailed to ${user.email}`);
+      } else {
+        toast(`✉️ Email not configured (${(body as { reason?: string }).reason ?? "unknown"}) — opening your mail app instead`);
+        fallback();
+      }
+    } catch {
+      toast("✉️ Couldn't reach the email service — opening your mail app instead");
+      fallback();
+    } finally {
+      setSending(false);
+    }
   };
   return (
     <Modal onClose={onClose} title="📊 Weekly report" desc="Your last 7 days of application activity — where the funnel moves, and where it stalls.">
@@ -579,7 +620,9 @@ function ReportModal({ onClose }: { onClose: () => void }) {
           <p className="text-[13px] font-extrabold text-acc1">📬 Weekly digest</p>
           <div className="flex gap-2">
             <button className={btnGhost + btnSm} onClick={copyDigest}>📋 Copy</button>
-            <button className={btnGhost + btnSm} onClick={mailDigest}>✉️ Email</button>
+            <button className={btnGhost + btnSm} onClick={() => void mailDigest()} disabled={sending}>
+              {sending ? "⏳ Sending…" : "✉️ Email"}
+            </button>
           </div>
         </div>
         <pre className="mt-2 max-h-[180px] overflow-y-auto whitespace-pre-wrap rounded-lg bg-deep/40 p-3 font-sans text-[11.5px] leading-relaxed text-fnt">{digest}</pre>
