@@ -116,7 +116,20 @@ const toJobPosting = (r: DbJobRow): JobPosting => ({
   postedAt: r.posted_at
 });
 
-/** Pull the latest feed from the cloud (jobs are public-read). */
+/** Locally-imported jobs (user pasted the URL) — never part of the public
+    cloud feed, and never evicted by a refresh. */
+const isImported = (j: JobPosting): boolean => j.source.startsWith("imported:");
+
+/** Add a user-imported job to the local feed (deduped by apply URL).
+    Imported jobs sit at the front so the 80-job cap can't evict them. */
+export function addImportedJob(job: JobPosting): JobPosting[] {
+  const next = [job, ...listJobs().filter(j => j.url !== job.url && !(isImported(j) && j.id === job.id))];
+  setJobs(next);
+  return next;
+}
+
+/** Pull the latest feed from the cloud (jobs are public-read). The user's
+    imported jobs ride along — merged at the front, never overwritten. */
 export async function loadJobsFromCloud(): Promise<JobPosting[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
@@ -126,8 +139,9 @@ export async function loadJobsFromCloud(): Promise<JobPosting[]> {
     .limit(80);
   if (error || !data) return [];
   const jobs = (data as unknown as DbJobRow[]).map(toJobPosting);
-  setJobs(jobs);
-  return jobs;
+  const imported = listJobs().filter(isImported);
+  setJobs([...imported, ...jobs]);
+  return [...imported, ...jobs];
 }
 
 /* ------------------------------------------------------------------ */
@@ -141,6 +155,8 @@ export interface JobFilters {
   salaryMin: number | null;
   salaryMax: number | null;
   currency: string | null;
+  /** Feed source (e.g. "greenhouse", "imported:naukri") or null = all. */
+  source: string | null;
 }
 
 export const EMPTY_FILTERS: JobFilters = {
@@ -149,13 +165,15 @@ export const EMPTY_FILTERS: JobFilters = {
   companySize: null,
   salaryMin: null,
   salaryMax: null,
-  currency: null
+  currency: null,
+  source: null
 };
 
 /** Pure filter over the feed — testable, keeps the view dumb. */
 export function filterJobs(jobs: JobPosting[], f: JobFilters): JobPosting[] {
   const q = f.query.trim().toLowerCase();
   return jobs.filter(j => {
+    if (f.source && j.source !== f.source) return false;
     if (f.remote === true && !j.remote) return false;
     if (f.remote === false && j.remote) return false;
     if (f.companySize && j.companySize !== f.companySize) return false;

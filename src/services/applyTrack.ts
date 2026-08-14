@@ -23,6 +23,8 @@ export interface InterviewRound {
 export interface ApplyTrack {
   jobId: string;
   status: ApplyStatus;
+  /** Platform/source the application was handed off through (e.g. "Naukri"). */
+  via?: string;
   /** Epoch ms when the application was first marked applied (or later). */
   appliedAt: number | null;
   /** Epoch ms when the user should follow up. */
@@ -79,6 +81,29 @@ export function setStatus(jobId: string, status: ApplyStatus): ApplyTrack {
   };
   saveTrack(t);
   return t;
+}
+
+/** Mark an application as applied via an external platform hand-off
+    (deep link to the platform's own page). Sets the status, remembers the
+    platform, and defaults a 2-week follow-up so the user remembers to
+    chase it. Never downgrades a later stage (interview/offer/rejected). */
+export function markAppliedVia(jobId: string, via: string): ApplyTrack {
+  const prev = getTrack(jobId);
+  const stage: Record<ApplyStatus, number> = { saved: 0, applied: 1, interview: 2, offer: 3, rejected: 3 };
+  const current = prev?.status ?? "saved";
+  const next: ApplyTrack = {
+    jobId,
+    status: stage[current] >= stage.applied ? current : "applied",
+    via,
+    appliedAt: prev?.appliedAt ?? Date.now(),
+    followUpAt: prev?.followUpAt ?? Date.now() + 14 * 24 * 3600 * 1000,
+    followUpNotified: prev?.followUpNotified ?? false,
+    notes: prev?.notes ?? "",
+    rounds: prev?.rounds ?? [],
+    updatedAt: Date.now()
+  };
+  saveTrack(next);
+  return next;
 }
 
 export function setFollowUp(jobId: string, followUpAt: number | null): ApplyTrack {

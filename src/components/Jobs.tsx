@@ -9,15 +9,16 @@ import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
 import {
-  defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
+  addImportedJob, defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
   recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
+import { importFromUrlWithFallback, sourceLabel } from "../services/importJob";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, jdKeywords, saveApplyKit } from "../services/applyKit";
-import { applyDigest, dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
+import { applyDigest, dueFollowUps, followUpDraft, getTrack, listTracks, markAppliedVia, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
 import { BENCHMARK, BENCH_LEVELS, benchLevelForYears, companyBands, detectMarket, fmtAmount, fmtBand, marketBand, MARKETS, negotiationPoints, offerVerdict, ordinal, positionInBand, positionRead, type BenchLevel, type Market } from "../services/salaryBench";
 import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
@@ -88,6 +89,14 @@ export function Jobs() {
   const [skillSuggestions, setSkillSuggestions] = useState<string[]>([]);
   /* one-time banner: resume was uploaded before strict resume-based skills */
   const [resumeBannerDismissed, setResumeBannerDismissed] = useState(() => storageGet<boolean>(STORAGE_KEYS.resumeStrictBanner, false));
+  /* platform import (Lane B) — paste a job URL from any site */
+  const [importOpen, setImportOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importPreview, setImportPreview] = useState<JobPosting | null>(null);
+  const [importErr, setImportErr] = useState<string | null>(null);
+  /* apply hand-off (Lane C) — first-use explainer shown once */
+  const [applyHintShown, setApplyHintShown] = useState(() => storageGet<boolean>(STORAGE_KEYS.externalApplyHint, false));
   const [showResumeBanner, setShowResumeBanner] = useState(false);
   const [recsDigestOpen, setRecsDigestOpen] = useState(false);
   const [rankLimit, setRankLimit] = useState(10);
@@ -327,6 +336,60 @@ export function Jobs() {
     setTracks(m => ({ ...m, [jobId]: getTrack(jobId)! }));
     toast(iso ? `📅 Follow-up set for ${new Date(iso + "T09:00:00").toLocaleDateString()}` : "🗑️ Follow-up cleared");
   };
+
+  /* --- platform import: paste a job URL → preview → add to feed ------- */
+  const previewImport = async () => {
+    const raw = importUrl.trim();
+    if (!raw) { setImportErr("Paste a job link first — from Naukri, LinkedIn, Indeed, or any company page."); return; }
+    setImporting(true);
+    setImportErr(null);
+    setImportPreview(null);
+    try {
+      const client = await getSupabaseClient();
+      const session = await client?.auth.getSession().catch(() => null);
+      const out = await importFromUrlWithFallback(raw, {
+        supabaseUrl: CONFIG.supabase.url,
+        token: session?.data?.session?.access_token ?? undefined
+      });
+      if (!out.ok) { setImportErr(out.message); return; }
+      setImportPreview(out.job);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const confirmImport = () => {
+    if (!importPreview) return;
+    addImportedJob(importPreview);
+    setJobs(listJobs());
+    toast(`➕ Imported “${importPreview.title}” — ${sourceLabel(importPreview.source)} · now in your match feed`);
+    setImportOpen(false);
+    setImportUrl("");
+    setImportPreview(null);
+    setImportErr(null);
+  };
+
+  /* --- apply hand-off: open the platform's own page, track locally ----- */
+  const applyOnPlatform = (j: JobPosting) => {
+    const via = sourceLabel(j.source);
+    window.open(j.url || "#", "_blank", "noopener");
+    markAppliedVia(j.id, via);
+    setTracks(m => ({ ...m, [j.id]: getTrack(j.id)! }));
+    if (!applyHintShown) {
+      toast(`🔗 Opened ${via} in a new tab — you complete the application there. InterviewIQ never applies for you.`);
+      setApplyHintShown(true);
+      storageSet(STORAGE_KEYS.externalApplyHint, true);
+    } else {
+      toast(`🔗 Opened the application on ${via} — marked as applied (follow-up in 2 weeks)`);
+    }
+  };
+
+  /* distinct feed sources for the filter chips (M5) */
+  const feedSources = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const j of jobs) seen.set(j.source, (seen.get(j.source) ?? 0) + 1);
+    return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([s, n]) => ({ s, n, label: sourceLabel(s) }));
+  }, [jobs]);
 
   /* batch export — generate a kit for every tracked job and ship as a zip */
   const batchExport = () => {
@@ -1053,9 +1116,29 @@ export function Jobs() {
             onChange={e => setFilters(f => ({ ...f, salaryMin: e.target.value ? Number(e.target.value) : null }))}
             title="Minimum annual salary (in the chosen currency)"
           />
-          {(filters.query || filters.remote !== null || filters.companySize || filters.currency || filters.salaryMin !== null || filters.salaryMax !== null) && (
+          {(filters.query || filters.remote !== null || filters.companySize || filters.currency || filters.salaryMin !== null || filters.salaryMax !== null || filters.source) && (
             <button className={btnGhost + btnSm} onClick={() => setFilters(EMPTY_FILTERS)}>✕ Clear</button>
           )}
+        </div>
+        {/* source chips — every platform with live postings in the feed */}
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-line/10 px-4 py-2.5">
+          <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">Source:</span>
+          <button
+            className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${!filters.source ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
+            onClick={() => setFilters(f => ({ ...f, source: null }))}
+          >
+            📦 All ({jobs.length})
+          </button>
+          {feedSources.map(({ s, n, label }) => (
+            <button
+              key={s}
+              className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${filters.source === s ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
+              onClick={() => setFilters(f => ({ ...f, source: f.source === s ? null : s }))}
+              title={`Only ${label} postings`}
+            >
+              {label} ({n})
+            </button>
+          ))}
         </div>
       </div>
 
@@ -1081,6 +1164,9 @@ export function Jobs() {
                 <option value="0">All</option>
               </select>
             </label>
+            <button className={btnGhost + btnSm} onClick={() => setImportOpen(true)} title="Paste a job URL from Naukri, LinkedIn, Indeed or any site — it joins your match feed">
+              ➕ Add job from a link
+            </button>
             <button className={btnGhost + btnSm} onClick={refresh} disabled={refreshing || !cloud}>
               {refreshing ? "⏳ Refreshing…" : "🔄 Refresh feed"} {!cloud && "(sign in)"}
             </button>
@@ -1161,6 +1247,13 @@ export function Jobs() {
                         onClick={() => (locked ? setUpgrade("Tailored resumes and cover letters are Pro features.") : setKitJob(j))}
                       >
                         📄 Resume & letter
+                      </button>
+                      <button
+                        className="rounded-full border border-ok/30 bg-ok/10 px-2.5 py-0.5 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/20"
+                        onClick={() => applyOnPlatform(j)}
+                        title={`Open the official application on ${sourceLabel(j.source)} — you complete it there; InterviewIQ never applies for you`}
+                      >
+                        🔗 Apply on {sourceLabel(j.source)} ↗
                       </button>
                       {m.blockers.map((b, i) => (
                         <span key={i} className="text-warn">⚠️ {b}</span>
@@ -1252,6 +1345,70 @@ export function Jobs() {
       {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
       {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onAddSkill={addSkillToProfile} onClose={() => setKitJob(null)} />}
       {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
+      {importOpen && (
+        <Modal
+          onClose={() => { setImportOpen(false); setImportUrl(""); setImportPreview(null); setImportErr(null); }}
+          title="➕ Add a job from a platform"
+          desc="Paste a job link from Naukri, LinkedIn, Indeed — or any company page. We read the public posting and score it like any feed job. Applying always happens on the platform's own page; InterviewIQ never applies for you."
+        >
+          <div className="flex gap-2">
+            <input
+              className="inp flex-1"
+              placeholder="https://www.naukri.com/job/… or any job URL"
+              value={importUrl}
+              onChange={e => { setImportUrl(e.target.value); setImportErr(null); setImportPreview(null); }}
+              onKeyDown={e => { if (e.key === "Enter") void previewImport(); }}
+            />
+            <button className={btnPrimary + btnSm} onClick={() => void previewImport()} disabled={importing}>
+              {importing ? "⏳ Reading…" : "🔎 Preview"}
+            </button>
+          </div>
+
+          {importing && <p className="mt-3 text-[12px] text-mut">⏳ Reading the posting… (public fetch, rate-limited)</p>}
+
+          {importErr && !importPreview && (
+            <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3.5">
+              <p className="text-[12.5px] text-fnt">✗ {importErr}</p>
+              {importUrl.trim() && (
+                <a
+                  href={importUrl.trim()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1.5 inline-block text-[12px] font-bold text-acctxt underline"
+                >
+                  Open the job page manually ↗
+                </a>
+              )}
+            </div>
+          )}
+
+          {importPreview && (
+            <div className="mt-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip tone="co">{sourceLabel(importPreview.source)}</Chip>
+                {importPreview.remote && <Chip tone="ok">REMOTE</Chip>}
+                {importPreview.level && <span className="text-[11.5px] font-bold uppercase tracking-wider text-mut">· {importPreview.level}</span>}
+              </div>
+              <div className="mt-2 text-[14px] font-extrabold text-ink">{importPreview.title}</div>
+              {importPreview.company && <div className="text-[12.5px] font-bold text-fnt">{importPreview.company}</div>}
+              {importPreview.location && <div className="text-[12px] text-mut">📍 {importPreview.location}</div>}
+              {importPreview.description && (
+                <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-fnt">{importPreview.description.slice(0, 400)}</p>
+              )}
+              {importPreview.skills.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {importPreview.skills.map(s => <Chip key={s} tone="default">{s}</Chip>)}
+                </div>
+              )}
+              <div className="mt-3 flex gap-2">
+                <button className={btnPrimary + btnSm} onClick={confirmImport}>➕ Add to feed</button>
+                <button className={btnGhost + btnSm} onClick={() => { setImportPreview(null); setImportErr(null); }}>↺ Try another URL</button>
+              </div>
+              <p className="mt-2 text-[11px] text-mut">The apply button on this job opens its page on {sourceLabel(importPreview.source)} — you complete it there.</p>
+            </div>
+          )}
+        </Modal>
+      )}
       {recsDigestOpen && profile && <RecsDigestModal profile={profile} ranks={ranks} onClose={() => setRecsDigestOpen(false)} />}
       {draftJob && (
         <DraftModal

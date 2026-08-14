@@ -4,6 +4,8 @@ import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, getApplyKit, jdKeywords, quantifiedClaims, saveApplyKit, type ApplyKit, type AtsKeywordRow } from "../services/applyKit";
 import { diffLines } from "../services/diff";
 import { matchJob } from "../services/jobs";
+import { markAppliedVia } from "../services/applyTrack";
+import { sourceLabel } from "../services/importJob";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
 import { openResumePrint } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
@@ -186,6 +188,13 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
           return <span title={`${cov.found.length} of ${job.skills.length} required skills appear in the resume — 🔍 ATS preview breaks it down per keyword`} className="cursor-help"><Chip tone={cov.score >= 80 ? "ok" : cov.score >= 50 ? "co" : "warn"}>⚡ ATS {cov.score}%</Chip></span>;
         })()}
         <div className="ml-auto flex gap-2">
+          <button
+            className="rounded-xl border border-ok/30 bg-ok/10 px-3 py-1.5 text-[12px] font-bold text-ok transition-all hover:bg-ok/20"
+            onClick={() => { window.open(job.url || "#", "_blank", "noopener"); markAppliedVia(job.id, sourceLabel(job.source)); toast(`🔗 Opened ${sourceLabel(job.source)} in a new tab — you complete the application there`); }}
+            title="Open the official application page — InterviewIQ never applies for you"
+          >
+            🔗 Apply on {sourceLabel(job.source)} ↗
+          </button>
           <button
             className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
             onClick={copy}

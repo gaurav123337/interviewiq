@@ -371,15 +371,17 @@ describe("job feed filters", () => {
   const a = mk({ id: "a", salary: { min: 100000, max: 120000, currency: "USD" }, companySize: "large", remote: true });
   const b = mk({ id: "b", salary: { min: 20000, max: 30000, currency: "INR" }, companySize: "small", remote: false });
 
+  const base = { query: "", remote: null as boolean | null, companySize: null as string | null, salaryMin: null as number | null, salaryMax: null as number | null, currency: null as string | null, source: null as string | null };
+
   it("filters by remote, size, and currency", () => {
-    expect(filterJobs([a, b], { query: "", remote: true, companySize: null, salaryMin: null, salaryMax: null, currency: null }).map(j => j.id)).toEqual(["a"]);
-    expect(filterJobs([a, b], { query: "", remote: null, companySize: "small", salaryMin: null, salaryMax: null, currency: null }).map(j => j.id)).toEqual(["b"]);
-    expect(filterJobs([a, b], { query: "", remote: null, companySize: null, salaryMin: null, salaryMax: null, currency: "INR" }).map(j => j.id)).toEqual(["b"]);
+    expect(filterJobs([a, b], { ...base, remote: true }).map(j => j.id)).toEqual(["a"]);
+    expect(filterJobs([a, b], { ...base, companySize: "small" }).map(j => j.id)).toEqual(["b"]);
+    expect(filterJobs([a, b], { ...base, currency: "INR" }).map(j => j.id)).toEqual(["b"]);
   });
 
   it("filters by salary band with null-salary jobs excluded when a band is set", () => {
     const noSal = mk({ id: "c", salary: null });
-    const r = filterJobs([a, b, noSal], { query: "", remote: null, companySize: null, salaryMin: 90000, salaryMax: null, currency: null });
+    const r = filterJobs([a, b, noSal], { ...base, salaryMin: 90000 });
     expect(r.map(j => j.id)).toEqual(["a"]);
   });
 
