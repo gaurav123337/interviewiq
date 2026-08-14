@@ -34,6 +34,7 @@ import {
 } from "../services/scraper";
 import { CONFIG } from "../config";
 import { getCareerProfile, listJobs, rankCompanies, recommendationsDigest } from "../services/jobs";
+import { applyDigest } from "../services/applyTrack";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
@@ -2220,11 +2221,15 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [enrCap, setEnrCap] = useState<number>(() => config.jobs?.salaryEnrichment?.cap ?? 30);
   /* apply digest email — shared secret (stored locally only, never published) */
   const [applySecret, setApplySecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.applyEmailSecret, ""));
-  const [digestTesting, setDigestTesting] = useState(false);
+  const [digestTesting, setDigestTesting] = useState<null | "dryrun" | "send">(null);
+  const [applyPreview, setApplyPreview] = useState<string | null>(null);
+  const [applyRecipients, setApplyRecipients] = useState<string[] | null>(null);
+  const previewApply = () => setApplyPreview(applyDigest());
   /* recommendations digest — same secret-gated broadcast, with a dry-run preview */
   const [recsSecret, setRecsSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.recsEmailSecret, ""));
   const [recsBusy, setRecsBusy] = useState<null | "dryrun" | "send">(null);
   const [recsPreview, setRecsPreview] = useState<string | null>(null);
+  const [recsRecipients, setRecsRecipients] = useState<string[] | null>(null);
   const recsHeaders = (): Record<string, string> => {
     const h: Record<string, string> = { apikey: CONFIG.supabase.anonKey, "Content-Type": "application/json" };
     if (recsSecret) h["x-apply-secret"] = recsSecret;
@@ -2245,8 +2250,9 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-recommendations-digest`, {
         method: "POST", headers: recsHeaders(), body: dryRun ? JSON.stringify({ dryRun: true }) : "{}"
       });
-      const body = await res.json().catch(() => ({})) as { sent?: boolean; dryRun?: boolean; wouldEmail?: number; emailsSent?: number; reason?: string };
+      const body = await res.json().catch(() => ({})) as { sent?: boolean; dryRun?: boolean; wouldEmail?: number; emailsSent?: number; recipients?: string[]; reason?: string };
       if (dryRun && body.dryRun) {
+        setRecsRecipients(body.recipients ?? []);
         toast(`📡 Dry run — would email ${body.wouldEmail ?? 0} user${(body.wouldEmail ?? 0) === 1 ? "" : "s"} (nothing sent)`);
       } else if (body.sent) {
         toast(`📬 Recommendations digest sent — ${body.emailsSent ?? 0} email${body.emailsSent === 1 ? "" : "s"}`);
@@ -2259,8 +2265,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
       setRecsBusy(null);
     }
   };
-  const testDigest = async () => {
-    setDigestTesting(true);
+  const runApplyDigest = async (dryRun: boolean) => {
+    setDigestTesting(dryRun ? "dryrun" : "send");
     try {
       const headers: Record<string, string> = {
         apikey: CONFIG.supabase.anonKey,
@@ -2270,15 +2276,21 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
       const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
       if (key) headers["x-resend-key"] = key;
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-apply-digest`, {
-        method: "POST", headers, body: "{}"
+        method: "POST", headers, body: dryRun ? JSON.stringify({ dryRun: true }) : "{}"
       });
-      const body = await res.json().catch(() => ({})) as { sent?: boolean; reason?: string; emailsSent?: number };
-      if (body.sent) toast(`📬 Digest broadcast OK — ${body.emailsSent ?? 0} email${body.emailsSent === 1 ? "" : "s"} sent`);
-      else toast("✗ " + (body.reason ?? "Broadcast failed"));
+      const body = await res.json().catch(() => ({})) as { sent?: boolean; dryRun?: boolean; wouldEmail?: number; emailsSent?: number; recipients?: string[]; reason?: string };
+      if (dryRun && body.dryRun) {
+        setApplyRecipients(body.recipients ?? []);
+        toast(`📡 Dry run — would email ${body.wouldEmail ?? 0} user${(body.wouldEmail ?? 0) === 1 ? "" : "s"} (nothing sent)`);
+      } else if (body.sent) {
+        toast(`📬 Digest broadcast OK — ${body.emailsSent ?? 0} email${body.emailsSent === 1 ? "" : "s"} sent`);
+      } else {
+        toast("✗ " + (body.reason ?? "Broadcast failed"));
+      }
     } catch (e) {
       toast("✗ " + ((e as Error).message || "Digest test failed"));
     } finally {
-      setDigestTesting(false);
+      setDigestTesting(null);
     }
   };
   /* native digest email keys — stored locally only (never published to clients) */
@@ -2526,11 +2538,15 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             Supabase dashboard → Edge Functions → send-apply-digest → Secrets.
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button className={btnGhost + btnSm} disabled={digestTesting} onClick={testDigest}>
-              {digestTesting ? "⏳ Testing…" : "📬 Test weekly digest (broadcast)"}
+            <button className={btnGhost + btnSm} onClick={previewApply}>👀 Preview my digest</button>
+            <button className={btnGhost + btnSm} disabled={!!digestTesting} onClick={() => void runApplyDigest(true)}>
+              {digestTesting === "dryrun" ? "⏳ Counting…" : "📡 Dry-run broadcast"}
             </button>
-            <span className="text-[11px] text-mut">Sends the same empty-body request the pg_cron job fires every Monday — checks the secret guard and, if a Resend key exists, emails every active user.</span>
+            <button className={btnPrimary + btnSm} disabled={!!digestTesting} onClick={() => void runApplyDigest(false)}>
+              {digestTesting === "send" ? "⏳ Sending…" : "📤 Send broadcast now"}
+            </button>
           </div>
+          <p className="mt-2 text-[11px] text-mut">Dry run counts recipients and shows their emails without sending — the broadcast fires the same empty-body request the pg_cron job sends every Monday.</p>
         </div>
         <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
           <label className="block">
@@ -2562,6 +2578,36 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
         <Modal onClose={() => setRecsPreview(null)} title="👀 Recommendations digest preview" desc="What this week's email would look like for the profile saved in this browser.">
           <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] leading-relaxed text-fnt">{recsPreview}</pre>
           <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setRecsPreview(null)}>Close</button>
+        </Modal>
+      )}
+      {applyPreview && (
+        <Modal onClose={() => setApplyPreview(null)} title="👀 Apply digest preview" desc="What this week's email would look like for the tracker in this browser.">
+          <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] leading-relaxed text-fnt">{applyPreview}</pre>
+          <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setApplyPreview(null)}>Close</button>
+        </Modal>
+      )}
+      {recsRecipients && (
+        <Modal onClose={() => setRecsRecipients(null)} title="📡 Recommendations digest — dry-run recipients" desc={`Would email ${recsRecipients.length} user${recsRecipients.length === 1 ? "" : "s"} (nothing sent).`}>
+          {recsRecipients.length ? (
+            <ul className="max-h-[320px] divide-y divide-line/10 overflow-auto rounded-xl border border-line/15 bg-deep/50 p-2 text-[12.5px] text-fnt">
+              {recsRecipients.map((e, i) => <li key={e} className="px-2 py-1.5">{i + 1}. {e}</li>)}
+            </ul>
+          ) : (
+            <p className="rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] text-mut">No one to email yet — users need a synced uploaded resume with a saved profile.</p>
+          )}
+          <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setRecsRecipients(null)}>Close</button>
+        </Modal>
+      )}
+      {applyRecipients && (
+        <Modal onClose={() => setApplyRecipients(null)} title="📡 Apply digest — dry-run recipients" desc={`Would email ${applyRecipients.length} user${applyRecipients.length === 1 ? "" : "s"} (nothing sent).`}>
+          {applyRecipients.length ? (
+            <ul className="max-h-[320px] divide-y divide-line/10 overflow-auto rounded-xl border border-line/15 bg-deep/50 p-2 text-[12.5px] text-fnt">
+              {applyRecipients.map((e, i) => <li key={e} className="px-2 py-1.5">{i + 1}. {e}</li>)}
+            </ul>
+          ) : (
+            <p className="rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] text-mut">No one to email yet — users need a synced tracker.</p>
+          )}
+          <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setApplyRecipients(null)}>Close</button>
         </Modal>
       )}
 

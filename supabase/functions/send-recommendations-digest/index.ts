@@ -104,7 +104,7 @@ async function handleBroadcast(req: Request, dryRun: boolean): Promise<Response>
   }
   if (dryRun) {
     console.log(`[send-recommendations-digest] dry run — would email ${recipients.length} user${recipients.length === 1 ? "" : "s"}`);
-    return new Response(JSON.stringify({ sent: false, dryRun: true, wouldEmail: recipients.length, reason: "dry run — nothing sent" }), { status: 200, headers });
+    return new Response(JSON.stringify({ sent: false, dryRun: true, wouldEmail: recipients.length, recipients: recipients.map(r => r.email), reason: "dry run — nothing sent" }), { status: 200, headers });
   }
   let sent = 0;
   for (const r of recipients) {

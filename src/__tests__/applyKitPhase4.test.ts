@@ -160,6 +160,18 @@ describe("JD-aware tailoring — two postings never produce the same kit", () =>
     expect(r.join(" ")).toMatch(/design|scale|build|automate/i);
   });
 
+  it("never mirrors the posting header (title/location line) as a highlight", () => {
+    const hdr: JobPosting = {
+      ...JOB, id: "greenhouse:hdr", title: "Senior Kubernetes Platform Engineer",
+      description: "Senior Kubernetes Platform Engineer Remote, USA\n• Design and scale Kubernetes clusters across multiple regions.",
+      skills: ["kubernetes"]
+    };
+    const r = jdResponsibilities(hdr, 3);
+    expect(r.join(" ")).not.toMatch(/Senior Kubernetes Platform Engineer/);
+    expect(r.join(" ")).not.toMatch(/Remote, USA/);
+    expect(r.join(" ")).toMatch(/Design and scale Kubernetes clusters/);
+  });
+
   it("builds visibly different resumes for different JDs", () => {
     const ra = buildResume(PROFILE, K8S_JOB, MATCH);
     const rb = buildResume(PROFILE, IOS_JOB, MATCH);

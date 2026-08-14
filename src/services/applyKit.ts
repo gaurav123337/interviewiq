@@ -58,16 +58,28 @@ const JD_ACTION = /(build|design|develop|own|lead|drive|scale|ship|maintain|part
     resume/letter can mirror back. Pure + testable. */
 export function jdResponsibilities(job: JobPosting, max = 4): string[] {
   if (!job.description) return [];
+  /* normalize whitespace first, then turn bullet glyphs into sentence
+     breaks — doing it the other way round collapses bulleted lists into
+     one giant sentence (the whitespace pass eats the bullet newlines) */
   const sentences = (job.description
-    .replace(/[\u2022\u00b7\u2023\u25aa\u25cf]/g, "\n")
     .replace(/\s+/g, " ")
-    .split(/(?<=[.!?])\s+|\n+/))
-    .map(s => s.trim().replace(/^[-*]+/, ""))
+    .replace(/[\u2022\u00b7\u2023\u25aa\u25cf]/g, ".")
+    .replace(/\.\s*\./g, ".")
+    .split(/(?<=[.!?])\s+/))
+    .map(s => s.trim().replace(/^[-*.]\s*/, ""))
     .filter(s => s.length >= 40 && s.length <= 200)
     .filter(s => !/who we are|about us|our mission|what we offer|benefits include|perks|equal opportunity|e-?verify|we ('re| are) looking|apply today|learn more|visit our|how to apply/i.test(s))
     /* skip generic intros — “Join our team”, “We are…”, section headings — so
        the mined responsibilities are the actual work, not the pitch */
-    .filter(s => !/^(join|come|we('re| are| care| value| believe| love| think| know| hope| pride)|about (us|the role)|our (team|mission|company|story)|as a|become|want to|help us|apply if|you will|what you'?ll|your day|the role|this role|in this role|overview|responsibilities|requirements|qualifications|preferred|bonus|who we are)/i.test(s));
+    .filter(s => !/^(join|come|we('re| are| care| value| believe| love| think| know| hope| pride)|about (us|the role)|our (team|mission|company|story)|as a|become|want to|help us|apply if|you will|what you'?ll|your day|the role|this role|in this role|overview|responsibilities|requirements|qualifications|preferred|bonus|who we are)/i.test(s))
+    /* drop lines that are just the posting header — the title, location, or a
+       “Remote, USA”-style tag — so highlights never mirror the header back */
+    .filter(s => {
+      const t = s.toLowerCase();
+      if (job.title && t.includes(job.title.toLowerCase().slice(0, 40))) return false;
+      if (/^(remote|united states|usa|uk|canada|india|japan|tokyo|london|berlin|paris|amsterdam|singapore|australia|new york|san francisco|seattle|austin|bengaluru|toronto|vancouver)[, .\-]?/i.test(s)) return false;
+      return true;
+    });
   const action = sentences.filter(s => JD_ACTION.test(s));
   const pool = action.length >= max ? action : [...action, ...sentences];
   const seen = new Set<string>();

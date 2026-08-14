@@ -3,7 +3,7 @@ import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, quantifiedClaims, saveApplyKit, type ApplyKit } from "../services/applyKit";
 import { diffLines } from "../services/diff";
-import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
+import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
 import { openResumePrint } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
 import { downloadResumeDocx } from "../services/docx";
@@ -34,8 +34,25 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
   const [aiBusy, setAiBusy] = useState(false);
   const [atsOpen, setAtsOpen] = useState(false);
   /* diff baselines: the last kit from a DIFFERENT job, the plain template,
-     or the last AI-polished version of this job */
-  const [compareBase, setCompareBase] = useState<null | "prev" | "template" | "ai">(null);
+     or the last AI-polished version of this job. The chosen baseline is
+     remembered across reloads — restored only when it's still valid here. */
+  const [compareBase, setCompareBase] = useState<null | "prev" | "template" | "ai">(() => {
+    const stored = storageGet<null | "prev" | "template" | "ai">(STORAGE_KEYS.lastCompare, null);
+    if (stored === "prev") {
+      const prev = storageGet<{ jobId: string } | null>(STORAGE_KEYS.lastKit, null);
+      return prev && prev.jobId !== job.id ? "prev" : null;
+    }
+    if (stored === "ai") {
+      const k = getApplyKit(job.id);
+      return k?.aiResume || k?.aiCover ? "ai" : null;
+    }
+    return stored; /* "template" (always valid) or null */
+  });
+  const pickCompareBase = (base: null | "prev" | "template" | "ai") => {
+    setCompareBase(base);
+    if (base) storageSet(STORAGE_KEYS.lastCompare, base);
+    else storageRemove(STORAGE_KEYS.lastCompare);
+  };
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState("");
   const [prevKit] = useState<{ jobId: string; company: string; resume: string; coverLetter: string } | null>(
@@ -90,7 +107,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
     } else {
       setEditText(text);
       setEditing(true);
-      setCompareBase(null);
+      pickCompareBase(null);
     }
   };
 
@@ -145,7 +162,10 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         <Chip tone={kit?.ai ? "ok" : "default"}>{kit?.ai ? "✨ AI-tailored" : "Template"}</Chip>
         {tab === "resume" && (() => {
           const cov = atsCoverage(kit?.resume ?? "", job);
-          return <Chip tone={cov.score >= 80 ? "ok" : cov.score >= 50 ? "co" : "warn"}>⚡ ATS {cov.score}%</Chip>;
+          if (!job.skills.length) {
+            return <span title="This posting doesn't list any extractable skills — there's nothing for ATS to cover, so the score isn't applicable here." className="cursor-help"><Chip tone="default">⚡ ATS —</Chip></span>;
+          }
+          return <span title={`${cov.found.length} of ${job.skills.length} required skills appear in the resume`} className="cursor-help"><Chip tone={cov.score >= 80 ? "ok" : cov.score >= 50 ? "co" : "warn"}>⚡ ATS {cov.score}%</Chip></span>;
         })()}
         <div className="ml-auto flex gap-2">
           <button
@@ -230,7 +250,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         {canCompare && prevKit && (
           <button
             className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${compareBase === "prev" ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
-            onClick={() => setCompareBase(b => b === "prev" ? null : "prev")}
+            onClick={() => pickCompareBase(compareBase === "prev" ? null : "prev")}
             title={`What changed vs the ${prevKit.company} kit — green is new, red is gone`}
           >
             vs {prevKit.company}
@@ -238,7 +258,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         )}
         <button
           className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${compareBase === "template" ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
-          onClick={() => setCompareBase(b => b === "template" ? null : "template")}
+          onClick={() => pickCompareBase(compareBase === "template" ? null : "template")}
           title="What changed vs the plain template (no AI, no edits)"
         >
           vs plain template
@@ -246,14 +266,14 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         {kit?.[tab === "resume" ? "aiResume" : "aiCover"] && (
           <button
             className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${compareBase === "ai" ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
-            onClick={() => setCompareBase(b => b === "ai" ? null : "ai")}
+            onClick={() => pickCompareBase(compareBase === "ai" ? null : "ai")}
             title="What changed vs the last AI-polished version"
           >
             vs AI polish
           </button>
         )}
         {compareBase && (
-          <button className="text-[11px] font-bold text-mut hover:text-ink" onClick={() => setCompareBase(null)}>✕ hide</button>
+          <button className="text-[11px] font-bold text-mut hover:text-ink" onClick={() => pickCompareBase(null)}>✕ hide</button>
         )}
       </div>
 
@@ -333,8 +353,8 @@ function AtsPreviewModal({ text, job, onClose }: { text: string; job: JobPosting
         {[
           { label: "Words", value: p.wordCount, tone: "text-ink" },
           { label: "Sections", value: p.sections.length, tone: "text-acc1" },
-          { label: "Keywords", value: `${p.coverage.found.length}/${job.skills.length}`, tone: "text-ok" },
-          { label: "ATS score", value: `${p.coverage.score}%`, tone: p.coverage.score >= 80 ? "text-ok" : p.coverage.score >= 50 ? "text-acc3" : "text-warn" }
+          { label: "Keywords", value: job.skills.length ? `${p.coverage.found.length}/${job.skills.length}` : "—", tone: "text-ok" },
+          { label: "ATS score", value: job.skills.length ? `${p.coverage.score}%` : "—", tone: job.skills.length ? (p.coverage.score >= 80 ? "text-ok" : p.coverage.score >= 50 ? "text-acc3" : "text-warn") : "text-mut" }
         ].map(c => (
           <div key={c.label} className="rounded-xl border border-line/15 bg-deep/30 p-3 text-center">
             <div className={`text-xl font-extrabold ${c.tone}"`}>{c.value}</div>
@@ -368,7 +388,9 @@ function AtsPreviewModal({ text, job, onClose }: { text: string; job: JobPosting
 
       <div className="mt-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
         <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Keyword coverage vs {job.company}</div>
-        {p.coverage.missing.length > 0 ? (
+        {job.skills.length === 0 ? (
+          <p className="mt-1 text-[12px] text-mut">This posting has no extractable skills, so there's nothing to score — “✨ Polish with AI” can still tailor the language to the role.</p>
+        ) : p.coverage.missing.length > 0 ? (
           <p className="mt-1 text-[12px] text-fnt">Missing: <b>{p.coverage.missing.join(", ")}</b> — add them where true to clear automated filters.</p>
         ) : (
           <p className="mt-1 text-[12px] text-ok">All required keywords present — this would clear a keyword filter.</p>
