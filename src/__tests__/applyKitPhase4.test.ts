@@ -10,7 +10,7 @@ import {
 } from "../services/applyTrack";
 import { PDFDocument } from "pdf-lib";
 import { inflate } from "pako"; /* ambient types in src/pako.d.ts */
-import { atsCoverage, buildCoverLetter, buildResume, jdKeywords, jdResponsibilities, quantifiedClaims } from "../services/applyKit";
+import { atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, jdKeywords, jdResponsibilities, quantifiedClaims } from "../services/applyKit";
 import { practiceForRound } from "../services/drill";
 import { buildResumeHtml } from "../services/resumeHtml";
 import { renderResumePdf } from "../services/resumePdf";
@@ -405,6 +405,34 @@ describe("ATS parse preview", () => {
   it("flags very short documents", () => {
     const p = atsParsePreview("Hi", JOB);
     expect(p.flags.some(f => f.includes("words"))).toBe(true);
+  });
+
+  it("drills down per required skill — found vs missing", () => {
+    const d = atsKeywordDrilldown("Senior Frontend Engineer with react and kubernetes experience.", { ...JOB, skills: ["react", "kubernetes", "golang"] });
+    expect(d.skills.find(r => r.keyword === "react")?.present).toBe(true);
+    expect(d.skills.find(r => r.keyword === "kubernetes")?.present).toBe(true);
+    expect(d.skills.find(r => r.keyword === "golang")?.present).toBe(false);
+    expect(d.missing).toContain("golang");
+    expect(d.score).toBe(67);
+    expect(d.total).toBe(d.skills.length + d.jd.length);
+  });
+
+  it("skill-less postings still get actionable vocabulary coverage", () => {
+    const job: JobPosting = {
+      ...JOB,
+      skills: [],
+      description: "We are looking for a Senior Frontend Engineer to build polished React dashboards with TypeScript, GraphQL, and Kubernetes. You will design and ship high-scale frontends."
+    };
+    const d = atsKeywordDrilldown("Senior Frontend Engineer — React, TypeScript, and GraphQL in production.", job);
+    expect(d.skills).toHaveLength(0);
+    expect(d.score).toBe(0);
+    expect(d.jd.length).toBeGreaterThan(0);
+    expect(d.jd.find(r => r.keyword === "react")?.present).toBe(true);
+    expect(d.jd.find(r => r.keyword === "kubernetes")?.present).toBe(false);
+    /* the drill-down gives a real number even with no skills listed */
+    expect(d.total).toBe(d.jd.length);
+    expect(d.hits).toBeGreaterThan(0);
+    expect(d.hits).toBeLessThan(d.total);
   });
 });
 

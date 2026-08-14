@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
-import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, quantifiedClaims, saveApplyKit, type ApplyKit } from "../services/applyKit";
+import { aiTailorCoverLetter, aiTailorResume, atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, getApplyKit, quantifiedClaims, saveApplyKit, type ApplyKit, type AtsKeywordRow } from "../services/applyKit";
 import { diffLines } from "../services/diff";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
 import { openResumePrint } from "../services/resumeHtml";
@@ -163,9 +163,9 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         {tab === "resume" && (() => {
           const cov = atsCoverage(kit?.resume ?? "", job);
           if (!job.skills.length) {
-            return <span title="This posting doesn't list any extractable skills — there's nothing for ATS to cover, so the score isn't applicable here." className="cursor-help"><Chip tone="default">⚡ ATS —</Chip></span>;
+            return <span title="This posting lists no extractable skills, so there's no % score — open 🔍 ATS preview to see how the resume covers the posting's own keywords instead." className="cursor-help"><Chip tone="default">⚡ ATS —</Chip></span>;
           }
-          return <span title={`${cov.found.length} of ${job.skills.length} required skills appear in the resume`} className="cursor-help"><Chip tone={cov.score >= 80 ? "ok" : cov.score >= 50 ? "co" : "warn"}>⚡ ATS {cov.score}%</Chip></span>;
+          return <span title={`${cov.found.length} of ${job.skills.length} required skills appear in the resume — 🔍 ATS preview breaks it down per keyword`} className="cursor-help"><Chip tone={cov.score >= 80 ? "ok" : cov.score >= 50 ? "co" : "warn"}>⚡ ATS {cov.score}%</Chip></span>;
         })()}
         <div className="ml-auto flex gap-2">
           <button
@@ -326,10 +326,15 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
 
       {tab === "resume" && (() => {
         const cov = atsCoverage(kit?.resume ?? "", job);
-        return cov.missing.length > 0 ? (
+        /* skill-less postings have nothing to score — fall back to the posting's
+           own mined vocabulary so the tip still gives something actionable */
+        const miss = cov.missing.length
+          ? cov.missing
+          : atsKeywordDrilldown(kit?.resume ?? "", job).jd.filter(r => !r.present).map(r => r.keyword);
+        return miss.length > 0 ? (
           <p className="mt-3 text-[11.5px] text-mut">
-            ATS tip: <b>{cov.missing.join(", ")}</b> {cov.missing.length === 1 ? "appears" : "appear"} in the posting but not in this
-            resume — add them where true (skills or highlights) to clear automated filters.
+            ATS tip: <b>{miss.slice(0, 6).join(", ")}</b> {miss.length === 1 ? "appears" : "appear"} in the posting but not in this
+            resume — add {miss.length === 1 ? "it" : "them"} where true (skills or highlights) to clear automated filters.
           </p>
         ) : null;
       })()}
@@ -344,17 +349,27 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
   );
 }
 
+/* one drill-down row — a posting keyword with its match verdict */
+function KeywordChip({ row }: { row: AtsKeywordRow }) {
+  return row.present ? (
+    <Chip tone="ok" title="Appears in your resume">✓ {row.keyword}</Chip>
+  ) : (
+    <Chip tone="warn" title="In the posting but not in this resume — add it where true">✗ {row.keyword}</Chip>
+  );
+}
+
 /* how an ATS would read this export — sections, contact, flags, coverage */
 function AtsPreviewModal({ text, job, onClose }: { text: string; job: JobPosting; onClose: () => void }) {
   const p = atsParsePreview(text, job);
+  const d = atsKeywordDrilldown(text, job);
   return (
     <Modal onClose={onClose} title="🔍 ATS parse preview" desc="A simulation of how applicant-tracking software would read this resume — what it keeps, what it stumbles on.">
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         {[
           { label: "Words", value: p.wordCount, tone: "text-ink" },
           { label: "Sections", value: p.sections.length, tone: "text-acc1" },
-          { label: "Keywords", value: job.skills.length ? `${p.coverage.found.length}/${job.skills.length}` : "—", tone: "text-ok" },
-          { label: "ATS score", value: job.skills.length ? `${p.coverage.score}%` : "—", tone: job.skills.length ? (p.coverage.score >= 80 ? "text-ok" : p.coverage.score >= 50 ? "text-acc3" : "text-warn") : "text-mut" }
+          { label: "Keywords", value: job.skills.length ? `${d.found.length}/${d.skills.length}` : `${d.jd.filter(r => r.present).length}/${d.jd.length}`, tone: "text-ok" },
+          { label: "ATS score", value: job.skills.length ? `${d.score}%` : "—", tone: job.skills.length ? (d.score >= 80 ? "text-ok" : d.score >= 50 ? "text-acc3" : "text-warn") : "text-mut" }
         ].map(c => (
           <div key={c.label} className="rounded-xl border border-line/15 bg-deep/30 p-3 text-center">
             <div className={`text-xl font-extrabold ${c.tone}"`}>{c.value}</div>
@@ -387,15 +402,51 @@ function AtsPreviewModal({ text, job, onClose }: { text: string; job: JobPosting
       )}
 
       <div className="mt-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
-        <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Keyword coverage vs {job.company}</div>
-        {job.skills.length === 0 ? (
-          <p className="mt-1 text-[12px] text-mut">This posting has no extractable skills, so there's nothing to score — “✨ Polish with AI” can still tailor the language to the role.</p>
-        ) : p.coverage.missing.length > 0 ? (
-          <p className="mt-1 text-[12px] text-fnt">Missing: <b>{p.coverage.missing.join(", ")}</b> — add them where true to clear automated filters.</p>
-        ) : (
-          <p className="mt-1 text-[12px] text-ok">All required keywords present — this would clear a keyword filter.</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-mut">Keyword coverage vs {job.company}</div>
+          {d.total > 0 && (
+            <Chip tone={d.total && d.hits / d.total >= 0.7 ? "ok" : d.hits / d.total >= 0.4 ? "co" : "warn"}>
+              {d.hits}/{d.total} in resume
+            </Chip>
+          )}
+        </div>
+        {job.skills.length === 0 && (
+          <p className="mt-1.5 text-[11.5px] text-mut">
+            This posting lists no extractable skills, so there's no % score — the match below scores the posting's own vocabulary
+            ({d.jd.length} role keywords) against your resume, so you still get something actionable.
+          </p>
         )}
-        {p.coverage.found.length > 0 && <p className="mt-1 text-[12px] text-fnt">Found: <b className="text-ok">{p.coverage.found.join(", ")}</b></p>}
+        {d.skills.length > 0 && (
+          <>
+            <div className="mt-2.5 text-[11px] font-bold text-fnt">Required skills ({d.skills.length})</div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {d.skills.map(r => <KeywordChip key={r.keyword} row={r} />)}
+            </div>
+          </>
+        )}
+        {d.jd.length > 0 && (
+          <>
+            <div className="mt-2.5 text-[11px] font-bold text-fnt">
+              Role keywords the posting leans on ({d.jd.length}){job.skills.length === 0 ? " — what to mirror" : ""}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {d.jd.map(r => <KeywordChip key={r.keyword} row={r} />)}
+            </div>
+          </>
+        )}
+        {d.total > 0 && (
+          <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-deep/60">
+            <div
+              className={`h-full rounded-full ${d.hits / d.total >= 0.7 ? "bg-ok" : d.hits / d.total >= 0.4 ? "bg-acc3" : "bg-warn"}`}
+              style={{ width: `${Math.round((d.hits / d.total) * 100)}%` }}
+            />
+          </div>
+        )}
+        {job.skills.length > 0 && d.missing.length > 0 && (
+          <p className="mt-2 text-[11.5px] text-mut">
+            Add the ✗ items where true (skills or highlights) to clear automated filters.
+          </p>
+        )}
       </div>
 
       <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>

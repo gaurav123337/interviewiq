@@ -42,7 +42,9 @@ const JD_STOP = new Set([
 export function jdKeywords(job: JobPosting, max = 8): string[] {
   const counts = new Map<string, number>();
   const add = (t: string) => {
-    const k = t.toLowerCase().trim();
+    /* strip leading/trailing dots — the split class keeps `.` for c++/c#,
+       so sentence-final punctuation would otherwise become part of the token */
+    const k = t.toLowerCase().trim().replace(/^\.+|\.+$/g, "");
     if (k.length < 3 || JD_STOP.has(k) || /^[0-9+#.]+$/.test(k)) return;
     counts.set(k, (counts.get(k) ?? 0) + 1);
   };
@@ -274,6 +276,58 @@ export function atsCoverage(text: string, job: JobPosting): { score: number; fou
   }
   const total = job.skills.length;
   return { score: total ? Math.round((found.length / total) * 100) : 0, found, missing };
+}
+
+/** One row of the ATS keyword drill-down — a posting skill or a mined
+    JD keyword, and whether it appears in the generated document. */
+export interface AtsKeywordRow {
+  keyword: string;
+  present: boolean;
+  source: "skill" | "jd";
+}
+
+export interface AtsDrilldown {
+  /** The posting's own required-skills rows (empty when it lists none). */
+  skills: AtsKeywordRow[];
+  /** Role keywords mined from the posting's title + description. */
+  jd: AtsKeywordRow[];
+  /** Coverage score against required skills (0 when none are listed). */
+  score: number;
+  found: string[];
+  missing: string[];
+  /** Aggregates across every row — the actionable number even when the
+      posting lists no skills, because the JD vocabulary is still scored. */
+  hits: number;
+  total: number;
+}
+
+/** Per-keyword ATS drill-down: every required skill AND the posting's own
+    mined vocabulary (jdKeywords) matched against the generated document.
+    Skill-less postings still get a real, actionable number — the posting's
+    vocabulary coverage — instead of a blank score. Pure + testable. */
+export function atsKeywordDrilldown(text: string, job: JobPosting): AtsDrilldown {
+  const lower = text.toLowerCase();
+  const present = (k: string) => {
+    const tokens = k.toLowerCase().split(/[^a-z0-9+#.]+/).filter(Boolean).map(t => t.replace(/^\.+|\.+$/g, ""));
+    return tokens.length > 0 && tokens.every(t => t.length >= 2 && lower.includes(t));
+  };
+  const skills: AtsKeywordRow[] = job.skills.map(s => ({ keyword: s, present: present(s), source: "skill" }));
+  const jd: AtsKeywordRow[] = jdKeywords(job, 12)
+    /* skip mined keywords that duplicate a listed skill — the skills row already shows them */
+    .filter(k => !job.skills.some(s => skillTokens(s).includes(k)))
+    .map(k => ({ keyword: k, present: present(k), source: "jd" }));
+  const found = skills.filter(r => r.present).map(r => r.keyword);
+  const missing = skills.filter(r => !r.present).map(r => r.keyword);
+  const rows = [...skills, ...jd];
+  return {
+    skills,
+    jd,
+    score: skills.length ? Math.round((found.length / skills.length) * 100) : 0,
+    found,
+    missing,
+    hits: rows.filter(r => r.present).length,
+    total: rows.length
+  };
 }
 
 /* ------------------------------------------------------------------ */

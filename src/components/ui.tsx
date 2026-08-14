@@ -28,9 +28,9 @@ const tones: Record<string, string> = {
   bad: "bg-bad/10 text-bad border-bad/35"
 };
 
-export function Chip({ tone = "default", children }: { tone?: keyof typeof tones; children: ReactNode }) {
+export function Chip({ tone = "default", title, children }: { tone?: keyof typeof tones; title?: string; children: ReactNode }) {
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12.5px] font-bold ${tones[tone]}`}>
+    <span title={title} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12.5px] font-bold ${tones[tone]}`}>
       {children}
     </span>
   );
