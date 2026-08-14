@@ -2,7 +2,7 @@
    lives in supabase/functions/_shared/rss.ts). */
 
 import { describe, expect, it } from "vitest";
-import { feedTitle, parseRss } from "../../supabase/functions/_shared/rss";
+import { feedTitle, parseRss, splitRssTitle } from "../../supabase/functions/_shared/rss";
 
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -64,6 +64,13 @@ describe("parseRss (shared edge-function parser)", () => {
 
   it("returns the channel title as the feed title", () => {
     expect(feedTitle(SAMPLE_RSS)).toBe("Acme Jobs");
+  });
+
+  it("splitRssTitle pulls the company from board-style item titles (colon only)", () => {
+    expect(splitRssTitle("Airtable: Senior Solutions Architect")).toEqual({ company: "Airtable", title: "Senior Solutions Architect" });
+    expect(splitRssTitle("Senior Solutions Architect - West Coast").company).toBe(""); /* dash style untouched */
+    expect(splitRssTitle("DevOps Engineer (Remote)").company).toBe("");
+    expect(splitRssTitle("Acme： 后端工程师").company).toBe("Acme");
   });
 
   it("degrades gracefully on garbage", () => {

@@ -2499,7 +2499,10 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
         <div className="mt-2 flex flex-wrap gap-2">
           {[
             { label: "➕ WWR programming", src: "rss:https://weworkremotely.com/categories/remote-programming-jobs.rss" },
-            { label: "➕ WWR full-stack", src: "rss:https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss" }
+            { label: "➕ WWR full-stack", src: "rss:https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss" },
+            { label: "➕ 🇮🇳 fampay (startup)", src: "lever:fampay" },
+            { label: "➕ 🇮🇳 cred (startup)", src: "lever:cred" },
+            { label: "➕ 🇮🇳 groww (startup)", src: "greenhouse:groww" }
           ].map(o => (
             <button
               key={o.src}

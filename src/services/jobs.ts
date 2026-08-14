@@ -9,6 +9,7 @@ import { LEVELS, fieldById } from "../data";
 import { getCloudState, getSupabaseClient } from "./cloud";
 import { getGoal, getProfile } from "./goal";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
+import { sourceLabel } from "./importJob";
 
 /* ------------------------------------------------------------------ */
 /* Career profile                                                      */
@@ -209,6 +210,47 @@ export function salaryLabel(j: JobPosting): string | null {
   const s = sym[currency] ?? (currency + " ");
   const fmt = (n: number) => n >= 1000000 ? `${s}${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${s}${Math.round(n / 1000)}k` : `${s}${n}`;
   return `${fmt(min)}–${fmt(max)} ${currency}${j.salary.source === "estimate" ? " est." : ""}`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Cross-source duplicate collapse — the same role on Greenhouse, Ashby, */
+/* Lever and RSS becomes one card (the richest posting wins).           */
+/* ------------------------------------------------------------------ */
+
+/** Normalized dedupe key — title + company, case/punctuation folded. */
+function dedupeKey(j: JobPosting): string {
+  const t = j.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const c = j.company.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return `${t}|${c}`;
+}
+
+/** Which posting best represents a duplicate group: direct ATS sources
+    beat RSS (richer, canonical data); skills, a salary, and a fuller
+    description break ties. */
+function repQuality(j: JobPosting): number {
+  return (j.source === "rss" ? 0 : 1) * 1000
+    + (j.skills.length > 0 ? 100 : 0)
+    + (j.salary ? 10 : 0)
+    + (j.description && j.description.length > 200 ? 1 : 0);
+}
+
+/** Collapse the same role posted on multiple sources into one card,
+    tagging the winner with the other sources (alsoSources). Pure. */
+export function dedupeJobs(jobs: JobPosting[]): JobPosting[] {
+  const groups = new Map<string, JobPosting[]>();
+  for (const j of jobs) {
+    const k = dedupeKey(j);
+    const list = groups.get(k);
+    if (list) list.push(j); else groups.set(k, [j]);
+  }
+  const out: JobPosting[] = [];
+  for (const list of groups.values()) {
+    const sorted = [...list].sort((a, b) => repQuality(b) - repQuality(a));
+    const best = sorted[0];
+    const others = [...new Set(sorted.slice(1).map(o => sourceLabel(o.source)))];
+    out.push(others.length ? { ...best, alsoSources: others } : best);
+  }
+  return out;
 }
 
 /** Last successful feed refresh (epoch ms) — drives the auto-refresh. */

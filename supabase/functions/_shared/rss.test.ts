@@ -2,7 +2,7 @@
    Mirrors the client suite. Run: deno test supabase/functions/_shared/ */
 
 import { assertEquals } from "jsr:@std/assert";
-import { feedTitle, parseRss } from "./rss.ts";
+import { feedTitle, parseRss, splitRssTitle } from "./rss.ts";
 
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -33,6 +33,11 @@ Deno.test("parseRss extracts items and decodes CDATA/entities", () => {
 Deno.test("feedTitle returns the channel title", () => {
   assertEquals(feedTitle(SAMPLE_RSS), "Acme Jobs");
   assertEquals(feedTitle(""), null);
+});
+
+Deno.test("splitRssTitle splits board-style titles on a colon only", () => {
+  assertEquals(splitRssTitle("Airtable: Senior Solutions Architect").company, "Airtable");
+  assertEquals(splitRssTitle("Senior Solutions Architect - West Coast").company, "");
 });
 
 Deno.test("parseRss handles Atom entries and garbage", () => {

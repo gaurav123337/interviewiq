@@ -199,6 +199,9 @@ export interface JobPosting {
   /** Company size tier from explicit employee counts (small/mid/large or null). */
   companySize: string | null;
   postedAt: string | null;
+  /** Other sources posting the same role — set by dedupeJobs so the UI can
+      show "also on …" without listing duplicates. */
+  alsoSources?: string[];
 }
 
 /** Match verdict tiers — the "good match or not" suggestion. */

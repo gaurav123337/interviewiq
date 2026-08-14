@@ -9,7 +9,7 @@ import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
 import {
-  addImportedJob, defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
+  addImportedJob, dedupeJobs, defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
   recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
@@ -194,9 +194,10 @@ export function Jobs() {
     return m;
   }, [profile, jobs]);
 
-  /* match feed — filtered, then sorted by match % descending (best first) */
+  /* match feed — cross-source duplicates collapsed, then filtered, then
+     sorted by match % descending (best first) */
   const visible = useMemo(
-    () => sortJobsByMatch(filterJobs(jobs, filters), id => matchOf.get(id)?.score ?? 0),
+    () => sortJobsByMatch(dedupeJobs(filterJobs(jobs, filters)), id => matchOf.get(id)?.score ?? 0),
     [jobs, filters, matchOf]
   );
   /* pagination — page size persists across sessions; 0 = show all */
@@ -213,8 +214,9 @@ export function Jobs() {
     setFeedLimit(v === 0 ? Infinity : v);
   };
 
-  /* company leaderboard — best match % per company, descending */
-  const ranks = useMemo(() => rankCompanies(profile, jobs), [profile, jobs]);
+  /* company leaderboard — best match % per company, descending (deduped so
+     the same role on Greenhouse + RSS doesn't double-count a company) */
+  const ranks = useMemo(() => rankCompanies(profile, dedupeJobs(jobs)), [profile, jobs]);
   const filteredRanks = useMemo(() => filterRanks(ranks, rankFilters, shortlist), [ranks, rankFilters, shortlist]);
   /* recommendations — the top picks, with a concrete next step for #1 */
   const topPicks = useMemo(() => filteredRanks.slice(0, 3), [filteredRanks]);
@@ -1232,6 +1234,11 @@ export function Jobs() {
                     {j.location && <span>📍 {j.location}</span>}
                     {j.remote && <Chip tone="ok">REMOTE</Chip>}
                     {j.level && <span>· {j.level}</span>}
+                    {j.alsoSources && j.alsoSources.length > 0 && (
+                      <Chip tone="default" title={`This role is also posted on ${j.alsoSources.join(", ")} — collapsed into one card`}>
+                        ＋{j.alsoSources.length} on {j.alsoSources.join(", ")}
+                      </Chip>
+                    )}
                     {(() => { const s = salaryLabel(j); return s ? <span className="font-bold text-ok">💰 {s}</span> : null; })()}
                     <span className="text-[11px]">{j.source}</span>
                     {j.url && <a href={j.url} target="_blank" rel="noreferrer" className="font-bold text-acctxt hover:underline">View →</a>}

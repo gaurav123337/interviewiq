@@ -10,15 +10,22 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
-import { feedTitle, parseRss } from "../_shared/rss.ts";
+import { feedTitle, parseRss, splitRssTitle } from "../_shared/rss.ts";
 
-/* default ATS sources — verified live; admins can override via app_config */
+/* default sources — verified live; admins can override via app_config.
+   Global ATS boards + public RSS feeds + Indian startup boards (fampay,
+   cred, groww) so the feed covers the India market too. */
 const DEFAULT_SOURCES = [
   { provider: "greenhouse", board: "lyft" },
   { provider: "greenhouse", board: "airbnb" },
   { provider: "greenhouse", board: "dropbox" },
   { provider: "ashby", board: "linear" },
-  { provider: "ashby", board: "notion" }
+  { provider: "ashby", board: "notion" },
+  { provider: "lever", board: "fampay" },
+  { provider: "lever", board: "cred" },
+  { provider: "greenhouse", board: "groww" },
+  { provider: "rss", board: "https://weworkremotely.com/categories/remote-programming-jobs.rss" },
+  { provider: "rss", board: "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss" }
 ];
 
 /* Skill dictionary. Two tiers so ordinary prose can't fake a tech role:
@@ -174,18 +181,23 @@ async function fetchRss(feedUrl: string): Promise<{ company: string; jobs: unkno
   const title = feedTitle(xml);
   const company = (title || new URL(feedUrl).hostname.replace(/^www\./, "") || "RSS").slice(0, 60);
   const jobs = parseRss(xml).map((item, i) => {
-    const desc = `${item.title}\n${item.description}`;
+    /* board feeds put the company in each item title ("Airtable: Senior
+       Solutions Architect") — use it over the generic feed title */
+    const { company: itemCompany, title } = splitRssTitle(item.title);
+    const jobTitle = itemCompany ? title : item.title;
+    const companyLabel = itemCompany || company;
+    const desc = `${jobTitle}\n${item.description}`;
     return {
       externalId: `${new URL(item.link).hostname}-${i}-${simpleHash(item.link)}`,
-      title: item.title,
-      company,
+      title: jobTitle,
+      company: companyLabel,
       location: "",
       remote: true,
       description: desc.slice(0, 6000),
       url: item.link,
       postedAt: item.pubDate,
-      skills: extractSkills(item.title, desc),
-      level: guessLevel(item.title),
+      skills: extractSkills(jobTitle, desc),
+      level: guessLevel(jobTitle),
       salary: extractSalary(desc),
       companySize: extractCompanySize(desc)
     };

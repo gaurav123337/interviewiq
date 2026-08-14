@@ -205,3 +205,33 @@ describe("feed services", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("dedupeJobs (cross-source collapse)", () => {
+  const j = (over: Partial<JobPosting>): JobPosting => ({
+    id: "x", source: "greenhouse", externalId: "1", title: "Senior Frontend Engineer", company: "Acme",
+    location: "Remote", remote: true, description: "React + TypeScript at scale.", url: "https://a.com/1",
+    skills: ["react", "typescript"], level: "senior", salary: null, companySize: null, postedAt: null, ...over
+  });
+
+  it("collapses the same role across sources and keeps the richer posting", async () => {
+    const { dedupeJobs } = await import("../services/jobs");
+    const ats = j({ id: "gh:1", source: "greenhouse", skills: ["react", "typescript"], salary: { min: 100000, max: 130000, currency: "USD" } });
+    const rss = j({ id: "rss:1", source: "rss", skills: [], salary: null, url: "https://rss.example.com/1" });
+    const out = dedupeJobs([rss, ats]);
+    expect(out).toHaveLength(1);
+    expect(out[0].id).toBe("gh:1"); /* the ATS posting wins over RSS */
+    expect(out[0].alsoSources).toEqual(["RSS"]);
+  });
+
+  it("keeps genuinely different roles separate", async () => {
+    const { dedupeJobs } = await import("../services/jobs");
+    const a = j({ id: "1", title: "Senior Frontend Engineer" });
+    const b = j({ id: "2", title: "Backend Engineer" });
+    expect(dedupeJobs([a, b])).toHaveLength(2);
+  });
+
+  it("leaves a solo posting without an alsoSources tag", async () => {
+    const { dedupeJobs } = await import("../services/jobs");
+    expect(dedupeJobs([j({})])[0].alsoSources).toBeUndefined();
+  });
+});

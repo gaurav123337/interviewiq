@@ -38,6 +38,19 @@ const pubDateToIso = (raw: string): string | null => {
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
 };
 
+/** Board-style item titles put the company first ("Airtable: Senior
+    Solutions Architect" — We Work Remotely's format). Split on a colon
+    only, so dash-style "Title - Company" titles stay untouched. */
+export function splitRssTitle(raw: string): { company: string; title: string } {
+  const m = raw.match(/^(.{2,40}?)\s*[:：]\s+(.+)$/);
+  if (m) {
+    const company = m[1].trim();
+    const title = m[2].trim();
+    if (company && title) return { company, title };
+  }
+  return { company: "", title: raw.trim() };
+}
+
 /** Feed title (channel/feed title) — used as the company label. */
 export function feedTitle(xml: string): string | null {
   const channel = xml.match(/<channel[^>]*>([\s\S]*?)<\/channel>/i)?.[1] ?? xml;
