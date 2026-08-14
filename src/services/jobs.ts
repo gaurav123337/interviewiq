@@ -174,6 +174,15 @@ export function filterJobs(jobs: JobPosting[], f: JobFilters): JobPosting[] {
   });
 }
 
+/** Stable sort of the feed by match score descending (highest % first).
+    Ties keep their original order so the sort never shuffles the list. */
+export function sortJobsByMatch(jobs: JobPosting[], scoreOf: (id: string) => number): JobPosting[] {
+  return jobs
+    .map((j, i) => ({ j, i, s: scoreOf(j.id) || 0 }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map(x => x.j);
+}
+
 /** Human-readable salary band for a job (e.g. "$120k–$150k") or null. */
 export function salaryLabel(j: JobPosting): string | null {
   if (!j.salary) return null;

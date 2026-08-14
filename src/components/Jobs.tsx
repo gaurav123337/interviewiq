@@ -11,7 +11,7 @@ import { ResumeKitModal } from "./ResumeKitModal";
 import {
   defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
-  salaryLabel, saveCareerProfile, toggleShortlist, VERDICT_META, type JobFilters, type RankFilters
+  salaryLabel, saveCareerProfile, sortJobsByMatch, toggleShortlist, VERDICT_META, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { clearUploadedResume, getUploadedResume, resumeToProfile, saveUploadedResume } from "../services/resume";
 import { extractFileText } from "../services/pdf";
@@ -23,7 +23,7 @@ import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
 import { practiceForRound, type DrillCard } from "../services/drill";
 import { getGoal } from "../services/goal";
-import { STORAGE_KEYS, storageGet } from "../services/storage";
+import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { bankFromRound, listBank, removeFromBank, type BankEntry } from "../services/questionBank";
 
 /* small comma/Enter-driven tag input */
@@ -150,7 +150,24 @@ export function Jobs() {
     return m;
   }, [profile, jobs]);
 
-  const visible = useMemo(() => filterJobs(jobs, filters), [jobs, filters]);
+  /* match feed — filtered, then sorted by match % descending (best first) */
+  const visible = useMemo(
+    () => sortJobsByMatch(filterJobs(jobs, filters), id => matchOf.get(id)?.score ?? 0),
+    [jobs, filters, matchOf]
+  );
+  /* pagination — page size persists across sessions; 0 = show all */
+  const [feedPageSize, setFeedPageSize] = useState<number>(() => {
+    const v = storageGet<number>(STORAGE_KEYS.feedPageSize, 15);
+    return [15, 25, 50, 0].includes(v) ? v : 15;
+  });
+  const [feedLimit, setFeedLimit] = useState<number>(feedPageSize === 0 ? Infinity : feedPageSize);
+  /* the page resets to the chosen size whenever filters change */
+  useEffect(() => { setFeedLimit(feedPageSize === 0 ? Infinity : feedPageSize); }, [filters, feedPageSize]);
+  const pickPageSize = (v: number) => {
+    setFeedPageSize(v);
+    storageSet(STORAGE_KEYS.feedPageSize, v);
+    setFeedLimit(v === 0 ? Infinity : v);
+  };
 
   /* company leaderboard — best match % per company, descending */
   const ranks = useMemo(() => rankCompanies(profile, jobs), [profile, jobs]);
@@ -319,7 +336,7 @@ export function Jobs() {
                 className="inp mt-3 h-auto w-full resize-y text-[13px]"
               />
               <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-[11px] text-mut">Tip: PDFs with selectable text work best — scanned pages can't be read.</span>
+                <span className="text-[11px] text-mut">Tip: PDFs with selectable text work best — scanned pages fall back to OCR (needs a connection).</span>
                 <button className={btnPrimary + btnSm} disabled={resumeBusy || resumePaste.trim().length < 40} onClick={() => applyResume(resumePaste, "pasted-resume.txt")}>
                   🔍 Analyze &amp; match
                 </button>
@@ -823,12 +840,28 @@ export function Jobs() {
       <div className={`${cardCls} mt-5 overflow-hidden`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 p-5">
           <div>
-            <h3 className="text-[14.5px] font-extrabold">🎯 Match feed ({visible.length}{visible.length !== jobs.length ? ` of ${jobs.length}` : ""})</h3>
-            <p className="mt-0.5 text-[11.5px] text-fnt">Verdicts compare the job's required skills against your profile. {proGated ? "Unlock Pro for the full reasons." : ""}</p>
+            <h3 className="text-[14.5px] font-extrabold">🎯 Match feed ({visible.length > feedLimit ? `${feedLimit} of ${visible.length}` : visible.length !== jobs.length ? `${visible.length} of ${jobs.length}` : visible.length})</h3>
+            <p className="mt-0.5 text-[11.5px] text-fnt">Sorted by match %, best first. Verdicts compare the job's required skills against your profile. {proGated ? "Unlock Pro for the full reasons." : ""}</p>
           </div>
-          <button className={btnGhost + btnSm} onClick={refresh} disabled={refreshing || !cloud}>
-            {refreshing ? "⏳ Refreshing…" : "🔄 Refresh feed"} {!cloud && "(sign in)"}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">
+              Show
+              <select
+                className="inp w-auto cursor-pointer py-1.5 text-[12px]"
+                value={feedPageSize === 0 ? "0" : String(feedPageSize)}
+                onChange={e => pickPageSize(Number(e.target.value))}
+                title="Jobs shown per page — your choice is remembered"
+              >
+                <option value="15">15</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="0">All</option>
+              </select>
+            </label>
+            <button className={btnGhost + btnSm} onClick={refresh} disabled={refreshing || !cloud}>
+              {refreshing ? "⏳ Refreshing…" : "🔄 Refresh feed"} {!cloud && "(sign in)"}
+            </button>
+          </div>
         </div>
 
         {jobs.length === 0 ? (
@@ -841,7 +874,7 @@ export function Jobs() {
           </div>
         ) : (
           <ul className="divide-y divide-line/10">
-            {visible.map(j => {
+            {visible.slice(0, feedLimit).map(j => {
               const m = matchOf.get(j.id);
               const locked = proGated;
               return (
@@ -938,6 +971,13 @@ export function Jobs() {
               );
             })}
           </ul>
+        )}
+        {visible.length > feedLimit && (
+          <div className="border-t border-line/10 p-4 text-center">
+            <button className={btnGhost + btnSm} onClick={() => setFeedLimit(l => l + feedPageSize)}>
+              Show more — {visible.length - feedLimit} more job{visible.length - feedLimit === 1 ? "" : "s"} (sorted by match %)
+            </button>
+          </div>
         )}
       </div>
 

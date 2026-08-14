@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CareerProfile, JobPosting } from "../types";
 import { STORAGE_KEYS, storageRemove } from "../services/storage";
-import { EMPTY_RANK_FILTERS, filterRanks, listShortlist, rankCompanies, toggleShortlist } from "../services/jobs";
+import { EMPTY_RANK_FILTERS, filterRanks, listShortlist, rankCompanies, sortJobsByMatch, toggleShortlist } from "../services/jobs";
 
 vi.mock("../services/cloud", () => ({
   getCloudState: () => ({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] }),
@@ -91,6 +91,35 @@ describe("filterRanks", () => {
   it("empty filters return everything unchanged", () => {
     const ranks = mkRanks();
     expect(filterRanks(ranks, EMPTY_RANK_FILTERS, new Set())).toEqual(ranks);
+  });
+});
+
+describe("sortJobsByMatch", () => {
+  const jobs3 = [
+    job({ id: "j1", company: "A", title: "Low match" }),
+    job({ id: "j2", company: "B", title: "High match" }),
+    job({ id: "j3", company: "C", title: "Mid match" })
+  ];
+
+  it("sorts the feed by match % descending (best first)", () => {
+    const out = sortJobsByMatch(jobs3, id => ({ j1: 20, j2: 90, j3: 55 })[id] ?? 0);
+    expect(out.map(j => j.id)).toEqual(["j2", "j3", "j1"]);
+  });
+
+  it("is stable — equal scores keep the original order", () => {
+    const out = sortJobsByMatch(jobs3, id => ({ j1: 40, j2: 40, j3: 40 })[id] ?? 0);
+    expect(out.map(j => j.id)).toEqual(["j1", "j2", "j3"]);
+  });
+
+  it("unknown ids (no match computed) sort to the bottom, still stable", () => {
+    const out = sortJobsByMatch(jobs3, id => (id === "j2" ? 80 : 0));
+    expect(out.map(j => j.id)).toEqual(["j2", "j1", "j3"]);
+  });
+
+  it("never mutates the input array", () => {
+    const before = jobs3.map(j => j.id);
+    sortJobsByMatch(jobs3, id => ({ j1: 20, j2: 90, j3: 55 })[id] ?? 0);
+    expect(jobs3.map(j => j.id)).toEqual(before);
   });
 });
 
