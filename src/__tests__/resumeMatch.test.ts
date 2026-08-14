@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CareerProfile, JobPosting } from "../types";
 import { STORAGE_KEYS, storageRemove } from "../services/storage";
-import { analyzeResume, resumeToProfile, suggestSkills } from "../services/resume";
+import { analyzeResume, profileHasStaleSkills, resumeToProfile, suggestSkills } from "../services/resume";
 import { rankCompanies } from "../services/jobs";
 
 vi.mock("../services/cloud", () => ({
@@ -122,6 +122,16 @@ describe("resumeToProfile", () => {
     expect(s).not.toContain("Go");
     expect(s).not.toContain("PostgreSQL");
     expect(s.length).toBeLessThanOrEqual(10);
+  });
+
+  it("flags profiles that predate strict resume-based skills", () => {
+    const text = "Senior Frontend Engineer\nReact, TypeScript, CSS.\n5+ years.";
+    const extracted = resumeToProfile(text);
+    /* strict profile == extraction → no banner */
+    expect(profileHasStaleSkills(extracted, text)).toBe(false);
+    /* merged-style profile with extras → banner */
+    const merged = { ...extracted, skills: [...extracted.skills, "Kubernetes", "Docker"] };
+    expect(profileHasStaleSkills(merged, text)).toBe(true);
   });
 
   it("never treats a name pair as a title", () => {

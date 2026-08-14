@@ -13,10 +13,10 @@ import {
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
   recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
-import { analyzeResume, clearUploadedResume, getUploadedResume, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
+import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
-import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
+import { buildCoverLetter, buildResume, getApplyKit, jdKeywords, saveApplyKit } from "../services/applyKit";
 import { applyDigest, dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
 import { BENCHMARK, BENCH_LEVELS, benchLevelForYears, companyBands, detectMarket, fmtAmount, fmtBand, marketBand, MARKETS, negotiationPoints, offerVerdict, ordinal, positionInBand, positionRead, type BenchLevel, type Market } from "../services/salaryBench";
 import { fire } from "../services/notifications";
@@ -86,6 +86,9 @@ export function Jobs() {
   const [resumeBusy, setResumeBusy] = useState(false);
   /* skills offered after an upload — the user opts in with ＋, nothing merges */
   const [skillSuggestions, setSkillSuggestions] = useState<string[]>([]);
+  /* one-time banner: resume was uploaded before strict resume-based skills */
+  const [resumeBannerDismissed, setResumeBannerDismissed] = useState(() => storageGet<boolean>(STORAGE_KEYS.resumeStrictBanner, false));
+  const [showResumeBanner, setShowResumeBanner] = useState(false);
   const [recsDigestOpen, setRecsDigestOpen] = useState(false);
   const [rankLimit, setRankLimit] = useState(10);
   const [rankFilters, setRankFilters] = useState<RankFilters>(EMPTY_RANK_FILTERS);
@@ -218,6 +221,19 @@ export function Jobs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* show the re-upload banner once, only when the stored profile has skills
+     the current resume no longer supports (the old merging behavior) */
+  useEffect(() => {
+    if (!resumeBannerDismissed && resume && profile && profileHasStaleSkills(profile, resume.text)) {
+      setShowResumeBanner(true);
+    }
+  }, [resume, profile, resumeBannerDismissed]);
+  const dismissResumeBanner = () => {
+    setShowResumeBanner(false);
+    setResumeBannerDismissed(true);
+    storageSet(STORAGE_KEYS.resumeStrictBanner, true);
+  };
+
   /* 🔎 Show in feed — filter the match feed to a company, scroll to it, flash it */
   const feedRef = useRef<HTMLDivElement | null>(null);
   const [feedFlash, setFeedFlash] = useState(false);
@@ -347,6 +363,19 @@ export function Jobs() {
         </div>
         <Chip tone={proGated ? "co" : "ok"}>{proGated ? "🔒 Verdicts are Pro" : "✨ Pro active"}</Chip>
       </div>
+
+      {showResumeBanner && (
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-acc1/30 bg-acc1/10 px-4 py-3">
+          <span className="text-[12.5px] text-fnt">
+            📎 Your profile has <b>{(() => { const n = (profile?.skills.length ?? 0) - resumeToProfile(resume!.text).skills.length; return `${n} skill${n === 1 ? "" : "s"}`; })()}</b> beyond what this resume mentions.
+            Re-upload it to keep skill chips strictly from the resume — anything you still want can be re-added from 💡 Suggestions.
+          </span>
+          <span className="flex flex-wrap items-center gap-2">
+            <button className={btnPrimary + btnSm} onClick={() => setResumeFormOpen(true)}>↺ Re-upload resume</button>
+            <button className={btnGhost + btnSm} onClick={dismissResumeBanner}>✕ Not now</button>
+          </span>
+        </div>
+      )}
 
       {/* resume upload — the fastest way to a match profile */}
       <div className={`${cardCls} mt-5 overflow-hidden`}>
@@ -1126,6 +1155,31 @@ export function Jobs() {
                       ))}
                     </div>
                   )}
+                  {!locked && m && m.missing.length === 0 && (() => {
+                    /* no missing-skill chips to suggest — offer the posting's own
+                       mined vocabulary instead, so skill-less postings stay actionable */
+                    const has = new Set((profile?.skills ?? []).map(s => s.toLowerCase()));
+                    const skip = new Set([...m.matched, ...m.missing].map(s => s.toLowerCase()));
+                    const jd = jdKeywords(j, 6).filter(k => !has.has(k) && !skip.has(k));
+                    if (!jd.length) return null;
+                    return (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                        <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">💡 Leans on</span>
+                        {jd.slice(0, 4).map(k => (
+                          <span key={k} className="inline-flex items-center gap-0.5">
+                            <Chip tone="co" title={`The posting leans on “${k}” — add it to your profile if you have this skill`}>{k}</Chip>
+                            <button
+                              className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
+                              onClick={() => addSkillToProfile(k)}
+                              title={`Add “${k}” to my skills`}
+                            >
+                              ＋
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {!locked && (
                     <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/10 pt-2.5">
                       <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Track:</span>

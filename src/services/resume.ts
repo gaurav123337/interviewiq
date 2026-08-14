@@ -263,6 +263,13 @@ export function suggestSkills(extracted: string[], prev: string[], fieldId: stri
   return out.slice(0, 10);
 }
 
+/** True when the stored profile carries more skills than the resume text
+    extracts — i.e. it was uploaded before strict resume-based skills and a
+    re-upload would tighten the chips. Pure + testable. */
+export function profileHasStaleSkills(profile: CareerProfile, resumeText: string): boolean {
+  return profile.skills.length > resumeToProfile(resumeText).skills.length;
+}
+
 /** Builds a CareerProfile from resume text — the matcher's input. */
 export function resumeToProfile(text: string): CareerProfile {
   const r = analyzeResume(text);

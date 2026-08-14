@@ -57,7 +57,8 @@ export const STORAGE_KEYS = {
   feedbackVotes: "iq.feedbackVotes",
   coachTopics: "iq.coachTopics",
   playgroundFocus: "iq.playgroundFocus",
-  feedPageSize: "iq.feedPageSize"
+  feedPageSize: "iq.feedPageSize",
+  resumeStrictBanner: "iq.resumeStrictBanner"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {
