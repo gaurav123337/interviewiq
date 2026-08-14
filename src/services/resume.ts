@@ -31,9 +31,14 @@ const FIELD_KEYWORDS: Record<string, string[]> = {
   product: ["product management", "product strategy", "roadmap", "stakeholder", "user research", "a/b testing", "metrics", "kpi", "agile", "scrum", "backlog", "user stories"]
 };
 
-/** Years of experience keywords → level mapping. */
+/** Executive titles are only a level when they appear as a standalone title
+    line ("CTO" on its own), never from prose — "worked with the CTO" or
+    "Reporting to the CEO" must not promote a senior engineer to a 15-year
+    executive and skew the years fallback / match verdicts. */
+const EXEC_TITLE_RE = /^(cto|chief technology officer|ceo|chief executive officer|vp of engineering|vice president of engineering|director of engineering)$/i;
+
+/** Years of experience keywords → level mapping (executives handled above). */
 const SENIORITY_PATTERNS: [RegExp, LevelId][] = [
-  [/(?:cto|chief technology officer|vp of engineering|director of engineering)/i, "cto"],
   [/(?:principal|distinguished|fellow|chief architect)/i, "principal"],
   [/(?:staff|lead|tech lead|architect)/i, "staff"],
   [/(?:senior|sr\.?|lead|5\+|6\+|7\+|8\+) (?:years|yr)/i, "senior"],
@@ -83,9 +88,12 @@ export function analyzeResume(text: string): ResumeResult {
     if (score > bestScore) { bestScore = score; bestField = id; }
   }
 
-  /* level detection: match patterns in order of seniority (highest match wins) */
+  /* level detection: a standalone executive title line wins; otherwise match
+     patterns in order of seniority (highest match wins) */
   let levelId: LevelId = "mid";
-  for (const [pattern, lvl] of SENIORITY_PATTERNS) {
+  const titleLine = text.split("\n").map(l => l.trim()).find(l => l.length > 0 && l.length < 50 && EXEC_TITLE_RE.test(l));
+  if (titleLine) levelId = "cto";
+  else for (const [pattern, lvl] of SENIORITY_PATTERNS) {
     if (pattern.test(lower)) { levelId = lvl; break; }
   }
 
@@ -228,7 +236,10 @@ function extractSummary(text: string): string {
   const body = lines.filter(l =>
     !/^[\w.+-]+@[\w-]+\.[\w.]+$/.test(l) &&
     !/^\+?\d[\d\s()-]{7,}$/.test(l) &&
-    !/linkedin\.com/i.test(l)
+    !/linkedin\.com/i.test(l) &&
+    /* header lines that carry the owner's name + title ("Gaurav Gupta  Frontend
+       Architect") are contact info, not summary prose */
+    stripNamePrefix(l) === l
   );
   return body.slice(0, 3).join(" ").slice(0, 180);
 }

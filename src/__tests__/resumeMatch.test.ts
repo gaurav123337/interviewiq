@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CareerProfile, JobPosting } from "../types";
 import { STORAGE_KEYS, storageRemove } from "../services/storage";
-import { resumeToProfile } from "../services/resume";
+import { analyzeResume, resumeToProfile } from "../services/resume";
 import { rankCompanies } from "../services/jobs";
 
 vi.mock("../services/cloud", () => ({
@@ -87,6 +87,22 @@ describe("resumeToProfile", () => {
     expect(p.targetTitles).toContain("Frontend Architect");
     expect(p.targetTitles).not.toContain("Gaurav Gupta  Frontend Architect");
     expect(p.targetTitles.every(t => !t.includes("Gaurav Gupta"))).toBe(true);
+  });
+
+  it("only treats a standalone executive title as the level, never a prose mention", () => {
+    const prose = analyzeResume("Senior Frontend Engineer\nWorked closely with the CTO on platform strategy. React, TypeScript, AWS.");
+    expect(prose.levelId).not.toBe("cto");
+    expect(prose.levelId).toBe("senior");
+    const exec = analyzeResume("Gaurav Gupta\nCTO\nReact, TypeScript, AWS, Kubernetes.");
+    expect(exec.levelId).toBe("cto");
+  });
+
+  it("keeps the owner's name+title header out of the extracted summary", () => {
+    const p = resumeToProfile(
+      "Gaurav Gupta\nGaurav Gupta  Frontend Architect\n12+ years building web products with React, TypeScript and AWS at scale.\nBengaluru, India"
+    );
+    expect(p.summary).not.toContain("Gaurav");
+    expect(p.summary).toContain("building web products");
   });
 
   it("never treats a name pair as a title", () => {
