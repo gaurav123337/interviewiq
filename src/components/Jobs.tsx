@@ -14,7 +14,7 @@ import {
   recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
-import { importFromUrlWithFallback, sourceLabel } from "../services/importJob";
+import { importFromUrlWithFallback, sourceLabel, splitJobUrls } from "../services/importJob";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, jdKeywords, saveApplyKit } from "../services/applyKit";
@@ -93,7 +93,8 @@ export function Jobs() {
   const [importOpen, setImportOpen] = useState(false);
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
-  const [importPreview, setImportPreview] = useState<JobPosting | null>(null);
+  /* one result row per pasted URL — multiple jobs in a single shot */
+  const [importResults, setImportResults] = useState<{ url: string; job: JobPosting | null; error: string | null }[]>([]);
   const [importErr, setImportErr] = useState<string | null>(null);
   /* apply hand-off (Lane C) — first-use explainer shown once */
   const [applyHintShown, setApplyHintShown] = useState(() => storageGet<boolean>(STORAGE_KEYS.externalApplyHint, false));
@@ -337,35 +338,38 @@ export function Jobs() {
     toast(iso ? `📅 Follow-up set for ${new Date(iso + "T09:00:00").toLocaleDateString()}` : "🗑️ Follow-up cleared");
   };
 
-  /* --- platform import: paste a job URL → preview → add to feed ------- */
+  /* --- platform import: paste one or more job URLs → preview → add ----- */
   const previewImport = async () => {
-    const raw = importUrl.trim();
-    if (!raw) { setImportErr("Paste a job link first — from Naukri, LinkedIn, Indeed, or any company page."); return; }
+    const urls = splitJobUrls(importUrl);
+    if (!urls.length) { setImportErr("Paste at least one job link — one per line."); return; }
     setImporting(true);
     setImportErr(null);
-    setImportPreview(null);
+    setImportResults([]);
     try {
       const client = await getSupabaseClient();
       const session = await client?.auth.getSession().catch(() => null);
-      const out = await importFromUrlWithFallback(raw, {
-        supabaseUrl: CONFIG.supabase.url,
-        token: session?.data?.session?.access_token ?? undefined
-      });
-      if (!out.ok) { setImportErr(out.message); return; }
-      setImportPreview(out.job);
+      const token = session?.data?.session?.access_token ?? undefined;
+      /* sequential on purpose — polite fetching, rate-limited per host */
+      const results: { url: string; job: JobPosting | null; error: string | null }[] = [];
+      for (const raw of urls) {
+        const out = await importFromUrlWithFallback(raw, { supabaseUrl: CONFIG.supabase.url, token });
+        results.push(out.ok ? { url: raw, job: out.job, error: null } : { url: raw, job: null, error: out.message });
+      }
+      setImportResults(results);
     } finally {
       setImporting(false);
     }
   };
 
   const confirmImport = () => {
-    if (!importPreview) return;
-    addImportedJob(importPreview);
+    const jobs = importResults.filter(r => r.job).map(r => r.job!);
+    if (!jobs.length) return;
+    for (const j of jobs) addImportedJob(j);
     setJobs(listJobs());
-    toast(`➕ Imported “${importPreview.title}” — ${sourceLabel(importPreview.source)} · now in your match feed`);
+    toast(`➕ Imported ${jobs.length} job${jobs.length === 1 ? "" : "s"} — now in your match feed`);
     setImportOpen(false);
     setImportUrl("");
-    setImportPreview(null);
+    setImportResults([]);
     setImportErr(null);
   };
 
@@ -591,7 +595,7 @@ export function Jobs() {
           </div>
           <label className="block sm:col-span-2">
             <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Summary (optional)</span>
-            <textarea className="inp h-20 resize-y" placeholder="One or two lines about you — used for tailored resumes later." value={profile?.summary ?? ""}
+            <textarea className="inp h-36 min-h-[120px] resize-y" placeholder="A few lines about you — used for tailored resumes later." value={profile?.summary ?? ""}
               onChange={e => setProfile(p => p ? { ...p, summary: e.target.value } : p)} />
             <span className="mt-1 block text-[10.5px] text-mut">✏️ Extracted from your resume — edit freely; your edits survive re-uploads.</span>
           </label>
@@ -1347,64 +1351,88 @@ export function Jobs() {
       {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
       {importOpen && (
         <Modal
-          onClose={() => { setImportOpen(false); setImportUrl(""); setImportPreview(null); setImportErr(null); }}
-          title="➕ Add a job from a platform"
-          desc="Paste a job link from Naukri, LinkedIn, Indeed — or any company page. We read the public posting and score it like any feed job. Applying always happens on the platform's own page; InterviewIQ never applies for you."
+          onClose={() => { setImportOpen(false); setImportUrl(""); setImportResults([]); setImportErr(null); }}
+          title="➕ Add jobs from platforms"
+          desc="Paste one or more job links (one per line) from Naukri, LinkedIn, Indeed — or any company page. We read the public postings and score them like any feed job. Applying always happens on the platform's own page; InterviewIQ never applies for you."
         >
           <div className="flex gap-2">
-            <input
-              className="inp flex-1"
-              placeholder="https://www.naukri.com/job/… or any job URL"
+            <textarea
+              className="inp min-h-[92px] flex-1 resize-y"
+              placeholder={"https://www.naukri.com/job/…\nhttps://www.linkedin.com/jobs/view/…\nhttps://in.indeed.com/viewjob?jk=…"}
               value={importUrl}
-              onChange={e => { setImportUrl(e.target.value); setImportErr(null); setImportPreview(null); }}
-              onKeyDown={e => { if (e.key === "Enter") void previewImport(); }}
+              onChange={e => { setImportUrl(e.target.value); setImportErr(null); setImportResults([]); }}
+              spellCheck={false}
             />
-            <button className={btnPrimary + btnSm} onClick={() => void previewImport()} disabled={importing}>
+            <button className={btnPrimary + btnSm} onClick={() => void previewImport()} disabled={importing || !importUrl.trim()}>
               {importing ? "⏳ Reading…" : "🔎 Preview"}
             </button>
           </div>
 
-          {importing && <p className="mt-3 text-[12px] text-mut">⏳ Reading the posting… (public fetch, rate-limited)</p>}
+          {importing && <p className="mt-3 text-[12px] text-mut">⏳ Reading postings… (public fetch, rate-limited per site)</p>}
 
-          {importErr && !importPreview && (
+          {importErr && !importing && (
             <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3.5">
               <p className="text-[12.5px] text-fnt">✗ {importErr}</p>
-              {importUrl.trim() && (
-                <a
-                  href={importUrl.trim()}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1.5 inline-block text-[12px] font-bold text-acctxt underline"
-                >
-                  Open the job page manually ↗
-                </a>
-              )}
             </div>
           )}
 
-          {importPreview && (
-            <div className="mt-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Chip tone="co">{sourceLabel(importPreview.source)}</Chip>
-                {importPreview.remote && <Chip tone="ok">REMOTE</Chip>}
-                {importPreview.level && <span className="text-[11.5px] font-bold uppercase tracking-wider text-mut">· {importPreview.level}</span>}
-              </div>
-              <div className="mt-2 text-[14px] font-extrabold text-ink">{importPreview.title}</div>
-              {importPreview.company && <div className="text-[12.5px] font-bold text-fnt">{importPreview.company}</div>}
-              {importPreview.location && <div className="text-[12px] text-mut">📍 {importPreview.location}</div>}
-              {importPreview.description && (
-                <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-fnt">{importPreview.description.slice(0, 400)}</p>
-              )}
-              {importPreview.skills.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {importPreview.skills.map(s => <Chip key={s} tone="default">{s}</Chip>)}
+          {importResults.length > 0 && !importing && (
+            <div className="mt-3 space-y-2">
+              {importResults.map((r, i) => (
+                <div key={i} className={`rounded-xl border p-3.5 ${r.job ? "border-line/15 bg-deep/30" : "border-warn/30 bg-warn/10"}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      {r.job ? (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Chip tone="co">{sourceLabel(r.job.source)}</Chip>
+                            {r.job.remote && <Chip tone="ok">REMOTE</Chip>}
+                            {r.job.level && <span className="text-[11px] font-bold uppercase tracking-wider text-mut">· {r.job.level}</span>}
+                          </div>
+                          <div className="mt-1.5 text-[13.5px] font-extrabold text-ink">{r.job.title}</div>
+                          {r.job.company && <div className="text-[12px] font-bold text-fnt">{r.job.company}</div>}
+                          {r.job.location && <div className="text-[11.5px] text-mut">📍 {r.job.location}</div>}
+                          {r.job.skills.length > 0 && (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {r.job.skills.slice(0, 6).map(s => <Chip key={s} tone="default">{s}</Chip>)}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-[12.5px] font-bold text-warn">✗ Couldn't read this link</p>
+                          <p className="mt-0.5 break-all text-[11.5px] text-fnt">{r.error}</p>
+                          <a href={r.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-[12px] font-bold text-acctxt underline">
+                            Open the job page manually ↗
+                          </a>
+                        </>
+                      )}
+                    </div>
+                    {r.job && (
+                      <button
+                        className="shrink-0 text-[12px] font-bold text-mut hover:text-ink"
+                        onClick={() => setImportResults(list => list.filter((_, x) => x !== i))}
+                        title="Remove from this import"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 </div>
-              )}
-              <div className="mt-3 flex gap-2">
-                <button className={btnPrimary + btnSm} onClick={confirmImport}>➕ Add to feed</button>
-                <button className={btnGhost + btnSm} onClick={() => { setImportPreview(null); setImportErr(null); }}>↺ Try another URL</button>
+              ))}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  className={btnPrimary + btnSm}
+                  onClick={confirmImport}
+                  disabled={!importResults.some(r => r.job)}
+                >
+                  ➕ Add {importResults.filter(r => r.job).length} to feed
+                </button>
+                <button className={btnGhost + btnSm} onClick={() => { setImportResults([]); setImportUrl(""); setImportErr(null); }}>
+                  ↺ Start over
+                </button>
               </div>
-              <p className="mt-2 text-[11px] text-mut">The apply button on this job opens its page on {sourceLabel(importPreview.source)} — you complete it there.</p>
+              <p className="mt-1 text-[11px] text-mut">The apply button on each job opens its page on the platform — you complete it there.</p>
             </div>
           )}
         </Modal>

@@ -7,7 +7,7 @@ import { STORAGE_KEYS, storageRemove } from "../services/storage";
 import { addImportedJob, EMPTY_FILTERS, filterJobs } from "../services/jobs";
 import { markAppliedVia, setStatus } from "../services/applyTrack";
 import {
-  extractFromJsonLd, importFromUrl, normalizeImportedJob, platformFromUrl, robotsAllows, sourceLabel, stableHash, stripHtml
+  extractFromJsonLd, importFromUrl, normalizeImportedJob, platformFromUrl, robotsAllows, sourceLabel, splitJobUrls, stableHash, stripHtml
 } from "../services/importJob";
 
 afterEach(() => {
@@ -44,6 +44,13 @@ describe("platformFromUrl", () => {
     expect(platformFromUrl("not a url")).toBeNull();
     expect(platformFromUrl("ftp://naukri.com/job/1")).toBeNull();
     expect(platformFromUrl("javascript:alert(1)")).toBeNull();
+  });
+});
+
+describe("splitJobUrls", () => {
+  it("splits newline- and comma-separated links, trims, dedupes, drops blanks", () => {
+    expect(splitJobUrls("https://a.com/j1\nhttps://b.com/j2, https://a.com/j1\n\n   ")).toEqual(["https://a.com/j1", "https://b.com/j2"]);
+    expect(splitJobUrls("")).toEqual([]);
   });
 });
 

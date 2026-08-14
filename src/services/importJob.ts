@@ -54,6 +54,17 @@ export const sourceLabel = (s: string): string =>
   SOURCE_LABELS[s] ?? (s.startsWith("imported:") ? s.slice("imported:".length) : s);
 
 /* ------------------------------------------------------------------ */
+/* Multi-URL input — one per line (or comma separated)                 */
+/* ------------------------------------------------------------------ */
+
+/** Split a paste of multiple job links into clean, deduped URLs. */
+export function splitJobUrls(text: string): string[] {
+  return [...new Set(
+    text.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
+  )];
+}
+
+/* ------------------------------------------------------------------ */
 /* HTML helpers — meta tags, JSON-LD, plain text                       */
 /* ------------------------------------------------------------------ */
 
