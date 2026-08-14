@@ -150,6 +150,19 @@ export function Jobs() {
     }
   };
 
+  /* one-click ATS fix — add a missing posting skill to the profile; matches
+     recompute instantly so the chip flips from ✗ to ✓ where true */
+  const addSkillToProfile = (skill: string) => {
+    if (!profile) { toast("Save your career profile first."); return; }
+    const k = skill.trim();
+    if (!k) return;
+    if (profile.skills.some(s => s.toLowerCase() === k.toLowerCase())) { toast(`✓ “${k}” is already in your skills`); return; }
+    const next = { ...profile, skills: [...profile.skills, k] };
+    setProfile(next);
+    saveCareerProfile(next);
+    toast(`➕ Added “${k}” to your skills — matches updated`);
+  };
+
   const matchOf = useMemo(() => {
     const m = new Map<string, ReturnType<typeof matchJob>>();
     for (const j of jobs) m.set(j.id, matchJob(profile, j));
@@ -996,12 +1009,31 @@ export function Jobs() {
                     {j.url && <a href={j.url} target="_blank" rel="noreferrer" className="font-bold text-acctxt hover:underline">View →</a>}
                   </div>
                   {!locked && m && (m.matched.length || m.missing.length || m.blockers.length) && (
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-[12px]">
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px]">
                       {m.matched.length > 0 && (
-                        <span>✓ <span className="text-ok">Matched:</span> {m.matched.join(", ")}</span>
+                        <span className="flex flex-wrap items-center gap-1">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Matched:</span>
+                          {m.matched.map(s => (
+                            <Chip key={s} tone="ok" title="Appears in your resume">✓ {s}</Chip>
+                          ))}
+                        </span>
                       )}
                       {m.missing.length > 0 && (
-                        <span>✗ <span className="text-bad">Missing:</span> {m.missing.join(", ")}</span>
+                        <span className="flex flex-wrap items-center gap-1">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Missing:</span>
+                          {m.missing.map(s => (
+                            <span key={s} className="inline-flex items-center gap-0.5">
+                              <Chip tone="bad" title="In the posting but not in your profile — click ＋ to add it">✗ {s}</Chip>
+                              <button
+                                className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
+                                onClick={() => addSkillToProfile(s)}
+                                title={`Add “${s}” to my profile skills`}
+                              >
+                                ＋
+                              </button>
+                            </span>
+                          ))}
+                        </span>
                       )}
                       {m.missing.length > 0 && (
                         <button
@@ -1080,7 +1112,7 @@ export function Jobs() {
 
       {upgrade && <UpgradeModal onClose={() => setUpgrade(null)} reason={upgrade} />}
       {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
-      {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onClose={() => setKitJob(null)} />}
+      {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onAddSkill={addSkillToProfile} onClose={() => setKitJob(null)} />}
       {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
       {recsDigestOpen && profile && <RecsDigestModal profile={profile} ranks={ranks} onClose={() => setRecsDigestOpen(false)} />}
       {draftJob && (

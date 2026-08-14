@@ -23,10 +23,11 @@ function downloadText(name: string, text: string, job: JobPosting) {
   URL.revokeObjectURL(url);
 }
 
-export function ResumeKitModal({ job, profile, match, onClose }: {
+export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
   job: JobPosting;
   profile: CareerProfile;
   match: JobMatch | null;
+  onAddSkill?: (skill: string) => void;
   onClose: () => void;
 }) {
   const [kit, setKit] = useState<ApplyKit | null>(() => getApplyKit(job.id));
@@ -184,7 +185,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
             </button>
           )}
           {tab === "resume" && atsOpen && (
-            <AtsPreviewModal text={kit?.resume ?? ""} job={job} onClose={() => setAtsOpen(false)} />
+            <AtsPreviewModal text={kit?.resume ?? ""} job={job} onAddSkill={onAddSkill} onClose={() => setAtsOpen(false)} />
           )}
           {tab === "resume" && (
             <>
@@ -349,17 +350,29 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
   );
 }
 
-/* one drill-down row — a posting keyword with its match verdict */
-function KeywordChip({ row }: { row: AtsKeywordRow }) {
+/* one drill-down row — a posting keyword with its match verdict; when an
+   add handler is given, missing skills get a one-click ➕ into the profile */
+function KeywordChip({ row, onAdd }: { row: AtsKeywordRow; onAdd?: () => void }) {
   return row.present ? (
     <Chip tone="ok" title="Appears in your resume">✓ {row.keyword}</Chip>
   ) : (
-    <Chip tone="warn" title="In the posting but not in this resume — add it where true">✗ {row.keyword}</Chip>
+    <span className="inline-flex items-center gap-1">
+      <Chip tone="warn" title="In the posting but not in this resume — add it where true">✗ {row.keyword}</Chip>
+      {onAdd && (
+        <button
+          className="grid h-5 w-5 place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[13px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
+          onClick={onAdd}
+          title={`Add “${row.keyword}” to my profile skills`}
+        >
+          ＋
+        </button>
+      )}
+    </span>
   );
 }
 
 /* how an ATS would read this export — sections, contact, flags, coverage */
-function AtsPreviewModal({ text, job, onClose }: { text: string; job: JobPosting; onClose: () => void }) {
+function AtsPreviewModal({ text, job, onAddSkill, onClose }: { text: string; job: JobPosting; onAddSkill?: (skill: string) => void; onClose: () => void }) {
   const p = atsParsePreview(text, job);
   const d = atsKeywordDrilldown(text, job);
   return (
@@ -420,7 +433,7 @@ function AtsPreviewModal({ text, job, onClose }: { text: string; job: JobPosting
           <>
             <div className="mt-2.5 text-[11px] font-bold text-fnt">Required skills ({d.skills.length})</div>
             <div className="mt-1 flex flex-wrap gap-1.5">
-              {d.skills.map(r => <KeywordChip key={r.keyword} row={r} />)}
+              {d.skills.map(r => <KeywordChip key={r.keyword} row={r} onAdd={onAddSkill ? () => onAddSkill(r.keyword) : undefined} />)}
             </div>
           </>
         )}
