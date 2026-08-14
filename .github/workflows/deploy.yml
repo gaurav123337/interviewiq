@@ -31,6 +31,13 @@ jobs:
       # still stops the deploy
       - run: npm run build
       - run: npm test
+      # edge-function shared code is pure TS — verify it with Deno so the
+      # import-job extraction logic is tested in the pipeline (mirrors the
+      # client suite, which exercises the same file)
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno test supabase/functions/_shared/importPage.test.ts
       # surface the offline-shell suite on the run summary so a regression is
       # visible at a glance, not just in the test logs (also re-gates on it)
       - name: Report offline-shell check
@@ -48,3 +55,14 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+      # deploy the import-job edge function automatically when the Supabase
+      # access token secret exists; inert otherwise so the pipeline stays
+      # green without it
+      - name: Deploy import-job edge function (Supabase)
+        if: env.SUPABASE_ACCESS_TOKEN != ''
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          npx supabase functions deploy import-job \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt

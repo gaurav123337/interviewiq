@@ -62,6 +62,14 @@ function TagInput({ value, onChange, placeholder }: { value: string[]; onChange:
   );
 }
 
+/* real public postings the "✨ Try sample links" button pre-fills — stable
+   ATS-board URLs so the flow can be demoed without hunting for a link */
+const SAMPLE_IMPORT_URLS = [
+  "https://jobs.ashbyhq.com/notion/f1f9e19d-cbf3-49eb-9824-d04adf2e3d75",
+  "https://jobs.ashbyhq.com/notion/72532ca0-eb7d-4d9e-b982-50f52614fca9",
+  "https://app.careerpuck.com/job-board/lyft/job/8603653002?gh_jid=8603653002"
+];
+
 export function Jobs() {
   const [profile, setProfile] = useState<CareerProfile | null>(() => getCareerProfile());
   const [jobs, setJobs] = useState<JobPosting[]>(() => listJobs());
@@ -96,6 +104,8 @@ export function Jobs() {
   /* one result row per pasted URL — multiple jobs in a single shot */
   const [importResults, setImportResults] = useState<{ url: string; job: JobPosting | null; error: string | null }[]>([]);
   const [importErr, setImportErr] = useState<string | null>(null);
+  /* batch apply queue — work through the just-imported jobs one by one */
+  const [applyQueue, setApplyQueue] = useState<JobPosting[] | null>(null);
   /* apply hand-off (Lane C) — first-use explainer shown once */
   const [applyHintShown, setApplyHintShown] = useState(() => storageGet<boolean>(STORAGE_KEYS.externalApplyHint, false));
   const [showResumeBanner, setShowResumeBanner] = useState(false);
@@ -371,6 +381,9 @@ export function Jobs() {
     setImportUrl("");
     setImportResults([]);
     setImportErr(null);
+    /* hand straight into the batch apply queue so users can work through
+       the apply hand-offs instead of hunting cards one at a time */
+    if (jobs.length) setApplyQueue(jobs);
   };
 
   /* --- apply hand-off: open the platform's own page, track locally ----- */
@@ -1355,9 +1368,9 @@ export function Jobs() {
           title="➕ Add jobs from platforms"
           desc="Paste one or more job links (one per line) from Naukri, LinkedIn, Indeed — or any company page. We read the public postings and score them like any feed job. Applying always happens on the platform's own page; InterviewIQ never applies for you."
         >
-          <div className="flex gap-2">
+          <div className="flex items-start gap-2">
             <textarea
-              className="inp min-h-[92px] flex-1 resize-y"
+              className="inp h-24 w-full flex-1"
               placeholder={"https://www.naukri.com/job/…\nhttps://www.linkedin.com/jobs/view/…\nhttps://in.indeed.com/viewjob?jk=…"}
               value={importUrl}
               onChange={e => { setImportUrl(e.target.value); setImportErr(null); setImportResults([]); }}
@@ -1367,6 +1380,13 @@ export function Jobs() {
               {importing ? "⏳ Reading…" : "🔎 Preview"}
             </button>
           </div>
+          <button
+            className="mt-2 text-[11.5px] font-bold text-acctxt underline-offset-2 hover:underline"
+            onClick={() => setImportUrl(SAMPLE_IMPORT_URLS.join("\n"))}
+            title="Fill the box with a few real public postings to try the flow"
+          >
+            ✨ Try sample links
+          </button>
 
           {importing && <p className="mt-3 text-[12px] text-mut">⏳ Reading postings… (public fetch, rate-limited per site)</p>}
 
@@ -1435,6 +1455,48 @@ export function Jobs() {
               <p className="mt-1 text-[11px] text-mut">The apply button on each job opens its page on the platform — you complete it there.</p>
             </div>
           )}
+        </Modal>
+      )}
+      {applyQueue && applyQueue.length > 0 && (
+        <Modal
+          onClose={() => setApplyQueue(null)}
+          title="📋 Apply to your imported jobs"
+          desc="Work through the batch one at a time — each Apply opens the platform's own page in a new tab, where you complete the submission. InterviewIQ never applies for you; it just tracks progress."
+        >
+          <div className="space-y-2">
+            {applyQueue.map((j, i) => {
+              const tr = tracks[j.id];
+              const done = tr && (tr.status === "applied" || tr.status === "interview" || tr.status === "offer" || tr.status === "rejected");
+              return (
+                <div key={j.id} className="flex items-start justify-between gap-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Chip tone="co">{sourceLabel(j.source)}</Chip>
+                      <span className="text-[11px] font-bold text-mut">{i + 1}/{applyQueue.length}</span>
+                    </div>
+                    <div className="mt-1 truncate text-[13px] font-extrabold text-ink">{j.title}</div>
+                    {j.company && <div className="text-[11.5px] font-bold text-fnt">{j.company}</div>}
+                  </div>
+                  {done ? (
+                    <Chip tone="ok" title={tr.via ? `Applied via ${tr.via}` : "Marked applied"}>
+                      ✓ {tr.via ? `Applied via ${tr.via}` : "Applied"}
+                    </Chip>
+                  ) : (
+                    <button
+                      className="shrink-0 rounded-full border border-ok/30 bg-ok/10 px-3 py-1.5 text-[12px] font-bold text-ok transition-all hover:bg-ok/20"
+                      onClick={() => applyOnPlatform(j)}
+                    >
+                      🔗 Apply on {sourceLabel(j.source)} ↗
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-[11px] text-mut">Each apply is also tracked on its feed card — follow-ups land in the apply tracker.</p>
+          <button className="mt-3 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setApplyQueue(null)}>
+            Done — close
+          </button>
         </Modal>
       )}
       {recsDigestOpen && profile && <RecsDigestModal profile={profile} ranks={ranks} onClose={() => setRecsDigestOpen(false)} />}

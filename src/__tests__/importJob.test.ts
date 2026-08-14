@@ -59,6 +59,7 @@ describe("sourceLabel", () => {
     expect(sourceLabel("greenhouse")).toBe("Greenhouse");
     expect(sourceLabel("imported:naukri")).toBe("Naukri");
     expect(sourceLabel("imported:linkedin")).toBe("LinkedIn");
+    expect(sourceLabel("imported:other")).toBe("company page");
     expect(sourceLabel("imported:monster")).toBe("monster");
   });
 });

@@ -16,6 +16,10 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/__tests__/setup.ts"],
     /* hard cap so a hung test (e.g. a network fetch) fails instead of stalling the suite */
-    testTimeout: 30_000
+    testTimeout: 30_000,
+    /* Deno tests for the edge functions run in the deploy pipeline (deno
+       test) — vitest must not try to collect them */
+    exclude: ["**/node_modules/**", "**/dist/**", "**/supabase/**"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"]
   }
 });
