@@ -50,6 +50,7 @@ const SOURCE_LABELS: Record<string, string> = {
   greenhouse: "Greenhouse",
   ashby: "Ashby",
   lever: "Lever",
+  rss: "RSS",
   "imported:naukri": "Naukri",
   "imported:linkedin": "LinkedIn",
   "imported:indeed": "Indeed",
@@ -59,6 +60,20 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export const sourceLabel = (s: string): string =>
   SOURCE_LABELS[s] ?? (s.startsWith("imported:") ? s.slice("imported:".length) : s);
+
+/* ------------------------------------------------------------------ */
+/* Region-aware platform ordering                                      */
+/* ------------------------------------------------------------------ */
+
+/** Sort rank for a platform given the profile location: India → Naukri
+    first; elsewhere → LinkedIn/Indeed first. Unknown platforms rank last. */
+export function sourcePriority(location: string): Record<string, number> {
+  const loc = (location ?? "").toLowerCase();
+  const india = /india|bengaluru|mumbai|delhi|gurgaon|gurugram|pune|hyderabad|chennai|kolkata|noida|ahmedabad/.test(loc);
+  return india
+    ? { "imported:naukri": 0, "imported:linkedin": 1, "imported:indeed": 2, "imported:glassdoor": 3 }
+    : { "imported:linkedin": 0, "imported:indeed": 1, "imported:naukri": 2, "imported:glassdoor": 3 };
+}
 
 /* ------------------------------------------------------------------ */
 /* Multi-URL input — one per line (or comma separated)                 */

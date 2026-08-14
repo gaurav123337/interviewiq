@@ -2482,7 +2482,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">💼 Job feed (Apply Kit)</h2>
-        <p className="mb-3 text-[12.5px] text-mut">How often the app auto-refreshes job postings, and which ATS boards to pull from (one <code>provider:board</code> per line — greenhouse, ashby, lever).</p>
+        <p className="mb-3 text-[12.5px] text-mut">How often the app auto-refreshes job postings, and which boards/feeds to pull from (one <code>provider:board</code> per line — greenhouse, ashby, lever, or <code>rss:https://…</code> for public job feeds like Remotive or We Work Remotely).</p>
         <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <NumField label="Auto-refresh every (hours)" value={jobsHours} onChange={v => setJobsHours(Math.max(1, Math.round(v)))} />
         </div>
@@ -2492,10 +2492,25 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             value={jobsSources}
             onChange={e => setJobsSources(e.target.value)}
             rows={5}
-            placeholder={"greenhouse:lyft\ngreenhouse:airbnb\ngreenhouse:dropbox\nashby:linear\nashby:notion"}
+            placeholder={"greenhouse:lyft\ngreenhouse:airbnb\ngreenhouse:dropbox\nashby:linear\nashby:notion\nrss:https://remotive.com/feed/software-dev\nrss:https://weworkremotely.com/categories/remote-programming-jobs.rss"}
             className="inp w-full font-mono text-[12px]"
           />
         </label>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {[
+            { label: "➕ WWR programming", src: "rss:https://weworkremotely.com/categories/remote-programming-jobs.rss" },
+            { label: "➕ WWR full-stack", src: "rss:https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss" }
+          ].map(o => (
+            <button
+              key={o.src}
+              className="rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-mut transition-all hover:text-ink"
+              onClick={() => setJobsSources(s => (s.trim() ? s.trim() + "\n" : "") + o.src)}
+              title={`Add ${o.src}`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
         <p className="mt-2 text-[11.5px] text-mut">Clients refresh on mount when the feed is older than the interval. The refresh button in the app also re-ingests on demand.</p>
         <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
           <div className="flex flex-wrap items-center gap-3">

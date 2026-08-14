@@ -7,7 +7,7 @@ import { STORAGE_KEYS, storageRemove } from "../services/storage";
 import { addImportedJob, EMPTY_FILTERS, filterJobs } from "../services/jobs";
 import { markAppliedVia, setStatus } from "../services/applyTrack";
 import {
-  extractFromJsonLd, importFromUrl, normalizeImportedJob, platformFromUrl, robotsAllows, sourceLabel, splitJobUrls, stableHash, stripHtml
+  extractFromJsonLd, importFromUrl, normalizeImportedJob, platformFromUrl, robotsAllows, sourceLabel, sourcePriority, splitJobUrls, stableHash, stripHtml
 } from "../services/importJob";
 
 afterEach(() => {
@@ -47,6 +47,25 @@ describe("platformFromUrl", () => {
   });
 });
 
+describe("sourcePriority (region-aware ordering)", () => {
+  it("favors Naukri for India locations", () => {
+    const p = sourcePriority("Bengaluru, India");
+    expect(p["imported:naukri"]).toBeLessThan(p["imported:linkedin"]);
+    expect(p["imported:naukri"]).toBe(0);
+  });
+
+  it("favors LinkedIn/Indeed elsewhere and defaults unknown sources to last", () => {
+    const p = sourcePriority("San Francisco, US");
+    expect(p["imported:linkedin"]).toBeLessThan(p["imported:naukri"]);
+    expect(p["imported:indeed"]).toBeLessThan(p["imported:naukri"]);
+    expect(p["imported:monster"]).toBeUndefined();
+  });
+
+  it("treats an empty location as non-India", () => {
+    expect(sourcePriority("")["imported:naukri"]).toBeGreaterThan(sourcePriority("")["imported:linkedin"]);
+  });
+});
+
 describe("splitJobUrls", () => {
   it("splits newline- and comma-separated links, trims, dedupes, drops blanks", () => {
     expect(splitJobUrls("https://a.com/j1\nhttps://b.com/j2, https://a.com/j1\n\n   ")).toEqual(["https://a.com/j1", "https://b.com/j2"]);
@@ -57,6 +76,7 @@ describe("splitJobUrls", () => {
 describe("sourceLabel", () => {
   it("maps native + imported sources to human labels", () => {
     expect(sourceLabel("greenhouse")).toBe("Greenhouse");
+    expect(sourceLabel("rss")).toBe("RSS");
     expect(sourceLabel("imported:naukri")).toBe("Naukri");
     expect(sourceLabel("imported:linkedin")).toBe("LinkedIn");
     expect(sourceLabel("imported:other")).toBe("company page");

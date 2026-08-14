@@ -14,7 +14,7 @@ import {
   recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
-import { importFromUrlWithFallback, sourceLabel, splitJobUrls } from "../services/importJob";
+import { importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls } from "../services/importJob";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, jdKeywords, saveApplyKit } from "../services/applyKit";
@@ -401,12 +401,17 @@ export function Jobs() {
     }
   };
 
-  /* distinct feed sources for the filter chips (M5) */
+  /* distinct feed sources for the filter chips (M5) — region-aware: the
+     platforms the user's location favors (Naukri for India, LinkedIn/Indeed
+     elsewhere) sort ahead of the raw count order */
   const feedSources = useMemo(() => {
+    const pri = sourcePriority(profile?.location ?? "");
     const seen = new Map<string, number>();
     for (const j of jobs) seen.set(j.source, (seen.get(j.source) ?? 0) + 1);
-    return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([s, n]) => ({ s, n, label: sourceLabel(s) }));
-  }, [jobs]);
+    return [...seen.entries()]
+      .sort((a, b) => (pri[a[0]] ?? 99) - (pri[b[0]] ?? 99) || b[1] - a[1])
+      .map(([s, n]) => ({ s, n, label: sourceLabel(s) }));
+  }, [jobs, profile]);
 
   /* batch export — generate a kit for every tracked job and ship as a zip */
   const batchExport = () => {
@@ -689,6 +694,13 @@ export function Jobs() {
                 >
                   📧 Email digest
                 </button>
+                <button
+                  className="rounded-full border border-ok/25 bg-ok/10 px-2.5 py-0.5 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/20"
+                  onClick={() => setApplyQueue(topPicks.map(r => r.best))}
+                  title="Work through your top picks' best-fit roles in one apply queue"
+                >
+                  📋 Apply to top picks
+                </button>
               </div>
             </div>
             <p className="mt-1 text-[13px] leading-relaxed text-ink">
@@ -719,8 +731,8 @@ export function Jobs() {
                   <div className="ml-auto flex gap-1.5">
                     <button
                       className="rounded-full border border-ok/30 bg-ok/5 px-2.5 py-0.5 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/15"
-                      onClick={() => setKitJob(r.best)}
-                      title="Open the resume & cover letter for the best-fit role"
+                      onClick={() => setApplyQueue([r.best])}
+                      title="Apply to this best-fit role — opens the platform's page, you complete it there"
                     >
                       📮 Apply next
                     </button>
@@ -1460,8 +1472,8 @@ export function Jobs() {
       {applyQueue && applyQueue.length > 0 && (
         <Modal
           onClose={() => setApplyQueue(null)}
-          title="📋 Apply to your imported jobs"
-          desc="Work through the batch one at a time — each Apply opens the platform's own page in a new tab, where you complete the submission. InterviewIQ never applies for you; it just tracks progress."
+          title="📋 Apply queue"
+          desc="Work through the batch one at a time — each Apply opens the platform's own page in a new tab, where you complete the submission. InterviewIQ never applies for you; it just tracks progress. Use 📄 Kit to review the tailored resume & cover letter first."
         >
           <div className="space-y-2">
             {applyQueue.map((j, i) => {
@@ -1477,18 +1489,27 @@ export function Jobs() {
                     <div className="mt-1 truncate text-[13px] font-extrabold text-ink">{j.title}</div>
                     {j.company && <div className="text-[11.5px] font-bold text-fnt">{j.company}</div>}
                   </div>
-                  {done ? (
-                    <Chip tone="ok" title={tr.via ? `Applied via ${tr.via}` : "Marked applied"}>
-                      ✓ {tr.via ? `Applied via ${tr.via}` : "Applied"}
-                    </Chip>
-                  ) : (
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
                     <button
-                      className="shrink-0 rounded-full border border-ok/30 bg-ok/10 px-3 py-1.5 text-[12px] font-bold text-ok transition-all hover:bg-ok/20"
-                      onClick={() => applyOnPlatform(j)}
+                      className="rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-mut transition-all hover:text-ink"
+                      onClick={() => setKitJob(j)}
+                      title="Open the tailored resume & cover letter for this role"
                     >
-                      🔗 Apply on {sourceLabel(j.source)} ↗
+                      📄 Kit
                     </button>
-                  )}
+                    {done ? (
+                      <Chip tone="ok" title={tr.via ? `Applied via ${tr.via}` : "Marked applied"}>
+                        ✓ {tr.via ? `Applied via ${tr.via}` : "Applied"}
+                      </Chip>
+                    ) : (
+                      <button
+                        className="rounded-full border border-ok/30 bg-ok/10 px-2.5 py-1 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/20"
+                        onClick={() => applyOnPlatform(j)}
+                      >
+                        🔗 Apply on {sourceLabel(j.source)} ↗
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}

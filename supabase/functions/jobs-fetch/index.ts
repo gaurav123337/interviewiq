@@ -10,6 +10,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
+import { feedTitle, parseRss } from "../_shared/rss.ts";
 
 /* default ATS sources — verified live; admins can override via app_config */
 const DEFAULT_SOURCES = [
@@ -163,6 +164,42 @@ async function fetchAshby(board: string): Promise<{ company: string; jobs: unkno
   return { company: board, jobs };
 }
 
+/* RSS feeds (Lane A) — Remotive, We Work Remotely, or any public job RSS.
+   Config entry: rss:https://feed.example.com/jobs.rss. The feed title
+   becomes the company label; each <item> becomes one posting. */
+async function fetchRss(feedUrl: string): Promise<{ company: string; jobs: unknown[] }> {
+  const res = await fetch(feedUrl);
+  if (!res.ok) throw new Error(`RSS feed returned HTTP ${res.status}`);
+  const xml = await res.text();
+  const title = feedTitle(xml);
+  const company = (title || new URL(feedUrl).hostname.replace(/^www\./, "") || "RSS").slice(0, 60);
+  const jobs = parseRss(xml).map((item, i) => {
+    const desc = `${item.title}\n${item.description}`;
+    return {
+      externalId: `${new URL(item.link).hostname}-${i}-${simpleHash(item.link)}`,
+      title: item.title,
+      company,
+      location: "",
+      remote: true,
+      description: desc.slice(0, 6000),
+      url: item.link,
+      postedAt: item.pubDate,
+      skills: extractSkills(item.title, desc),
+      level: guessLevel(item.title),
+      salary: extractSalary(desc),
+      companySize: extractCompanySize(desc)
+    };
+  });
+  return { company, jobs };
+}
+
+/* Small stable hash (FNV-1a) for RSS external ids — links can be long. */
+function simpleHash(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 async function fetchLever(org: string): Promise<{ company: string; jobs: unknown[] }> {
   const res = await fetch(`https://api.lever.co/v0/postings/${org}?mode=json`);
   const data = await res.json();
@@ -204,7 +241,9 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
         ? await fetchLever(src.board)
         : src.provider === "ashby"
           ? await fetchAshby(src.board)
-          : await fetchGreenhouse(src.board);
+          : src.provider === "rss"
+            ? await fetchRss(src.board)
+            : await fetchGreenhouse(src.board);
       const rows = jobs.map((j: Record<string, unknown>) => ({
         source: src.provider,
         external_id: j.externalId,
