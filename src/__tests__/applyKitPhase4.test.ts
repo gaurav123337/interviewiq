@@ -10,7 +10,7 @@ import {
 } from "../services/applyTrack";
 import { PDFDocument } from "pdf-lib";
 import { inflate } from "pako"; /* ambient types in src/pako.d.ts */
-import { atsCoverage, buildCoverLetter, buildResume, jdKeywords, jdResponsibilities } from "../services/applyKit";
+import { atsCoverage, buildCoverLetter, buildResume, jdKeywords, jdResponsibilities, quantifiedClaims } from "../services/applyKit";
 import { practiceForRound } from "../services/drill";
 import { buildResumeHtml } from "../services/resumeHtml";
 import { renderResumePdf } from "../services/resumePdf";
@@ -189,6 +189,36 @@ describe("JD-aware tailoring — two postings never produce the same kit", () =>
     expect(noDesc).toContain("Senior Frontend Engineer");
     expect(noDesc).toContain("Airbnb");
     expect(noDesc).toContain("HIGHLIGHTS");
+  });
+});
+
+describe("smarter JD bullets — quantified evidence pairing", () => {
+  it("reuses the profile's quantified claims verbatim in the highlights", () => {
+    const q = { ...PROFILE, summary: "Cut p95 latency 40% while scaling to 2M users across three regions." };
+    const r = buildResume(q, JOB, MATCH);
+    expect(r).toContain("Cut p95 latency 40%");
+  });
+
+  it("falls back to the honest generic impact line when the profile has no claims", () => {
+    const r = buildResume(PROFILE, JOB, MATCH);
+    expect(r).toContain("measurable impact on delivery, quality");
+  });
+
+  it("quantifiedClaims ignores plain years but keeps real metrics", () => {
+    expect(quantifiedClaims({ ...PROFILE, summary: "Worked 9 years at a startup." })).toEqual([]);
+    expect(quantifiedClaims({ ...PROFILE, summary: "Reduced deployment time 60%." })).toEqual(["Reduced deployment time 60%."]);
+  });
+
+  it("pairs a JD responsibility with a matched skill and the claim", () => {
+    const q = { ...PROFILE, summary: "Scaled services to 1M requests/day." };
+    const k8s: JobPosting = {
+      ...JOB, id: "greenhouse:k8s", title: "Senior Kubernetes Platform Engineer",
+      description: "• Design and scale Kubernetes clusters across multiple regions.",
+      skills: ["kubernetes", "terraform"]
+    };
+    const r = buildResume(q, k8s, MATCH);
+    expect(r).toMatch(/Design and scale Kubernetes clusters/i);
+    expect(r).toContain("1M requests/day");
   });
 });
 

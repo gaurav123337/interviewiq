@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, saveApplyKit, type ApplyKit } from "../services/applyKit";
+import { diffLines } from "../services/diff";
+import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { openResumePrint } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
 import { downloadResumeDocx } from "../services/docx";
@@ -31,6 +33,19 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
   const [tab, setTab] = useState<"resume" | "cover">("resume");
   const [aiBusy, setAiBusy] = useState(false);
   const [atsOpen, setAtsOpen] = useState(false);
+  /* the last kit the user opened for a DIFFERENT job — the diff baseline */
+  const [compare, setCompare] = useState(false);
+  const [prevKit] = useState<{ jobId: string; company: string; resume: string; coverLetter: string } | null>(
+    () => storageGet(STORAGE_KEYS.lastKit, null)
+  );
+  const canCompare = !!prevKit && prevKit.jobId !== job.id;
+  /* remember this job as the compare baseline for the next kit you open */
+  const close = () => {
+    if (kit) {
+      storageSet(STORAGE_KEYS.lastKit, { jobId: job.id, company: job.company, resume: kit.resume, coverLetter: kit.coverLetter });
+    }
+    onClose();
+  };
 
   /* Build the template kit on first open if not already saved. */
   if (!kit) {
@@ -93,7 +108,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
 
   return (
     <Modal
-      onClose={onClose}
+      onClose={close}
       title="📄 Resume & cover letter"
       desc={`Tailored to ${job.title} at ${job.company} — keywords mirror the posting, so it reads as written-for-this-role, not a generic apply.`}
     >
@@ -121,6 +136,15 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
           >
             📋 Copy
           </button>
+          {canCompare && prevKit && (
+            <button
+              className={`rounded-xl border px-3 py-1.5 text-[12px] font-bold transition-all ${compare ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-fnt hover:text-ink"}`}
+              onClick={() => setCompare(c => !c)}
+              title={`What changed vs the ${prevKit.company} kit — green is new, red is gone`}
+            >
+              {compare ? "✕ Hide diff" : `⚖️ vs ${prevKit.company}`}
+            </button>
+          )}
           {tab === "resume" && atsOpen && (
             <AtsPreviewModal text={kit?.resume ?? ""} job={job} onClose={() => setAtsOpen(false)} />
           )}
@@ -182,9 +206,22 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         </div>
       </div>
 
-      <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/40 p-4 font-sans text-[12.5px] leading-relaxed text-fnt">
-        {text}
-      </pre>
+      {compare && canCompare && prevKit && kit ? (
+        <div className="max-h-[46vh] overflow-y-auto rounded-xl border border-line/15 bg-deep/40 p-3 font-mono text-[12px] leading-relaxed">
+          {diffLines(
+            prevKit[tab === "resume" ? "resume" : "coverLetter"],
+            kit[tab === "resume" ? "resume" : "coverLetter"]
+          ).map((l, i) => (
+            <div key={i} className={`whitespace-pre-wrap ${l.type === "add" ? "bg-ok/10 text-ok" : l.type === "del" ? "bg-bad/10 text-bad line-through" : "text-fnt"}`}>
+              {l.type === "add" ? "+ " : l.type === "del" ? "− " : "  "}{l.text || " "}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/40 p-4 font-sans text-[12.5px] leading-relaxed text-fnt">
+          {text}
+        </pre>
+      )}
 
       {tab === "resume" && (() => {
         const cov = atsCoverage(kit?.resume ?? "", job);
@@ -199,7 +236,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         Template mode works offline and never sends data anywhere. “Polish with AI” uses <b>your own API key</b> (Settings) and
         rewrites the same facts — it never invents employers or credentials, so review before sending.
       </p>
-      <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
+      <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={close}>
         Done — close
       </button>
     </Modal>

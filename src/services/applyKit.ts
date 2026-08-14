@@ -90,11 +90,28 @@ function prioritizedSkills(profile: CareerProfile, match: JobMatch | null): stri
   return [...matched, ...rest];
 }
 
-/** A single tailored achievement bullet mirroring a JD requirement. */
-function bulletFor(skill: string, title: string): string {
+/** Quantified achievements the profile already claims (summary/headline) —
+    reused verbatim in bullets so the resume never invents numbers it can't
+    back up. Pure + testable. */
+export function quantifiedClaims(profile: CareerProfile, max = 2): string[] {
+  const src = `${profile.summary || ""} ${profile.headline || ""}`;
+  const sentences = src.split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
+  const claims = sentences.filter(s =>
+    /\d/.test(s) &&
+    /(users|uptime|latency|requests|queries|revenue|conversion|cost|deploy|deploys|percent|%|×|reduced|improved|cut|grew|scaled|served|handled|million|thousand|p95|p99|rps|\bk\b|\bm\b)/i.test(s)
+  );
+  return claims.slice(0, max);
+}
+
+/** A single tailored achievement bullet mirroring a JD requirement, paired
+    with a skill the candidate actually has and — when the profile states
+    one — a quantified outcome (reused verbatim, never invented). */
+function bulletFor(skill: string, title: string, claim?: string): string {
   const s = skill.trim();
   const cap = s.charAt(0).toUpperCase() + s.slice(1);
-  return `• ${cap} — shipped and maintained in production for a ${title} role, with measurable impact on delivery, quality, or team velocity.`;
+  return claim
+    ? `• ${cap} — shipped and maintained in production for a ${title} role. ${claim.trim()}`
+    : `• ${cap} — shipped and maintained in production for a ${title} role, with measurable impact on delivery, quality, or team velocity.`;
 }
 
 /** Builds a plain-text resume tailored to the job posting. Pure + testable. */
@@ -131,14 +148,18 @@ export function buildResume(profile: CareerProfile, job: JobPosting, match: JobM
      them (so two jobs never read the same); otherwise fall back to the
      skill-anchored bullets. */
   const resp = jdResponsibilities(job, 4);
+  const claims = quantifiedClaims(profile, 2);
   lines.push("HIGHLIGHTS");
   if (resp.length) {
-    const anchor = (match?.matched[0] ?? skills[0] ?? "hands-on engineering").toLowerCase();
-    for (const r of resp) {
-      lines.push(`• ${r.charAt(0).toUpperCase()}${r.slice(1)} — I bring ${anchor} and production experience to exactly this work.`);
-    }
+    const anchors = (match?.matched.length ? match.matched : skills).slice(0, resp.length);
+    resp.forEach((r, i) => {
+      const cap = r.charAt(0).toUpperCase() + r.slice(1);
+      const anchor = (anchors[i] ?? "hands-on engineering").toLowerCase();
+      const ev = claims[i] ? ` ${claims[i].trim()}` : "";
+      lines.push(`• ${cap} — I bring ${anchor} and production experience to exactly this work${ev ? "." + ev : ", with measurable impact on delivery, quality, and team velocity."}`);
+    });
   } else {
-    lines.push(...(match?.matched.length ? match.matched.slice(0, 5) : skills.slice(0, 5)).map(s => bulletFor(s, job.title)));
+    lines.push(...(match?.matched.length ? match.matched.slice(0, 5) : skills.slice(0, 5)).map((s, i) => bulletFor(s, job.title, claims[i])));
   }
 
   /* ROLE KEYWORDS — the posting's own vocabulary, ATS-facing. */
