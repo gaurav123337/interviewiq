@@ -98,6 +98,14 @@ describe("buildCoverLetter", () => {
     const c = buildCoverLetter(PROFILE, JOB, MATCH);
     expect(c.trim().endsWith("Senior Frontend Engineer")).toBe(true);
   });
+
+  it("regenerating with a skill added via ＋ mirrors it back into the letter", () => {
+    /* the one-click add flow: profile gains the skill, the letter is rebuilt
+       from the new profile + match — the keyword must land in the text */
+    const next = { ...PROFILE, skills: [...PROFILE.skills, "graphql"] };
+    const c = buildCoverLetter(next, JOB, { ...MATCH, matched: [...MATCH.matched, "graphql"], missing: MATCH.missing.filter(s => s !== "graphql") });
+    expect(c.toLowerCase()).toContain("graphql");
+  });
 });
 
 describe("persistence", () => {

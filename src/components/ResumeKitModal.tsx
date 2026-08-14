@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
-import { aiTailorCoverLetter, aiTailorResume, atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, getApplyKit, quantifiedClaims, saveApplyKit, type ApplyKit, type AtsKeywordRow } from "../services/applyKit";
+import { aiTailorCoverLetter, aiTailorResume, atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, getApplyKit, jdKeywords, quantifiedClaims, saveApplyKit, type ApplyKit, type AtsKeywordRow } from "../services/applyKit";
 import { diffLines } from "../services/diff";
 import { matchJob } from "../services/jobs";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
@@ -101,18 +101,19 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
   };
 
   /* one-click ATS fix inside the kit: the parent adds the skill to the
-     profile, then we rebuild THIS job's resume with it so the drill-down
-     flips to matched — the current document updates, not just the profile */
+     profile, then we rebuild THIS job's document with it so the chips flip
+     to matched — whichever tab is active regenerates, the other tab keeps
+     its hand-edits */
   const handleAddSkill = (skill: string) => {
     const already = profile.skills.some(s => s.toLowerCase() === skill.toLowerCase());
     onAddSkill?.(skill);
     if (already) return;
     const nextProfile = { ...profile, skills: [...profile.skills, skill] };
     const m = matchJob(nextProfile, job);
-    const resume = buildResume(nextProfile, job, m);
-    const cover = kit?.coverLetter ?? buildCoverLetter(nextProfile, job, m);
+    const resume = tab === "resume" ? buildResume(nextProfile, job, m) : (kit?.resume ?? buildResume(nextProfile, job, m));
+    const cover = tab === "cover" ? buildCoverLetter(nextProfile, job, m) : (kit?.coverLetter ?? buildCoverLetter(nextProfile, job, m));
     refresh(resume, cover, kit?.ai ?? false);
-    toast(`📄 Resume regenerated with “${skill}” — ATS coverage updated`);
+    toast(tab === "cover" ? `✉️ Cover letter regenerated with “${skill}”` : `📄 Resume regenerated with “${skill}” — ATS coverage updated`);
   };
 
   const toggleEdit = () => {
@@ -354,6 +355,44 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
             resume — add {miss.length === 1 ? "it" : "them"} where true (skills or highlights) to clear automated filters.
           </p>
         ) : null;
+      })()}
+
+      {tab === "cover" && !editing && !compareBase && (() => {
+        /* the letter mirrors the posting's vocabulary — offer the keywords it
+           leans on (real missing skills first, then mined JD words) so a click
+           adds them to the profile AND regenerates this letter */
+        const has = new Set((profile?.skills ?? []).map(s => s.toLowerCase()));
+        const missing = (match?.missing ?? []).filter(s => !has.has(s.toLowerCase()));
+        const skip = new Set([...(match?.matched ?? []), ...(match?.missing ?? [])].map(s => s.toLowerCase()));
+        const leans = jdKeywords(job, 6).filter(k => !has.has(k) && !skip.has(k));
+        const rows = [
+          ...missing.map(k => ({ k, missing: true })),
+          ...leans.slice(0, Math.max(0, 4 - missing.length)).map(k => ({ k, missing: false }))
+        ];
+        if (!rows.length) return null;
+        return (
+          <div className="mt-3 flex flex-wrap items-center gap-1">
+            <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">💡 Leans on</span>
+            {rows.map(({ k, missing: isMissing }) => (
+              <span key={k} className="inline-flex items-center gap-0.5">
+                <Chip
+                  tone={isMissing ? "warn" : "co"}
+                  title={isMissing ? `In the posting but not in your profile — add it if you have this skill` : `The posting leans on “${k}” — add it to your profile if you have this skill`}
+                >
+                  {isMissing ? `✗ ${k}` : k}
+                </Chip>
+                <button
+                  className="grid h-5 w-5 place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[13px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
+                  onClick={() => handleAddSkill(k)}
+                  title={`Add “${k}” to my profile skills — regenerates this letter`}
+                >
+                  ＋
+                </button>
+              </span>
+            ))}
+            <span className="text-[11px] text-mut">— adds it to your profile &amp; regenerates this letter</span>
+          </div>
+        );
       })()}
       <p className="mt-3 text-[11.5px] text-mut">
         Template mode works offline and never sends data anywhere. “Polish with AI” uses <b>your own API key</b> (Settings) and
