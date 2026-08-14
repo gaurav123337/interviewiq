@@ -220,6 +220,13 @@ describe("smarter JD bullets — quantified evidence pairing", () => {
     expect(r).toMatch(/Design and scale Kubernetes clusters/i);
     expect(r).toContain("1M requests/day");
   });
+
+  it("claimsOverride swaps the extracted evidence lines", () => {
+    const r = buildResume(PROFILE, JOB, MATCH, ["Shaved 30% off our release cycle."]);
+    expect(r).toContain("Shaved 30% off our release cycle.");
+    /* the profile's own (empty) claims must NOT be used */
+    expect(r).not.toContain("measurable impact on delivery, quality");
+  });
 });
 
 describe("weekly report", () => {
@@ -466,6 +473,20 @@ describe("one-click resume PDF (pdf-lib)", () => {
     const bytes = await renderResumePdf(longProfile, JOB, MATCH);
     const doc = await PDFDocument.load(bytes);
     expect(doc.getPageCount()).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("export text override — edits survive PDF/HTML/docx", () => {
+  it("buildResumeHtml uses the edited text when provided", () => {
+    const html = buildResumeHtml(PROFILE, JOB, MATCH, {}, "CUSTOM EDITED RESUME LINE");
+    expect(html).toContain("CUSTOM EDITED RESUME LINE");
+    /* the template's default summary is replaced by the override */
+    expect(html).not.toContain("Built design systems used by millions");
+  });
+
+  it("buildResumeHtml still generates from the template without an override", () => {
+    const html = buildResumeHtml(PROFILE, JOB, MATCH);
+    expect(html).toContain("Senior Frontend Engineer");
   });
 });
 

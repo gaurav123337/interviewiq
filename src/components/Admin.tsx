@@ -33,6 +33,7 @@ import {
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
 } from "../services/scraper";
 import { CONFIG } from "../config";
+import { getCareerProfile, listJobs, rankCompanies, recommendationsDigest } from "../services/jobs";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import {
   adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
@@ -2220,6 +2221,44 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   /* apply digest email — shared secret (stored locally only, never published) */
   const [applySecret, setApplySecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.applyEmailSecret, ""));
   const [digestTesting, setDigestTesting] = useState(false);
+  /* recommendations digest — same secret-gated broadcast, with a dry-run preview */
+  const [recsSecret, setRecsSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.recsEmailSecret, ""));
+  const [recsBusy, setRecsBusy] = useState<null | "dryrun" | "send">(null);
+  const [recsPreview, setRecsPreview] = useState<string | null>(null);
+  const recsHeaders = (): Record<string, string> => {
+    const h: Record<string, string> = { apikey: CONFIG.supabase.anonKey, "Content-Type": "application/json" };
+    if (recsSecret) h["x-apply-secret"] = recsSecret;
+    const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
+    if (key) h["x-resend-key"] = key;
+    return h;
+  };
+  const previewRecs = () => {
+    const p = getCareerProfile();
+    const jobs = listJobs();
+    if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
+    if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
+    setRecsPreview(recommendationsDigest(p, rankCompanies(p, jobs)));
+  };
+  const runRecsBroadcast = async (dryRun: boolean) => {
+    setRecsBusy(dryRun ? "dryrun" : "send");
+    try {
+      const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-recommendations-digest`, {
+        method: "POST", headers: recsHeaders(), body: dryRun ? JSON.stringify({ dryRun: true }) : "{}"
+      });
+      const body = await res.json().catch(() => ({})) as { sent?: boolean; dryRun?: boolean; wouldEmail?: number; emailsSent?: number; reason?: string };
+      if (dryRun && body.dryRun) {
+        toast(`📡 Dry run — would email ${body.wouldEmail ?? 0} user${(body.wouldEmail ?? 0) === 1 ? "" : "s"} (nothing sent)`);
+      } else if (body.sent) {
+        toast(`📬 Recommendations digest sent — ${body.emailsSent ?? 0} email${body.emailsSent === 1 ? "" : "s"}`);
+      } else {
+        toast("✗ " + (body.reason ?? "Broadcast failed"));
+      }
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Broadcast failed"));
+    } finally {
+      setRecsBusy(null);
+    }
+  };
   const testDigest = async () => {
     setDigestTesting(true);
     try {
@@ -2493,7 +2532,38 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             <span className="text-[11px] text-mut">Sends the same empty-body request the pg_cron job fires every Monday — checks the secret guard and, if a Resend key exists, emails every active user.</span>
           </div>
         </div>
+        <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Recommendations digest email — function secret (x-apply-secret) — {storageGet(STORAGE_KEYS.recsEmailSecret, "") ? "saved in this browser" : "not set"}</span>
+            <input
+              type="password"
+              className="inp w-full font-mono"
+              value={recsSecret}
+              onChange={e => { setRecsSecret(e.target.value); storageSet(STORAGE_KEYS.recsEmailSecret, e.target.value); }}
+              placeholder="leave empty if the send-recommendations-digest function has no secret"
+            />
+          </label>
+          <p className="mt-2 text-[11.5px] text-mut">
+            Same guard as the apply digest — the pg_cron job fires this function every Monday. Preview, dry-run, then send the blast
+            here before the cron goes live.
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button className={btnGhost + btnSm} onClick={previewRecs}>👀 Preview my digest</button>
+            <button className={btnGhost + btnSm} disabled={!!recsBusy} onClick={() => void runRecsBroadcast(true)}>
+              {recsBusy === "dryrun" ? "⏳ Counting…" : "📡 Dry-run broadcast"}
+            </button>
+            <button className={btnPrimary + btnSm} disabled={!!recsBusy} onClick={() => void runRecsBroadcast(false)}>
+              {recsBusy === "send" ? "⏳ Sending…" : "📤 Send broadcast now"}
+            </button>
+          </div>
+        </div>
       </div>
+      {recsPreview && (
+        <Modal onClose={() => setRecsPreview(null)} title="👀 Recommendations digest preview" desc="What this week's email would look like for the profile saved in this browser.">
+          <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] leading-relaxed text-fnt">{recsPreview}</pre>
+          <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setRecsPreview(null)}>Close</button>
+        </Modal>
+      )}
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">📬 Weekly digest</h2>

@@ -48,10 +48,12 @@ async function sendOne(apiKey: string, to: string, text: string, from: string): 
 }
 
 /* ------------------------------------------------------------------ */
-/* Scheduled broadcast (pg_cron) — empty body + shared secret          */
+/* Scheduled broadcast (pg_cron) — empty body + shared secret.         */
+/* A { dryRun: true } body counts recipients without sending, so the   */
+/* admin panel can preview the blast before the cron goes live.        */
 /* ------------------------------------------------------------------ */
 
-async function handleBroadcast(req: Request): Promise<Response> {
+async function handleBroadcast(req: Request, dryRun: boolean): Promise<Response> {
   const headers = { ...cors(req), "Content-Type": "application/json" };
   const secret = Deno.env.get("RECS_DIGEST_SECRET") ?? "";
   const provided = req.headers.get("x-apply-secret");
@@ -92,14 +94,22 @@ async function handleBroadcast(req: Request): Promise<Response> {
   const { data: users } = await admin.from("auth.users").select("id, email");
   const emailOf = new Map((users ?? []).map((u: { id: string; email: string | null }) => [u.id, u.email]));
 
-  let sent = 0;
+  const recipients: { email: string; digest: string }[] = [];
   for (const row of resumes as { user_id: string; data: unknown }[]) {
     const profile = ((row.data ?? {}) as { profile?: Profile }).profile ?? null;
     const digest = composeRecommendationsDigest(profile, jobs);
     const email = emailOf.get(row.user_id);
     if (!digest || !email) continue;
-    const r = await sendOne(apiKey, email, digest, "InterviewIQ <digest@interviewiq.app>");
-    if (r.ok) sent++;
+    recipients.push({ email, digest });
+  }
+  if (dryRun) {
+    console.log(`[send-recommendations-digest] dry run — would email ${recipients.length} user${recipients.length === 1 ? "" : "s"}`);
+    return new Response(JSON.stringify({ sent: false, dryRun: true, wouldEmail: recipients.length, reason: "dry run — nothing sent" }), { status: 200, headers });
+  }
+  let sent = 0;
+  for (const r of recipients) {
+    const out = await sendOne(apiKey, r.email, r.digest, "InterviewIQ <digest@interviewiq.app>");
+    if (out.ok) sent++;
   }
   console.log(`[send-recommendations-digest] broadcast sent ${sent} digest${sent === 1 ? "" : "s"}`);
   return new Response(JSON.stringify({ sent: true, emailsSent: sent }), { status: 200, headers });
@@ -110,10 +120,11 @@ Deno.serve(async (req) => {
 
   const headers = { ...cors(req), "Content-Type": "application/json" };
   try {
-    const body = await req.json().catch(() => ({})) as { to?: string; subject?: string; text?: string; from?: string };
+    const body = await req.json().catch(() => ({})) as { to?: string; subject?: string; text?: string; from?: string; dryRun?: boolean };
 
-    /* scheduled broadcast — pg_cron posts an empty body every Monday */
-    if (!body.to) return handleBroadcast(req);
+    /* scheduled broadcast — pg_cron posts an empty body every Monday;
+       the admin panel posts { dryRun: true } to preview the blast */
+    if (!body.to) return handleBroadcast(req, !!body.dryRun);
 
     const to = body.to ?? "";
     const text = body.text ?? "";

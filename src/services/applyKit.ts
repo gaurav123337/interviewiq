@@ -21,6 +21,10 @@ export interface ApplyKit {
   /** True when AI-tailored, false when template-generated. */
   ai: boolean;
   createdAt: number;
+  /** The last AI-polished version of each document — the baseline for the
+      “vs AI” diff after the user hand-edits the text. */
+  aiResume?: string;
+  aiCover?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -114,8 +118,10 @@ function bulletFor(skill: string, title: string, claim?: string): string {
     : `• ${cap} — shipped and maintained in production for a ${title} role, with measurable impact on delivery, quality, or team velocity.`;
 }
 
-/** Builds a plain-text resume tailored to the job posting. Pure + testable. */
-export function buildResume(profile: CareerProfile, job: JobPosting, match: JobMatch | null): string {
+/** Builds a plain-text resume tailored to the job posting. Pure + testable.
+    `claimsOverride` swaps the quantified-claims extraction (used by the kit's
+    editable evidence lines). */
+export function buildResume(profile: CareerProfile, job: JobPosting, match: JobMatch | null, claimsOverride?: string[]): string {
   const skills = prioritizedSkills(profile, match);
   const head = [
     profile.headline || job.title,
@@ -148,7 +154,7 @@ export function buildResume(profile: CareerProfile, job: JobPosting, match: JobM
      them (so two jobs never read the same); otherwise fall back to the
      skill-anchored bullets. */
   const resp = jdResponsibilities(job, 4);
-  const claims = quantifiedClaims(profile, 2);
+  const claims = claimsOverride ?? quantifiedClaims(profile, 2);
   lines.push("HIGHLIGHTS");
   if (resp.length) {
     const anchors = (match?.matched.length ? match.matched : skills).slice(0, resp.length);

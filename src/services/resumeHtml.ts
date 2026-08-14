@@ -48,11 +48,12 @@ export function buildResumeHtml(
   profile: CareerProfile,
   job: JobPosting,
   match: JobMatch | null,
-  brand: ResumeBrand = {}
+  brand: ResumeBrand = {},
+  textOverride?: string
 ): string {
   const accent = brand.accent ?? ACCENT;
   const font = brand.fontFamily ?? "'Segoe UI', -apple-system, 'Helvetica Neue', Arial, sans-serif";
-  const text = buildResume(profile, job, match);
+  const text = textOverride ?? buildResume(profile, job, match);
   const { header, sections } = parseResumeSections(text);
 
   const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -106,8 +107,8 @@ export function buildResumeHtml(
 
 /** Opens the designed resume in a new window and triggers the print dialog
     ("Save as PDF"). Returns false if the popup was blocked. */
-export function openResumePrint(profile: CareerProfile, job: JobPosting, match: JobMatch | null, brand: ResumeBrand = {}): boolean {
-  const html = buildResumeHtml(profile, job, match, brand);
+export function openResumePrint(profile: CareerProfile, job: JobPosting, match: JobMatch | null, brand: ResumeBrand = {}, textOverride?: string): boolean {
+  const html = buildResumeHtml(profile, job, match, brand, textOverride);
   const w = window.open("", "_blank", "width=860,height=1100");
   if (!w) return false;
   w.document.open();

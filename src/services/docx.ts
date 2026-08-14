@@ -69,9 +69,10 @@ const rels =
 export function downloadResumeDocx(
   profile: CareerProfile,
   job: JobPosting,
-  match: JobMatch | null
+  match: JobMatch | null,
+  textOverride?: string
 ): void {
-  const blob = resumeDocxBlob(buildResume(profile, job, match));
+  const blob = resumeDocxBlob(textOverride ?? buildResume(profile, job, match));
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

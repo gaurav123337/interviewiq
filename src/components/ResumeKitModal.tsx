@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
-import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, saveApplyKit, type ApplyKit } from "../services/applyKit";
+import { aiTailorCoverLetter, aiTailorResume, atsCoverage, buildCoverLetter, buildResume, getApplyKit, quantifiedClaims, saveApplyKit, type ApplyKit } from "../services/applyKit";
 import { diffLines } from "../services/diff";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { openResumePrint } from "../services/resumeHtml";
@@ -33,8 +33,11 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
   const [tab, setTab] = useState<"resume" | "cover">("resume");
   const [aiBusy, setAiBusy] = useState(false);
   const [atsOpen, setAtsOpen] = useState(false);
-  /* the last kit the user opened for a DIFFERENT job — the diff baseline */
-  const [compare, setCompare] = useState(false);
+  /* diff baselines: the last kit from a DIFFERENT job, the plain template,
+     or the last AI-polished version of this job */
+  const [compareBase, setCompareBase] = useState<null | "prev" | "template" | "ai">(null);
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState("");
   const [prevKit] = useState<{ jobId: string; company: string; resume: string; coverLetter: string } | null>(
     () => storageGet(STORAGE_KEYS.lastKit, null)
   );
@@ -62,7 +65,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
     setKit(built);
   }
 
-  const refresh = (resume: string, coverLetter: string, ai: boolean) => {
+  const refresh = (resume: string, coverLetter: string, ai: boolean, aiVersions?: { aiResume?: string; aiCover?: string }) => {
     const next: ApplyKit = {
       jobId: job.id,
       jobTitle: job.title,
@@ -70,10 +73,25 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
       resume,
       coverLetter,
       ai,
+      aiResume: aiVersions?.aiResume ?? kit?.aiResume,
+      aiCover: aiVersions?.aiCover ?? kit?.aiCover,
       createdAt: kit?.createdAt ?? Date.now()
     };
     saveApplyKit(next);
     setKit(next);
+  };
+
+  const toggleEdit = () => {
+    if (editing) {
+      const other = tab === "resume" ? (kit?.coverLetter ?? buildCoverLetter(profile, job, match)) : (kit?.resume ?? buildResume(profile, job, match));
+      refresh(tab === "resume" ? editText : other, tab === "resume" ? other : editText, kit?.ai ?? false);
+      setEditing(false);
+      toast("💾 Edits saved — exports use this text");
+    } else {
+      setEditText(text);
+      setEditing(true);
+      setCompareBase(null);
+    }
   };
 
   const aiRegenerate = async () => {
@@ -85,10 +103,10 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
     try {
       if (tab === "resume") {
         const resume = await aiTailorResume(profile, job, match);
-        refresh(resume, kit?.coverLetter ?? buildCoverLetter(profile, job, match), true);
+        refresh(resume, kit?.coverLetter ?? buildCoverLetter(profile, job, match), true, { aiResume: resume });
       } else {
         const cover = await aiTailorCoverLetter(profile, job, match);
-        refresh(kit?.resume ?? buildResume(profile, job, match), cover, true);
+        refresh(kit?.resume ?? buildResume(profile, job, match), cover, true, { aiCover: cover });
       }
       toast("✨ AI-tailored — reviewed for accuracy before sending");
     } catch (err) {
@@ -136,13 +154,13 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
           >
             📋 Copy
           </button>
-          {canCompare && prevKit && (
+          {!compareBase && (
             <button
-              className={`rounded-xl border px-3 py-1.5 text-[12px] font-bold transition-all ${compare ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-fnt hover:text-ink"}`}
-              onClick={() => setCompare(c => !c)}
-              title={`What changed vs the ${prevKit.company} kit — green is new, red is gone`}
+              className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
+              onClick={toggleEdit}
+              title={editing ? "Save your edits — exports will use this text" : "Edit the text before exporting"}
             >
-              {compare ? "✕ Hide diff" : `⚖️ vs ${prevKit.company}`}
+              {editing ? "💾 Save edits" : "✏️ Edit"}
             </button>
           )}
           {tab === "resume" && atsOpen && (
@@ -161,7 +179,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
                 className="rounded-xl bg-acc1/15 px-3 py-1.5 text-[12px] font-extrabold text-acctxt transition-all hover:bg-acc1/25 disabled:opacity-50"
                 onClick={async () => {
                   try {
-                    await downloadResumePdf(profile, job, match, resumeBrandFor(job.company));
+                    await downloadResumePdf(profile, job, match, resumeBrandFor(job.company), kit?.resume);
                     toast("⬇️ PDF downloaded — one click, styled per company");
                   } catch (e) {
                     toast("✗ PDF failed — " + ((e as Error).message || "unknown error"));
@@ -173,7 +191,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
               </button>
               <button
                 className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
-                onClick={() => { downloadResumeDocx(profile, job, match); toast("⬇️ .docx downloaded — ATS-safe single column"); }}
+                onClick={() => { downloadResumeDocx(profile, job, match, kit?.resume); toast("⬇️ .docx downloaded — ATS-safe single column"); }}
                 title="Download as .docx (text-first, best for ATS parsing)"
               >
                 ⬇️ .docx
@@ -181,7 +199,7 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
               <button
                 className="rounded-xl border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold text-fnt transition-all hover:text-ink"
                 onClick={() => {
-                  const ok = openResumePrint(profile, job, match, resumeBrandFor(job.company));
+                  const ok = openResumePrint(profile, job, match, resumeBrandFor(job.company), kit?.resume);
                   toast(ok ? "🖨️ Print view opened" : "✗ Popup blocked — allow popups for this site");
                 }}
                 title="Open the designed resume in a print window"
@@ -206,22 +224,85 @@ export function ResumeKitModal({ job, profile, match, onClose }: {
         </div>
       </div>
 
-      {compare && canCompare && prevKit && kit ? (
-        <div className="max-h-[46vh] overflow-y-auto rounded-xl border border-line/15 bg-deep/40 p-3 font-mono text-[12px] leading-relaxed">
-          {diffLines(
-            prevKit[tab === "resume" ? "resume" : "coverLetter"],
-            kit[tab === "resume" ? "resume" : "coverLetter"]
-          ).map((l, i) => (
-            <div key={i} className={`whitespace-pre-wrap ${l.type === "add" ? "bg-ok/10 text-ok" : l.type === "del" ? "bg-bad/10 text-bad line-through" : "text-fnt"}`}>
-              {l.type === "add" ? "+ " : l.type === "del" ? "− " : "  "}{l.text || " "}
+      {/* diff baselines — previous job, the plain template, or the last AI polish */}
+      <div className="mb-2 mt-1 flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-mut">⚖️ Compare:</span>
+        {canCompare && prevKit && (
+          <button
+            className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${compareBase === "prev" ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
+            onClick={() => setCompareBase(b => b === "prev" ? null : "prev")}
+            title={`What changed vs the ${prevKit.company} kit — green is new, red is gone`}
+          >
+            vs {prevKit.company}
+          </button>
+        )}
+        <button
+          className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${compareBase === "template" ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
+          onClick={() => setCompareBase(b => b === "template" ? null : "template")}
+          title="What changed vs the plain template (no AI, no edits)"
+        >
+          vs plain template
+        </button>
+        {kit?.[tab === "resume" ? "aiResume" : "aiCover"] && (
+          <button
+            className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${compareBase === "ai" ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
+            onClick={() => setCompareBase(b => b === "ai" ? null : "ai")}
+            title="What changed vs the last AI-polished version"
+          >
+            vs AI polish
+          </button>
+        )}
+        {compareBase && (
+          <button className="text-[11px] font-bold text-mut hover:text-ink" onClick={() => setCompareBase(null)}>✕ hide</button>
+        )}
+      </div>
+
+      {(() => {
+        const baseline =
+          compareBase === "prev" && prevKit
+            ? prevKit[tab === "resume" ? "resume" : "coverLetter"]
+            : compareBase === "template"
+              ? (tab === "resume" ? buildResume(profile, job, match) : buildCoverLetter(profile, job, match))
+              : compareBase === "ai"
+                ? (tab === "resume" ? kit?.aiResume : kit?.aiCover)
+                : null;
+        const showDiff = compareBase !== null && baseline !== undefined && baseline !== null && kit;
+        if (showDiff) {
+          return (
+            <div className="max-h-[46vh] overflow-y-auto rounded-xl border border-line/15 bg-deep/40 p-3 font-mono text-[12px] leading-relaxed">
+              {diffLines(baseline!, kit![tab === "resume" ? "resume" : "coverLetter"]).map((l, i) => (
+                <div key={i} className={`whitespace-pre-wrap ${l.type === "add" ? "bg-ok/10 text-ok" : l.type === "del" ? "bg-bad/10 text-bad line-through" : "text-fnt"}`}>
+                  {l.type === "add" ? "+ " : l.type === "del" ? "− " : "  "}{l.text || " "}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : (
-        <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/40 p-4 font-sans text-[12.5px] leading-relaxed text-fnt">
-          {text}
-        </pre>
-      )}
+          );
+        }
+        if (editing) {
+          return (
+            <textarea
+              className="max-h-[46vh] min-h-[260px] w-full resize-y rounded-xl border border-acc1/30 bg-deep/50 p-4 font-sans text-[12.5px] leading-relaxed text-ink outline-none"
+              value={editText}
+              onChange={e => setEditText(e.target.value)}
+              spellCheck={false}
+            />
+          );
+        }
+        return (
+          <pre className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/40 p-4 font-sans text-[12.5px] leading-relaxed text-fnt">
+            {text}
+          </pre>
+        );
+      })()}
+
+      {tab === "resume" && !editing && !compareBase && (() => {
+        const claims = quantifiedClaims(profile, 2);
+        return claims.length > 0 ? (
+          <p className="mt-3 text-[11.5px] text-mut">
+            🧮 Evidence reused from your profile: <b>{claims.join(" · ")}</b> — tweak any line with ✏️ before exporting.
+          </p>
+        ) : null;
+      })()}
 
       {tab === "resume" && (() => {
         const cov = atsCoverage(kit?.resume ?? "", job);

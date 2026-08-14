@@ -41,7 +41,8 @@ export async function renderResumePdf(
   profile: CareerProfile,
   job: JobPosting,
   match: JobMatch | null,
-  brand: ResumeBrand = {}
+  brand: ResumeBrand = {},
+  textOverride?: string
 ): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
@@ -51,7 +52,7 @@ export async function renderResumePdf(
   const ink = rgb(0.07, 0.09, 0.15);
   const mut = rgb(0.42, 0.45, 0.52);
 
-  const { header, sections } = parseResumeSections(buildResume(profile, job, match));
+  const { header, sections } = parseResumeSections(textOverride ?? buildResume(profile, job, match));
   let current = page;
   let y = PAGE_H - MARGIN - 8;
 
@@ -112,9 +113,10 @@ export async function downloadResumePdf(
   profile: CareerProfile,
   job: JobPosting,
   match: JobMatch | null,
-  brand: ResumeBrand = {}
+  brand: ResumeBrand = {},
+  textOverride?: string
 ): Promise<void> {
-  const bytes = await renderResumePdf(profile, job, match, brand);
+  const bytes = await renderResumePdf(profile, job, match, brand, textOverride);
   const blob = new Blob([bytes as BlobPart], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

@@ -33,6 +33,7 @@ export const STORAGE_KEYS = {
   ragEmailSecret: "iq.ragEmailSecret",
   ragEmailKey: "iq.ragEmailKey",
   applyEmailSecret: "iq.applyEmailSecret",
+  recsEmailSecret: "iq.recsEmailSecret",
   code: "iq.code",
   uiCode: "iq.uiCode",
   codingTrack: "iq.codingTrack",
