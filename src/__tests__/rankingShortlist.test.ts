@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CareerProfile, JobPosting } from "../types";
 import { STORAGE_KEYS, storageRemove } from "../services/storage";
-import { EMPTY_RANK_FILTERS, filterRanks, listShortlist, rankCompanies, sortJobsByMatch, toggleShortlist } from "../services/jobs";
+import { EMPTY_RANK_FILTERS, filterRanks, listShortlist, rankCompanies, recommendationsDigest, skillImpact, sortJobsByMatch, toggleShortlist } from "../services/jobs";
 
 vi.mock("../services/cloud", () => ({
   getCloudState: () => ({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] }),
@@ -120,6 +120,54 @@ describe("sortJobsByMatch", () => {
     const before = jobs3.map(j => j.id);
     sortJobsByMatch(jobs3, id => ({ j1: 20, j2: 90, j3: 55 })[id] ?? 0);
     expect(jobs3.map(j => j.id)).toEqual(before);
+  });
+});
+
+describe("recommendationsDigest — the weekly email body", () => {
+  it("lists the top companies with scores and best-fit roles", () => {
+    const d = recommendationsDigest(PROFILE, mkRanks(), 3);
+    expect(d).toContain("weekly company recommendations");
+    expect(d).toContain("1. Stripe");
+    expect(d).toContain("2. Dropbox");
+    expect(d).toContain("3. Lyft");
+    expect(d).toContain("% match");
+    expect(d).toContain("best fit: Senior Frontend Engineer");
+  });
+
+  it("calls out the biggest learnable gain when one exists", () => {
+    /* a job with a skill the profile lacks → missing[0] boosts the score */
+    const ranks = rankCompanies(PROFILE, [job({ id: "d1", title: "Fullstack Engineer", skills: ["react", "typescript", "python"] })]);
+    const d = recommendationsDigest(PROFILE, ranks);
+    expect(d).toMatch(/learn python and .* jumps from \d+% → \d+%/);
+  });
+
+  it("is safe with no profile and no ranks", () => {
+    expect(recommendationsDigest(null, [])).toContain("no companies to recommend");
+    expect(recommendationsDigest(null, mkRanks())).toContain("weekly company recommendations");
+  });
+});
+
+describe("skillImpact — the “learn X → Y%” recommendation", () => {
+  it("returns the boosted score when the top missing skill is learnable", () => {
+    const ranks = rankCompanies(PROFILE, [
+      job({ id: "g1", title: "Fullstack Engineer", skills: ["react", "typescript", "python"] })
+    ]);
+    const top = ranks[0];
+    const impact = skillImpact(PROFILE, top);
+    expect(impact).not.toBeNull();
+    expect(impact!.skill).toBe("python");
+    expect(impact!.from).toBe(top.score);
+    expect(impact!.to).toBeGreaterThan(impact!.from);
+  });
+
+  it("returns null when the profile already covers every required skill", () => {
+    const ranks = rankCompanies(PROFILE, [job({ id: "g2", title: "Frontend Engineer", skills: ["react", "typescript"] })]);
+    expect(skillImpact(PROFILE, ranks[0])).toBeNull();
+  });
+
+  it("returns null without a profile", () => {
+    const ranks = rankCompanies(PROFILE, [job({ id: "g3", title: "Fullstack Engineer", skills: ["react", "typescript", "python"] })]);
+    expect(skillImpact(null, ranks[0])).toBeNull();
   });
 });
 

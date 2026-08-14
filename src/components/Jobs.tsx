@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CareerProfile, JobPosting, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { getCloudState, getSupabaseClient, isCloudConfigured } from "../services/cloud";
@@ -11,7 +11,7 @@ import { ResumeKitModal } from "./ResumeKitModal";
 import {
   defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
-  salaryLabel, saveCareerProfile, sortJobsByMatch, toggleShortlist, VERDICT_META, type JobFilters, type RankFilters
+  recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { clearUploadedResume, getUploadedResume, resumeToProfile, saveUploadedResume } from "../services/resume";
 import { extractFileText } from "../services/pdf";
@@ -25,6 +25,10 @@ import { practiceForRound, type DrillCard } from "../services/drill";
 import { getGoal } from "../services/goal";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { bankFromRound, listBank, removeFromBank, type BankEntry } from "../services/questionBank";
+
+/* verdict tone → text color (matches VERDICT_META tones) */
+const verdictToneCls = (tone: string) =>
+  tone === "ok" ? "text-ok" : tone === "co" ? "text-acctxt" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-mut";
 
 /* small comma/Enter-driven tag input */
 function TagInput({ value, onChange, placeholder }: { value: string[]; onChange: (v: string[]) => void; placeholder: string }) {
@@ -77,8 +81,10 @@ export function Jobs() {
   const [filters, setFilters] = useState<JobFilters>(EMPTY_FILTERS);
   const [resume, setResume] = useState<UploadedResume | null>(() => getUploadedResume());
   const [resumeFormOpen, setResumeFormOpen] = useState(false);
+  const [resumeShowAll, setResumeShowAll] = useState(false);
   const [resumePaste, setResumePaste] = useState("");
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [recsDigestOpen, setRecsDigestOpen] = useState(false);
   const [rankLimit, setRankLimit] = useState(10);
   const [rankFilters, setRankFilters] = useState<RankFilters>(EMPTY_RANK_FILTERS);
   const [shortlist, setShortlist] = useState<Set<string>>(() => new Set(listShortlist()));
@@ -172,7 +178,25 @@ export function Jobs() {
   /* company leaderboard — best match % per company, descending */
   const ranks = useMemo(() => rankCompanies(profile, jobs), [profile, jobs]);
   const filteredRanks = useMemo(() => filterRanks(ranks, rankFilters, shortlist), [ranks, rankFilters, shortlist]);
-  const topRank = filteredRanks[0];
+  /* recommendations — the top picks, with a concrete next step for #1 */
+  const topPicks = useMemo(() => filteredRanks.slice(0, 3), [filteredRanks]);
+  /* what learning the #1 pick's most-missing skill is worth */
+  const gapImpact = useMemo(
+    () => (topPicks[0] && !proGated ? skillImpact(profile, topPicks[0]) : null),
+    [topPicks, profile, proGated]
+  );
+
+  /* 🔎 Show in feed — filter the match feed to a company, scroll to it, flash it */
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  const [feedFlash, setFeedFlash] = useState(false);
+  const flashTimer = useRef<number | null>(null);
+  const showInFeed = (company: string) => {
+    setFilters(f => ({ ...f, query: company }));
+    setFeedFlash(true);
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFeedFlash(false), 2200);
+    feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const star = (company: string) => setShortlist(new Set(toggleShortlist(company)));
   const isStarred = (company: string) => shortlist.has(company.toLowerCase());
@@ -300,10 +324,18 @@ export function Jobs() {
               </div>
               {resume.profile.skills.length > 0 && (
                 <div className="mt-2.5 flex flex-wrap gap-1.5">
-                  {resume.profile.skills.slice(0, 14).map(s => (
+                  {resume.profile.skills.slice(0, resumeShowAll ? undefined : 14).map(s => (
                     <span key={s} className="rounded-full border border-acc1/35 bg-acc1/10 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt">{s}</span>
                   ))}
-                  {resume.profile.skills.length > 14 && <Chip>+{resume.profile.skills.length - 14} more</Chip>}
+                  {resume.profile.skills.length > 14 && (
+                    <button
+                      className="cursor-pointer rounded-full border border-acc1/35 bg-acc1/10 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/20"
+                      onClick={() => setResumeShowAll(s => !s)}
+                      title={resumeShowAll ? "Show fewer skills" : `Show all ${resume.profile.skills.length} extracted skills`}
+                    >
+                      {resumeShowAll ? "− show less" : `+${resume.profile.skills.length - 14} more`}
+                    </button>
+                  )}
                 </div>
               )}
               <p className="mt-2 text-[11px] text-mut">The match feed and company ranking below are scored from these skills. You can still edit the profile card above.</p>
@@ -454,14 +486,78 @@ export function Jobs() {
           )}
         </div>
 
-        {topRank && topRank.score > 0 && (
+        {/* recommendations — top picks with a concrete next step */}
+        {profile && jobs.length > 0 && topPicks.length > 0 && topPicks[0].score > 0 && (
           <div className="border-b border-ok/20 bg-ok/[.07] px-5 py-4">
-            <p className="text-[12.5px] font-extrabold text-ok">🏆 Recommendation</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[12.5px] font-extrabold text-ok">🏆 Recommendations — your top {topPicks.length} pick{topPicks.length === 1 ? "" : "s"}</p>
+              <div className="flex items-center gap-2">
+                {filterActive && (
+                  <button className="text-[11px] font-bold text-mut underline-offset-2 hover:text-ink hover:underline" onClick={() => setRankFilters(EMPTY_RANK_FILTERS)}>
+                    ✕ show all companies
+                  </button>
+                )}
+                <button
+                  className="rounded-full border border-ok/25 bg-ok/10 px-2.5 py-0.5 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/20"
+                  onClick={() => setRecsDigestOpen(true)}
+                  title="Preview or email this week's top picks"
+                >
+                  📧 Email digest
+                </button>
+              </div>
+            </div>
             <p className="mt-1 text-[13px] leading-relaxed text-ink">
-              Start with <span className="font-extrabold text-ok">{topRank.company}</span> — {proGated ? "your match % is locked" : `${topRank.score}% match (${VERDICT_META[topRank.verdict].label.toLowerCase()})`} across {topRank.openings} open role{topRank.openings === 1 ? "" : "s"}, best fit: <span className="font-semibold">{topRank.best.title}</span>.{" "}
-              {!proGated && topRank.matched.length > 0 && <>You already cover <span className="font-semibold">{topRank.matched.slice(0, 4).join(", ")}</span>.</>}{" "}
-              {!proGated && topRank.missing.length > 0 && <>Close the gap on <span className="font-semibold">{topRank.missing.slice(0, 3).join(", ")}</span> to push even higher.</>}
+              Start with <span className="font-extrabold text-ok">{topPicks[0].company}</span> — {proGated ? "your match % is locked" : `${topPicks[0].score}% match (${VERDICT_META[topPicks[0].verdict].label.toLowerCase()})`} across {topPicks[0].openings} open role{topPicks[0].openings === 1 ? "" : "s"}, best fit: <span className="font-semibold">{topPicks[0].best.title}</span>.{" "}
+              {!proGated && topPicks[0].matched.length > 0 && <>You already cover <span className="font-semibold">{topPicks[0].matched.slice(0, 4).join(", ")}</span>.</>}{" "}
+              {!proGated && gapImpact && (
+                <>Learn <span className="font-bold text-bad">{gapImpact.skill}</span> and {topPicks[0].company} jumps from {gapImpact.from}% → <span className="font-extrabold text-ok">{gapImpact.to}%</span>.</>
+              )}
               {proGated && <button className="font-bold text-acc3 underline" onClick={() => setUpgrade("Match verdicts and the company ranking are Pro features.")}>Unlock Pro</button>}
+            </p>
+            <ul className="mt-3 space-y-1.5">
+              {topPicks.map((r, i) => (
+                <li key={r.company} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-ok/15 bg-deep/30 px-3 py-2">
+                  <span className="w-5 flex-none text-center text-[12px] font-extrabold text-ok">{i + 1}</span>
+                  <span className="text-[13px] font-extrabold">{r.company}</span>
+                  {proGated ? (
+                    <span className="text-[12px] font-bold text-mut">🔒 {r.openings} open role{r.openings === 1 ? "" : "s"}</span>
+                  ) : (
+                    <>
+                      <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wide ${verdictToneCls(r.verdict)}`}>{r.score}% · {VERDICT_META[r.verdict].label}</span>
+                      <span className="text-[12px] text-mut">{r.openings} role{r.openings === 1 ? "" : "s"} · {r.best.title}</span>
+                    </>
+                  )}
+                  {(() => { const s = salaryLabel(r.best); return s ? <span className="text-[11.5px] font-bold text-ok">💰 {s}</span> : null; })()}
+                  {!proGated && r.missing.length > 0 && (
+                    <span className="text-[11.5px] text-mut">gap: <span className="font-bold text-bad">{r.missing.slice(0, 2).join(", ")}</span></span>
+                  )}
+                  <div className="ml-auto flex gap-1.5">
+                    <button
+                      className="rounded-full border border-ok/30 bg-ok/5 px-2.5 py-0.5 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/15"
+                      onClick={() => setKitJob(r.best)}
+                      title="Open the resume & cover letter for the best-fit role"
+                    >
+                      📮 Apply next
+                    </button>
+                    <button
+                      className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+                      onClick={() => showInFeed(r.company)}
+                      title="Filter the match feed to this company and jump to it"
+                    >
+                      🔎 Show in feed
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {/* nothing clears the bar yet — point at the closest gap */}
+        {profile && jobs.length > 0 && topPicks.length > 0 && topPicks[0].score === 0 && (
+          <div className="border-b border-warn/20 bg-warn/[.07] px-5 py-4">
+            <p className="text-[12.5px] font-extrabold text-warn">🏆 Recommendation</p>
+            <p className="mt-1 text-[13px] leading-relaxed text-ink">
+              Nothing in the feed clears a match yet — the closest gap is <span className="font-bold text-bad">{topPicks[0].missing.slice(0, 3).join(", ") || "a skills mismatch"}</span>. Add those skills to your profile and re-rank, or upload a fuller resume.
             </p>
           </div>
         )}
@@ -540,7 +636,8 @@ export function Jobs() {
                 <div className="mt-2 pl-9">
                   <button
                     className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
-                    onClick={() => setFilters(f => ({ ...f, query: r.company }))}
+                    onClick={() => showInFeed(r.company)}
+                    title="Filter the match feed to this company and jump to it"
                   >
                     🔎 Show in feed
                   </button>
@@ -837,7 +934,7 @@ export function Jobs() {
       </div>
 
       {/* match feed */}
-      <div className={`${cardCls} mt-5 overflow-hidden`}>
+      <div id="match-feed" ref={feedRef} className={`${cardCls} mt-5 scroll-mt-3 overflow-hidden transition-shadow ${feedFlash ? "ring-2 ring-acc1/70" : ""}`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 p-5">
           <div>
             <h3 className="text-[14.5px] font-extrabold">🎯 Match feed ({visible.length > feedLimit ? `${feedLimit} of ${visible.length}` : visible.length !== jobs.length ? `${visible.length} of ${jobs.length}` : visible.length})</h3>
@@ -985,6 +1082,7 @@ export function Jobs() {
       {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
       {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onClose={() => setKitJob(null)} />}
       {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
+      {recsDigestOpen && profile && <RecsDigestModal profile={profile} ranks={ranks} onClose={() => setRecsDigestOpen(false)} />}
       {draftJob && (
         <DraftModal
           track={draftJob}
@@ -1410,6 +1508,73 @@ function DraftModal({ track, job, onClose }: { track: ApplyTrack; job: JobPostin
         </button>
         <button className="flex-1 rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
                           Close
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/* weekly recommendations digest — top picks + the learnable gap, emailable */
+function RecsDigestModal({ profile, ranks, onClose }: { profile: CareerProfile; ranks: CompanyRank[]; onClose: () => void }) {
+  const digest = useMemo(() => recommendationsDigest(profile, ranks), [profile, ranks]);
+  const [sending, setSending] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(digest).then(
+      () => toast("📋 Digest copied — paste it into your email or notes"),
+      () => toast("✗ Clipboard blocked — copy manually")
+    );
+  };
+  const email = async () => {
+    const user = getCloudState().user;
+    /* real email via the send-apply-digest Edge Function when signed in;
+       falls back to a mailto link so the flow always works */
+    const fallback = () => {
+      const url = `mailto:?subject=${encodeURIComponent("InterviewIQ — weekly company recommendations")}&body=${encodeURIComponent(digest)}`;
+      window.location.href = url;
+    };
+    if (!user?.email) { fallback(); return; }
+    setSending(true);
+    try {
+      const client = await getSupabaseClient();
+      const { data: session } = await client!.auth.getSession();
+      const token = session?.session?.access_token;
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        apikey: CONFIG.supabase.anonKey,
+        "Content-Type": "application/json"
+      };
+      const secret = storageGet<string>(STORAGE_KEYS.applyEmailSecret, "");
+      if (secret) headers["x-apply-secret"] = secret;
+      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
+      if (key) headers["x-resend-key"] = key;
+      const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-apply-digest`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ to: user.email, subject: "InterviewIQ — weekly company recommendations", text: digest })
+      });
+      const body = await res.json().catch(() => ({}));
+      if ((body as { sent?: boolean }).sent) {
+        toast(`📧 Digest emailed to ${user.email}`);
+      } else {
+        toast(`✉️ Email not configured (${(body as { reason?: string }).reason ?? "unknown"}) — opening your mail app instead`);
+        fallback();
+      }
+    } catch {
+      toast("✉️ Couldn't reach the email service — opening your mail app instead");
+      fallback();
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <Modal onClose={onClose} title="📧 Weekly recommendations digest" desc="Your top picks and the biggest learnable gap — copy it, or email it to yourself each week.">
+      <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] leading-relaxed text-fnt">
+        {digest}
+      </pre>
+      <div className="mt-4 flex flex-wrap justify-end gap-2">
+        <button className={btnGhost + btnSm} onClick={copy}>📋 Copy</button>
+        <button className={btnPrimary + btnSm} onClick={email} disabled={sending}>
+          {sending ? "⏳ Sending…" : "📧 Email to me"}
         </button>
       </div>
     </Modal>

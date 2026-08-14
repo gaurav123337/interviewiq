@@ -10,7 +10,7 @@ import {
 } from "../services/applyTrack";
 import { PDFDocument } from "pdf-lib";
 import { inflate } from "pako"; /* ambient types in src/pako.d.ts */
-import { atsCoverage, buildResume } from "../services/applyKit";
+import { atsCoverage, buildCoverLetter, buildResume, jdKeywords, jdResponsibilities } from "../services/applyKit";
 import { practiceForRound } from "../services/drill";
 import { buildResumeHtml } from "../services/resumeHtml";
 import { renderResumePdf } from "../services/resumePdf";
@@ -123,6 +123,74 @@ const PROFILE: CareerProfile = {
 };
 
 const MATCH = { score: 72, verdict: "good" as const, matched: ["react"], missing: ["accessibility"], blockers: [] as string[] };
+
+describe("JD-aware tailoring — two postings never produce the same kit", () => {
+  const K8S_JOB: JobPosting = {
+    ...JOB, id: "greenhouse:k8s", title: "Senior Kubernetes Platform Engineer", company: "Acme",
+    location: "Remote", remote: true, level: "senior",
+    description:
+      "We are looking for a Senior Kubernetes Platform Engineer to own our container platform.\n" +
+      "• Design and scale Kubernetes clusters across multiple regions.\n" +
+      "• Build Terraform modules and automate cluster upgrades with GitOps.\n" +
+      "• Partner with engineering teams to migrate services onto the platform.",
+    skills: ["kubernetes", "terraform"]
+  };
+  const IOS_JOB: JobPosting = {
+    ...JOB, id: "greenhouse:ios", title: "Senior iOS Engineer", company: "Globex",
+    location: "Bengaluru, India", remote: false, level: "senior",
+    salary: { min: 2500000, max: 3500000, currency: "INR" },
+    description:
+      "Join the mobile team and shape a fast-growing consumer app.\n" +
+      "• Architect SwiftUI features used by millions.\n" +
+      "• Build and maintain the iOS CI pipeline with fastlane.\n" +
+      "• Collaborate with product to ship polished, accessible UI.",
+    skills: ["swift", "ios"]
+  };
+
+  it("mines role-specific keywords from title, skills and JD", () => {
+    const a = jdKeywords(K8S_JOB, 8).join(" ");
+    const b = jdKeywords(IOS_JOB, 8).join(" ");
+    expect(a).toMatch(/kubernetes|terraform|gitops|cluster/i);
+    expect(b).toMatch(/swift|ios|swiftui|fastlane/i);
+  });
+
+  it("mines action-verb responsibilities from the JD", () => {
+    const r = jdResponsibilities(K8S_JOB, 3);
+    expect(r.length).toBeGreaterThanOrEqual(2);
+    expect(r.join(" ")).toMatch(/design|scale|build|automate/i);
+  });
+
+  it("builds visibly different resumes for different JDs", () => {
+    const ra = buildResume(PROFILE, K8S_JOB, MATCH);
+    const rb = buildResume(PROFILE, IOS_JOB, MATCH);
+    expect(ra).not.toBe(rb);
+    expect(ra).toMatch(/Kubernetes Platform Engineer/);
+    expect(ra).toMatch(/kubernetes/i);
+    expect(rb).toMatch(/iOS Engineer/);
+    expect(rb).toMatch(/swift/i);
+  });
+
+  it("mirrors a JD responsibility in the resume highlights", () => {
+    const r = buildResume(PROFILE, K8S_JOB, MATCH);
+    expect(r).toMatch(/Design and scale Kubernetes clusters/i);
+    expect(r).toContain("ROLE KEYWORDS");
+  });
+
+  it("cover letter cites the posting's specifics — location, level, salary band, responsibility", () => {
+    const c = buildCoverLetter(PROFILE, IOS_JOB, MATCH);
+    expect(c).toMatch(/iOS Engineer role at Globex/i);
+    expect(c).toMatch(/based in Bengaluru, India/);
+    expect(c).toMatch(/₹2\.5M–₹3\.5M/);
+    expect(c).toMatch(/Architect SwiftUI features used by millions/i);
+  });
+
+  it("falls back gracefully for postings without a description", () => {
+    const noDesc = buildResume(PROFILE, JOB, MATCH);
+    expect(noDesc).toContain("Senior Frontend Engineer");
+    expect(noDesc).toContain("Airbnb");
+    expect(noDesc).toContain("HIGHLIGHTS");
+  });
+});
 
 describe("weekly report", () => {
   it("computes response rate and follow-up completion over the window", () => {

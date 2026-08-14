@@ -448,6 +448,42 @@ export interface RankFilters {
 
 export const EMPTY_RANK_FILTERS: RankFilters = { remoteOnly: false, minScore: 0, minSalary: 0, shortlistOnly: false };
 
+/** What learning a company's most-missing skill is worth: the boosted score
+    for its best role, or null when there's nothing learnable to gain. */
+export function skillImpact(profile: CareerProfile | null, rank: CompanyRank): { skill: string; from: number; to: number } | null {
+  if (!profile) return null;
+  const skill = rank.missing[0];
+  if (!skill) return null;
+  const boosted = matchJob({ ...profile, skills: [...new Set([...profile.skills, skill])] }, rank.best);
+  if (boosted.score <= rank.score) return null;
+  return { skill, from: rank.score, to: boosted.score };
+}
+
+/** Plain-text weekly digest of the top company recommendations — the body
+    for the email digest. Pure + testable. */
+export function recommendationsDigest(profile: CareerProfile | null, ranks: CompanyRank[], top = 3): string {
+  const picks = ranks.slice(0, top);
+  if (!picks.length) {
+    return "InterviewIQ — no companies to recommend yet. Upload a resume or save your career profile to rank companies.";
+  }
+  const impact = skillImpact(profile, picks[0]);
+  const lines = [
+    "InterviewIQ — weekly company recommendations",
+    "",
+    ...(profile ? [`Based on your profile: ${profile.headline || "—"} (${profile.years} yrs).`, ""] : []),
+    ...picks.map((r, i) =>
+      `${i + 1}. ${r.company} — ${r.score}% match (${VERDICT_META[r.verdict].label}) · ${r.openings} open role${r.openings === 1 ? "" : "s"} · best fit: ${r.best.title}`
+    )
+  ];
+  if (impact) {
+    lines.push("", `Biggest learnable gain: learn ${impact.skill} and ${picks[0].company} jumps from ${impact.from}% → ${impact.to}%.`);
+  }
+  if (picks[0].missing.length) {
+    lines.push(`Closest gap for ${picks[0].company}: ${picks[0].missing.slice(0, 4).join(", ")}.`);
+  }
+  return lines.join("\n");
+}
+
 /** Pure filter over the ranked companies — the view stays dumb. */
 export function filterRanks(ranks: CompanyRank[], f: RankFilters, shortlist: ReadonlySet<string>): CompanyRank[] {
   return ranks.filter(r => {
