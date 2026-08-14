@@ -33,7 +33,7 @@ import {
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
 } from "../services/scraper";
 import { CONFIG } from "../config";
-import { getCareerProfile, listJobs, rankCompanies, recommendationsDigest } from "../services/jobs";
+import { getCareerProfile, indiaDigest, listJobs, rankCompanies, recommendationsDigest } from "../services/jobs";
 import { applyDigest } from "../services/applyTrack";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import {
@@ -2230,6 +2230,10 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [recsBusy, setRecsBusy] = useState<null | "dryrun" | "send">(null);
   const [recsPreview, setRecsPreview] = useState<string | null>(null);
   const [recsRecipients, setRecsRecipients] = useState<string[] | null>(null);
+  /* 🇮🇳 India & startup digest — the same broadcast with kind: "india" */
+  const [indiaRecsBusy, setIndiaRecsBusy] = useState<null | "dryrun" | "send">(null);
+  const [indiaRecsPreview, setIndiaRecsPreview] = useState<string | null>(null);
+  const [indiaRecsRecipients, setIndiaRecsRecipients] = useState<string[] | null>(null);
   const recsHeaders = (): Record<string, string> => {
     const h: Record<string, string> = { apikey: CONFIG.supabase.anonKey, "Content-Type": "application/json" };
     if (recsSecret) h["x-apply-secret"] = recsSecret;
@@ -2263,6 +2267,34 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
       toast("✗ " + ((e as Error).message || "Broadcast failed"));
     } finally {
       setRecsBusy(null);
+    }
+  };
+  const previewIndiaRecs = () => {
+    const p = getCareerProfile();
+    const jobs = listJobs();
+    if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
+    if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
+    setIndiaRecsPreview(indiaDigest(p, jobs));
+  };
+  const runIndiaRecsBroadcast = async (dryRun: boolean) => {
+    setIndiaRecsBusy(dryRun ? "dryrun" : "send");
+    try {
+      const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-recommendations-digest`, {
+        method: "POST", headers: recsHeaders(), body: JSON.stringify({ dryRun, kind: "india" })
+      });
+      const body = await res.json().catch(() => ({})) as { sent?: boolean; dryRun?: boolean; wouldEmail?: number; emailsSent?: number; recipients?: string[]; reason?: string };
+      if (dryRun && body.dryRun) {
+        setIndiaRecsRecipients(body.recipients ?? []);
+        toast(`📡 Dry run — would email ${body.wouldEmail ?? 0} user${(body.wouldEmail ?? 0) === 1 ? "" : "s"} (nothing sent)`);
+      } else if (body.sent) {
+        toast(`📬 🇮🇳 India digest sent — ${body.emailsSent ?? 0} email${body.emailsSent === 1 ? "" : "s"}`);
+      } else {
+        toast("✗ " + (body.reason ?? "Broadcast failed"));
+      }
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Broadcast failed"));
+    } finally {
+      setIndiaRecsBusy(null);
     }
   };
   const runApplyDigest = async (dryRun: boolean) => {
@@ -2482,7 +2514,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">💼 Job feed (Apply Kit)</h2>
-        <p className="mb-3 text-[12.5px] text-mut">How often the app auto-refreshes job postings, and which boards/feeds to pull from (one <code>provider:board</code> per line — greenhouse, ashby, lever, or <code>rss:https://…</code> for public job feeds like Remotive or We Work Remotely).</p>
+        <p className="mb-3 text-[12.5px] text-mut">How often the app auto-refreshes job postings, and which boards/feeds to pull from (one <code>provider:board</code> per line — greenhouse, ashby, lever, <code>remoteok:remoteok</code> for RemoteOK's official API, or <code>rss:https://…</code> for public job feeds like We Work Remotely or Himalayas).</p>
         <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <NumField label="Auto-refresh every (hours)" value={jobsHours} onChange={v => setJobsHours(Math.max(1, Math.round(v)))} />
         </div>
@@ -2500,6 +2532,8 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           {[
             { label: "➕ WWR programming", src: "rss:https://weworkremotely.com/categories/remote-programming-jobs.rss" },
             { label: "➕ WWR full-stack", src: "rss:https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss" },
+            { label: "➕ 🏔 Himalayas (curated remote)", src: "rss:https://himalayas.app/jobs/rss" },
+            { label: "➕ 🚀 RemoteOK (official API)", src: "remoteok:remoteok" },
             { label: "➕ 🇮🇳 fampay (startup)", src: "lever:fampay" },
             { label: "➕ 🇮🇳 cred (startup)", src: "lever:cred" },
             { label: "➕ 🇮🇳 groww (startup)", src: "greenhouse:groww" }
@@ -2591,11 +2625,42 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
             </button>
           </div>
         </div>
+        <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
+          <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">🇮🇳 India & startup digest — same broadcast, kind: "india"</span>
+          <p className="mt-1 text-[11.5px] text-mut">Filters the live feed to the Indian market (India locations, known Indian startups like fampay/cred/groww, and remote roles) and emails each user their top India picks — same secret guard, separate subject line.</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button className={btnGhost + btnSm} onClick={previewIndiaRecs}>👀 Preview 🇮🇳 digest</button>
+            <button className={btnGhost + btnSm} disabled={!!indiaRecsBusy} onClick={() => void runIndiaRecsBroadcast(true)}>
+              {indiaRecsBusy === "dryrun" ? "⏳ Counting…" : "📡 Dry-run broadcast"}
+            </button>
+            <button className={btnPrimary + btnSm} disabled={!!indiaRecsBusy} onClick={() => void runIndiaRecsBroadcast(false)}>
+              {indiaRecsBusy === "send" ? "⏳ Sending…" : "📤 Send broadcast now"}
+            </button>
+          </div>
+        </div>
       </div>
       {recsPreview && (
         <Modal onClose={() => setRecsPreview(null)} title="👀 Recommendations digest preview" desc="What this week's email would look like for the profile saved in this browser.">
           <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] leading-relaxed text-fnt">{recsPreview}</pre>
           <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setRecsPreview(null)}>Close</button>
+        </Modal>
+      )}
+      {indiaRecsPreview && (
+        <Modal onClose={() => setIndiaRecsPreview(null)} title="👀 🇮🇳 India & startup digest preview" desc="What the India digest would look like for the profile saved in this browser.">
+          <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-xl border border-line/15 bg-deep/50 p-4 text-[12.5px] leading-relaxed text-fnt">{indiaRecsPreview}</pre>
+          <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setIndiaRecsPreview(null)}>Close</button>
+        </Modal>
+      )}
+      {indiaRecsRecipients && (
+        <Modal onClose={() => setIndiaRecsRecipients(null)} title="📡 🇮🇳 India digest — dry-run recipients" desc={`Would email ${indiaRecsRecipients.length} user${indiaRecsRecipients.length === 1 ? "" : "s"} (nothing sent).`}>
+          {indiaRecsRecipients.length ? (
+            <ul className="max-h-[260px] space-y-1 overflow-y-auto pr-1">
+              {indiaRecsRecipients.map((e, i) => <li key={e} className="px-2 py-1.5">{i + 1}. {e}</li>)}
+            </ul>
+          ) : (
+            <p className="text-[12.5px] text-mut">No recipients — nobody has an uploaded resume with a profile yet.</p>
+          )}
+          <button className="mt-4 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setIndiaRecsRecipients(null)}>Close</button>
         </Modal>
       )}
       {applyPreview && (

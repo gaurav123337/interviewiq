@@ -14,7 +14,7 @@
    otherwise it answers sent:false with a clear reason. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { composeRecommendationsDigest, type Job, type Profile } from "../_shared/recommendationsDigest.ts";
+import { composeIndiaDigest, composeRecommendationsDigest, type Job, type Profile } from "../_shared/recommendationsDigest.ts";
 
 const cors = (req: Request): Record<string, string> => ({
   "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*",
@@ -23,25 +23,25 @@ const cors = (req: Request): Record<string, string> => ({
 });
 
 /** Minimal text→HTML so the digest reads well in email clients. */
-function renderHtml(text: string): string {
+function renderHtml(text: string, title: string, subtitle: string): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const body = esc(text)
     .split(/\n{2,}/)
     .map(para => `<p style="margin:0 0 10px;color:#334155;line-height:1.6">${para.replace(/\n/g, "<br/>")}</p>`)
     .join("");
   return `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto">
-    <h2 style="color:#4f46e5;margin:0 0 4px">🏆 InterviewIQ — weekly company recommendations</h2>
-    <p style="color:#94a3b8;font-size:12px;margin:0 0 16px">Your best-fit companies, scored from your resume.</p>
+    <h2 style="color:#4f46e5;margin:0 0 4px">${esc(title)}</h2>
+    <p style="color:#94a3b8;font-size:12px;margin:0 0 16px">${esc(subtitle)}</p>
     ${body}
     <p style="color:#94a3b8;font-size:12px;margin:20px 0 0">Update your resume in the app — the digest is generated from your current profile and the live feed.</p>
   </div>`;
 }
 
-async function sendOne(apiKey: string, to: string, text: string, from: string): Promise<{ ok: boolean; id?: string }> {
+async function sendOne(apiKey: string, to: string, text: string, from: string, subject: string, title: string, subtitle: string): Promise<{ ok: boolean; id?: string }> {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to, subject: "InterviewIQ — weekly company recommendations", text, html: renderHtml(text) })
+    body: JSON.stringify({ from, to, subject, text, html: renderHtml(text, title, subtitle) })
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, id: (data as { id?: string }).id };
@@ -53,7 +53,7 @@ async function sendOne(apiKey: string, to: string, text: string, from: string): 
 /* admin panel can preview the blast before the cron goes live.        */
 /* ------------------------------------------------------------------ */
 
-async function handleBroadcast(req: Request, dryRun: boolean): Promise<Response> {
+async function handleBroadcast(req: Request, dryRun: boolean, kind: string): Promise<Response> {
   const headers = { ...cors(req), "Content-Type": "application/json" };
   const secret = Deno.env.get("RECS_DIGEST_SECRET") ?? "";
   const provided = req.headers.get("x-apply-secret");
@@ -94,24 +94,30 @@ async function handleBroadcast(req: Request, dryRun: boolean): Promise<Response>
   const { data: users } = await admin.from("auth.users").select("id, email");
   const emailOf = new Map((users ?? []).map((u: { id: string; email: string | null }) => [u.id, u.email]));
 
+  const india = kind === "india";
+  const subject = india ? "InterviewIQ — weekly 🇮🇳 India & startup recommendations" : "InterviewIQ — weekly company recommendations";
+  const title = india ? "🇮🇳 InterviewIQ — India & startup recommendations" : "🏆 InterviewIQ — weekly company recommendations";
+  const subtitle = india
+    ? "Your best-fit Indian-market & startup companies, scored from your resume."
+    : "Your best-fit companies, scored from your resume.";
   const recipients: { email: string; digest: string }[] = [];
   for (const row of resumes as { user_id: string; data: unknown }[]) {
     const profile = ((row.data ?? {}) as { profile?: Profile }).profile ?? null;
-    const digest = composeRecommendationsDigest(profile, jobs);
+    const digest = india ? composeIndiaDigest(profile, jobs) : composeRecommendationsDigest(profile, jobs);
     const email = emailOf.get(row.user_id);
     if (!digest || !email) continue;
     recipients.push({ email, digest });
   }
   if (dryRun) {
-    console.log(`[send-recommendations-digest] dry run — would email ${recipients.length} user${recipients.length === 1 ? "" : "s"}`);
+    console.log(`[send-recommendations-digest] ${india ? "india " : ""}dry run — would email ${recipients.length} user${recipients.length === 1 ? "" : "s"}`);
     return new Response(JSON.stringify({ sent: false, dryRun: true, wouldEmail: recipients.length, recipients: recipients.map(r => r.email), reason: "dry run — nothing sent" }), { status: 200, headers });
   }
   let sent = 0;
   for (const r of recipients) {
-    const out = await sendOne(apiKey, r.email, r.digest, "InterviewIQ <digest@interviewiq.app>");
+    const out = await sendOne(apiKey, r.email, r.digest, "InterviewIQ <digest@interviewiq.app>", subject, title, subtitle);
     if (out.ok) sent++;
   }
-  console.log(`[send-recommendations-digest] broadcast sent ${sent} digest${sent === 1 ? "" : "s"}`);
+  console.log(`[send-recommendations-digest] broadcast sent ${sent} ${india ? "india " : ""}digest${sent === 1 ? "" : "s"}`);
   return new Response(JSON.stringify({ sent: true, emailsSent: sent }), { status: 200, headers });
 }
 
@@ -123,8 +129,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({})) as { to?: string; subject?: string; text?: string; from?: string; dryRun?: boolean };
 
     /* scheduled broadcast — pg_cron posts an empty body every Monday;
-       the admin panel posts { dryRun: true } to preview the blast */
-    if (!body.to) return handleBroadcast(req, !!body.dryRun);
+       the admin panel posts { dryRun: true } to preview the blast, or
+       { kind: "india" } for the India & startup digest */
+    if (!body.to) return handleBroadcast(req, !!body.dryRun, (body as { kind?: string }).kind ?? "default");
 
     const to = body.to ?? "";
     const text = body.text ?? "";

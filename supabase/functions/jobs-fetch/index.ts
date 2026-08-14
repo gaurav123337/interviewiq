@@ -10,7 +10,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
-import { feedTitle, parseRss, splitRssTitle } from "../_shared/rss.ts";
+import { companyFromLink, feedTitle, parseRss, splitRssTitle, stripJobNumberPrefix } from "../_shared/rss.ts";
 
 /* default sources — verified live; admins can override via app_config.
    Global ATS boards + public RSS feeds + Indian startup boards (fampay,
@@ -25,7 +25,9 @@ const DEFAULT_SOURCES = [
   { provider: "lever", board: "cred" },
   { provider: "greenhouse", board: "groww" },
   { provider: "rss", board: "https://weworkremotely.com/categories/remote-programming-jobs.rss" },
-  { provider: "rss", board: "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss" }
+  { provider: "rss", board: "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss" },
+  { provider: "rss", board: "https://himalayas.app/jobs/rss" },
+  { provider: "remoteok", board: "remoteok" }
 ];
 
 /* Skill dictionary. Two tiers so ordinary prose can't fake a tech role:
@@ -171,7 +173,7 @@ async function fetchAshby(board: string): Promise<{ company: string; jobs: unkno
   return { company: board, jobs };
 }
 
-/* RSS feeds (Lane A) — Remotive, We Work Remotely, or any public job RSS.
+/* RSS feeds (Lane A) — We Work Remotely, Himalayas, or any public job RSS.
    Config entry: rss:https://feed.example.com/jobs.rss. The feed title
    becomes the company label; each <item> becomes one posting. */
 async function fetchRss(feedUrl: string): Promise<{ company: string; jobs: unknown[] }> {
@@ -182,11 +184,15 @@ async function fetchRss(feedUrl: string): Promise<{ company: string; jobs: unkno
   const company = (title || new URL(feedUrl).hostname.replace(/^www\./, "") || "RSS").slice(0, 60);
   const jobs = parseRss(xml).map((item, i) => {
     /* board feeds put the company in each item title ("Airtable: Senior
-       Solutions Architect") — use it over the generic feed title */
-    const { company: itemCompany, title } = splitRssTitle(item.title);
-    const jobTitle = itemCompany ? title : item.title;
-    const companyLabel = itemCompany || company;
-    const desc = `${jobTitle}\n${item.description}`;
+       Solutions Architect") — use it over the generic feed title.
+       Himalayas puts the company in the item URL and its titles carry an
+       internal "[Job - N]" prefix — handle both. */
+    const { company: itemCompany, title } = splitRssTitle(stripJobNumberPrefix(item.title));
+    const jobTitle = itemCompany ? title : stripJobNumberPrefix(item.title);
+    const companyLabel = itemCompany || companyFromLink(item.link) || company;
+    /* category tags (Himalayas' skill buckets) feed the skill extractor */
+    const tags = (item.tags ?? []).join(", ");
+    const desc = `${jobTitle}\n${tags}\n${item.description}`;
     return {
       externalId: `${new URL(item.link).hostname}-${i}-${simpleHash(item.link)}`,
       title: jobTitle,
@@ -203,6 +209,48 @@ async function fetchRss(feedUrl: string): Promise<{ company: string; jobs: unkno
     };
   });
   return { company, jobs };
+}
+
+/* RemoteOK — official public JSON API (https://remoteok.com/api). Their
+   API terms require attribution: a link back + mentioning Remote OK as the
+   source. The job URL we store IS their remoteOK.com page (not the
+   employer's ATS), and the feed card shows the "RemoteOK" source chip,
+   satisfying both. The first array element is a legal/terms object, not a
+   job — it's skipped. Config entry: remoteok:remoteok */
+async function fetchRemoteOk(): Promise<{ company: string; jobs: unknown[] }> {
+  const res = await fetch("https://remoteok.com/api", { headers: { "User-Agent": "InterviewIQ/job-feed (attribution per remoteok.com/api terms)" } });
+  if (!res.ok) throw new Error(`RemoteOK API returned HTTP ${res.status}`);
+  const data = (await res.json()) as unknown[];
+  const jobs = data
+    .filter((d): d is Record<string, unknown> => !!d && typeof d === "object" && typeof (d as Record<string, unknown>).position === "string")
+    .map((d) => {
+      const position = String(d.position ?? "").trim();
+      const company = String(d.company ?? "RemoteOK").slice(0, 60);
+      const location = String(d.location ?? "").replace(/,\s*$/, "").trim();
+      const url = String(d.url ?? "") || String(d.apply_url ?? "");
+      const tags = Array.isArray(d.tags) ? d.tags.map(String).filter(Boolean) : [];
+      const salaryMin = Number(d.salary_min) || 0;
+      const salaryMax = Number(d.salary_max) || 0;
+      const salary = salaryMin > 0 && salaryMax >= salaryMin
+        ? { min: salaryMin, max: salaryMax, currency: "USD", source: "posting" as const }
+        : null;
+      const desc = `${position}\n${tags.join(", ")}\nRemote role advertised on Remote OK — apply on their site.`;
+      return {
+        externalId: `remoteok-${String(d.id ?? simpleHash(url + position))}`,
+        title: position,
+        company,
+        location,
+        remote: true,
+        description: desc.slice(0, 6000),
+        url: url || "https://remoteok.com/remote-jobs",
+        postedAt: d.date ? new Date(String(d.date)).toISOString() : null,
+        skills: extractSkills(position, desc),
+        level: guessLevel(position),
+        salary,
+        companySize: null
+      };
+    });
+  return { company: "RemoteOK", jobs };
 }
 
 /* Small stable hash (FNV-1a) for RSS external ids — links can be long. */
@@ -255,7 +303,9 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
           ? await fetchAshby(src.board)
           : src.provider === "rss"
             ? await fetchRss(src.board)
-            : await fetchGreenhouse(src.board);
+            : src.provider === "remoteok"
+              ? await fetchRemoteOk()
+              : await fetchGreenhouse(src.board);
       const rows = jobs.map((j: Record<string, unknown>) => ({
         source: src.provider,
         external_id: j.externalId,

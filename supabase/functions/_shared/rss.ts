@@ -10,6 +10,8 @@ export interface RssItem {
   description: string;
   /** ISO string when the feed provides a pubDate/updated, else null. */
   pubDate: string | null;
+  /** Category/tag strings (RSS <category> / Atom <category term>). */
+  tags: string[];
 }
 
 const decodeXml = (s: string): string =>
@@ -51,11 +53,46 @@ export function splitRssTitle(raw: string): { company: string; title: string } {
   return { company: "", title: raw.trim() };
 }
 
+/** Himalayas posts items titled "[Job - 12345] Role Name" — strip the
+    internal ID prefix so titles read as a human would. */
+export function stripJobNumberPrefix(raw: string): string {
+  return raw.replace(/^\s*\[Job\s*-\s*\d+\]\s*/i, "").trim() || raw.trim();
+}
+
+/** Himalayas puts the company in the item URL: /companies/<slug>/jobs/….
+    Extracts the slug and humanizes it ("ci-t" → "CI&T" via a small
+    stylized map, otherwise Title Case). Returns "" when the link has no
+    company slug. */
+export function companyFromLink(link: string): string {
+  const m = link.match(/\/companies\/([a-z0-9-]{1,60})\/jobs\//i);
+  if (!m) return "";
+  const slug = m[1].toLowerCase();
+  const stylized: Record<string, string> = { "ci-t": "CI&T" };
+  if (stylized[slug]) return stylized[slug];
+  return slug.split("-").map(p => (p ? p.charAt(0).toUpperCase() + p.slice(1) : p)).join(" ");
+}
+
 /** Feed title (channel/feed title) — used as the company label. */
 export function feedTitle(xml: string): string | null {
   const channel = xml.match(/<channel[^>]*>([\s\S]*?)<\/channel>/i)?.[1] ?? xml;
   const title = first(channel, "title");
   return title || null;
+}
+
+/** All <category> values in a block (RSS 2.0) or <category term=…> (Atom). */
+function categories(block: string): string[] {
+  const out: string[] = [];
+  const re = /<category\b([^>]*)>([\s\S]*?)<\/category>|<category\b([^>]*)\/>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(block))) {
+    if (m[3] !== undefined) {
+      const term = m[3].match(/\bterm\s*=\s*["']([^"']*)["']/i);
+      if (term) out.push(decodeXml(term[1]));
+    } else if (m[2] !== undefined) {
+      out.push(decodeXml(m[2]));
+    }
+  }
+  return out;
 }
 
 /** Parse RSS 2.0 <item> blocks (and Atom <entry> blocks as a bonus). */
@@ -70,7 +107,7 @@ export function parseRss(xml: string): RssItem[] {
     const title = first(block, "title") || "Untitled role";
     const description = first(block, "description") || first(block, "summary") || "";
     const pubDate = pubDateToIso(first(block, "pubDate") || first(block, "updated") || first(block, "published")) ?? null;
-    items.push({ title, link, description: description.slice(0, 6000), pubDate });
+    items.push({ title, link, description: description.slice(0, 6000), pubDate, tags: categories(block) });
   }
   return items;
 }

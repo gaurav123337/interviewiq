@@ -14,7 +14,7 @@ import {
   recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
-import { importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls } from "../services/importJob";
+import { importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls, trustOf } from "../services/importJob";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, jdKeywords, saveApplyKit } from "../services/applyKit";
@@ -1240,7 +1240,9 @@ export function Jobs() {
                       </Chip>
                     )}
                     {(() => { const s = salaryLabel(j); return s ? <span className="font-bold text-ok">💰 {s}</span> : null; })()}
-                    <span className="text-[11px]">{j.source}</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] text-mut" title={trustOf(j.source).title}>
+                      <span aria-hidden>{trustOf(j.source).icon}</span> {trustOf(j.source).label}
+                    </span>
                     {j.url && <a href={j.url} target="_blank" rel="noreferrer" className="font-bold text-acctxt hover:underline">View →</a>}
                   </div>
                   {!locked && m && (m.matched.length || m.missing.length || m.blockers.length) && (

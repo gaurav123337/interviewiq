@@ -2,7 +2,7 @@
    Mirrors the client suite. Run: deno test supabase/functions/_shared/ */
 
 import { assertEquals } from "jsr:@std/assert";
-import { feedTitle, parseRss, splitRssTitle } from "./rss.ts";
+import { companyFromLink, feedTitle, parseRss, splitRssTitle, stripJobNumberPrefix } from "./rss.ts";
 
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -38,6 +38,25 @@ Deno.test("feedTitle returns the channel title", () => {
 Deno.test("splitRssTitle splits board-style titles on a colon only", () => {
   assertEquals(splitRssTitle("Airtable: Senior Solutions Architect").company, "Airtable");
   assertEquals(splitRssTitle("Senior Solutions Architect - West Coast").company, "");
+});
+
+Deno.test("parseRss collects category tags (Himalayas style)", () => {
+  const himalayas = `<rss><channel><title>Remote jobs from Himalayas</title><item>
+    <title><![CDATA[[Job - 30986] Software Master Developer, Brazil]]></title>
+    <description><![CDATA[At CI&T, we help large enterprises.]]></description>
+    <link>https://himalayas.app/companies/ci-t/jobs/job-30986-software-master-developer-brazil</link>
+    <category><![CDATA[Software-Developer]]></category>
+    <category><![CDATA[Azure-Developer]]></category>
+  </item></channel></rss>`;
+  const items = parseRss(himalayas);
+  assertEquals(items.length, 1);
+  assertEquals(items[0].title, "[Job - 30986] Software Master Developer, Brazil");
+  assertEquals(items[0].tags, ["Software-Developer", "Azure-Developer"]);
+  assertEquals(stripJobNumberPrefix(items[0].title), "Software Master Developer, Brazil");
+  assertEquals(companyFromLink(items[0].link), "CI&T");
+  assertEquals(companyFromLink("https://himalayas.app/companies/stripe/jobs/job-9-x"), "Stripe");
+  assertEquals(companyFromLink("https://example.com/jobs/1"), "");
+  assertEquals(stripJobNumberPrefix("Plain title"), "Plain title");
 });
 
 Deno.test("parseRss handles Atom entries and garbage", () => {

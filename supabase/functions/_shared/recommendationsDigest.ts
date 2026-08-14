@@ -264,3 +264,52 @@ export function composeRecommendationsDigest(profile: Profile | null, jobs: Job[
   if (!profile || !profile.skills?.length || !jobs.length) return null;
   return recommendationsDigest(profile, rankCompanies(profile, jobs), 3);
 }
+
+/* ------------------------------------------------------------------ */
+/* India & startup focus                                               */
+/* ------------------------------------------------------------------ */
+
+/** Indian metro/region signals — matching on location text. */
+const INDIA_LOCATION_RE = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|gurgaon|gurugram|noida|kolkata|ahmedabad|indore|kochi|chandigarh|jaipur/i;
+
+/** Well-known Indian companies/startups, as a location-less fallback. */
+const INDIA_COMPANIES = [
+  "fampay", "cred", "groww", "razorpay", "swiggy", "zomato", "flipkart", "freshworks",
+  "chargebee", "postman", "zepto", "meesho", "ola", "paytm", "upstox", "zerodha",
+  "dream11", "myntra", "bigbasket", "nobroker", "apna", "sharechat", "unacademy",
+  "byju", "ayu", "phonepe", "druva", "zoho", "infosys", "tcs", "wipro", "hcl",
+  "technologies", "mindtree", "l&t", "tata", "mahindra", "reliance", "jio"
+];
+
+/** True when a posting targets the Indian market (or is remote, which is
+    reachable from India). Used by the India digest + filter chip. */
+export function isIndiaJob(job: Job): boolean {
+  const loc = (job.location ?? "").toLowerCase();
+  if (INDIA_LOCATION_RE.test(loc)) return true;
+  const company = (job.company ?? "").toLowerCase().replace(/[^a-z0-9& ]/g, "");
+  if (INDIA_COMPANIES.some(c => company.includes(c))) return true;
+  return !!job.remote;
+}
+
+/** Compose the weekly 🇮🇳 India & startup digest. Same engine, filtered to
+    the Indian market (locations, known Indian startups, and remote roles). */
+export function composeIndiaDigest(profile: Profile | null, jobs: Job[]): string | null {
+  if (!profile || !profile.skills?.length || !jobs.length) return null;
+  const indiaJobs = jobs.filter(isIndiaJob);
+  if (!indiaJobs.length) return null;
+  const picks = rankCompanies(profile, indiaJobs).slice(0, 3);
+  if (!picks.length) return null;
+  const lines = [
+    "InterviewIQ — weekly 🇮🇳 India & startup recommendations",
+    "",
+    ...(profile ? [`Based on your profile: ${profile.headline || "—"} (${profile.years} yrs).`, ""] : []),
+    ...picks.map((r, i) =>
+      `${i + 1}. ${r.company} — ${r.score}% match (${VERDICT_META[r.verdict].label}) · ${r.openings} open role${r.openings === 1 ? "" : "s"} · best fit: ${r.best.title}`
+    )
+  ];
+  const impact = skillImpact(profile, picks[0]);
+  if (impact) {
+    lines.push("", `Biggest learnable gain: learn ${impact.skill} and ${picks[0].company} jumps from ${impact.from}% → ${impact.to}%.`);
+  }
+  return lines.join("\n");
+}

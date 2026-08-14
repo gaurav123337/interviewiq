@@ -51,6 +51,7 @@ const SOURCE_LABELS: Record<string, string> = {
   ashby: "Ashby",
   lever: "Lever",
   rss: "RSS",
+  remoteok: "RemoteOK",
   "imported:naukri": "Naukri",
   "imported:linkedin": "LinkedIn",
   "imported:indeed": "Indeed",
@@ -60,6 +61,55 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export const sourceLabel = (s: string): string =>
   SOURCE_LABELS[s] ?? (s.startsWith("imported:") ? s.slice("imported:".length) : s);
+
+/* ------------------------------------------------------------------ */
+/* Source trust badges — why you can (or can't) trust a posting        */
+/* ------------------------------------------------------------------ */
+
+export interface SourceTrust {
+  /** Short chip label, e.g. "Official ATS". */
+  label: string;
+  /** Icon shown next to the source chip on feed cards. */
+  icon: string;
+  /** Tooltip explaining the trust level honestly. */
+  title: string;
+}
+
+/** Trust tier for any feed source: ATS boards are pulled from the
+    company's own system, RSS feeds are published by the board itself,
+    RemoteOK comes from their official API, and imported jobs are links
+    the user pasted themselves. */
+export function trustOf(source: string): SourceTrust {
+  if (source === "greenhouse" || source === "ashby" || source === "lever") {
+    return {
+      label: "Official ATS",
+      icon: "🛡️",
+      title: "Pulled from the company's own application system (Greenhouse/Ashby/Lever) — the posting is the employer's own."
+    };
+  }
+  if (source === "remoteok") {
+    return {
+      label: "Official API",
+      icon: "🛡️",
+      title: "Pulled from RemoteOK's official public API — RemoteOK vets the companies it lists."
+    };
+  }
+  if (source === "rss") {
+    return {
+      label: "Curated feed",
+      icon: "📡",
+      title: "Published via a public RSS feed from a vetted board (We Work Remotely, Himalayas) — the board screens the postings, but details come from the feed itself."
+    };
+  }
+  if (source.startsWith("imported:")) {
+    return {
+      label: "You added",
+      icon: "🔗",
+      title: "Imported from a link you pasted — we read the public page, but you're the one vouching for it."
+    };
+  }
+  return { label: "Feed", icon: "🌐", title: "Pulled from a configured job source." };
+}
 
 /* ------------------------------------------------------------------ */
 /* Region-aware platform ordering                                      */

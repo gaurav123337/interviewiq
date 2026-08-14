@@ -544,6 +544,54 @@ export function recommendationsDigest(profile: CareerProfile | null, ranks: Comp
   return lines.join("\n");
 }
 
+/* ------------------------------------------------------------------ */
+/* 🇮🇳 India & startup digest — same engine, filtered to the Indian      */
+/* market (locations, known Indian startups, and remote roles).         */
+/* Mirrors the server-side composer in _shared/recommendationsDigest.ts */
+/* ------------------------------------------------------------------ */
+
+const INDIA_LOCATION_RE = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|gurgaon|gurugram|noida|kolkata|ahmedabad|indore|kochi|chandigarh|jaipur/i;
+
+const INDIA_COMPANIES = [
+  "fampay", "cred", "groww", "razorpay", "swiggy", "zomato", "flipkart", "freshworks",
+  "chargebee", "postman", "zepto", "meesho", "ola", "paytm", "upstox", "zerodha",
+  "dream11", "myntra", "bigbasket", "nobroker", "apna", "sharechat", "unacademy",
+  "byju", "ayu", "phonepe", "druva", "zoho", "infosys", "tcs", "wipro", "hcl",
+  "technologies", "mindtree", "l&t", "tata", "mahindra", "reliance", "jio"
+];
+
+/** True when a posting targets the Indian market (or is remote, which is
+    reachable from India). */
+export function isIndiaPosting(job: JobPosting): boolean {
+  const loc = (job.location ?? "").toLowerCase();
+  if (INDIA_LOCATION_RE.test(loc)) return true;
+  const company = (job.company ?? "").toLowerCase().replace(/[^a-z0-9& ]/g, "");
+  if (INDIA_COMPANIES.some(c => company.includes(c))) return true;
+  return !!job.remote;
+}
+
+/** Plain-text weekly 🇮🇳 India & startup digest — the email body for the
+    India-focused broadcast. Pure + testable. */
+export function indiaDigest(profile: CareerProfile | null, jobs: JobPosting[], top = 3): string {
+  const picks = rankCompanies(profile, jobs.filter(isIndiaPosting)).slice(0, top);
+  if (!picks.length) {
+    return "InterviewIQ — no Indian-market companies to recommend yet. Upload a resume or save your career profile to rank companies.";
+  }
+  const impact = skillImpact(profile, picks[0]);
+  const lines = [
+    "InterviewIQ — weekly 🇮🇳 India & startup recommendations",
+    "",
+    ...(profile ? [`Based on your profile: ${profile.headline || "—"} (${profile.years} yrs).`, ""] : []),
+    ...picks.map((r, i) =>
+      `${i + 1}. ${r.company} — ${r.score}% match (${VERDICT_META[r.verdict].label}) · ${r.openings} open role${r.openings === 1 ? "" : "s"} · best fit: ${r.best.title}`
+    )
+  ];
+  if (impact) {
+    lines.push("", `Biggest learnable gain: learn ${impact.skill} and ${picks[0].company} jumps from ${impact.from}% → ${impact.to}%.`);
+  }
+  return lines.join("\n");
+}
+
 /** Pure filter over the ranked companies — the view stays dumb. */
 export function filterRanks(ranks: CompanyRank[], f: RankFilters, shortlist: ReadonlySet<string>): CompanyRank[] {
   return ranks.filter(r => {

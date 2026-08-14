@@ -2,7 +2,7 @@
    lives in supabase/functions/_shared/rss.ts). */
 
 import { describe, expect, it } from "vitest";
-import { feedTitle, parseRss, splitRssTitle } from "../../supabase/functions/_shared/rss";
+import { companyFromLink, feedTitle, parseRss, splitRssTitle, stripJobNumberPrefix } from "../../supabase/functions/_shared/rss";
 
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -64,6 +64,24 @@ describe("parseRss (shared edge-function parser)", () => {
 
   it("returns the channel title as the feed title", () => {
     expect(feedTitle(SAMPLE_RSS)).toBe("Acme Jobs");
+  });
+
+  it("collects category tags and strips Himalayas' [Job - N] prefix + company slug", () => {
+    const himalayas = `<rss><channel><title>Remote jobs from Himalayas</title><item>
+      <title><![CDATA[[Job - 30986] Software Master Developer, Brazil]]></title>
+      <description><![CDATA[At CI&T, we help large enterprises.]]></description>
+      <link>https://himalayas.app/companies/ci-t/jobs/job-30986-software-master-developer-brazil</link>
+      <category><![CDATA[Software-Developer]]></category>
+      <category><![CDATA[Azure-Developer]]></category>
+    </item></channel></rss>`;
+    const items = parseRss(himalayas);
+    expect(items[0].title).toBe("[Job - 30986] Software Master Developer, Brazil");
+    expect(items[0].tags).toEqual(["Software-Developer", "Azure-Developer"]);
+    expect(stripJobNumberPrefix(items[0].title)).toBe("Software Master Developer, Brazil");
+    expect(companyFromLink(items[0].link)).toBe("CI&T");
+    expect(companyFromLink("https://himalayas.app/companies/stripe/jobs/job-9-x")).toBe("Stripe");
+    expect(companyFromLink("https://example.com/jobs/1")).toBe("");
+    expect(stripJobNumberPrefix("Plain title")).toBe("Plain title");
   });
 
   it("splitRssTitle pulls the company from board-style item titles (colon only)", () => {
