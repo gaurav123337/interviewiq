@@ -70,3 +70,6 @@ jobs:
           npx supabase functions deploy jobs-fetch \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
+          npx supabase functions deploy send-recommendations-digest \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt
