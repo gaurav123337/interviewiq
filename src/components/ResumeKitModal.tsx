@@ -456,10 +456,10 @@ function AtsPreviewModal({ text, job, onAddSkill, onClose }: { text: string; job
         {d.jd.length > 0 && (
           <>
             <div className="mt-2.5 text-[11px] font-bold text-fnt">
-              Role keywords the posting leans on ({d.jd.length}){job.skills.length === 0 ? " — what to mirror" : ""}
+              Role keywords the posting leans on ({d.jd.length}){job.skills.length === 0 ? " — add them if you have these" : ""}
             </div>
             <div className="mt-1 flex flex-wrap gap-1.5">
-              {d.jd.map(r => <KeywordChip key={r.keyword} row={r} />)}
+              {d.jd.map(r => <KeywordChip key={r.keyword} row={r} onAdd={onAddSkill && job.skills.length === 0 ? () => onAddSkill(r.keyword) : undefined} />)}
             </div>
           </>
         )}

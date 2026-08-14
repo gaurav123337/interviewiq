@@ -221,12 +221,12 @@ export function Jobs() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* show the re-upload banner once, only when the stored profile has skills
-     the current resume no longer supports (the old merging behavior) */
+  /* show the re-upload banner only while the stored profile carries skills
+     the current resume no longer supports (the old merging behavior) — and
+     clear it the moment a re-upload resolves the difference */
   useEffect(() => {
-    if (!resumeBannerDismissed && resume && profile && profileHasStaleSkills(profile, resume.text)) {
-      setShowResumeBanner(true);
-    }
+    if (resumeBannerDismissed || !resume || !profile) { setShowResumeBanner(false); return; }
+    setShowResumeBanner(profileHasStaleSkills(profile, resume.text));
   }, [resume, profile, resumeBannerDismissed]);
   const dismissResumeBanner = () => {
     setShowResumeBanner(false);
@@ -365,15 +365,27 @@ export function Jobs() {
       </div>
 
       {showResumeBanner && (
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-acc1/30 bg-acc1/10 px-4 py-3">
+        <div
+          className="mt-5 flex flex-wrap items-center justify-between gap-2.5 rounded-xl border border-acc1/30 bg-acc1/10 px-4 py-3 transition-all"
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => {
+            e.preventDefault();
+            const file = e.dataTransfer.files?.[0];
+            if (file) void handleResumeFile(file);
+          }}
+        >
           <span className="text-[12.5px] text-fnt">
             📎 Your profile has <b>{(() => { const n = (profile?.skills.length ?? 0) - resumeToProfile(resume!.text).skills.length; return `${n} skill${n === 1 ? "" : "s"}`; })()}</b> beyond what this resume mentions.
             Re-upload it to keep skill chips strictly from the resume — anything you still want can be re-added from 💡 Suggestions.
           </span>
           <span className="flex flex-wrap items-center gap-2">
-            <button className={btnPrimary + btnSm} onClick={() => setResumeFormOpen(true)}>↺ Re-upload resume</button>
+            <label className={`${btnPrimary} ${btnSm} cursor-pointer`} title="Pick your resume file">
+              ↺ Re-upload resume
+              <input type="file" accept=".pdf,.txt,.docx" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) void handleResumeFile(f); e.target.value = ""; }} />
+            </label>
             <button className={btnGhost + btnSm} onClick={dismissResumeBanner}>✕ Not now</button>
           </span>
+          <span className="w-full text-[10.5px] text-mut">💾 Or drop your .pdf / .txt / .docx anywhere on this banner.</span>
         </div>
       )}
 
