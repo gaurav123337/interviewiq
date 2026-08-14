@@ -244,6 +244,25 @@ function extractSummary(text: string): string {
   return body.slice(0, 3).join(" ").slice(0, 180);
 }
 
+/** Skills worth offering when a resume is uploaded: skills the user had
+    before but this resume didn't re-mention (so a re-upload doesn't silently
+    drop them), topped up with typical skills for the detected field. The
+    user opts in — nothing is merged automatically. Pure + testable. */
+export function suggestSkills(extracted: string[], prev: string[], fieldId: string): string[] {
+  const out: string[] = [];
+  const have = new Set(extracted.map(s => s.toLowerCase()));
+  for (const s of prev) {
+    if (!have.has(s.toLowerCase()) && !out.includes(s)) out.push(s);
+  }
+  const field = FIELDS.find(f => f.id === fieldId);
+  for (const s of field?.skills ?? []) {
+    if (have.has(s.toLowerCase()) || out.includes(s)) continue;
+    out.push(s);
+    if (out.length >= 8) break;
+  }
+  return out.slice(0, 10);
+}
+
 /** Builds a CareerProfile from resume text — the matcher's input. */
 export function resumeToProfile(text: string): CareerProfile {
   const r = analyzeResume(text);

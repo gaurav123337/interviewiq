@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CareerProfile, JobPosting } from "../types";
 import { STORAGE_KEYS, storageRemove } from "../services/storage";
-import { analyzeResume, resumeToProfile } from "../services/resume";
+import { analyzeResume, resumeToProfile, suggestSkills } from "../services/resume";
 import { rankCompanies } from "../services/jobs";
 
 vi.mock("../services/cloud", () => ({
@@ -103,6 +103,25 @@ describe("resumeToProfile", () => {
     );
     expect(p.summary).not.toContain("Gaurav");
     expect(p.summary).toContain("building web products");
+  });
+
+  it("suggests previous skills the resume no longer mentions, then field skills", () => {
+    /* "Kubernetes" was in the old profile but not the new resume; nothing in
+       the resume suggests it either — it comes back as the first suggestion */
+    const s = suggestSkills(["React", "TypeScript"], ["React", "Kubernetes", "Docker"], "frontend");
+    expect(s[0]).toBe("Kubernetes");
+    expect(s).toContain("Docker");
+    expect(s).not.toContain("React");
+    expect(s).not.toContain("TypeScript");
+    /* field top-up kicks in once the previous-profile pool is exhausted */
+    expect(s.length).toBeGreaterThan(2);
+  });
+
+  it("never suggests a skill already in the resume, and caps the list", () => {
+    const s = suggestSkills(["Go", "PostgreSQL"], [], "backend");
+    expect(s).not.toContain("Go");
+    expect(s).not.toContain("PostgreSQL");
+    expect(s.length).toBeLessThanOrEqual(10);
   });
 
   it("never treats a name pair as a title", () => {

@@ -13,7 +13,7 @@ import {
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
   recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
-import { clearUploadedResume, getUploadedResume, resumeToProfile, saveUploadedResume } from "../services/resume";
+import { analyzeResume, clearUploadedResume, getUploadedResume, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
@@ -84,6 +84,8 @@ export function Jobs() {
   const [resumeShowAll, setResumeShowAll] = useState(false);
   const [resumePaste, setResumePaste] = useState("");
   const [resumeBusy, setResumeBusy] = useState(false);
+  /* skills offered after an upload — the user opts in with ＋, nothing merges */
+  const [skillSuggestions, setSkillSuggestions] = useState<string[]>([]);
   const [recsDigestOpen, setRecsDigestOpen] = useState(false);
   const [rankLimit, setRankLimit] = useState(10);
   const [rankFilters, setRankFilters] = useState<RankFilters>(EMPTY_RANK_FILTERS);
@@ -199,6 +201,23 @@ export function Jobs() {
     [topPicks, profile, proGated]
   );
 
+  /* one-click add from a suggestion chip — add the skill and drop it from the list */
+  const addSuggestedSkill = (s: string) => {
+    addSkillToProfile(s);
+    setSkillSuggestions(list => list.filter(x => x.toLowerCase() !== s.toLowerCase()));
+  };
+
+  /* initial suggestions for a resume already stored from a previous session:
+     profile skills the stored resume didn't extract (e.g. from an older
+     merged upload) plus typical field skills */
+  useEffect(() => {
+    if (resume && skillSuggestions.length === 0) {
+      const added = (profile?.skills ?? []).filter(s => !resume.profile.skills.some(x => x.toLowerCase() === s.toLowerCase()));
+      setSkillSuggestions(suggestSkills(resume.profile.skills, added, analyzeResume(resume.text).fieldId));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* 🔎 Show in feed — filter the match feed to a company, scroll to it, flash it */
   const feedRef = useRef<HTMLDivElement | null>(null);
   const [feedFlash, setFeedFlash] = useState(false);
@@ -218,13 +237,21 @@ export function Jobs() {
   const applyResume = (text: string, fileName: string) => {
     try {
       const p = resumeToProfile(text);
-      /* keep the user's location/remote/work-auth prefs; resume drives the rest */
+      /* skills are STRICTLY what this resume mentions — nothing is merged in.
+         Skills you used to have are offered as suggestions instead, so the
+         profile always reflects the actual resume. */
+      const prevSkills = profile?.skills ?? [];
+      /* keep a hand-edited summary across re-uploads (extraction only wins
+         when the current summary is still the old extraction) */
+      const prevSummary = profile?.summary ?? "";
+      const prevExtracted = resume?.profile?.summary ?? "";
       const merged: CareerProfile = {
         ...p,
         location: profile?.location ?? "",
         remote: profile?.remote ?? true,
         workAuth: profile?.workAuth ?? "",
-        skills: [...new Set([...p.skills, ...(profile?.skills ?? [])])].slice(0, 40),
+        skills: p.skills,
+        summary: prevSummary && prevSummary !== prevExtracted ? prevSummary : p.summary,
         updatedAt: Date.now()
       };
       saveCareerProfile(merged);
@@ -232,6 +259,7 @@ export function Jobs() {
       saveUploadedResume(rec);
       setResume(rec);
       setProfile(merged);
+      setSkillSuggestions(suggestSkills(p.skills, prevSkills, analyzeResume(text).fieldId));
       setResumePaste("");
       setResumeFormOpen(false);
       toast(`📄 ${fileName} analyzed — ${merged.skills.length} skills extracted · ${merged.years} yrs · “${merged.headline}”`);
@@ -351,7 +379,12 @@ export function Jobs() {
                   )}
                 </div>
               )}
-              <p className="mt-2 text-[11px] text-mut">The match feed and company ranking below are scored from these skills. You can still edit the profile card above.</p>
+              <p className="mt-2 text-[11px] text-mut">
+                📄 {resume.profile.skills.length} skills extracted from this resume
+                {(profile?.skills.length ?? 0) > resume.profile.skills.length
+                  ? ` · +${(profile?.skills.length ?? 0) - resume.profile.skills.length} added in your profile`
+                  : ""} — the match feed and company ranking below are scored from these. You can still edit the profile card above.
+              </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className={btnGhost + btnSm} onClick={() => setResumeFormOpen(true)}>↺ Replace resume</button>
                 <button className={btnDanger + btnSm} onClick={removeResume}>🗑 Remove</button>
@@ -434,11 +467,29 @@ export function Jobs() {
           <div className="sm:col-span-2">
             <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Skills</span>
             <TagInput value={profile?.skills ?? []} onChange={v => setProfile(p => p ? { ...p, skills: v } : p)} placeholder="react, typescript, node, aws…" />
+            {skillSuggestions.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">💡 Suggestions</span>
+                {skillSuggestions.slice(0, 8).map(s => (
+                  <span key={s} className="inline-flex items-center gap-0.5">
+                    <Chip tone="co" title={`“${s}” isn't in your resume — add it if you have this skill`}>{s}</Chip>
+                    <button
+                      className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
+                      onClick={() => addSuggestedSkill(s)}
+                      title={`Add “${s}” to my skills — it will appear in generated resumes`}
+                    >
+                      ＋
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <label className="block sm:col-span-2">
             <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Summary (optional)</span>
             <textarea className="inp h-20 resize-y" placeholder="One or two lines about you — used for tailored resumes later." value={profile?.summary ?? ""}
               onChange={e => setProfile(p => p ? { ...p, summary: e.target.value } : p)} />
+            <span className="mt-1 block text-[10.5px] text-mut">✏️ Extracted from your resume — edit freely; your edits survive re-uploads.</span>
           </label>
         </div>
         <div className="flex items-center justify-between gap-3 border-t border-line/10 px-5 py-3.5">
