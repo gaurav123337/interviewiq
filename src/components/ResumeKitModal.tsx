@@ -3,6 +3,7 @@ import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, getApplyKit, quantifiedClaims, saveApplyKit, type ApplyKit, type AtsKeywordRow } from "../services/applyKit";
 import { diffLines } from "../services/diff";
+import { matchJob } from "../services/jobs";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
 import { openResumePrint } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
@@ -99,6 +100,21 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
     setKit(next);
   };
 
+  /* one-click ATS fix inside the kit: the parent adds the skill to the
+     profile, then we rebuild THIS job's resume with it so the drill-down
+     flips to matched — the current document updates, not just the profile */
+  const handleAddSkill = (skill: string) => {
+    const already = profile.skills.some(s => s.toLowerCase() === skill.toLowerCase());
+    onAddSkill?.(skill);
+    if (already) return;
+    const nextProfile = { ...profile, skills: [...profile.skills, skill] };
+    const m = matchJob(nextProfile, job);
+    const resume = buildResume(nextProfile, job, m);
+    const cover = kit?.coverLetter ?? buildCoverLetter(nextProfile, job, m);
+    refresh(resume, cover, kit?.ai ?? false);
+    toast(`📄 Resume regenerated with “${skill}” — ATS coverage updated`);
+  };
+
   const toggleEdit = () => {
     if (editing) {
       const other = tab === "resume" ? (kit?.coverLetter ?? buildCoverLetter(profile, job, match)) : (kit?.resume ?? buildResume(profile, job, match));
@@ -185,7 +201,7 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
             </button>
           )}
           {tab === "resume" && atsOpen && (
-            <AtsPreviewModal text={kit?.resume ?? ""} job={job} onAddSkill={onAddSkill} onClose={() => setAtsOpen(false)} />
+            <AtsPreviewModal text={kit?.resume ?? ""} job={job} onAddSkill={handleAddSkill} onClose={() => setAtsOpen(false)} />
           )}
           {tab === "resume" && (
             <>

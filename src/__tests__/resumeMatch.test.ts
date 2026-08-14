@@ -79,6 +79,25 @@ describe("resumeToProfile", () => {
     expect(p.skills.length).toBeGreaterThan(0);
   });
 
+  it("strips the owner's name from header title lines", () => {
+    const p = resumeToProfile(
+      "Gaurav Gupta\nCTO Frontend Engineer\nGaurav Gupta  Frontend Architect\n12+ years building web products. React, TypeScript, AWS, Kubernetes."
+    );
+    expect(p.headline).toBe("CTO Frontend Engineer");
+    expect(p.targetTitles).toContain("Frontend Architect");
+    expect(p.targetTitles).not.toContain("Gaurav Gupta  Frontend Architect");
+    expect(p.targetTitles.every(t => !t.includes("Gaurav Gupta"))).toBe(true);
+  });
+
+  it("never treats a name pair as a title", () => {
+    const p = resumeToProfile(
+      "Gaurav Gupta\nBengaluru, India\nSenior Frontend Engineer at Acme\nReact, TypeScript, CSS."
+    );
+    expect(p.targetTitles).toContain("Senior Frontend Engineer");
+    expect(p.targetTitles.some(t => t.toLowerCase().startsWith("gaurav"))).toBe(false);
+    expect(p.targetTitles.some(t => t.toLowerCase().startsWith("bengaluru"))).toBe(false);
+  });
+
   it("never fabricates skills from prose", () => {
     const p = resumeToProfile("I ride bicycles and enjoy cooking. Team player with great communication.");
     expect(p.skills).toEqual([]);

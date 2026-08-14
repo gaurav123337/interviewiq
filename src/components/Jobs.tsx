@@ -637,12 +637,33 @@ export function Jobs() {
                   </div>
                 </div>
                 {!proGated && (r.matched.length > 0 || r.missing.length > 0) && (
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 pl-9 text-[12px]">
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 pl-9 text-[12px]">
                     {r.matched.length > 0 && (
-                      <span>✓ <span className="text-ok">You have:</span> {r.matched.slice(0, 5).join(", ")}</span>
+                      <span className="flex flex-wrap items-center gap-1">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-mut">You have:</span>
+                        {r.matched.slice(0, 5).map(s => (
+                          <Chip key={s} tone="ok" title="Appears in your resume">✓ {s}</Chip>
+                        ))}
+                        {r.matched.length > 5 && <span className="text-[11.5px] text-mut">+{r.matched.length - 5} more</span>}
+                      </span>
                     )}
                     {r.missing.length > 0 && (
-                      <span>✗ <span className="text-bad">Gap:</span> {r.missing.slice(0, 4).join(", ")}</span>
+                      <span className="flex flex-wrap items-center gap-1">
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Gap:</span>
+                        {r.missing.slice(0, 4).map(s => (
+                          <span key={s} className="inline-flex items-center gap-0.5">
+                            <Chip tone="bad" title="In the posting but not in your profile — click ＋ to add it">✗ {s}</Chip>
+                            <button
+                              className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
+                              onClick={() => addSkillToProfile(s)}
+                              title={`Add “${s}” to my profile skills`}
+                            >
+                              ＋
+                            </button>
+                          </span>
+                        ))}
+                        {r.missing.length > 4 && <span className="text-[11.5px] text-mut">+{r.missing.length - 4} more</span>}
+                      </span>
                     )}
                   </div>
                 )}

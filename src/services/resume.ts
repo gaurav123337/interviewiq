@@ -186,11 +186,24 @@ function cleanRoleLine(line: string): string {
     .trim();
 }
 
+/** Drop a leading name pair from a role line ("Gaurav Gupta  Frontend
+    Architect" → "Frontend Architect"). Only treated as a name when neither
+    word is a role/level word and a role word follows, so "Senior Frontend
+    Engineer" and "Principal Software Architect" stay untouched. */
+function stripNamePrefix(line: string): string {
+  const m = line.match(/^([A-Z][a-z]+)\s+([A-Z][a-z]+)\s+(.+)$/);
+  if (!m) return line;
+  const a = m[1], b = m[2], rest = m[3];
+  if (ROLE_HINT_RE.test(a) || ROLE_HINT_RE.test(b) || ROLE_RE.test(a) || ROLE_RE.test(b)) return line;
+  if (!ROLE_RE.test(rest) && !ROLE_HINT_RE.test(rest)) return line;
+  return rest.trim();
+}
+
 /** First role-looking line (resume header or most recent role) → headline. */
 function extractHeadline(lines: string[], fieldName: string, levelName: string): string {
   const roleLines = lines.filter(l => ROLE_RE.test(l) && ROLE_HINT_RE.test(l) && l.length < 90);
   for (const line of roleLines) {
-    const cleaned = cleanRoleLine(line);
+    const cleaned = stripNamePrefix(cleanRoleLine(line));
     if (cleaned.length > 3 && ROLE_RE.test(cleaned)) return cleaned;
   }
   return `${levelName} ${fieldName}`.trim();
@@ -201,7 +214,7 @@ function extractTitles(lines: string[]): string[] {
   const titles: string[] = [];
   for (const line of lines) {
     if (!ROLE_RE.test(line)) continue;
-    const cleaned = cleanRoleLine(line);
+    const cleaned = stripNamePrefix(cleanRoleLine(line));
     if (cleaned.length < 4 || cleaned.length > 60 || titles.includes(cleaned)) continue;
     titles.push(cleaned);
     if (titles.length >= 5) break;
