@@ -69,10 +69,22 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- the admin gate — used by RLS below and by the client (rpc('is_admin'))
+-- the product owner — the ONLY account that can manage the admin allow-list
+-- (single source of truth; keep in sync with CONFIG.ownerEmail in the app)
+create or replace function public.is_owner()
+returns boolean language sql security definer set search_path = public as $$
+  select auth.jwt() ->> 'email' = 'gaurav.123337@gmail.com'
+$$;
+
+-- the admin gate — used by RLS below and by the client (rpc('is_admin')).
+-- The owner is always an admin (can't lock themselves out); everyone else
+-- needs a row in app_admins. Being Pro NEVER implies admin — the two roles
+-- are fully separate.
 create or replace function public.is_admin()
 returns boolean language sql security definer set search_path = public as $$
-  select exists (select 1 from public.app_admins where email = auth.jwt() ->> 'email')
+  select public.is_owner() or exists (
+    select 1 from public.app_admins where email = auth.jwt() ->> 'email'
+  )
 $$;
 
 -- row level security
@@ -93,7 +105,11 @@ create policy "config admin write" on public.app_config for all using (public.is
 create policy "announcements admin write" on public.announcements for all using (public.is_admin()) with check (public.is_admin());
 create policy "questions admin write" on public.published_questions for all using (public.is_admin()) with check (public.is_admin());
 create policy "admins read" on public.app_admins for select using (public.is_admin());
-create policy "admins write" on public.app_admins for all using (public.is_admin()) with check (public.is_admin());
+/* ONLY the owner may add/remove admins — other admins can read the list but
+   not change it. Enforced by RLS and by the owner-gated RPCs below. */
+drop policy if exists "admins write" on public.app_admins;
+create policy "admins write" on public.app_admins for all
+  using (public.is_owner()) with check (public.is_owner());
 
 -- usage events: users insert their own, only admins read
 create policy "events own insert" on public.usage_events for insert with check (auth.uid() = user_id);
@@ -108,6 +124,26 @@ create policy "profiles admin read" on public.profiles for select using (public.
 -- ---------------------------------------------------------------------------
 -- Admin RPCs (security definer — server enforces the is_admin gate)
 -- ---------------------------------------------------------------------------
+
+/* Add an email to the admin allow-list — OWNER ONLY (server-enforced). */
+create or replace function public.admin_grant_admin(p_email text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_owner() then raise exception 'forbidden'; end if;
+  if p_email is null or position('@' in p_email) = 0 then raise exception 'invalid email'; end if;
+  insert into public.app_admins (email) values (lower(trim(p_email)))
+  on conflict (email) do nothing;
+end $$;
+
+/* Remove an email from the admin allow-list — OWNER ONLY. The owner's own
+   admin access can't be revoked (is_admin() always includes them). */
+create or replace function public.admin_revoke_admin(p_email text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_owner() then raise exception 'forbidden'; end if;
+  if lower(trim(p_email)) = 'gaurav.123337@gmail.com' then raise exception 'cannot revoke the owner'; end if;
+  delete from public.app_admins where email = lower(trim(p_email));
+end $$;
 
 create or replace function public.admin_list_users()
 returns table (id uuid, email text, created_at timestamptz, last_seen timestamptz,

@@ -5,7 +5,7 @@
    test-mode fallback (see CONFIG.features.testLicensing). */
 
 import { getCloudState, getSupabaseClient } from "./cloud";
-import { getTier, setTier, type Tier } from "./entitlements";
+import { adminUnlockedActive, getTier, setTier, type Tier } from "./entitlements";
 import { STORAGE_KEYS, storageGet } from "./storage";
 import { CONFIG } from "../config";
 
@@ -186,9 +186,10 @@ export function testLicensing(): boolean {
   return CONFIG.features.testLicensing === true;
 }
 
-/** Local tier source, for the Settings readout: server (verified), team seat,
-    local/test key, or free. */
-export function tierSource(): "server" | "team" | "local" | "free" {
+/** Local tier source, for the Settings readout: server (verified), admin
+    (all restrictions lifted), team seat, local/test key, or free. */
+export function tierSource(): "server" | "admin" | "team" | "local" | "free" {
+  if (adminUnlockedActive()) return "admin";
   if (serverPro()) return "server";
   if (getTier() === "pro") return storageGet<string>(STORAGE_KEYS.licenseKey, "") ? "local" : "team";
   return "free";

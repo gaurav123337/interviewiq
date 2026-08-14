@@ -10,7 +10,8 @@
    the dashboard when the RPC says the user isn't an admin. */
 
 import type { LevelId } from "../types";
-import { getSupabaseClient } from "./cloud";
+import { CONFIG } from "../config";
+import { getCloudState, getSupabaseClient } from "./cloud";
 import { applyCoachVocab } from "../coach/concepts";
 import {
   getRemoteConfig, setAnnouncements, setPublishedQuestions, setRemoteConfig, type RemoteConfig
@@ -119,7 +120,9 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
   }
 }
 
-/** Re-fetch remote data (e.g. after an admin publishes changes). */
+/** Re-fetch remote data (e.g. after an admin publishes changes) and re-check
+    the admin role. Also called on sign-in / sign-out so the nav and the
+    admin-unlock flag stay correct without a reload. */
 export async function refreshAdminData(): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) return;
@@ -130,7 +133,20 @@ export async function refreshAdminData(): Promise<void> {
   if (data?.user) {
     const { data: admin } = await client.rpc("is_admin");
     setState({ isAdmin: !!admin });
+  } else {
+    setState({ isAdmin: false });
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Ownership — only the PO (gaurav.123337@gmail.com) manages admins      */
+/* ------------------------------------------------------------------ */
+
+/** True when the signed-in user is the product owner (UI hint — the server
+    RPCs enforce this for real). */
+export function amOwner(): boolean {
+  const email = getCloudState().user?.email?.trim().toLowerCase();
+  return !!email && !!CONFIG.ownerEmail && email === CONFIG.ownerEmail.trim().toLowerCase();
 }
 
 /* ------------------------------------------------------------------ */
@@ -408,14 +424,14 @@ export async function searchPdfChunks(embedding: number[], matchCount = 4): Prom
 export async function grantAdmin(email: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
-  const { error } = await client.from("app_admins").insert({ email: email.trim().toLowerCase() });
+  const { error } = await client.rpc("admin_grant_admin", { p_email: email.trim().toLowerCase() });
   if (error) throw new Error(error.message);
 }
 
 export async function revokeAdmin(email: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
-  const { error } = await client.from("app_admins").delete().eq("email", email.trim().toLowerCase());
+  const { error } = await client.rpc("admin_revoke_admin", { p_email: email.trim().toLowerCase() });
   if (error) throw new Error(error.message);
 }
 

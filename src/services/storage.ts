@@ -38,6 +38,8 @@ export const STORAGE_KEYS = {
   codingTrack: "iq.codingTrack",
   remoteConfig: "iq.remoteConfig",
   career: "iq.career",
+  resume: "iq.resume",
+  shortlist: "iq.shortlist",
   jobs: "iq.jobs",
   jobsRefreshedAt: "iq.jobsRefreshedAt",
   gapPlans: "iq.gapPlans",

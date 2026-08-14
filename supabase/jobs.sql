@@ -18,6 +18,20 @@ drop policy if exists "career profile own" on public.career_profiles;
 create policy "career profile own" on public.career_profiles
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+/* The uploaded resume (parsed text + extracted profile) — follows the user
+   across devices, exactly like career_profiles. Local storage stays the
+   source of truth; this row is a best-effort backup when signed in. */
+create table if not exists public.uploaded_resumes (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.uploaded_resumes enable row level security;
+drop policy if exists "uploaded resume own" on public.uploaded_resumes;
+create policy "uploaded resume own" on public.uploaded_resumes
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
 create table if not exists public.jobs (
   id bigint generated always as identity primary key,
   source text not null,

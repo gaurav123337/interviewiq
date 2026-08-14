@@ -23,7 +23,8 @@ import { Legal } from "./Legal";
 import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
-import { getAdminState, subscribeAdmin, type AdminState } from "../services/admin";
+import { getAdminState, refreshAdminData, subscribeAdmin, type AdminState } from "../services/admin";
+import { setAdminUnlocked } from "../services/entitlements";
 import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { refreshEntitlement } from "../services/entitlement";
@@ -62,6 +63,13 @@ export function App() {
 
   /* keep the header avatar in sync with sign-in state */
   useEffect(() => subscribeCloud(setCloud), []);
+
+  /* admin role re-check on sign-in / sign-out — the nav entry and the
+     admin-unlock flag (all restrictions lifted) follow the account */
+  useEffect(() => {
+    const un = subscribeCloud(() => { void refreshAdminData().catch(() => {}); });
+    return un;
+  }, []);
 
   /* server-verified Pro — refresh the entitlement whenever the sign-in state
      changes (login, logout, sync) and once on boot, so grants/revokes from
@@ -145,7 +153,7 @@ export function App() {
   ];
   const moreActive = moreTabs.some(t => t.id === view);
 
-  useEffect(() => subscribeAdmin(s => { setAdmin(s); setBanner(nextUnseenAnnouncement()); }), []);
+  useEffect(() => subscribeAdmin(s => { setAdmin(s); setBanner(nextUnseenAnnouncement()); setAdminUnlocked(s.isAdmin); }), []);
 
   return (
     <div className="flex min-h-screen flex-col">

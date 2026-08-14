@@ -1,8 +1,15 @@
 /* Resume import — extracts skills, experience, and suggested field/level
-   from a pasted text or uploaded PDF/txt, then pre-fills the goal wizard. */
+   from a pasted text or uploaded PDF/txt, then pre-fills the goal wizard.
 
-import { FIELDS } from "../data";
-import type { LevelId, SkillRating } from "../types";
+   Also hosts the resume → career profile pipeline: the uploaded resume is
+   turned into a CareerProfile (skills, headline, years, target titles) that
+   the job matcher (services/jobs.ts) consumes, so match percentages are
+   literally based on the resume. Offline-first; nothing leaves the device. */
+
+import { FIELDS, LEVELS } from "../data";
+import type { CareerProfile, LevelId, SkillRating, UploadedResume } from "../types";
+import { getCloudState, getSupabaseClient } from "./cloud";
+import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./storage";
 
 export interface ResumeResult {
   fieldId: string;
@@ -87,4 +94,193 @@ export function analyzeResume(text: string): ResumeResult {
   const snippets = extractSnippets(text);
 
   return { fieldId: bestField, levelId, skills, snippets };
+}
+
+/* ------------------------------------------------------------------ */
+/* Resume → career profile (the job matcher's input)                   */
+/* ------------------------------------------------------------------ */
+
+/** Common tech skills that appear in resumes but aren't field labels. */
+const EXTRA_SKILLS = [
+  "GraphQL", "REST APIs", "gRPC", "AWS", "GCP", "Azure", "Docker", "Kubernetes",
+  "Terraform", "Ansible", "PostgreSQL", "MySQL", "MongoDB", "Redis", "Kafka",
+  "Elasticsearch", "Golang", "Rust", "Java", "Python", "Node.js", "Express",
+  "Next.js", "Vue", "Svelte", "Tailwind CSS", "Sass", "CI/CD", "Jenkins",
+  "GitHub Actions", "GitLab CI", "Spark", "Airflow", "Pandas", "NumPy",
+  "TensorFlow", "PyTorch", "Kotlin", "Swift", "Flutter", "React Native",
+  "Redux", "Webpack", "Vite", "Jest", "Cypress", "Playwright", "Django",
+  "Flask", "Spring", "SQL", "NoSQL", "Microservices", "Serverless", "Lambda",
+  "Prometheus", "Grafana", "Bash", "Linux", "Agile", "Scrum", "Figma", "Storybook"
+];
+
+/** All extractable skill names: every field's display labels + curated extras. */
+const ALL_SKILL_LABELS: string[] = (() => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const f of FIELDS) {
+    for (const s of f.skills) {
+      if (!seen.has(s)) { seen.add(s); out.push(s); }
+    }
+  }
+  for (const s of EXTRA_SKILLS) {
+    if (!seen.has(s)) { seen.add(s); out.push(s); }
+  }
+  return out;
+})();
+
+/** Word tokens of the resume text (lowercased, punctuation stripped). */
+function tokenSet(text: string): Set<string> {
+  return new Set(text.toLowerCase().replace(/[^a-z0-9+#]/g, " ").split(/\s+/).filter(Boolean));
+}
+
+/** Is any meaningful word of the skill label present in the resume's tokens?
+    Plural-tolerant ("databases" ≈ "database") so labels match real prose. */
+function labelMentioned(label: string, tokens: Set<string>): boolean {
+  const words = label.toLowerCase().split(/[^a-z0-9+#]+/).filter(Boolean);
+  return words.some(w => {
+    if (tokens.has(w)) return true;
+    if (w.length > 3 && w.endsWith("s")) {
+      const singular = w.slice(0, -1);
+      if (tokens.has(singular)) return true;
+    }
+    return false;
+  });
+}
+
+/** Skills the resume mentions, as stable display labels the matcher knows. */
+export function extractSkillNames(text: string): string[] {
+  const tokens = tokenSet(text);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const label of ALL_SKILL_LABELS) {
+    if (labelMentioned(label, tokens)) {
+      /* de-dup near-identical labels (e.g. "Node.js" vs "Go · Java · Node · Python") */
+      const key = label.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!seen.has(key)) { seen.add(key); out.push(label); }
+    }
+  }
+  return out.slice(0, 35);
+}
+
+/** Years of experience: explicit "N+ years" wins, else a "since YYYY" anchor,
+    else a seniority-based fallback. */
+function extractYears(text: string, levelId: LevelId): number {
+  const lower = text.toLowerCase();
+  const matches = [...lower.matchAll(/(\d{1,2})\s*\+?\s*(?:years|yrs)\b/g)].map(m => Number(m[1]));
+  if (matches.length) return Math.max(...matches);
+  const since = lower.match(/since\s+(19|20)\d{2}/);
+  if (since) return Math.max(0, new Date().getFullYear() - Number(since[0].match(/\d{4}/)));
+  const fallback: Record<LevelId, number> = { junior: 1, mid: 3, senior: 6, staff: 8, principal: 12, cto: 15, ceo: 15 };
+  return fallback[levelId] ?? 3;
+}
+
+const ROLE_RE = /(engineer|developer|architect|designer|scientist|analyst|manager|consultant|intern)/i;
+const ROLE_HINT_RE = /(senior|staff|principal|lead|junior|mid|frontend|front end|backend|back end|full.?stack|devops|data|mobile|security|software|product|cto|ceo|sre|qa|ios|android)/i;
+
+/** Strip a company/date suffix off a role line ("Senior FE — Acme | 2019–24"). */
+function cleanRoleLine(line: string): string {
+  return line
+    .replace(/[|–—-].*$/, "")
+    .replace(/\s+at\s+.*$/i, "")
+    .replace(/^[•·\-*\d.\s]+/, "")
+    .trim();
+}
+
+/** First role-looking line (resume header or most recent role) → headline. */
+function extractHeadline(lines: string[], fieldName: string, levelName: string): string {
+  const roleLines = lines.filter(l => ROLE_RE.test(l) && ROLE_HINT_RE.test(l) && l.length < 90);
+  for (const line of roleLines) {
+    const cleaned = cleanRoleLine(line);
+    if (cleaned.length > 3 && ROLE_RE.test(cleaned)) return cleaned;
+  }
+  return `${levelName} ${fieldName}`.trim();
+}
+
+/** Role-like lines → target titles (used for title-fit scoring). */
+function extractTitles(lines: string[]): string[] {
+  const titles: string[] = [];
+  for (const line of lines) {
+    if (!ROLE_RE.test(line)) continue;
+    const cleaned = cleanRoleLine(line);
+    if (cleaned.length < 4 || cleaned.length > 60 || titles.includes(cleaned)) continue;
+    titles.push(cleaned);
+    if (titles.length >= 5) break;
+  }
+  return titles;
+}
+
+/** First few substantive lines (contact info filtered) → summary. */
+function extractSummary(text: string): string {
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 20 && !/^[|•\-*]/.test(l));
+  const body = lines.filter(l =>
+    !/^[\w.+-]+@[\w-]+\.[\w.]+$/.test(l) &&
+    !/^\+?\d[\d\s()-]{7,}$/.test(l) &&
+    !/linkedin\.com/i.test(l)
+  );
+  return body.slice(0, 3).join(" ").slice(0, 180);
+}
+
+/** Builds a CareerProfile from resume text — the matcher's input. */
+export function resumeToProfile(text: string): CareerProfile {
+  const r = analyzeResume(text);
+  const fieldName = FIELDS.find(f => f.id === r.fieldId)?.name ?? "";
+  const levelName = LEVELS.find(l => l.id === r.levelId)?.name ?? "";
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  const skills = extractSkillNames(text);
+  const years = extractYears(text, r.levelId);
+  const headline = extractHeadline(lines, fieldName, levelName);
+  const targetTitles = extractTitles(lines);
+  return {
+    headline: headline || `${levelName} ${fieldName}`.trim(),
+    years,
+    location: "",
+    remote: true,
+    workAuth: "",
+    targetTitles: targetTitles.length ? targetTitles : (fieldName ? [fieldName] : []),
+    skills,
+    summary: extractSummary(text),
+    updatedAt: Date.now()
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Persistence — the uploaded resume stays on the device               */
+/* ------------------------------------------------------------------ */
+
+export function getUploadedResume(): UploadedResume | null {
+  return storageGet<UploadedResume | null>(STORAGE_KEYS.resume, null);
+}
+
+export function saveUploadedResume(r: UploadedResume): void {
+  const capped = { ...r, text: r.text.slice(0, 20000) };
+  storageSet(STORAGE_KEYS.resume, capped);
+  /* best-effort cloud backup — never blocks the UI */
+  void saveUploadedResumeToCloud(capped);
+}
+
+export function clearUploadedResume(): void {
+  storageRemove(STORAGE_KEYS.resume);
+}
+
+/* ------------------------------------------------------------------ */
+/* Cloud backup (signed in) — same pattern as the career profile       */
+/* ------------------------------------------------------------------ */
+
+export async function loadUploadedResumeFromCloud(): Promise<UploadedResume | null> {
+  const client = await getSupabaseClient();
+  const user = getCloudState().user;
+  if (!client || !user) return null;
+  const { data, error } = await client.from("uploaded_resumes").select("data").eq("user_id", user.id).maybeSingle();
+  if (error || !data) return null;
+  return data.data as UploadedResume;
+}
+
+export async function saveUploadedResumeToCloud(r: UploadedResume): Promise<void> {
+  const client = await getSupabaseClient();
+  const user = getCloudState().user;
+  if (!client || !user) return;
+  await client.from("uploaded_resumes").upsert(
+    { user_id: user.id, data: r, updated_at: new Date().toISOString() },
+    { onConflict: "user_id" }
+  );
 }

@@ -371,3 +371,97 @@ export function matchJob(profile: CareerProfile | null, job: JobPosting): JobMat
 
   return { score, verdict, matched, missing, blockers };
 }
+
+/* ------------------------------------------------------------------ */
+/* Company ranking — one row per company, best role wins, descending    */
+/* ------------------------------------------------------------------ */
+
+/** One company's standing: its best match across every open role. */
+export interface CompanyRank {
+  company: string;
+  /** Best match % across the company's jobs (0–100). */
+  score: number;
+  verdict: MatchVerdict;
+  /** Number of open roles at this company in the feed. */
+  openings: number;
+  /** The company's best-matching job. */
+  best: JobPosting;
+  matched: string[];
+  missing: string[];
+}
+
+/** Ranks every company in the feed by match %, descending (ties: more
+    openings first, then name). Pure + offline — the view just paginates. */
+export function rankCompanies(profile: CareerProfile | null, jobs: JobPosting[]): CompanyRank[] {
+  const grouped = new Map<string, JobPosting[]>();
+  for (const j of jobs) {
+    const list = grouped.get(j.company);
+    if (list) list.push(j);
+    else grouped.set(j.company, [j]);
+  }
+  const ranks: CompanyRank[] = [];
+  for (const [company, list] of grouped) {
+    let best: JobPosting = list[0];
+    let bestMatch: JobMatch | null = null;
+    let bestScore = -1;
+    for (const j of list) {
+      const m = matchJob(profile, j);
+      if (m.score > bestScore) { bestScore = m.score; best = j; bestMatch = m; }
+    }
+    ranks.push({
+      company,
+      score: bestScore,
+      verdict: bestMatch?.verdict ?? "no",
+      openings: list.length,
+      best,
+      matched: bestMatch?.matched ?? [],
+      missing: bestMatch?.missing ?? []
+    });
+  }
+  ranks.sort((a, b) => b.score - a.score || b.openings - a.openings || a.company.localeCompare(b.company));
+  return ranks;
+}
+
+/* ------------------------------------------------------------------ */
+/* Ranking filters + company shortlist                                 */
+/* ------------------------------------------------------------------ */
+
+export interface RankFilters {
+  /** Keep only companies whose best role is remote. */
+  remoteOnly: boolean;
+  /** Minimum match % (0 = any). */
+  minScore: number;
+  /** Minimum annual salary of the best role, in its own currency (0 = any). */
+  minSalary: number;
+  /** Keep only shortlisted companies. */
+  shortlistOnly: boolean;
+}
+
+export const EMPTY_RANK_FILTERS: RankFilters = { remoteOnly: false, minScore: 0, minSalary: 0, shortlistOnly: false };
+
+/** Pure filter over the ranked companies — the view stays dumb. */
+export function filterRanks(ranks: CompanyRank[], f: RankFilters, shortlist: ReadonlySet<string>): CompanyRank[] {
+  return ranks.filter(r => {
+    if (f.remoteOnly && !r.best.remote) return false;
+    if (f.minScore > 0 && r.score < f.minScore) return false;
+    if (f.minSalary > 0 && (!r.best.salary || r.best.salary.max < f.minSalary)) return false;
+    if (f.shortlistOnly && !shortlist.has(r.company.toLowerCase())) return false;
+    return true;
+  });
+}
+
+/** Shortlisted company names (lowercased), persisted locally. */
+export function listShortlist(): string[] {
+  return storageGet<string[]>(STORAGE_KEYS.shortlist, []);
+}
+
+/** Toggles a company in the shortlist; returns the new list. */
+export function toggleShortlist(company: string): string[] {
+  const key = company.trim().toLowerCase();
+  if (!key) return listShortlist();
+  const next = listShortlist().includes(key)
+    ? listShortlist().filter(c => c !== key)
+    : [...listShortlist(), key];
+  storageSet(STORAGE_KEYS.shortlist, next);
+  return next;
+}

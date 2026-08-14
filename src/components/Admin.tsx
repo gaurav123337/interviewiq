@@ -15,7 +15,7 @@ import {
   type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type KbSuggestionRow, type QualityRow,
   type RagDocRow, type RagDomainRow, type RagHealthRow, type RagWeeklyDigest
 } from "../services/quality";
-import { getAdminState, subscribeAdmin } from "../services/admin";
+import { amOwner, getAdminState, subscribeAdmin } from "../services/admin";
 import { cleanTextToQuestions } from "../services/cleaner";
 import { parseQuestionBatch } from "../services/import";
 import { extractFileText } from "../services/pdf";
@@ -890,6 +890,9 @@ function Users({ users, admins, busy, setBusy, onChanged }: {
 }) {
   const [grantEmail, setGrantEmail] = useState("");
   const [billingUser, setBillingUser] = useState<{ id: string; email: string } | null>(null);
+  /* only the product owner can grant/revoke admin — other admins just watch */
+  const owner = amOwner();
+  const ownerEmail = (CONFIG.ownerEmail ?? "").toLowerCase();
 
   const doGrant = async () => {
     if (!grantEmail.trim()) { toast("Enter an email"); return; }
@@ -921,14 +924,18 @@ function Users({ users, admins, busy, setBusy, onChanged }: {
           <h2 className="text-[16px] font-extrabold">👥 Users ({users.length})</h2>
           <p className="text-[12.5px] text-mut">Everyone who signed in and synced. Status reflects their last heartbeat.</p>
         </div>
-        <div className="flex gap-2">
-          <input
-            value={grantEmail} onChange={e => setGrantEmail(e.target.value)}
-            placeholder="admin@example.com"
-            className="rounded-xl border border-line/15 bg-deep/80 px-3.5 py-2 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
-          />
-          <button className={btnPrimary + btnSm} onClick={doGrant} disabled={busy}>Grant admin</button>
-        </div>
+        {owner ? (
+          <div className="flex gap-2">
+            <input
+              value={grantEmail} onChange={e => setGrantEmail(e.target.value)}
+              placeholder="admin@example.com"
+              className="rounded-xl border border-line/15 bg-deep/80 px-3.5 py-2 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+            />
+            <button className={btnPrimary + btnSm} onClick={doGrant} disabled={busy}>Grant admin</button>
+          </div>
+        ) : (
+          <Chip tone="warn">🔒 Only the product owner can manage admins</Chip>
+        )}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-[13px]">
@@ -952,10 +959,14 @@ function Users({ users, admins, busy, setBusy, onChanged }: {
             {users.map(u => {
               const st = status(u);
               const isAdmin = admins.includes(u.email.toLowerCase());
+              const isOwner = u.email.toLowerCase() === ownerEmail;
               return (
                 <tr key={u.id} className="border-b border-line/5 last:border-0 hover:bg-wht/5">
                   <td className="px-5 py-3">
-                    <div className="font-bold">{u.email || "—"}</div>
+                    <div className="flex items-center gap-1.5 font-bold">
+                      {isOwner && <span title="Product owner — the only account that can manage admins">👑</span>}
+                      {u.email || "—"}
+                    </div>
                     <div className="text-[11.5px] text-fnt">last seen {u.last_seen ? new Date(u.last_seen).toLocaleString() : "—"}</div>
                   </td>
                   <td className="px-3 py-3"><Chip tone={st.tone}>{st.label}</Chip></td>
@@ -967,8 +978,14 @@ function Users({ users, admins, busy, setBusy, onChanged }: {
                   <td className="px-3 py-3 tabular-nums">{u.ai_calls}</td>
                   <td className="px-3 py-3 tabular-nums">{new Date(u.created_at).toLocaleDateString()}</td>
                   <td className="px-5 py-3">
-                    {isAdmin ? (
-                      <button className={btnDanger + btnSm} onClick={() => doRevoke(u.email)} disabled={busy}>Revoke</button>
+                    {isOwner ? (
+                      <Chip tone="co">👑 Owner</Chip>
+                    ) : isAdmin ? (
+                      owner ? (
+                        <button className={btnDanger + btnSm} onClick={() => doRevoke(u.email)} disabled={busy}>Revoke</button>
+                      ) : (
+                        <Chip tone="ok">Admin</Chip>
+                      )
                     ) : (
                       <span className="text-fnt">—</span>
                     )}

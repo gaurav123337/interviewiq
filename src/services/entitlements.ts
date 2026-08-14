@@ -18,6 +18,20 @@ export function teamProActive(): boolean {
   return teamPro;
 }
 
+/* Admins have ALL restrictions lifted — the paywall, session quotas and AI
+   limits don't apply to them. This is independent of the Pro tier: a Pro
+   user is NOT an admin and an admin is NOT automatically Pro (server-verified
+   via is_admin()). Driven by services/admin.ts state through App.tsx. */
+let adminUnlocked = false;
+
+export function setAdminUnlocked(v: boolean): void {
+  adminUnlocked = v;
+}
+
+export function adminUnlockedActive(): boolean {
+  return adminUnlocked;
+}
+
 export interface Usage {
   month: string;
   sessions: number;
@@ -32,7 +46,7 @@ export function isPaywallEnabled(): boolean {
 }
 
 export function getTier(): Tier {
-  if (teamPro) return "pro";
+  if (adminUnlocked || teamPro) return "pro";
   return storageGet<Tier>(STORAGE_KEYS.tier, "free");
 }
 

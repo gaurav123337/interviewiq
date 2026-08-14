@@ -296,9 +296,9 @@ export function Roadmap() {
                     {resumeBusy ? <><span className="spinner" />…</> : "🔍 Analyze & prefill"}
                   </button>
                   <label className={`${btnGhost} ${btnSm} cursor-pointer`}>
-                    📎 Upload .pdf / .txt
+                    📎 Upload .pdf / .txt / .docx
                     <input
-                      type="file" accept=".pdf,.txt" className="hidden"
+                      type="file" accept=".pdf,.txt,.docx" className="hidden"
                       onChange={async e => {
                         const file = e.target.files?.[0];
                         if (!file) return;

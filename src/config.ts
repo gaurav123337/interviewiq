@@ -5,6 +5,10 @@ export const CONFIG = {
   tagline: "AI Interview Coach",
   /** Where feedback and early-access requests go (mailto target — swap for a form endpoint when a backend exists). */
   supportEmail: "gaurav.123337@gmail.com",
+  /** The product owner — the only account that can grant/revoke admins.
+      Keep in sync with is_owner() in supabase/admin.sql (the server is
+      authoritative; this is only for the UI). */
+  ownerEmail: "gaurav.123337@gmail.com",
   repoUrl: "https://github.com/gaurav123337/interviewiq",
   /** Checkout / purchase URL for Pro (empty until a storefront exists → falls back to mailto).
       When the cloud payment functions (pay-checkout / pay-webhook) are deployed, the app

@@ -166,6 +166,18 @@ export interface CareerProfile {
   updatedAt: number;
 }
 
+/** A resume uploaded by the user — the source of truth for match skills.
+    The extracted `profile` is saved into the career profile so the existing
+    matcher (matchJob) works unchanged. */
+export interface UploadedResume {
+  fileName: string;
+  /** Extracted text (capped — kept for re-analysis and reference). */
+  text: string;
+  extractedAt: number;
+  /** Career profile derived from the resume at upload time. */
+  profile: CareerProfile;
+}
+
 /** A job posting pulled from an ATS board (Greenhouse / Lever / Ashby). */
 export interface JobPosting {
   /** Storage id — `${source}:${externalId}`. */

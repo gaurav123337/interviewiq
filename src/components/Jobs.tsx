@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CareerProfile, JobPosting } from "../types";
+import type { CareerProfile, JobPosting, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { getCloudState, getSupabaseClient, isCloudConfigured } from "../services/cloud";
 import { CONFIG } from "../config";
 import { toast } from "../toast";
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
+import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
 import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
 import {
-  defaultCareerProfile, EMPTY_FILTERS, filterJobs, getCareerProfile, lastJobsRefresh, listJobs, loadJobsFromCloud,
-  matchJob, refreshJobs, salaryLabel, saveCareerProfile, VERDICT_META, type JobFilters
+  defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
+  lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
+  salaryLabel, saveCareerProfile, toggleShortlist, VERDICT_META, type JobFilters, type RankFilters
 } from "../services/jobs";
+import { clearUploadedResume, getUploadedResume, resumeToProfile, saveUploadedResume } from "../services/resume";
+import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, saveApplyKit } from "../services/applyKit";
 import { applyDigest, dueFollowUps, followUpDraft, getTrack, listTracks, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
@@ -72,6 +75,13 @@ export function Jobs() {
   const [draftJob, setDraftJob] = useState<ApplyTrack | null>(null);
   const [roundJob, setRoundJob] = useState<ApplyTrack | null>(null);
   const [filters, setFilters] = useState<JobFilters>(EMPTY_FILTERS);
+  const [resume, setResume] = useState<UploadedResume | null>(() => getUploadedResume());
+  const [resumeFormOpen, setResumeFormOpen] = useState(false);
+  const [resumePaste, setResumePaste] = useState("");
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const [rankLimit, setRankLimit] = useState(10);
+  const [rankFilters, setRankFilters] = useState<RankFilters>(EMPTY_RANK_FILTERS);
+  const [shortlist, setShortlist] = useState<Set<string>>(() => new Set(listShortlist()));
   const [benchLvl, setBenchLvl] = useState<BenchLevel>(() => benchLevelForYears(profile?.years ?? 0));
   const [benchCo, setBenchCo] = useState("");
   const [benchOpen, setBenchOpen] = useState(false);
@@ -90,6 +100,16 @@ export function Jobs() {
     void loadJobsFromCloud().then(setJobs).catch(() => {});
     void import("../services/jobs").then(({ loadCareerProfileFromCloud }) =>
       loadCareerProfileFromCloud().then(p => { if (p) { setProfile(p); saveCareerProfile(p); } }).catch(() => {})
+    );
+    /* restore the uploaded resume from the account (it carries its own
+       extracted profile — the same data as the career profile above) */
+    void import("../services/resume").then(({ loadUploadedResumeFromCloud }) =>
+      loadUploadedResumeFromCloud().then(r => {
+        if (!r) return;
+        setResume(r);
+        saveCareerProfile(r.profile);
+        setProfile(r.profile);
+      }).catch(() => {})
     );
     /* scheduled refresh — if the feed is older than the admin-tunable
        interval (default 24h), re-ingest so matches never go stale */
@@ -131,6 +151,61 @@ export function Jobs() {
   }, [profile, jobs]);
 
   const visible = useMemo(() => filterJobs(jobs, filters), [jobs, filters]);
+
+  /* company leaderboard — best match % per company, descending */
+  const ranks = useMemo(() => rankCompanies(profile, jobs), [profile, jobs]);
+  const filteredRanks = useMemo(() => filterRanks(ranks, rankFilters, shortlist), [ranks, rankFilters, shortlist]);
+  const topRank = filteredRanks[0];
+
+  const star = (company: string) => setShortlist(new Set(toggleShortlist(company)));
+  const isStarred = (company: string) => shortlist.has(company.toLowerCase());
+  const filterActive = rankFilters.remoteOnly || rankFilters.minScore > 0 || rankFilters.minSalary > 0 || rankFilters.shortlistOnly;
+
+  const applyResume = (text: string, fileName: string) => {
+    try {
+      const p = resumeToProfile(text);
+      /* keep the user's location/remote/work-auth prefs; resume drives the rest */
+      const merged: CareerProfile = {
+        ...p,
+        location: profile?.location ?? "",
+        remote: profile?.remote ?? true,
+        workAuth: profile?.workAuth ?? "",
+        skills: [...new Set([...p.skills, ...(profile?.skills ?? [])])].slice(0, 40),
+        updatedAt: Date.now()
+      };
+      saveCareerProfile(merged);
+      const rec: UploadedResume = { fileName, text, extractedAt: Date.now(), profile: merged };
+      saveUploadedResume(rec);
+      setResume(rec);
+      setProfile(merged);
+      setResumePaste("");
+      setResumeFormOpen(false);
+      toast(`📄 ${fileName} analyzed — ${merged.skills.length} skills extracted · ${merged.years} yrs · “${merged.headline}”`);
+    } catch (e) {
+      toast("✗ Could not read the resume — try pasting the text");
+    }
+  };
+
+  const removeResume = () => {
+    clearUploadedResume();
+    setResume(null);
+    setResumePaste("");
+    setResumeFormOpen(false);
+    toast("🗑 Resume removed — your saved profile stays as-is");
+  };
+
+  const handleResumeFile = async (file: File) => {
+    setResumeBusy(true);
+    try {
+      const text = await extractFileText(file);
+      if (text.trim().length < 40) { toast("✗ That file looks empty — try a different one or paste the text"); return; }
+      applyResume(text, file.name);
+    } catch {
+      toast("✗ Could not read the file — try pasting the text");
+    } finally {
+      setResumeBusy(false);
+    }
+  };
 
   /* due follow-up reminders — surface once per job via notification + banner */
   useEffect(() => {
@@ -191,6 +266,69 @@ export function Jobs() {
         <Chip tone={proGated ? "co" : "ok"}>{proGated ? "🔒 Verdicts are Pro" : "✨ Pro active"}</Chip>
       </div>
 
+      {/* resume upload — the fastest way to a match profile */}
+      <div className={`${cardCls} mt-5 overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">📄 Your resume</h3>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Upload a .pdf / .txt or paste the text — we extract your skills, title and experience, then match you against every company below. Everything stays on your device.</p>
+        </div>
+        <div className="p-5">
+          {resume && !resumeFormOpen ? (
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[13.5px] font-extrabold">✅ {resume.fileName}</span>
+                <Chip tone="ok">{resume.profile.skills.length} skills</Chip>
+                <Chip>{resume.profile.years} yrs</Chip>
+                <span className="text-[12.5px] font-semibold text-ink">{resume.profile.headline}</span>
+              </div>
+              {resume.profile.skills.length > 0 && (
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {resume.profile.skills.slice(0, 14).map(s => (
+                    <span key={s} className="rounded-full border border-acc1/35 bg-acc1/10 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt">{s}</span>
+                  ))}
+                  {resume.profile.skills.length > 14 && <Chip>+{resume.profile.skills.length - 14} more</Chip>}
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-mut">The match feed and company ranking below are scored from these skills. You can still edit the profile card above.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className={btnGhost + btnSm} onClick={() => setResumeFormOpen(true)}>↺ Replace resume</button>
+                <button className={btnDanger + btnSm} onClick={removeResume}>🗑 Remove</button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className={`${btnOk} ${btnSm} cursor-pointer`}>
+                  {resumeBusy ? <><span className="spinner" />Reading…</> : "📎 Upload .pdf / .txt / .docx"}
+                  <input
+                    type="file" accept=".pdf,.txt,.docx" className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleResumeFile(file);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                {resume && <button className={btnGhost + btnSm} onClick={() => { setResumeFormOpen(false); setResumePaste(""); }}>Cancel</button>}
+              </div>
+              <textarea
+                rows={3}
+                value={resumePaste}
+                onChange={e => setResumePaste(e.target.value)}
+                placeholder="…or paste your resume text here (or drop a .pdf / .txt)"
+                className="inp mt-3 h-auto w-full resize-y text-[13px]"
+              />
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span className="text-[11px] text-mut">Tip: PDFs with selectable text work best — scanned pages can't be read.</span>
+                <button className={btnPrimary + btnSm} disabled={resumeBusy || resumePaste.trim().length < 40} onClick={() => applyResume(resumePaste, "pasted-resume.txt")}>
+                  🔍 Analyze &amp; match
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* career profile */}
       <div className={`${cardCls} mt-5 overflow-hidden`}>
         <div className="border-b border-line/10 p-5">
@@ -245,6 +383,163 @@ export function Jobs() {
           <span className="text-[11.5px] text-fnt">{profile ? `${profile.skills.length} skills · ${profile.targetTitles.length} target titles` : "No profile yet — prefill from your diagnostic or fill it in."}</span>
           <button className={btnPrimary + btnSm} onClick={save} disabled={saving || !profile}>💾 Save profile</button>
         </div>
+      </div>
+
+      {/* company ranking — best match % per company, descending */}
+      <div className={`${cardCls} mt-5 overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">🏆 Best-fit companies ({filteredRanks.length}{filterActive && filteredRanks.length !== ranks.length ? ` of ${ranks.length}` : ""})</h3>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Every company in the feed, ranked by match % — a company's best open role wins. {resume ? "Scored from your uploaded resume." : "Upload your resume above (or save the profile) to score the list."}</p>
+        </div>
+
+        {/* ranking filters — narrow the leaderboard without touching the feed */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-line/10 bg-wht/[.03] px-5 py-3">
+          <label className="flex cursor-pointer items-center gap-2 rounded-full border border-line/15 bg-deep/40 px-3 py-1.5 text-[12px] font-bold">
+            <input type="checkbox" className="h-3.5 w-3.5 accent-[#6366f1]" checked={rankFilters.remoteOnly}
+              onChange={e => setRankFilters(f => ({ ...f, remoteOnly: e.target.checked }))} />
+            🏠 Remote only
+          </label>
+          <label className="flex items-center gap-1.5 text-[11.5px] font-bold text-mut">
+            Match
+            <select
+              className="cursor-pointer rounded-full border border-line/20 bg-deep/40 px-2.5 py-1.5 text-[12px] font-bold text-fnt outline-none"
+              value={rankFilters.minScore}
+              onChange={e => setRankFilters(f => ({ ...f, minScore: Number(e.target.value) }))}
+            >
+              <option value={0}>any %</option>
+              <option value={40}>40%+</option>
+              <option value={60}>60%+</option>
+              <option value={80}>80%+</option>
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-[11.5px] font-bold text-mut">
+            Min salary
+            <input
+              type="number" min={0} step={5000} className="w-[92px] rounded-full border border-line/20 bg-deep/40 px-2.5 py-1.5 text-[12px] font-bold text-fnt outline-none"
+              placeholder="$0"
+              value={rankFilters.minSalary || ""}
+              onChange={e => setRankFilters(f => ({ ...f, minSalary: e.target.value ? Number(e.target.value) : 0 }))}
+              title="Minimum annual salary of the best role (in its own currency)"
+            />
+          </label>
+          <button
+            className={`rounded-full px-3 py-1.5 text-[12px] font-bold transition-all ${rankFilters.shortlistOnly ? "grad-bg text-white" : "border border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
+            onClick={() => setRankFilters(f => ({ ...f, shortlistOnly: !f.shortlistOnly }))}
+            disabled={shortlist.size === 0}
+            title="Only companies you've starred"
+          >
+            ⭐ Shortlist ({shortlist.size})
+          </button>
+          {filterActive && (
+            <button className="rounded-full border border-line/15 px-2.5 py-1.5 text-[11.5px] font-bold text-mut hover:text-ink" onClick={() => setRankFilters(EMPTY_RANK_FILTERS)}>
+              ✕ Clear
+            </button>
+          )}
+        </div>
+
+        {topRank && topRank.score > 0 && (
+          <div className="border-b border-ok/20 bg-ok/[.07] px-5 py-4">
+            <p className="text-[12.5px] font-extrabold text-ok">🏆 Recommendation</p>
+            <p className="mt-1 text-[13px] leading-relaxed text-ink">
+              Start with <span className="font-extrabold text-ok">{topRank.company}</span> — {proGated ? "your match % is locked" : `${topRank.score}% match (${VERDICT_META[topRank.verdict].label.toLowerCase()})`} across {topRank.openings} open role{topRank.openings === 1 ? "" : "s"}, best fit: <span className="font-semibold">{topRank.best.title}</span>.{" "}
+              {!proGated && topRank.matched.length > 0 && <>You already cover <span className="font-semibold">{topRank.matched.slice(0, 4).join(", ")}</span>.</>}{" "}
+              {!proGated && topRank.missing.length > 0 && <>Close the gap on <span className="font-semibold">{topRank.missing.slice(0, 3).join(", ")}</span> to push even higher.</>}
+              {proGated && <button className="font-bold text-acc3 underline" onClick={() => setUpgrade("Match verdicts and the company ranking are Pro features.")}>Unlock Pro</button>}
+            </p>
+          </div>
+        )}
+
+        {!profile ? (
+          <div className="p-10 text-center">
+            <div className="text-[26px]">📄</div>
+            <p className="mt-2 text-[13.5px] font-bold">Upload your resume to rank companies</p>
+            <p className="mx-auto mt-1 max-w-[380px] text-[12.5px] text-mut">Your skills drive the match — drop a .pdf / .txt above and every company in the feed gets a match %, sorted best first.</p>
+          </div>
+        ) : jobs.length === 0 ? (
+          <div className="p-10 text-center">
+            <div className="text-[26px]">🕳️</div>
+            <p className="mt-2 text-[13.5px] font-bold">No companies to rank yet</p>
+            <p className="mx-auto mt-1 max-w-[380px] text-[12.5px] text-mut">{cloud ? "Tap “Refresh feed” to pull live jobs and rank them." : "Sign in to fetch the live feed, then come back here."}</p>
+          </div>
+        ) : filteredRanks.length === 0 ? (
+          <div className="p-10 text-center">
+            <div className="text-[26px]">🔍</div>
+            <p className="mt-2 text-[13.5px] font-bold">No companies match these filters</p>
+            <p className="mx-auto mt-1 max-w-[380px] text-[12.5px] text-mut">{rankFilters.shortlistOnly ? "Star some companies with ☆ to build a shortlist, or " : ""}clear the filters to see the full ranking.</p>
+            <button className={btnGhost + btnSm + " mt-3"} onClick={() => setRankFilters(EMPTY_RANK_FILTERS)}>✕ Clear filters</button>
+          </div>
+        ) : (
+          <ul className="divide-y divide-line/10">
+            {filteredRanks.slice(0, rankLimit).map((r, i) => (
+              <li key={r.company} className="p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="w-6 flex-none text-center text-[13px] font-extrabold text-mut">{i + 1}</span>
+                  <div className="min-w-[190px] flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        className={`text-[15px] leading-none transition-all ${isStarred(r.company) ? "text-amber-300" : "text-mut opacity-50 hover:opacity-100"}`}
+                        onClick={() => star(r.company)}
+                        title={isStarred(r.company) ? "Remove from shortlist" : "Add to shortlist"}
+                      >
+                        {isStarred(r.company) ? "★" : "☆"}
+                      </button>
+                      <span className="text-[14px] font-extrabold">{r.company}</span>
+                      {i === 0 && <Chip tone="ok">🏆 Best fit</Chip>}
+                    </div>
+                    <div className="mt-0.5 text-[12px] text-mut">{r.openings} open role{r.openings === 1 ? "" : "s"} · best fit: {r.best.title}</div>
+                  </div>
+                  <div className="w-[132px] flex-none">
+                    {proGated ? (
+                      <button
+                        className="rounded-full border border-line/15 bg-wht/10 px-3 py-1 text-[12px] font-extrabold text-mut transition-all hover:text-ink"
+                        onClick={() => setUpgrade("Match verdicts and the company ranking are Pro features.")}
+                        title="Pro feature"
+                      >
+                        🔒 Match %
+                      </button>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[13.5px] font-extrabold text-acctxt">{r.score}%</span>
+                          <span className={`text-[10px] font-extrabold uppercase tracking-wide ${VERDICT_META[r.verdict].tone === "ok" ? "text-ok" : VERDICT_META[r.verdict].tone === "co" ? "text-acctxt" : VERDICT_META[r.verdict].tone === "warn" ? "text-warn" : VERDICT_META[r.verdict].tone === "bad" ? "text-bad" : "text-mut"}`}>{VERDICT_META[r.verdict].label}</span>
+                        </div>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-deep/60">
+                          <div className="h-full rounded-full grad-bg" style={{ width: `${Math.max(4, r.score)}%` }} />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {!proGated && (r.matched.length > 0 || r.missing.length > 0) && (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 pl-9 text-[12px]">
+                    {r.matched.length > 0 && (
+                      <span>✓ <span className="text-ok">You have:</span> {r.matched.slice(0, 5).join(", ")}</span>
+                    )}
+                    {r.missing.length > 0 && (
+                      <span>✗ <span className="text-bad">Gap:</span> {r.missing.slice(0, 4).join(", ")}</span>
+                    )}
+                  </div>
+                )}
+                <div className="mt-2 pl-9">
+                  <button
+                    className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
+                    onClick={() => setFilters(f => ({ ...f, query: r.company }))}
+                  >
+                    🔎 Show in feed
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {profile && jobs.length > 0 && filteredRanks.length > rankLimit && (
+          <div className="border-t border-line/10 p-4 text-center">
+            <button className={btnGhost + btnSm} onClick={() => setRankLimit(l => l + 10)}>
+              Show more — {filteredRanks.length - rankLimit} more company{filteredRanks.length - rankLimit === 1 ? "" : "ies"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* salary benchmark — market ranges by level + live feed bands */}
