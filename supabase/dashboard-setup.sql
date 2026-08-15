@@ -496,6 +496,9 @@ create table if not exists public.recovery_codes (
 );
 
 create index if not exists recovery_codes_owner_idx on public.recovery_codes (owner_id);
+
+/* upgrade path for installs that predate owner_email */
+alter table public.recovery_codes add column if not exists owner_email text not null default '';
 create index if not exists recovery_codes_email_idx on public.recovery_codes (owner_email);
 
 create table if not exists public.recovery_attempts (
