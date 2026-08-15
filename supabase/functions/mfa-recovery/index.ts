@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     }
 
     const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
-    const { data: user, error: userErr } = await service.from("users")
+    const { data: user, error: userErr } = await service.from("users", { schema: "auth" })
       .select("id, email")
       .eq("email", email)
       .maybeSingle();
