@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { BAND_ORDER, FIELDS, SKILLS } from "../../src/data/skillCatalog";
-import { bandForYears, buildPlan, gapAnalysis, levelUpDelta } from "../../src/services/skillCounselor";
+import { bandForYears, build90DayPlan, buildPlan, gapAnalysis, levelUpDelta, suggestTrack } from "../../src/services/skillCounselor";
 
 const profile = (years: number, skills: string[]) => ({ years, skills });
 
@@ -100,5 +100,54 @@ describe("catalog integrity", () => {
         }
       }
     }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Auto-track pick + 90-day plan                                       */
+/* ------------------------------------------------------------------ */
+
+describe("suggestTrack", () => {
+  it("picks the track with the most owned-skill overlap", () => {
+    const s = suggestTrack(profile(5, ["react", "typescript", "html", "css", "javascript", "git", "state-management", "performance-basics"]));
+    expect(s.trackId).toBe("react-specialist");
+    expect(s.owned).toBeGreaterThan(0);
+    expect(s.reason).toMatch(/React Specialist/);
+  });
+
+  it("falls back to the first path when there is no profile", () => {
+    const s = suggestTrack(null);
+    expect(s.trackId).toBe("ui-engineer");
+    expect(s.reason).toMatch(/No skill profile yet/);
+  });
+});
+
+describe("build90DayPlan", () => {
+  it("schedules the gap into ≤12 weekly milestones", () => {
+    const p = build90DayPlan(profile(1, ["html", "css"]), "frontend", "ui-engineer", "senior", 4);
+    expect(p).not.toBeNull();
+    expect(p!.milestones.length).toBeGreaterThan(0);
+    expect(p!.milestones.length).toBeLessThanOrEqual(12);
+    expect(p!.milestones[0].week).toBe(1);
+    expect(p!.totalHours).toBeGreaterThan(0);
+  });
+
+  it("respects availability (more hours/week → fewer weeks)", () => {
+    const slow = build90DayPlan(profile(1, []), "frontend", "ui-engineer", "staff", 2)!;
+    const fast = build90DayPlan(profile(1, []), "frontend", "ui-engineer", "staff", 8)!;
+    expect(fast.milestones.length).toBeLessThanOrEqual(slow.milestones.length);
+  });
+
+  it("produces an empty (or null) plan when nothing is missing", () => {
+    const p = build90DayPlan(profile(6, ["html", "css", "javascript", "typescript", "react", "state-management", "git", "http", "testing-basics", "performance-basics"]), "frontend", "react-specialist", "mid", 4);
+    expect(p).not.toBeNull();
+    expect(p!.totalHours).toBe(0);
+  });
+
+  it("path order is preserved across milestones (prereqs first)", () => {
+    const p = build90DayPlan(profile(0, []), "frontend", "ui-engineer", "senior", 4)!;
+    const flat = p.milestones.flatMap(m => m.skillIds);
+    expect(flat[0]).toBe("html");
+    expect(flat.indexOf("react")).toBeGreaterThan(flat.indexOf("javascript"));
   });
 });

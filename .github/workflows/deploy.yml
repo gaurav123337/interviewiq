@@ -93,3 +93,6 @@ jobs:
           npx supabase functions deploy trends-refresh \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
+          npx supabase functions deploy send-security-digest \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt

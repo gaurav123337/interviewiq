@@ -8,13 +8,17 @@
    (submit-resource), so personal saves are still vetted. */
 
 import { useEffect, useMemo, useState } from "react";
-import { BAND_LABEL, BAND_ORDER, FIELDS, type Band } from "../data/skillCatalog";
+import { BAND_LABEL, BAND_ORDER, FIELDS, SKILLS, type Band } from "../data/skillCatalog";
 import { applyManifestDiff, markManifestSeen, qualityBand, resourceFreshness, resourceQuality } from "../services/catalogMeta";
 import { getCareerProfile } from "../services/jobs";
 import { myResources, submitResource, type ResourceRow } from "../services/resources";
-import { buildPlan, gapAnalysis, levelUpDelta } from "../services/skillCounselor";
+import { build90DayPlan, buildPlan, gapAnalysis, levelUpDelta, suggestTrack } from "../services/skillCounselor";
+import {
+  clearStudyPlan, getPlanProgress, getSavedStudyPlan, planProgressKey, saveStudyPlan, setWeekDone
+} from "../services/studyPlan";
 import { latestSignals, STAGE_META, type SkillSignal } from "../services/trendSignals";
 import { getCloudState, subscribeCloud } from "../services/cloud";
+import { useApp } from "../store";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
 
@@ -33,9 +37,17 @@ export function Counselor() {
   const [gapsOnly, setGapsOnly] = useState(false);
   const [saved, setSaved] = useState<ResourceRow[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
+  const { nav } = useApp();
   const [signals, setSignals] = useState<Record<string, SkillSignal>>({});
   const diff = useMemo(() => applyManifestDiff(), []);
   const [showNew, setShowNew] = useState(diff.isNew);
+  const suggestion = useMemo(() => suggestTrack(profile), [profile]);
+  const [perWeek, setPerWeek] = useState(4);
+  const [study, setStudy] = useState<ReturnType<typeof build90DayPlan>>(() => getSavedStudyPlan());
+  const [progress, setProgress] = useState<Record<number, boolean>>(() => {
+    const p = getSavedStudyPlan();
+    return p ? getPlanProgress(planProgressKey(p)) : {};
+  });
 
   const field = FIELDS.find(f => f.id === fieldId)!;
   const track = field.tracks.find(t => t.id === trackId) ?? field.tracks[0];
@@ -44,6 +56,22 @@ export function Counselor() {
 
   useEffect(() => { void myResources().then(setSaved).catch(() => {}); }, []);
   useEffect(() => { void latestSignals().then(setSignals).catch(() => {}); }, []);
+
+  const makePlan = () => {
+    const p = build90DayPlan(profile, field.id, track.id, target, perWeek);
+    if (!p) { toast("✗ Couldn't build a plan — no gaps to fill"); return; }
+    saveStudyPlan(p);
+    setStudy(p);
+    setProgress(getPlanProgress(planProgressKey(p)));
+    toast(`📅 Plan built — ${p.milestones.length} weeks, ~${p.totalHours}h`);
+  };
+
+  const toggleWeek = (p: NonNullable<typeof study>, week: number) => {
+    const key = planProgressKey(p);
+    const next = { ...progress, [week]: !progress[week] };
+    setProgress(next);
+    setWeekDone(key, week, !!next[week]);
+  };
 
   useEffect(() => {
     /* when the field changes, snap to its first track and a sane target */
@@ -102,6 +130,24 @@ export function Counselor() {
           <ul className="mt-2 space-y-1">
             {diff.changes.map((c, i) => <li key={i} className="text-[12.5px] text-ink">{c}</li>)}
           </ul>
+        </div>
+      )}
+
+      {/* auto-pick — based on the user's resume skills */}
+      {suggestion.reason && (
+        <div className="mx-auto mt-5 flex max-w-[680px] flex-wrap items-center justify-between gap-2 rounded-2xl border border-line/15 bg-wht/5 px-5 py-3">
+          <p className="min-w-0 flex-1 text-[12.5px] text-mut">
+            <span className="font-bold text-acc2">🧭 Suggested track: </span>{suggestion.reason}
+          </p>
+          <button
+            className={btnPrimary + btnSm}
+            onClick={() => {
+              setFieldId(suggestion.fieldId);
+              setTrackId(suggestion.trackId);
+              setTarget(suggestion.track.maxBand === "cto" ? "staff" : suggestion.track.maxBand);
+              toast(`Using the ${suggestion.track.name} path`);
+            }}
+          >Use this track</button>
         </div>
       )}
 
@@ -166,6 +212,64 @@ export function Counselor() {
             <summary className="cursor-pointer text-[13px] font-bold text-acctxt">📋 Copy plan</summary>
             <pre className="mt-2 whitespace-pre-wrap font-mono text-[11.5px] text-fnt">{plan.join("\n")}</pre>
           </details>
+        )}
+      </section>
+
+      {/* 90-day study plan */}
+      <section className={`${cardCls} mt-4 p-6`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-[16px] font-extrabold">📅 90-day study plan</h2>
+            <p className="mt-0.5 text-[12.5px] text-mut">
+              Weekly milestones from your gaps on the {track.name} path — packed to your availability, tracked offline.
+            </p>
+          </div>
+          {study && (
+            <div className="flex gap-2">
+              <button className={btnGhost + btnSm} onClick={() => nav("planner")} title="Open the interview-date Planner">🗓️ Open Planner</button>
+              <button className={btnGhost + btnSm} onClick={() => { clearStudyPlan(); setStudy(null); setProgress({}); }}>Clear</button>
+            </div>
+          )}
+        </div>
+
+        {!study ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <span className="text-[12.5px] text-mut">Hours/week:</span>
+            {[2, 4, 6, 8].map(h => (
+              <button key={h} className={`${btnGhost + btnSm} ${perWeek === h ? "ring-2 ring-acc1/50" : ""}`} onClick={() => setPerWeek(h)}>{h}h</button>
+            ))}
+            <button className={btnPrimary + btnSm} onClick={makePlan}>
+              {gap.missing.length === 0 ? "No gaps — plan not needed ✓" : `Generate plan (${gap.missing.length} skills to learn)`}
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Chip tone="ok">✓ {Object.values(progress).filter(Boolean).length}/{study.milestones.length} weeks done</Chip>
+              <Chip>{study.totalHours}h total · ~{study.perWeekHours}h/week</Chip>
+              <Chip>🎯 {BAND_LABEL[study.targetBand]}</Chip>
+            </div>
+            <div className="mt-3 space-y-2">
+              {study.milestones.map(m => {
+                const done = !!progress[m.week];
+                return (
+                  <label key={m.week} className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-2.5 ${done ? "border-ok/25 bg-ok/5" : "border-line/10 bg-wht/5"}`}>
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 accent-acc1"
+                      checked={done}
+                      onChange={() => toggleWeek(study, m.week)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className={`block text-[13.5px] font-bold ${done ? "text-mut line-through" : "text-ink"}`}>{m.title}</span>
+                      <span className="text-[11.5px] text-fnt">~{m.hours}h · {m.skillIds.map(id => SKILLS[id]?.name ?? id).join(" · ")}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <button className={`${btnGhost} mt-3`} onClick={() => { saveStudyPlan(study); toast("📅 Plan saved — it reopens here anytime"); }}>Save plan</button>
+          </>
         )}
       </section>
 

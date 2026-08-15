@@ -62,6 +62,8 @@ export const STORAGE_KEYS = {
   resourcesApproved: "iq.resources.approved",
   catalogVersion: "iq.catalogVersion",
   trendSignals: "iq.trendSignals",
+  counselorPlan: "iq.counselorPlan",
+  counselorProgress: "iq.counselorProgress",
   externalApplyHint: "iq.externalApplyHint"
 } as const;
 
