@@ -20,7 +20,12 @@ const ROOT = join(import.meta.dirname, "..");
 const SRC = join(ROOT, "src");
 const ALLOW_FILES = new Set([
   "src/services/runner.ts",
-  "src/services/resumeHtml.ts"
+  "src/services/resumeHtml.ts",
+  /* skillsReport.ts writes a self-contained print document to a brand-new
+     noopener popup (never the app DOM). Every dynamic value is escaped by
+     buildSkillsReportHtml before it reaches the template (unit-tested), and
+     the popup is used only for the browser's print → Save as PDF flow. */
+  "src/services/skillsReport.ts"
 ]);
 const ALLOW_DIRS = ["src/data/codingBank"];
 
