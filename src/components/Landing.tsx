@@ -40,7 +40,12 @@ export function Landing() {
     ).catch(() => {});
     return () => { on = false; };
   }, []);
-  const proPrice = remotePrice != null ? `${remoteCurrency === "INR" ? "₹" : remoteCurrency ? remoteCurrency + " " : "$"}${remotePrice}` : "$9";
+  /* one currency per pricing card — the Free tier mirrors the Pro tier's
+     admin-published currency (₹0 for INR, $0 otherwise) so a page never
+     shows "$0" next to "₹699" */
+  const priceSym = remotePrice != null ? (remoteCurrency === "INR" ? "₹" : remoteCurrency ? remoteCurrency + " " : "$") : "$";
+  const proPrice = remotePrice != null ? `${priceSym}${remotePrice}` : "$9";
+  const freePrice = `${priceSym}0`;
 
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 
@@ -120,7 +125,7 @@ export function Landing() {
               <Chip tone="ok">FOREVER</Chip>
             </div>
             <div className="mt-3 text-[13px] text-mut">Everything you need to start today.</div>
-            <div className="mt-4 text-[34px] font-extrabold tracking-tight">$0<span className="text-[14px] font-bold text-mut">/mo</span></div>
+            <div className="mt-4 text-[34px] font-extrabold tracking-tight">{freePrice}<span className="text-[14px] font-bold text-mut">/mo</span></div>
             <ul className="mt-5 space-y-2 text-[13.5px] text-ink">
               <li className="before:content-['✓'] before:mr-2 before:text-ok">8 tailored sessions / month</li>
               <li className="before:content-['✓'] before:mr-2 before:text-ok">All fields, levels & companies</li>

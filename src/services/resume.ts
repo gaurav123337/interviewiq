@@ -185,6 +185,24 @@ function extractYears(text: string, levelId: LevelId): number {
 const ROLE_RE = /(engineer|developer|architect|designer|scientist|analyst|manager|consultant|intern)/i;
 const ROLE_HINT_RE = /(senior|staff|principal|lead|junior|mid|frontend|front end|backend|back end|full.?stack|devops|data|mobile|security|software|product|cto|ceo|sre|qa|ios|android)/i;
 
+/** Executive titles that, when jammed together with a role on one line, read
+    as a single odd title ("CTO Frontend Engineer"). Split them so the
+    headline shows both parts: "CTO / Frontend Engineer". Only bare exec
+    titles (no "of X" — "Head of Engineering" and "VP of Engineering" are
+    already clean) and only when a role phrase follows. */
+const EXEC_HEADLINE_RE = /^(cto|ceo|coo|founder|co-founder)\b[\s,|]+([a-z][^|]*)$/i;
+
+/** "CTO Frontend Engineer" → "CTO / Frontend Engineer" (keeps both parts). */
+function normalizeExecHeadline(line: string): string {
+  const m = line.match(EXEC_HEADLINE_RE);
+  if (!m) return line;
+  const exec = m[1].trim();
+  const rest = m[2].trim();
+  if (!ROLE_RE.test(rest) && !ROLE_HINT_RE.test(rest)) return line;
+  const cap = (s: string) => s.replace(/(^|\s)([a-z])/g, (_, sp, c) => sp + c.toUpperCase());
+  return `${exec} / ${cap(rest)}`;
+}
+
 /** Strip a company/date suffix off a role line ("Senior FE — Acme | 2019–24"). */
 function cleanRoleLine(line: string): string {
   return line
@@ -211,7 +229,7 @@ function stripNamePrefix(line: string): string {
 function extractHeadline(lines: string[], fieldName: string, levelName: string): string {
   const roleLines = lines.filter(l => ROLE_RE.test(l) && ROLE_HINT_RE.test(l) && l.length < 90);
   for (const line of roleLines) {
-    const cleaned = stripNamePrefix(cleanRoleLine(line));
+    const cleaned = normalizeExecHeadline(stripNamePrefix(cleanRoleLine(line)));
     if (cleaned.length > 3 && ROLE_RE.test(cleaned)) return cleaned;
   }
   return `${levelName} ${fieldName}`.trim();

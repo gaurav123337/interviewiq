@@ -83,10 +83,22 @@ describe("resumeToProfile", () => {
     const p = resumeToProfile(
       "Gaurav Gupta\nCTO Frontend Engineer\nGaurav Gupta  Frontend Architect\n12+ years building web products. React, TypeScript, AWS, Kubernetes."
     );
-    expect(p.headline).toBe("CTO Frontend Engineer");
+    /* exec title + role on one line is split so the headline reads as two
+       clear parts instead of one odd "CTO Frontend Engineer" */
+    expect(p.headline).toBe("CTO / Frontend Engineer");
     expect(p.targetTitles).toContain("Frontend Architect");
     expect(p.targetTitles).not.toContain("Gaurav Gupta  Frontend Architect");
     expect(p.targetTitles.every(t => !t.includes("Gaurav Gupta"))).toBe(true);
+  });
+
+  it("splits exec-title + role headlines into two clear parts", () => {
+    const p = resumeToProfile("Gaurav Gupta\nCEO Frontend Engineer\nReact, TypeScript, AWS.");
+    expect(p.headline).toBe("CEO / Frontend Engineer");
+    const q = resumeToProfile("Gaurav Gupta\nCTO Software Architect\nReact, TypeScript, AWS.");
+    expect(q.headline).toBe("CTO / Software Architect");
+    /* a normal role line is untouched */
+    const r = resumeToProfile("Gaurav Gupta\nSenior Frontend Engineer\nReact, TypeScript, AWS.");
+    expect(r.headline).toBe("Senior Frontend Engineer");
   });
 
   it("only treats a standalone executive title as the level, never a prose mention", () => {

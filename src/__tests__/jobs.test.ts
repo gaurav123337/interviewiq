@@ -104,6 +104,16 @@ describe("matchJob verdicts", () => {
     expect(m.score).toBeLessThan(75);
   });
 
+  it("a role well below seniority caps at moderate — it can't top the rankings", async () => {
+    const { matchJob } = await import("../services/jobs");
+    /* 12 yrs → principal; a mid-level role with perfect skill overlap used to
+       score ~73 ("good") and outrank genuinely senior roles */
+    const m = matchJob({ ...PROFILE, years: 12 }, job({ title: "Frontend Engineer", level: "mid", skills: ["react", "typescript", "node", "css", "graphql"] }));
+    expect(m.score).toBeLessThanOrEqual(55);
+    expect(m.verdict).toBe("moderate");
+    expect(m.blockers.some(b => /Below your seniority/i.test(b))).toBe(true);
+  });
+
   it("domain gate: a Sales role can never be a Good fit for an engineer", async () => {
     const { matchJob } = await import("../services/jobs");
     const m = matchJob(PROFILE, job({ title: "Director, Sales Compensation", company: "Dropbox", level: "lead", skills: [] }));

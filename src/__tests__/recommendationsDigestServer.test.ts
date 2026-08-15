@@ -70,7 +70,9 @@ const toServer = (j: JobPosting): ServerJob => ({
 const JOBS: JobPosting[] = [
   job({ id: "a1", company: "Stripe", title: "Senior Backend Engineer", skills: ["go", "kubernetes", "postgresql", "docker", "terraform", "aws"] }),
   job({ id: "b1", company: "Lyft", title: "Frontend Engineer", remote: false, skills: ["react", "css"], level: "mid" }),
-  job({ id: "c1", company: "Dropbox", title: "Site Reliability Engineer", skills: ["kubernetes", "terraform", "aws"], level: "senior" })
+  /* principal-level so the top pick isn't capped by the below-seniority
+     rule — Stripe/Lyft (below the 9-yr principal profile) now cap at 55 */
+  job({ id: "c1", company: "Dropbox", title: "Site Reliability Engineer", skills: ["kubernetes", "terraform", "aws"], level: "principal" })
 ];
 
 beforeEach(() => { Object.values(STORAGE_KEYS).forEach(k => storageRemove(k)); });
@@ -93,8 +95,10 @@ describe("parity: server composer vs client engine", () => {
     const client = clientDigest(PROFILE, clientRanks(PROFILE, JOBS));
     const server = serverDigest(SERVER_PROFILE, serverRanks(SERVER_PROFILE, JOBS.map(toServer)));
     expect(server).toBe(client);
-    expect(server).toContain("1. Stripe");
+    expect(server).toContain("1. Dropbox");
     expect(server).toContain("weekly company recommendations");
+    /* Stripe and Lyft sit below the principal profile — capped at 55 */
+    expect(server).toContain("2. Stripe — 55% match");
   });
 
   it("composeRecommendationsDigest returns null without a profile or jobs", () => {

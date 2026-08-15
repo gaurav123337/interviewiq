@@ -178,6 +178,9 @@ export function matchJob(profile: Profile | null, job: Job): Match {
   if (limited) score = Math.min(score, 40);
 
   score -= blockers.length * 6;
+  /* a role well below your seniority can never dominate the rankings —
+     mirror of the client engine (services/jobs.ts) */
+  if (lvlBlocker) score = Math.min(score, 55);
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   const verdict: Verdict = score >= 75 ? "strong" : score >= 58 ? "good" : score >= 38 ? "moderate" : score >= 18 ? "stretch" : "no";

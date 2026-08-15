@@ -439,6 +439,10 @@ export function matchJob(profile: CareerProfile | null, job: JobPosting): JobMat
 
   /* blockers knock the score down but never below zero */
   score -= blockers.length * 6;
+  /* a role well below your seniority can never dominate the rankings —
+     whatever its skill overlap it caps at "moderate", so a senior/principal
+     candidate's top picks stay senior-level roles */
+  if (lvlBlocker) score = Math.min(score, 55);
   score = Math.max(0, Math.min(100, Math.round(score)));
 
   const verdict: MatchVerdict =
