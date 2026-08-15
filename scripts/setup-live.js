@@ -29,7 +29,7 @@ const dim = (s) => `\x1b[90m${s}\x1b[0m`;
 
 const gen = () => globalThis.crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "");
 
-const SCHEMA_FILES = ["security.sql", "resources.sql", "trends.sql"];
+const SCHEMA_FILES = ["security.sql", "resources.sql", "trends.sql", "recovery-codes.sql"];
 
 /* function slug → { secretName, value }  (value resolved below) */
 const FUNCTION_SECRETS = [

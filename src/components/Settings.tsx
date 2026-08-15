@@ -10,7 +10,8 @@ import { cancelSubscription, fmtMinor, getMyPayments, getMySubscription, type My
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
 import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
-import { cloudMfaEnroll, cloudMfaFactors, cloudMfaUnenroll, cloudMfaVerify, cloudOAuthSignIn, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud, type EnrolledTotp, type TotpFactor } from "../services/cloud";
+import { cloudMfaEnroll, cloudMfaFactors, cloudMfaRecover, cloudMfaUnenroll, cloudMfaVerify, cloudOAuthSignIn, cloudSaveRecoveryCodes, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud, type EnrolledTotp, type TotpFactor } from "../services/cloud";
+import { generateRecoveryCodes, hashRecoveryCodeSet } from "../services/recoveryCodes";
 import type { OAuthProvider } from "../services/cloud";
 import { useApp } from "../store";
 import { toast } from "../toast";
@@ -43,6 +44,10 @@ export function Settings() {
   const [cloudBusy, setCloudBusy] = useState(false);
   /* MFA — challenge step during sign-in, plus the security card */
   const [mfaStep, setMfaStep] = useState<"idle" | "challenge">("idle");
+  const [mfaRecoveryMode, setMfaRecoveryMode] = useState(false);
+  const [mfaRecoveryCode, setMfaRecoveryCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaBusy, setMfaBusy] = useState(false);
   const [mfaFactors, setMfaFactors] = useState<TotpFactor[]>([]);
@@ -108,6 +113,46 @@ export function Settings() {
     } finally { setMfaBusy(false); }
   };
 
+  /* redeem a one-time recovery code (lost authenticator) → the edge function
+     removes the TOTP factor, so a fresh password sign-in completes cleanly */
+  const doMfaRecover = async () => {
+    if (!mfaRecoveryCode.trim()) { toast("Enter your recovery code"); return; }
+    if (!cloudEmail.trim()) { toast("Enter the account email"); return; }
+    setRecoveryBusy(true);
+    try {
+      const r = await cloudMfaRecover(cloudEmail.trim(), mfaRecoveryCode.trim());
+      if (!r.ok) { toast("✗ " + (r.error ?? "Recovery failed")); return; }
+      setMfaStep("idle"); setMfaRecoveryMode(false); setMfaRecoveryCode(""); setMfaCode("");
+      toast("🔓 Authenticator removed — signing you back in");
+      if (cloudEmail && cloudPass) {
+        const again = await cloudSignIn(cloudEmail, cloudPass);
+        if (again.ok) {
+          toast("☁️ Signed in — set up a new authenticator in Settings");
+          setCloudEmail(""); setCloudPass("");
+        } else {
+          toast("✗ Sign in again to continue");
+        }
+      } else {
+        toast("🔓 Sign in again to continue (OAuth)");
+      }
+    } finally { setRecoveryBusy(false); }
+  };
+
+  /* store the freshly generated one-time codes (hashed) server-side */
+  const saveRecovery = async () => {
+    if (!recoveryCodes) return;
+    setRecoveryBusy(true);
+    try {
+      const user = getCloudState().user;
+      if (!user?.email) { toast("✗ Not signed in"); return; }
+      const hashes = await hashRecoveryCodeSet(user.email, recoveryCodes);
+      const r = await cloudSaveRecoveryCodes(hashes);
+      if (!r.ok) { toast("✗ " + (r.error ?? "Couldn't save codes")); return; }
+      setRecoveryCodes(null);
+      toast("🔑 Recovery codes saved — store them somewhere safe");
+    } finally { setRecoveryBusy(false); }
+  };
+
   const refreshMfa = async () => {
     const r = await cloudMfaFactors();
     if (r.ok) setMfaFactors(r.factors);
@@ -129,6 +174,7 @@ export function Settings() {
       if (!r.ok) { toast("✗ " + (r.error ?? "Code didn't match")); return; }
       setMfaEnrollInfo(null); setMfaVerifyCode("");
       await refreshMfa();
+      setRecoveryCodes(generateRecoveryCodes(10));
       toast("🔐 2-factor authentication is now active");
     } finally { setMfaBusy(false); }
   };
@@ -459,19 +505,48 @@ export function Settings() {
                   {mfaStep === "challenge" && (
                     <div className="rounded-xl border border-acc1/30 bg-acc1/10 px-4 py-3">
                       <p className="mb-2 text-[12.5px] font-bold text-acc2">🔐 2-factor authentication</p>
-                      <p className="mb-2 text-[12px] text-mut">This account has an authenticator app. Enter the 6-digit code to finish signing in.</p>
-                      <div className="flex gap-2">
-                        <input
-                          type="text" inputMode="numeric" maxLength={6} value={mfaCode}
-                          onChange={e => setMfaCode(e.target.value.replace(/\D/g, ""))}
-                          placeholder="000000"
-                          className="w-32 rounded-xl border border-line/15 bg-deep/80 px-4 py-2 text-center text-[15px] font-bold tracking-[.3em] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
-                        />
-                        <button className={btnPrimary + btnSm} onClick={doMfaVerify} disabled={mfaBusy}>
-                          {mfaBusy ? <><span className="spinner" />…</> : "Verify"}
-                        </button>
-                        <button className={btnGhost + btnSm} onClick={() => { setMfaStep("idle"); setMfaCode(""); }}>Back</button>
-                      </div>
+                      {!mfaRecoveryMode ? (
+                        <>
+                          <p className="mb-2 text-[12px] text-mut">This account has an authenticator app. Enter the 6-digit code to finish signing in.</p>
+                          <div className="flex gap-2">
+                            <input
+                              type="text" inputMode="numeric" maxLength={6} value={mfaCode}
+                              onChange={e => setMfaCode(e.target.value.replace(/\D/g, ""))}
+                              placeholder="000000"
+                              className="w-32 rounded-xl border border-line/15 bg-deep/80 px-4 py-2 text-center text-[15px] font-bold tracking-[.3em] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                            />
+                            <button className={btnPrimary + btnSm} onClick={doMfaVerify} disabled={mfaBusy}>
+                              {mfaBusy ? <><span className="spinner" />…</> : "Verify"}
+                            </button>
+                            <button className={btnGhost + btnSm} onClick={() => { setMfaStep("idle"); setMfaCode(""); }}>Back</button>
+                          </div>
+                          <button className="mt-2 text-[11.5px] font-bold text-acctxt underline" onClick={() => setMfaRecoveryMode(true)}>
+                            Lost your authenticator? Use a recovery code
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <p className="mb-2 text-[12px] text-mut">
+                            Enter a one-time recovery code from when you set up 2-factor. This removes the authenticator so you can sign in and set up a new one.
+                          </p>
+                          <input
+                            type="email" value={cloudEmail} onChange={e => setCloudEmail(e.target.value)}
+                            placeholder="Account email"
+                            className="mb-2 w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                          />
+                          <input
+                            type="text" value={mfaRecoveryCode} onChange={e => setMfaRecoveryCode(e.target.value.toUpperCase())}
+                            placeholder="XXXXX-XXXXX-XXXXX"
+                            className="w-full rounded-xl border border-line/15 bg-deep/80 px-4 py-2.5 font-mono text-[13.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                          />
+                          <div className="mt-2 flex gap-2">
+                            <button className={btnPrimary + btnSm} onClick={doMfaRecover} disabled={recoveryBusy}>
+                              {recoveryBusy ? <><span className="spinner" />…</> : "Redeem"}
+                            </button>
+                            <button className={btnGhost + btnSm} onClick={() => { setMfaRecoveryMode(false); setMfaRecoveryCode(""); }}>Back</button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
@@ -533,6 +608,26 @@ export function Settings() {
                   {mfaBusy ? <><span className="spinner" />…</> : "➕ Set up authenticator app"}
                 </button>
               )
+            )}
+            {recoveryCodes && (
+              <div className="mt-4 rounded-xl border border-co/40 bg-co/10 px-4 py-4">
+                <p className="text-[13px] font-bold text-co">🔑 Recovery codes — save these now</p>
+                <p className="mt-1 text-[12px] text-mut">
+                  If you ever lose your authenticator, a one-time code lets you sign back in and reset it. Each code works once —
+                  store them somewhere safe (password manager). They're shown only once.
+                </p>
+                <div className="mt-3 grid grid-cols-1 gap-1.5 font-mono text-[12px] sm:grid-cols-2">
+                  {recoveryCodes.map((c, i) => (
+                    <div key={i} className="rounded-lg bg-deep/70 px-3 py-1.5 text-ink">{c}</div>
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className={btnPrimary + btnSm} onClick={saveRecovery} disabled={recoveryBusy}>
+                    {recoveryBusy ? <><span className="spinner" />…</> : "✅ I've saved them"}
+                  </button>
+                  <button className={btnGhost + btnSm} onClick={() => setRecoveryCodes(generateRecoveryCodes(10))}>Regenerate</button>
+                </div>
+              </div>
             )}
           </section>
         )}

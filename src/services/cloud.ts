@@ -244,6 +244,38 @@ export async function cloudMfaUnenroll(factorId: string): Promise<{ ok: boolean;
   }
 }
 
+/** Redeems a one-time recovery code via the mfa-recovery edge function. No
+    session is required (the caller is stuck at the MFA challenge); the edge
+    function rate-limits by IP/email and, on success, removes the TOTP factor
+    so a fresh sign-in completes without a challenge. */
+export async function cloudMfaRecover(email: string, code: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${CONFIG.supabase.url}/functions/v1/mfa-recovery`, {
+      method: "POST",
+      headers: await cloudFnHeaders(),
+      body: JSON.stringify({ email, code })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.ok) return { ok: false, error: body.error ?? `recovery failed (${res.status})` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/** Stores (replaces) the signed-in user's recovery-code hashes. */
+export async function cloudSaveRecoveryCodes(hashes: string[]): Promise<{ ok: boolean; error?: string }> {
+  const client = await resolveClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured" };
+  try {
+    const { error } = await client.rpc("save_recovery_codes", { p_hashes: hashes });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 export async function cloudSignUp(email: string, password: string): Promise<{ ok: boolean; needsConfirmation?: boolean; error?: string }> {
   const client = await resolveClient();
   if (!client) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };
