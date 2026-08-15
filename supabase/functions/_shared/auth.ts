@@ -45,11 +45,38 @@ export async function isAdminUser(email: string): Promise<boolean> {
   return !!data;
 }
 
-/** Caller must be a signed-in admin. Null → the function should 401. */
+function tokenFrom(req: Request): string {
+  return (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+}
+
+/** True when the JWT's amr claim includes a TOTP authentication method —
+    i.e. the session actually went through MFA (docs/app-security.md G8). */
+export function amrHasTotp(token: string): boolean {
+  try {
+    const payload = token.split(".")[1] ?? "";
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))) as { amr?: { method?: string }[] };
+    return Array.isArray(json.amr) && json.amr.some(a => a?.method === "totp");
+  } catch {
+    return false;
+  }
+}
+
+/** Mirrors public.admin_mfa_enforced() in supabase/security.sql. */
+async function adminMfaEnforced(): Promise<boolean> {
+  const client = serviceClient();
+  if (!client) return false;
+  const { data } = await client.from("app_config").select("value").eq("key", "admin_security").maybeSingle();
+  return !!data && (data.value as { mfa?: boolean } | undefined)?.mfa === true;
+}
+
+/** Caller must be a signed-in admin; when MFA enforcement is on, the session
+    must have authenticated with TOTP. Null → the function should 401. */
 export async function requireAdmin(req: Request): Promise<Caller | null> {
   const c = await callerFrom(req);
   if (!c) return null;
-  return (await isAdminUser(c.email)) ? c : null;
+  if (!(await isAdminUser(c.email))) return null;
+  if ((await adminMfaEnforced()) && !amrHasTotp(tokenFrom(req))) return null;
+  return c;
 }
 
 /** Caller must be signed in. When selfOnly, they may only act on their own

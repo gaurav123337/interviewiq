@@ -151,13 +151,87 @@ export async function initCloud(): Promise<void> {
 /* Auth API (used by the Settings UI)                                  */
 /* ------------------------------------------------------------------ */
 
-export async function cloudSignIn(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
+export async function cloudSignIn(email: string, password: string): Promise<{ ok: boolean; mfaRequired?: boolean; error?: string }> {
   const client = await resolveClient();
   if (!client) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };
   try {
-    const { error } = await client.auth.signInWithPassword({ email, password });
+    const { data, error } = await client.auth.signInWithPassword({ email, password });
     if (error) return { ok: false, error: error.message };
+    /* account has MFA enabled: no session yet — the caller must present a
+       TOTP code (cloudMfaVerify) to finish the sign-in */
+    if (data.user && !data.session) return { ok: true, mfaRequired: true };
     await startEngine(client);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* MFA (TOTP) — enroll/verify/unenroll + challenge sign-in            */
+/* ------------------------------------------------------------------ */
+
+export interface TotpFactor {
+  id: string;
+  status: string; /* "verified" | "unverified" */
+}
+
+export async function cloudMfaFactors(): Promise<{ ok: boolean; factors: TotpFactor[]; error?: string }> {
+  const client = await resolveClient();
+  if (!client) return { ok: false, factors: [], error: "Cloud sync isn't configured" };
+  try {
+    const { data, error } = await client.auth.mfa.listFactors();
+    if (error) return { ok: false, factors: [], error: error.message };
+    return { ok: true, factors: (data?.totp ?? []).map(f => ({ id: f.id, status: f.status })) };
+  } catch (e) {
+    return { ok: false, factors: [], error: (e as Error).message };
+  }
+}
+
+export interface EnrolledTotp {
+  id: string;
+  qrCode: string; /* data: URL for the QR image */
+  secret: string;
+}
+
+export async function cloudMfaEnroll(): Promise<{ ok: boolean; totp?: EnrolledTotp; error?: string }> {
+  const client = await resolveClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured" };
+  try {
+    const { data, error } = await client.auth.mfa.enroll({ factorType: "totp" });
+    if (error || !data) return { ok: false, error: error?.message ?? "enroll failed" };
+    return { ok: true, totp: { id: data.id, qrCode: data.totp.qr_code, secret: data.totp.secret } };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/** Verifies a TOTP code against the (verified) factor. Completes an
+    MFA-challenged sign-in OR activates a freshly enrolled factor. */
+export async function cloudMfaVerify(code: string): Promise<{ ok: boolean; error?: string }> {
+  const client = await resolveClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured" };
+  try {
+    const { data: factors } = await client.auth.mfa.listFactors();
+    const totp = factors?.totp ?? [];
+    const fid = totp.find(f => f.status === "verified")?.id ?? totp[0]?.id;
+    if (!fid) return { ok: false, error: "no TOTP factor found — set one up first" };
+    const { error } = await client.auth.mfa.challengeAndVerify({ factorId: fid, code: (code ?? "").trim() });
+    if (error) return { ok: false, error: error.message };
+    /* sign-in or re-auth completed — the session is live now */
+    await startEngine(client).catch(err => setState({ error: err.message }));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+export async function cloudMfaUnenroll(factorId: string): Promise<{ ok: boolean; error?: string }> {
+  const client = await resolveClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured" };
+  try {
+    const { error } = await client.auth.mfa.unenroll({ factorId });
+    if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -290,5 +364,38 @@ export class SupabaseRemoteStore implements RemoteStore {
     const uid = await this.userId();
     const { error } = await this.client.from("user_sync").delete().eq("user_id", uid).in("key", keys);
     if (error) throw new Error(error.message);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Data rights — download my data + delete my account (security.sql)   */
+/* ------------------------------------------------------------------ */
+
+/** Server-side copy of the signed-in user's rows (RPC is owner-scoped). */
+export async function cloudDownloadMyData(): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  const client = await getSupabaseClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured" };
+  try {
+    const { data, error } = await client.rpc("download_my_data");
+    if (error) return { ok: false, error: error.message };
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/** Permanently deletes the signed-in user's account (RPC is owner-scoped,
+    billing rows retained with identity removed). Caller signs out + clears
+    local data afterwards. */
+export async function cloudDeleteMyAccount(): Promise<{ ok: boolean; error?: string }> {
+  const client = await getSupabaseClient();
+  if (!client) return { ok: false, error: "Cloud sync isn't configured" };
+  try {
+    const { error } = await client.rpc("delete_my_account");
+    if (error) return { ok: false, error: error.message };
+    await cloudSignOut();
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
   }
 }

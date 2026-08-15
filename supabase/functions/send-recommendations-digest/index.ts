@@ -91,7 +91,7 @@ async function handleBroadcast(req: Request, dryRun: boolean, kind: string): Pro
   }
 
   const { data: users } = await admin.from("auth.users").select("id, email");
-  const emailOf = new Map((users ?? []).map((u: { id: string; email: string | null }) => [u.id, u.email]));
+  const emailOf = new Map<string, string>((users ?? []).map((u: { id: string; email: string | null }) => [u.id, u.email ?? ""] as [string, string]));
 
   const india = kind === "india";
   const subject = india ? "InterviewIQ — weekly 🇮🇳 India & startup recommendations" : "InterviewIQ — weekly company recommendations";

@@ -149,6 +149,23 @@ const isRemoteText = (s: string): boolean => /remote|hybrid/.test((s ?? "").toLo
 /* Enrichment config — read from app_config (admin-published), absent = off.
    Provider keys stay in function secrets; only the provider + country ship
    in config. */
+/** Normalized job row written to the jobs table (upsert on source+external_id). */
+interface JobRow {
+  source: string;
+  external_id: string;
+  title: string;
+  company: string;
+  location: string | null;
+  remote: boolean;
+  description: string;
+  url: string;
+  skills: string[];
+  level: string | null;
+  salary: SalaryBand | null;
+  company_size: string | null;
+  posted_at: string | null;
+}
+
 interface EnrichConfig {
   provider?: string;
   country?: string;
@@ -348,21 +365,24 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
             : src.provider === "remoteok"
               ? await fetchRemoteOk()
               : await fetchGreenhouse(src.board);
-      const rows = jobs.map((j: Record<string, unknown>) => ({
-        source: src.provider,
-        external_id: j.externalId,
-        title: j.title,
-        company: j.company,
-        location: j.location || null,
-        remote: !!j.remote,
-        description: String(j.description ?? "").slice(0, 12000),
-        url: String(j.url ?? ""),
-        skills: (j.skills as string[]) ?? [],
-        level: (j.level as string) ?? null,
-        salary: (j.salary as SalaryBand | null) ?? null,
-        company_size: (j.companySize as string | null) ?? null,
-        posted_at: j.postedAt ? new Date(String(j.postedAt)).toISOString() : null
-      }));
+      const rows = jobs.map((j): JobRow => {
+        const x = j as Record<string, unknown>;
+        return {
+          source: src.provider,
+          external_id: String(x.externalId ?? ""),
+          title: String(x.title ?? ""),
+          company: String(x.company ?? ""),
+          location: (x.location as string | null) ?? null,
+          remote: !!x.remote,
+          description: String(x.description ?? "").slice(0, 12000),
+          url: String(x.url ?? ""),
+          skills: (x.skills as string[]) ?? [],
+          level: (x.level as string | null) ?? null,
+          salary: (x.salary as SalaryBand | null) ?? null,
+          company_size: (x.companySize as string | null) ?? null,
+          posted_at: x.postedAt ? new Date(String(x.postedAt)).toISOString() : null
+        };
+      });
       /* compensation enrichment — only fills jobs the posting didn't price
          (honest: never overwrites an explicit range), capped per refresh */
       if (enrich.provider) {

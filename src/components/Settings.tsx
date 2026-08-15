@@ -10,7 +10,7 @@ import { cancelSubscription, fmtMinor, getMyPayments, getMySubscription, type My
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
 import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
-import { cloudOAuthSignIn, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud } from "../services/cloud";
+import { cloudMfaEnroll, cloudMfaFactors, cloudMfaUnenroll, cloudMfaVerify, cloudOAuthSignIn, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud, type EnrolledTotp, type TotpFactor } from "../services/cloud";
 import type { OAuthProvider } from "../services/cloud";
 import { useApp } from "../store";
 import { toast } from "../toast";
@@ -41,6 +41,13 @@ export function Settings() {
   const [cloudEmail, setCloudEmail] = useState("");
   const [cloudPass, setCloudPass] = useState("");
   const [cloudBusy, setCloudBusy] = useState(false);
+  /* MFA — challenge step during sign-in, plus the security card */
+  const [mfaStep, setMfaStep] = useState<"idle" | "challenge">("idle");
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [mfaFactors, setMfaFactors] = useState<TotpFactor[]>([]);
+  const [mfaEnrollInfo, setMfaEnrollInfo] = useState<EnrolledTotp | null>(null);
+  const [mfaVerifyCode, setMfaVerifyCode] = useState("");
 
   useEffect(() => subscribeCloud(setCloud), []);
   useEffect(() => {
@@ -66,6 +73,7 @@ export function Settings() {
         ? await cloudSignIn(cloudEmail, cloudPass)
         : await cloudSignUp(cloudEmail, cloudPass);
       if (!r.ok) { toast("✗ " + (r.error ?? "Something went wrong")); return; }
+      if ("mfaRequired" in r && r.mfaRequired) { setMfaStep("challenge"); toast("🔐 Enter your 6-digit authenticator code"); return; }
       if ("needsConfirmation" in r && r.needsConfirmation) { toast("📬 Check your email to confirm your account"); return; }
       toast("☁️ Cloud sync on — your progress is backed up");
       setCloudEmail(""); setCloudPass("");
@@ -88,6 +96,55 @@ export function Settings() {
     const un = subscribeCloud(() => { setCloud(getCloudState()); loadAll(); });
     return () => { live = false; un(); };
   }, []);
+
+  const doMfaVerify = async () => {
+    if (!mfaCode.trim()) { toast("Enter your 6-digit code"); return; }
+    setMfaBusy(true);
+    try {
+      const r = await cloudMfaVerify(mfaCode);
+      if (!r.ok) { toast("✗ " + (r.error ?? "Verification failed")); return; }
+      setMfaStep("idle"); setMfaCode("");
+      toast("☁️ Signed in — 2-factor verified");
+    } finally { setMfaBusy(false); }
+  };
+
+  const refreshMfa = async () => {
+    const r = await cloudMfaFactors();
+    if (r.ok) setMfaFactors(r.factors);
+  };
+  const enrollMfa = async () => {
+    setMfaBusy(true);
+    try {
+      const r = await cloudMfaEnroll();
+      if (!r.ok || !r.totp) { toast("✗ " + (r.error ?? "Enrollment failed")); return; }
+      setMfaEnrollInfo(r.totp);
+      await refreshMfa();
+    } finally { setMfaBusy(false); }
+  };
+  const activateMfa = async () => {
+    if (!mfaVerifyCode.trim()) { toast("Enter the 6-digit code from your authenticator"); return; }
+    setMfaBusy(true);
+    try {
+      const r = await cloudMfaVerify(mfaVerifyCode);
+      if (!r.ok) { toast("✗ " + (r.error ?? "Code didn't match")); return; }
+      setMfaEnrollInfo(null); setMfaVerifyCode("");
+      await refreshMfa();
+      toast("🔐 2-factor authentication is now active");
+    } finally { setMfaBusy(false); }
+  };
+  const removeMfa = async (factorId: string) => {
+    setMfaBusy(true);
+    try {
+      const r = await cloudMfaUnenroll(factorId);
+      if (!r.ok) { toast("✗ " + (r.error ?? "Couldn't remove the factor")); return; }
+      setMfaEnrollInfo(null);
+      await refreshMfa();
+      toast("🗑️ Authenticator removed");
+    } finally { setMfaBusy(false); }
+  };
+
+  /* refresh the factor list whenever the signed-in user changes */
+  useEffect(() => { if (getCloudState().user) void refreshMfa(); }, [cloud.user?.id]);
 
   const doCancelSub = async () => {
     if (!sub) return;
@@ -399,15 +456,86 @@ export function Settings() {
                   <button className={btnPrimary + btnSm} onClick={doCloudAuth} disabled={cloudBusy}>
                     {cloudBusy ? <><span className="spinner" />…</> : cloudMode === "in" ? "Sign in" : "Create account"}
                   </button>
+                  {mfaStep === "challenge" && (
+                    <div className="rounded-xl border border-acc1/30 bg-acc1/10 px-4 py-3">
+                      <p className="mb-2 text-[12.5px] font-bold text-acc2">🔐 2-factor authentication</p>
+                      <p className="mb-2 text-[12px] text-mut">This account has an authenticator app. Enter the 6-digit code to finish signing in.</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text" inputMode="numeric" maxLength={6} value={mfaCode}
+                          onChange={e => setMfaCode(e.target.value.replace(/\D/g, ""))}
+                          placeholder="000000"
+                          className="w-32 rounded-xl border border-line/15 bg-deep/80 px-4 py-2 text-center text-[15px] font-bold tracking-[.3em] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                        />
+                        <button className={btnPrimary + btnSm} onClick={doMfaVerify} disabled={mfaBusy}>
+                          {mfaBusy ? <><span className="spinner" />…</> : "Verify"}
+                        </button>
+                        <button className={btnGhost + btnSm} onClick={() => { setMfaStep("idle"); setMfaCode(""); }}>Back</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-xl border border-line/10 bg-wht/5 px-4 py-3 text-[12.5px] text-mut">
                   💡 To enable: create a free Supabase project → run the SQL in the README → paste your project URL + anon key into <code className="font-mono text-acc1">src/config.ts</code>.
                 </div>
               )}
-            </>
-          )}
+            </>            )}
         </section>
+
+        {/* Security (MFA) — visible when signed in */}
+        {cloud.user && (
+          <section className={`${cardCls} p-6`}>
+            <div className="mb-1 flex items-center gap-2">
+              <h2 className="text-[16px] font-extrabold">🔐 Security</h2>
+              {mfaFactors.some(f => f.status === "verified") && <Chip tone="ok">TOTP ON</Chip>}
+            </div>
+            <p className="mb-4 text-[13px] text-mut">
+              Two-factor authentication with your authenticator app (Google Authenticator, 1Password, Authy…). When enabled,
+              admin actions and sign-ins require a 6-digit code.
+            </p>
+            {mfaFactors.length > 0 && (
+              <div className="mb-3 space-y-2">
+                {mfaFactors.map(f => (
+                  <div key={f.id} className="flex items-center justify-between gap-3 rounded-xl border border-line/10 bg-wht/5 px-4 py-2.5">
+                    <span className="text-[13px]">Authenticator ({f.status === "verified" ? "active" : "awaiting verification"})</span>
+                    <button className={btnDanger + btnSm} onClick={() => void removeMfa(f.id)} disabled={mfaBusy}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {mfaEnrollInfo ? (
+              <div className="space-y-3 rounded-xl border border-acc1/30 bg-acc1/10 px-4 py-4">
+                <p className="text-[13px] font-bold text-acc2">Scan with your authenticator app</p>
+                <div className="flex flex-wrap items-start gap-4">
+                  <img src={mfaEnrollInfo.qrCode} alt="TOTP QR code" className="h-40 w-40 rounded-lg border border-line/20 bg-white" />
+                  <div className="min-w-[200px] flex-1 text-[12px] text-mut">
+                    <p className="mb-1">Or enter this secret manually:</p>
+                    <code className="break-all rounded bg-deep/80 px-2 py-1 font-mono text-[11.5px] text-ink">{mfaEnrollInfo.secret}</code>
+                    <div className="mt-3 flex gap-2">
+                      <input
+                        type="text" inputMode="numeric" maxLength={6} value={mfaVerifyCode}
+                        onChange={e => setMfaVerifyCode(e.target.value.replace(/\D/g, ""))}
+                        placeholder="000000"
+                        className="w-32 rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-center text-[15px] font-bold tracking-[.3em] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+                      />
+                      <button className={btnPrimary + btnSm} onClick={activateMfa} disabled={mfaBusy}>
+                        {mfaBusy ? <><span className="spinner" />…</> : "Activate"}
+                      </button>
+                      <button className={btnGhost + btnSm} onClick={() => { setMfaEnrollInfo(null); setMfaVerifyCode(""); }}>Cancel</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              !mfaFactors.some(f => f.status === "verified") && (
+                <button className={btnPrimary + btnSm} onClick={enrollMfa} disabled={mfaBusy}>
+                  {mfaBusy ? <><span className="spinner" />…</> : "➕ Set up authenticator app"}
+                </button>
+              )
+            )}
+          </section>
+        )}
 
         {/* AI section */}
         <section className={`${cardCls} p-6`}>

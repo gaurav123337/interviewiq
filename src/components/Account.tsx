@@ -8,7 +8,7 @@ import { streaks } from "../services/progress";
 import { getCodingTrack } from "../services/codingTrack";
 import { coachWeekStats, getCoachDiscussions } from "./CoachChat";
 import { getTier, getUsage, isPaywallEnabled } from "../services/entitlements";
-import { cloudSignOut, cloudSyncNow, getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
+import { cloudDeleteMyAccount, cloudDownloadMyData, cloudSignOut, cloudSyncNow, getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { clearServerEntitlement } from "../services/entitlement";
 import { STORAGE_KEYS } from "../services/storage";
 import { toast } from "../toast";
@@ -18,6 +18,8 @@ export function Account() {
   const { state, nav, resetAll } = useApp();
   const [cloud, setCloud] = useState(getCloudState());
   const [confirmWipe, setConfirmWipe] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
   const sessions = state.sessions;
   const st = useMemo(() => streaks(sessions), [sessions]);
   const stats = useMemo(getProfileStats, []);
@@ -39,11 +41,18 @@ export function Account() {
     toast("Signed out — your local data stays on this device");
   };
 
-  const exportData = () => {
+  const exportData = async () => {
     const data: Record<string, unknown> = {};
     for (const k of Object.values(STORAGE_KEYS)) {
       const raw = localStorage.getItem(k);
       if (raw !== null) data[k] = JSON.parse(raw);
+    }
+    /* when signed in, also pull the server-side copy (profile, resume list,
+       entitlements, payments…) so the export is the user's FULL data */
+    if (email) {
+      const r = await cloudDownloadMyData();
+      if (r.ok) data["cloud"] = r.data;
+      else toast("⚠️ Cloud copy unavailable — exporting local data only (" + (r.error ?? "") + ")");
     }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -59,6 +68,18 @@ export function Account() {
     resetAll();
     toast("🗑️ Local data cleared");
     nav("landing");
+  };
+
+  const deleteAccount = async () => {
+    setDelBusy(true);
+    try {
+      const r = await cloudDeleteMyAccount();
+      if (!r.ok) { toast("✗ " + (r.error ?? "Couldn't delete the account")); return; }
+      resetAll();
+      setConfirmDelete(false);
+      toast("🗑️ Account deleted — your cloud data is gone");
+      nav("landing");
+    } finally { setDelBusy(false); }
   };
 
   const email = cloud.user?.email ?? null;
@@ -190,6 +211,26 @@ export function Account() {
           </p>
         )}
       </section>
+
+      {/* danger zone — account deletion (signed-in only) */}
+      {email && (
+        <section className={`${cardCls} mt-4 border-bad/30 p-6`}>
+          <h2 className="mb-1 text-[16px] font-extrabold text-bad">⚠️ Danger zone</h2>
+          <p className="mb-4 text-[12.5px] text-mut">
+            Permanently delete your cloud account and all synced data. Payment history is kept (anonymised) for accounting; your local device copy survives unless you also clear it.
+          </p>
+          {confirmDelete ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button className={btnDanger + btnSm} onClick={deleteAccount} disabled={delBusy}>
+                {delBusy ? <><span className="spinner" />Deleting…</> : "Yes — delete my account permanently"}
+              </button>
+              <button className={btnGhost + btnSm} onClick={() => setConfirmDelete(false)}>Cancel</button>
+            </div>
+          ) : (
+            <button className={btnDanger + btnSm} onClick={() => setConfirmDelete(true)}>🗑️ Delete account…</button>
+          )}
+        </section>
+      )}
 
       <div className="pb-4 pt-6 text-center text-[12px] text-fnt">
         InterviewIQ — practice offline, sync when you want, own your data.

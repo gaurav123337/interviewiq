@@ -75,7 +75,7 @@ async function handleBroadcast(req: Request, dryRun: boolean): Promise<Response>
   }
 
   const { data: users } = await adminClient.from("auth.users").select("id, email");
-  const emailOf = new Map((users ?? []).map((u: { id: string; email: string | null }) => [u.id, u.email]));
+  const emailOf = new Map<string, string>((users ?? []).map((u: { id: string; email: string | null }) => [u.id, u.email ?? ""] as [string, string]));
 
   const recipients: { email: string; digest: string }[] = [];
   for (const row of rows as { user_id: string; value: unknown }[]) {
