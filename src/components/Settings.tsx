@@ -125,7 +125,7 @@ export function Settings() {
     if (!mfaVerifyCode.trim()) { toast("Enter the 6-digit code from your authenticator"); return; }
     setMfaBusy(true);
     try {
-      const r = await cloudMfaVerify(mfaVerifyCode);
+      const r = await cloudMfaVerify(mfaVerifyCode, mfaEnrollInfo?.id);
       if (!r.ok) { toast("✗ " + (r.error ?? "Code didn't match")); return; }
       setMfaEnrollInfo(null); setMfaVerifyCode("");
       await refreshMfa();

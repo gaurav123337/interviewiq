@@ -206,16 +206,22 @@ export async function cloudMfaEnroll(): Promise<{ ok: boolean; totp?: EnrolledTo
   }
 }
 
-/** Verifies a TOTP code against the (verified) factor. Completes an
-    MFA-challenged sign-in OR activates a freshly enrolled factor. */
-export async function cloudMfaVerify(code: string): Promise<{ ok: boolean; error?: string }> {
+/** Verifies a TOTP code against a factor. When `factorId` is given (a freshly
+    enrolled factor), it is used directly — no factor re-list, which is more
+    robust right after enrollment. Otherwise (MFA-challenged sign-in) the
+    verified/first TOTP factor is looked up. */
+export async function cloudMfaVerify(code: string, factorId?: string): Promise<{ ok: boolean; error?: string }> {
   const client = await resolveClient();
   if (!client) return { ok: false, error: "Cloud sync isn't configured" };
   try {
-    const { data: factors } = await client.auth.mfa.listFactors();
-    const totp = factors?.totp ?? [];
-    const fid = totp.find(f => f.status === "verified")?.id ?? totp[0]?.id;
-    if (!fid) return { ok: false, error: "no TOTP factor found — set one up first" };
+    let fid = factorId?.trim();
+    if (!fid) {
+      const { data: factors, error: listErr } = await client.auth.mfa.listFactors();
+      if (listErr) return { ok: false, error: listErr.message };
+      const totp = factors?.totp ?? [];
+      fid = totp.find(f => f.status === "verified")?.id ?? totp[0]?.id;
+      if (!fid) return { ok: false, error: "no TOTP factor found — set one up first" };
+    }
     const { error } = await client.auth.mfa.challengeAndVerify({ factorId: fid, code: (code ?? "").trim() });
     if (error) return { ok: false, error: error.message };
     /* sign-in or re-auth completed — the session is live now */
