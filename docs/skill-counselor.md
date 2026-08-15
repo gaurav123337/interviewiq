@@ -1,15 +1,16 @@
 # 🧭 Skill Counselor — implementation plan (v2)
 
-*Status: proposed (not started). Companion docs: `enrichment-plan.md`, `phase2-platform-integrations.md`. Replaces v1 — v2 adds the multi-path career model, the freshness/auto-update engine, market-trend evaluation, and course-quality benchmarking.*
+*Status: proposed (not started). Companion docs: `enrichment-plan.md`, `phase2-platform-integrations.md`, `resource-safety-guard.md` (full safety-guard spec). Replaces v1 — v2 adds the multi-path career model, the freshness/auto-update engine, market-trend evaluation, course-quality benchmarking, and the community-resource submission guard.*
 
 ## 1. What it is
 
-A **dedicated 🧭 Skill Counselor menu** that answers four questions:
+A **dedicated 🧭 Skill Counselor menu** that answers five questions:
 
 1. **"I want to become X"** — a full, ordered skill path with learning resources, grouped by level.
 2. **"I want to reach a higher role"** — the exact *delta* between my level and the target, handed to the Planner.
 3. **"Here's my favorite link/blog"** — saved alongside the app's suggestions, clearly separated (⭐ Saved by you vs 🔍 App suggested).
 4. **NEW — "Is my knowledge current?"** — a freshness check that flags skills on your profile that the market has moved past (e.g., your React knowledge is 2022-era, the market now demands Server Components).
+5. **NEW — "I found a great resource"** — submit it: keep it **personal**, or request it app-wide; app-wide requests pass a layered safety guard and **require admin approval** (see §6).
 
 Unlike v1, this is **not one linear path per field**. It is a **career graph**: fields → tracks → branches, with cross-field transfer edges and an IC-vs-management fork. And it is **self-refreshing**: a trend engine watches market signals, proposes catalog updates, and a quality benchmark keeps resources honest against the market.
 
@@ -159,7 +160,27 @@ The freshness check doubles as the "auto-evaluate me against the market" feature
 
 ---
 
-## 6. Data model (v1 + the new surfaces)
+## 6. Community submissions + the safety guard (NEW)
+
+A user who finds a great resource can **educate the app** in two ways — and a malicious one can never reach other users. Full spec: **`docs/resource-safety-guard.md`**.
+
+- **Personal save** — instant, no admin: stored in the user's own `iq.skillCounselor.saved`, still passing instant link-hygiene checks (L0–L1 below). It's the user's own data; the residual risk is only to them.
+- **Community request** — "Suggest to everyone": enters the **guard pipeline**, and **admin approval is mandatory** before it becomes a **🤝 Community suggested** resource (a third badge, distinct from 🔍 App suggested and ⭐ Saved by you). Nothing app-wide exists without the admin's recorded decision (audit log).
+
+The guard is **layered and fail-closed** — any check that errors, times out, or can't complete leaves the submission "pending review", never "approved":
+
+| Layer | What it stops | How |
+|---|---|---|
+| **L0 intake** | malicious *text* (the "single line" risk): XSS, prompt-injection bait, hidden unicode | plain-text-only fields (never rendered as HTML), length caps, control/zero-width char strip, canonical URL parse |
+| **L1 link hygiene** | SSRF (internal/private hosts), IP-literal hosts, non-https, homoglyph/confusable domains, dangerous schemes | server-authoritative URL rules + versioned blocklist |
+| **L2 reputation** | phishing/malware/scam URLs, shortener trickery | Google Safe Browsing Lookup (free) · URLhaus + PhishTank feeds (free) · RDAP domain age · resolve the **full redirect chain** then re-check the final URL |
+| **L3 content scan** | drive-by malicious pages, prompt-injection content (the recent poisoned-content incidents), supply-chain red flags | server-side fetch (user's IP never touches the target), static heuristics (hidden text, obfuscation, credential-harvesting forms, eval/binary payloads in repos), optional AI classifier — **never execute anything** |
+| **L4 human gate** | everything automation can't judge (e.g., social-engineering titles) | admin review card: link + plain-text fields + every layer's verdict + thumbnail; one-click approve/reject/quarantine |
+| **L5 runtime + re-check** | post-approval decay (a clean site going bad later), `window.opener` tricks, the app's AI reading poisoned content | `rel="noopener noreferrer"` everywhere, escaped-plain-text rendering, **AI treats resource content as untrusted data, never as instructions**, periodic re-validation |
+
+**Keeping the guard current**: the ruleset (`security-rules.json`) ships in the same versioned manifest as the catalog; the weekly cron pulls updated blocklists (URLhaus/PhishTank; Google maintains Safe Browsing continuously) and **re-validates approved resources**; every new attack pattern becomes a **regression case in the CI must-block corpus** so a rule change can't silently regress; a **🚩 Report suspicious** button auto-quarantines after N flags and a **kill-switch** instantly revokes any resource app-wide (audit-logged). No execution, no raw HTML, no AI authority over fetched content — that's how the admin sleeps at night.
+
+## 7. Data model (v1 + the new surfaces)
 
 ```ts
 interface SkillNode {           // v1 fields, plus:
@@ -192,7 +213,7 @@ Tracks (2) live in the manifest too: `tracks: { id, fieldId, name, band, nodeIds
 
 Storage keys: existing `iq.skillCounselor` (progress + saved links) + new `iq.catalogVersion` (last-seen manifest, for diff notifications).
 
-## 7. Engine — `src/services/skillCounselor.ts` (+ `_shared/trends.ts`)
+## 8. Engine — `src/services/skillCounselor.ts` (+ `_shared/trends.ts`)
 
 Client (pure, offline, tested):
 
@@ -214,7 +235,7 @@ classifyStage(score, prevScore): Stage
 emitProposals(catalog, signals, releases): UpdateProposal[]   // 4.4 step 2
 ```
 
-## 8. UI
+## 9. UI
 
 - **Nav**: 🧭 Skill Counselor (dedicated view).
 - **Top bar**: field → **track** picker (the v2 addition — "Frontend → React specialist" or "Backend → Data engineer"), level chips (Junior → CTO), and a "Check my freshness" button.
@@ -222,10 +243,10 @@ emitProposals(catalog, signals, releases): UpdateProposal[]   // 4.4 step 2
 - **Skill sheet**: 🔍 App suggested (grouped by kind, with quality + recency badges) · ⭐ Saved by you below · progress toggle · "Why this resource" note.
 - **Level-up card**: target > current → delta strip + "Start roadmap →" into the Planner; the IC-vs-management fork shown at senior.
 - **Freshness banner**: stale profile skills with "Mark as learning →" (section 5.3).
-- **Admin**: "🧭 Catalog updates" (proposal approve/reject with signal evidence) + "🧭 Benchmark" (quarterly competitor report) + the trend-weight sliders.
+- **Admin**: "🧭 Catalog updates" (proposal approve/reject with signal evidence) + "🧭 Benchmark" (quarterly competitor report) + "🛡️ Resource reviews" (the L4 queue: link + plain-text fields + scan verdicts + thumbnail, one-click approve/reject) + the trend-weight sliders.
 - **What's new toast**: manifest diff after refresh ("Your skill paths updated: 3 new, 2 changed").
 
-## 9. Reuse checklist (v1 + additions)
+## 10. Reuse checklist (v1 + additions)
 
 | Need | Existing piece |
 |---|---|
@@ -238,8 +259,10 @@ emitProposals(catalog, signals, releases): UpdateProposal[]   // 4.4 step 2
 | Cron + edge functions | existing deploy workflow (add `trends-refresh` to the auto-deploy list) |
 | UI primitives | `src/components/ui.tsx` |
 | Pro gating | `src/services/entitlements.ts` |
+| Versioned rules + feeds | `security-rules.json` manifest + cron-fed blocklists (URLhaus/PhishTank, Safe Browsing via key) |
+| Submission pipeline | new `resource-review` edge function (L0–L3) + Admin review queue (L4) |
 
-## 10. Phases
+## 11. Phases
 
 - **P0 — Career graph + view**: manifest v1 (frontend **tracks**: UI, React specialist, performance, accessibility, design-engineer + backend tracks), `SkillCounselor.tsx`, track picker, bands + why, "What's new" diff plumbing. Tests: catalog shape (unique ids, no dangling prereqs/related), topological ordering.
 - **P1 — Engine + gap + progress**: `gapAnalysis`, `freshnessCheck` (v1, static), progress persistence, IC-vs-management fork at senior. Tests: delta correctness, freshness detection.
@@ -247,15 +270,19 @@ emitProposals(catalog, signals, releases): UpdateProposal[]   // 4.4 step 2
 - **P3 — Level-up + Planner hand-off**: delta card, "Start roadmap →", staff+ non-technical nodes. Tests: hand-off shape.
 - **P4 — Freshness engine (auto-update)**: `trends-refresh` edge function (job-corpus deltas first, then npm + GitHub), `skill_signals`, `update_proposals`, Admin approval UI, manifest publish + client diff. Parity test: `_shared/trends.ts` used by both. **This is the phase that answers "how it auto-updates".**
 - **P5 — Benchmark**: quarterly competitor benchmark card (5.2), community quality signals going live, `benchmarkPassedAt`.
-- **P6 (optional)**: Google Trends + 🇮🇳 India signals (Indian ATS boards already in the corpus; add India-specific resource sets), AI-generated personalized plans (API key, Pro).
+- **P6 — Submissions MVP**: personal save with L0–L1 checks; community request → Admin review UI → **🤝 Community suggested** badge; audit log.
+- **P7 — Deep guard**: L2 reputation (Safe Browsing, URLhaus/PhishTank, redirect-chain resolution, RDAP domain age) + L3 content scan (incl. prompt-injection heuristics) + quarantine + fail-closed semantics.
+- **P8 — Living guard**: versioned `security-rules.json` + feed refresh + CI regression corpus + re-validation cron + 🚩 flag/kill-switch + optional AI classifier.
+- **P9 (optional)**: Google Trends + 🇮🇳 India signals (Indian ATS boards already in the corpus; add India-specific resource sets), AI-generated personalized plans (API key, Pro).
 
-## 11. Testing + deploy
+## 12. Testing + deploy
 
 - Vitest: trend math (normalize/blend/stage incl. the declining rule), proposal emission (React-19-style fixture), manifest diff, freshness check, quality scoring, path ordering — plus a **client/server parity test** for `_shared/trends.ts` (same pattern as the digest parity tests).
-- Deno tests for `trends-refresh` fixtures; the deploy workflow gains `trends-refresh` in the auto-deploy function list (the bug we caught with `send-recommendations-digest`).
+- Deno tests for `trends-refresh` fixtures; the deploy workflow gains `trends-refresh` and `resource-review` in the auto-deploy function list (the bug we caught with `send-recommendations-digest`).
+- **Guard regression suite**: `security-rules.test.ts` — a must-block corpus (real phishing URLs, prompt-injection lines, homoglyph domains, SSRF attempts) that runs in CI on *every* ruleset change; fail-closed is tested (scanner outage → quarantine, never approve).
 - Existing gates: `npm run typecheck`, `npm test`, `npm run build`; live preview verification per phase.
 
-## 12. Open questions
+## 13. Open questions
 
 1. **Multi-track scope** — frontend + backend get 4–5 tracks each (deep, v2's point) vs one track per field (thinner)? Recommend: deep on the 2 fields, mirroring the P0 catalog decision.
 2. **Consume roadmap.sh's open-source data?** It's MIT-licensed and gives structure cross-check (their React roadmap → our React track). Recommend: yes for *validation*, keep our resources hand-curated. Requires attribution.
@@ -264,3 +291,7 @@ emitProposals(catalog, signals, releases): UpdateProposal[]   // 4.4 step 2
 5. **India** — the corpus already includes Indian ATS boards + user imports, so India demand deltas work out of the box; want a separate 🇮🇳 trend view + India resource sets too?
 6. **Benchmark cadence** — quarterly manual benchmark acceptable, or push for a semi-automated monthly (Class Central pages are fetchable, but review weighting is editorial)?
 7. **Pro gating** — keep v1's proposal (free core + Pro for staff/CTO deltas & unlimited saved links) — trend badges/freshness stay free?
+8. **Reputation services** — enable Google Safe Browsing Lookup (free, needs a Google API key) + URLhaus/PhishTank (free, no key) as the baseline? Cloud Web Risk (100k checks/mo free) only if volume grows.
+9. **AI classifier** for prompt-injection content (L3) — needs an API key; recommend heuristic-only first, AI as an optional upgrade (fail-closed either way).
+10. **Re-validation cadence** for approved resources — monthly (recommended; a site can go bad fast) or quarterly (aligned with the benchmark)?
+11. **Trusted-user program** — keep admin approval *always* mandatory per your requirement, and skip a trusted-user shortcut? Recommend yes — always-mandatory is the safer default.
