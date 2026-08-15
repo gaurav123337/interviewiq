@@ -13,6 +13,7 @@ import { applyManifestDiff, markManifestSeen, qualityBand, resourceFreshness, re
 import { getCareerProfile } from "../services/jobs";
 import { myResources, submitResource, type ResourceRow } from "../services/resources";
 import { build90DayPlan, buildPlan, gapAnalysis, levelUpDelta, suggestTrack } from "../services/skillCounselor";
+import { openSkillsReport } from "../services/skillsReport";
 import {
   clearStudyPlan, getPlanProgress, getSavedStudyPlan, planProgressKey, saveStudyPlan, setWeekDone
 } from "../services/studyPlan";
@@ -106,6 +107,40 @@ export function Counselor() {
     return <div className="anim-view mx-auto max-w-[860px] pt-16 text-center text-mut">Loading the catalog…</div>;
   }
 
+  /* printable skills-to-job report — target, gaps, delta, 90-day plan, resources */
+  const exportReport = () => {
+    const user = getCloudState().user;
+    openSkillsReport({
+      candidate: user?.email ?? undefined,
+      email: user?.email ?? undefined,
+      fieldLabel: field.name,
+      trackLabel: track.name,
+      targetLabel: BAND_LABEL[target],
+      currentBandLabel: BAND_LABEL[delta.currentBand],
+      years: profile?.years ?? null,
+      skills: profile?.skills ?? [],
+      gaps: gap.missing.map(s => ({
+        name: s.name,
+        bandLabel: BAND_LABEL[s.band],
+        difficulty: s.difficulty,
+        why: s.why,
+        prerequisites: s.prerequisites,
+        trend: signals[s.id] ? STAGE_META[signals[s.id].stage]?.label : undefined
+      })),
+      deltaLines: delta.changes,
+      weeks: (study?.milestones ?? []).map(m => ({
+        week: m.week,
+        title: m.title,
+        hours: m.hours,
+        skillNames: m.skillIds.map(id => SKILLS[id]?.name ?? id),
+        done: !!progress[m.week]
+      })),
+      resources: gap.missing.flatMap(s =>
+        s.resources.map(r => ({ skill: s.name, title: r.title, url: r.url, kind: r.kind, free: !!r.free }))
+      )
+    });
+  };
+
   const bands = BANDS.filter(b => BAND_ORDER[b] <= BAND_ORDER[track.maxBand]);
 
   return (
@@ -189,7 +224,16 @@ export function Counselor() {
 
       {/* level-up delta */}
       <section className={`${cardCls} mt-6 p-6`}>
-        <h2 className="text-[16px] font-extrabold">🚀 Level up: {BAND_LABEL[delta.currentBand]} → {BAND_LABEL[delta.targetBand]}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-[16px] font-extrabold">🚀 Level up: {BAND_LABEL[delta.currentBand]} → {BAND_LABEL[delta.targetBand]}</h2>
+          <button
+            className={btnGhost + btnSm}
+            onClick={exportReport}
+            title="Printable skills-to-job report — gaps, plan and resources (Save as PDF)"
+          >
+            📄 Export PDF
+          </button>
+        </div>
         <p className="mt-1 text-[13px] text-mut">
           {profile?.years !== undefined
             ? `Based on your profile (${profile.years} yrs), you're at ${BAND_LABEL[delta.currentBand]}. Here's ONLY what changes on the way to ${BAND_LABEL[delta.targetBand]}.`

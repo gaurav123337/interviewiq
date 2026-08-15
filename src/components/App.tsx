@@ -157,6 +157,15 @@ export function App() {
   ];
   const moreActive = moreTabs.some(t => t.id === view);
 
+  /* mobile bottom nav — India-first journey: practice → match → learn → more.
+     The three most-used destinations (Practice, the Jobs match feed, and the
+     Skill Counselor) live on the bar; everything else is one tap away. */
+  const mobileTabs = [
+    { id: "onboard" as View, label: "Practice", icon: "🎯" },
+    ...(featureOn("jobs") ? [{ id: "jobs" as View, label: "Jobs", icon: "💼" }] : []),
+    { id: "counselor" as View, label: "Counselor", icon: "🧑‍🏫" }
+  ];
+
   useEffect(() => subscribeAdmin(s => { setAdmin(s); setBanner(nextUnseenAnnouncement()); setAdminUnlocked(s.isAdmin); }), []);
 
   return (
@@ -292,7 +301,7 @@ export function App() {
           </div>
         </div>
         <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {primaryTabs.map(t => (
+          {mobileTabs.map(t => (
             <button
               key={t.id}
               onClick={() => go(t.id)}

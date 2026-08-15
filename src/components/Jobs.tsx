@@ -87,6 +87,7 @@ export function Jobs() {
     return m;
   });
   const [due, setDue] = useState<ApplyTrack[]>(() => dueFollowUps());
+  const dueIds = useMemo(() => new Set(due.map(d => d.jobId)), [due]);
   const [reportOpen, setReportOpen] = useState(false);
   const [draftJob, setDraftJob] = useState<ApplyTrack | null>(null);
   const [roundJob, setRoundJob] = useState<ApplyTrack | null>(null);
@@ -1344,6 +1345,15 @@ export function Jobs() {
                   })()}
                   {!locked && (
                     <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/10 pt-2.5">
+                      {dueIds.has(j.id) && (
+                        <button
+                          className="rounded-full border border-warn/50 bg-warn/15 px-2.5 py-1 text-[11.5px] font-extrabold text-warn transition-all hover:bg-warn/25"
+                          onClick={() => setDraftJob(tracks[j.id]!)}
+                          title="Follow-up is due — draft a message or update the status"
+                        >
+                          🔔 Follow up
+                        </button>
+                      )}
                       <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Track:</span>
                       <select
                         className="cursor-pointer rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-fnt outline-none transition-all hover:text-ink"
