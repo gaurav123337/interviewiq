@@ -240,7 +240,7 @@ function extractTitles(lines: string[]): string[] {
   const titles: string[] = [];
   for (const line of lines) {
     if (!ROLE_RE.test(line)) continue;
-    const cleaned = stripNamePrefix(cleanRoleLine(line));
+    const cleaned = normalizeExecHeadline(stripNamePrefix(cleanRoleLine(line)));
     if (cleaned.length < 4 || cleaned.length > 60 || titles.includes(cleaned)) continue;
     titles.push(cleaned);
     if (titles.length >= 5) break;

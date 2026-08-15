@@ -11,7 +11,7 @@ import { ResumeKitModal } from "./ResumeKitModal";
 import {
   addImportedJob, dedupeJobs, defaultCareerProfile, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
-  recommendationsDigest, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
+  recommendationsDigest, recommendationReason, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type CompanyRank, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
 import { importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls, trustOf } from "../services/importJob";
@@ -732,6 +732,9 @@ export function Jobs() {
                   {(() => { const s = salaryLabel(r.best, displayCurrency); return s ? <span className="text-[11.5px] font-bold text-ok">💰 {s}</span> : null; })()}
                   {!proGated && r.missing.length > 0 && (
                     <span className="text-[11.5px] text-mut">gap: <span className="font-bold text-bad">{r.missing.slice(0, 2).join(", ")}</span></span>
+                  )}
+                  {!proGated && (
+                    <span className="w-full text-[11.5px] leading-snug text-mut">💡 {recommendationReason(profile, r)}</span>
                   )}
                   <div className="ml-auto flex gap-1.5">
                     <button

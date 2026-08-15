@@ -87,6 +87,8 @@ describe("resumeToProfile", () => {
        clear parts instead of one odd "CTO Frontend Engineer" */
     expect(p.headline).toBe("CTO / Frontend Engineer");
     expect(p.targetTitles).toContain("Frontend Architect");
+    expect(p.targetTitles).toContain("CTO / Frontend Engineer");
+    expect(p.targetTitles).not.toContain("CTO Frontend Engineer");
     expect(p.targetTitles).not.toContain("Gaurav Gupta  Frontend Architect");
     expect(p.targetTitles.every(t => !t.includes("Gaurav Gupta"))).toBe(true);
   });

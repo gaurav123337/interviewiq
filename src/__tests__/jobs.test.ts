@@ -114,6 +114,15 @@ describe("matchJob verdicts", () => {
     expect(m.blockers.some(b => /Below your seniority/i.test(b))).toBe(true);
   });
 
+  it("recommendationReason explains seniority fit, domain, and covered skills", async () => {
+    const { rankCompanies, recommendationReason } = await import("../services/jobs");
+    const ranks = rankCompanies(PROFILE, [job({ title: "Lead Backend Engineer", level: "lead", skills: ["typescript", "node", "css", "graphql", "react"] })]);
+    const why = recommendationReason(PROFILE, ranks[0]);
+    expect(why).toContain("Targets above your level (lead)");
+    expect(why).toContain("Engineering role");
+    expect(why).toContain("covers typescript, node, css, graphql");
+  });
+
   it("domain gate: a Sales role can never be a Good fit for an engineer", async () => {
     const { matchJob } = await import("../services/jobs");
     const m = matchJob(PROFILE, job({ title: "Director, Sales Compensation", company: "Dropbox", level: "lead", skills: [] }));

@@ -518,6 +518,25 @@ export interface RankFilters {
 
 export const EMPTY_RANK_FILTERS: RankFilters = { remoteOnly: false, minScore: 0, minSalary: 0, shortlistOnly: false };
 
+/** One-line "why this pick" for the recommendations list — seniority fit,
+    domain, and the skills the profile already covers. Pure + testable. */
+export function recommendationReason(profile: CareerProfile | null, rank: CompanyRank): string {
+  const parts: string[] = [];
+  if (profile) {
+    const mine = profileLevel(profile.years);
+    const lvl = rank.best.level;
+    if (lvl && lvl in LEVEL_ORDER) {
+      const diff = LEVEL_ORDER[lvl] - LEVEL_ORDER[mine];
+      parts.push(diff > 0 ? `Targets above your level (${lvl})` : diff === 0 ? `Matches your level (${lvl})` : diff === -1 ? `One rung below your level (${lvl})` : `Below your level (${lvl})`);
+    }
+    const profileDomain = inferDomain([profile.headline, ...profile.targetTitles].join(" "));
+    const jobDomain = inferDomain(rank.best.title);
+    if (profileDomain !== "other" && jobDomain !== "other") parts.push(domainLabel(jobDomain) + " role");
+  }
+  if (rank.matched.length) parts.push(`covers ${rank.matched.slice(0, 4).join(", ")}`);
+  return parts.join(" · ") || "Upload a resume to rank companies";
+}
+
 /** What learning a company's most-missing skill is worth: the boosted score
     for its best role, or null when there's nothing learnable to gain. */
 export function skillImpact(profile: CareerProfile | null, rank: CompanyRank): { skill: string; from: number; to: number } | null {
