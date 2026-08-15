@@ -45,6 +45,21 @@ Deno.serve(async (req) => {
 
     const service = serviceClient();
 
+    /* DB-backed brute-force guard: instance-independent (in-memory limiters
+       reset between cold starts, so the table is authoritative). 5 attempts
+       per email per 15 minutes. */
+    const since = new Date(Date.now() - 15 * 60_000).toISOString();
+    const { count, error: countErr } = await service.from("recovery_attempts")
+      .select("id", { count: "exact", head: true })
+      .eq("email", email)
+      .gte("attempted_at", since);
+    if (countErr) {
+      return new Response(JSON.stringify({ ok: false, error: countErr.message }), { status: 500, headers });
+    }
+    if ((count ?? 0) >= 5) {
+      return new Response(JSON.stringify({ ok: false, error: "too many attempts — try again in 15 minutes" }), { status: 429, headers });
+    }
+
     /* record the attempt regardless of outcome (rate-limit + forensics) */
     await service.from("recovery_attempts").insert({ email }).then(() => {});
 
