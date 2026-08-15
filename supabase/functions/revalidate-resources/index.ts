@@ -8,12 +8,12 @@
    REVALIDATE_RESOURCES_SECRET header, or by an admin from the dashboard via
    their JWT (requireAdmin). */
 
-import { createClient } from "npm:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { guardResource } from "../_shared/resourceGuard.ts";
 import { makeReputationChecker } from "../_shared/reputation.ts";
+import { serviceClient } from "../_shared/serviceClient.ts";
 
 /* one sweep per minute is plenty for a weekly job */
 const limitSweep = makeLimiter(1, 60_000);
@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: false, error: "sweep already running" }), { status: 429, headers });
     }
 
-    const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+    const service = serviceClient();
     const { data: rows, error } = await service.from("resources")
       .select("id, url")
       .eq("mode", "community")

@@ -14,10 +14,10 @@
    rate limiter is the only thing standing between an attacker and a
    guessing spree — plus 75 bits of entropy per code. */
 
-import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { hashRecoveryCode } from "../_shared/recoveryCodes.ts";
+import { serviceClient } from "../_shared/serviceClient.ts";
 
 /* per-IP + per-email limits: 5 redemption attempts per 15 minutes */
 const limitAttempt = makeLimiter(5, 15 * 60_000);
@@ -43,7 +43,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: false, error: "too many attempts — try again in 15 minutes" }), { status: 429, headers });
     }
 
-    const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+    const service = serviceClient();
     /* resolve email → user id via the admin API (avoids PostgREST schema
        resolution across auth.* tables) */
     const { data: page, error: userErr } = await service.auth.admin.listUsers({ page: 1, perPage: 1000 });

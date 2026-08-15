@@ -7,11 +7,11 @@
    SECURITY_DIGEST_SECRET header, or by an admin via their JWT (requireAdmin).
    Email goes through the shared sendEmail helper (RESEND_API_KEY secret). */
 
-import { createClient } from "npm:@supabase/supabase-js@2";
 import { OWNER_EMAIL, requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { sendEmail } from "../_shared/email.ts";
+import { serviceClient } from "../_shared/serviceClient.ts";
 
 const limitSend = makeLimiter(1, 60_000);
 const DAY = 86_400_000;
@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     }
 
     const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
-    const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+    const service = serviceClient();
 
     /* ---- gather the week's state ---- */
     const [signals, proposals, quarantined, admins] = await Promise.all([

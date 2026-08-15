@@ -14,13 +14,13 @@
    Deploy: supabase functions deploy submit-resource (wired into the GitHub
    Pages workflow when SUPABASE_ACCESS_TOKEN is present). */
 
-import { createClient } from "npm:@supabase/supabase-js@2";
 import { requireUser } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { cleanText, guardResource, looksInjected, textWithinLimits } from "../_shared/resourceGuard.ts";
 import { scanRemote, type ContentScanResult } from "../_shared/contentScan.ts";
 import { makeReputationChecker } from "../_shared/reputation.ts";
+import { serviceClient } from "../_shared/serviceClient.ts";
 
 /* best-effort per-client cap: 12 submissions/min */
 const limitSubmit = makeLimiter(12, 60_000);
@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
         ? { status: "blocked" as const, reasons: [...(verdict.reasons ?? []), `content scan: ${scan.findings.filter(f => f.severity === "high").map(f => f.label).join("; ")}`] }
         : verdict;
 
-    const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+    const service = serviceClient();
     const guardRecord = {
       status: effectiveVerdict.status,
       reasons: effectiveVerdict.reasons ?? [],

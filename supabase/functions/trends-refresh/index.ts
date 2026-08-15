@@ -12,10 +12,11 @@
    Triggered by pg_cron (supabase/trends-refresh-cron.sql) with the
    TRENDS_REFRESH_SECRET header, or by an admin via their JWT (requireAdmin). */
 
-import { createClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
+import { serviceClient } from "../_shared/serviceClient.ts";
 import {
   SKILL_KEYWORDS, SKILL_NPM, SKILL_REPO,
   classifyStage, computeTrendScore, mentionsIn, proposalsFromSignals
@@ -43,7 +44,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: false, error: "sweep already running" }), { status: 429, headers });
     }
 
-    const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
+    const service = serviceClient();
     const now = Date.now();
     const day = 86_400_000;
     const since30 = new Date(now - 30 * day).toISOString();
@@ -135,7 +136,7 @@ Deno.serve(async (req) => {
   }
 });
 
-async function fetchNpmDeltas(service: ReturnType<typeof createClient>): Promise<Record<string, number>> {
+async function fetchNpmDeltas(service: SupabaseClient): Promise<Record<string, number>> {
   void service;
   const out: Record<string, number> = {};
   const day = 86_400_000;
@@ -156,7 +157,7 @@ async function fetchNpmDeltas(service: ReturnType<typeof createClient>): Promise
   return out;
 }
 
-async function fetchGithubRecency(service: ReturnType<typeof createClient>): Promise<Record<string, boolean>> {
+async function fetchGithubRecency(service: SupabaseClient): Promise<Record<string, boolean>> {
   void service;
   const out: Record<string, boolean> = {};
   const token = Deno.env.get("GITHUB_TOKEN") ?? "";
