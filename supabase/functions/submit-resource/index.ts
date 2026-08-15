@@ -19,6 +19,7 @@ import { requireUser } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { cleanText, guardResource, looksInjected, textWithinLimits } from "../_shared/resourceGuard.ts";
+import { scanRemote, type ContentScanResult } from "../_shared/contentScan.ts";
 import { makeReputationChecker } from "../_shared/reputation.ts";
 
 /* best-effort per-client cap: 12 submissions/min */
@@ -63,19 +64,39 @@ Deno.serve(async (req) => {
     /* L1 + L2 — the guard. Fail-closed: errors land as "pending". */
     const verdict = await guardResource(url, { checkReputation: makeReputationChecker(Deno.env) });
 
+    /* L3 — server-side content scan (static heuristics on the fetched page;
+       never executes anything). A scan failure is fail-closed: "pending". */
+    let scan: ContentScanResult | null = null;
+    let scanError: string | null = null;
+    try {
+      scan = await scanRemote(url);
+    } catch (e) {
+      scanError = e instanceof Error ? e.message : "content scan could not complete";
+    }
+    const effectiveVerdict = scanError
+      ? { status: "pending" as const, reasons: [...(verdict.reasons ?? []), `content scan: ${scanError}`] }
+      : scan?.blocked
+        ? { status: "blocked" as const, reasons: [...(verdict.reasons ?? []), `content scan: ${scan.findings.filter(f => f.severity === "high").map(f => f.label).join("; ")}`] }
+        : verdict;
+
     const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
     const guardRecord = {
-      status: verdict.status,
-      reasons: verdict.reasons ?? [],
-      finalUrl: verdict.finalUrl ?? null,
-      checkedAt: new Date().toISOString()
+      status: effectiveVerdict.status,
+      reasons: effectiveVerdict.reasons ?? [],
+      finalUrl: effectiveVerdict.finalUrl ?? null,
+      checkedAt: new Date().toISOString(),
+      contentScan: scan
+        ? { findings: scan.findings, blocked: scan.blocked, title: scan.title ?? null }
+        : scanError
+          ? { error: scanError }
+          : null
     };
 
-    if (mode === "community" && verdict.status === "blocked") {
+    if (mode === "community" && effectiveVerdict.status === "blocked") {
       return json(headers, 400, {
         ok: false,
-        error: `That link was blocked by the safety guard: ${(verdict.reasons ?? []).join("; ")}`,
-        verdict
+        error: `That link was blocked by the safety guard: ${(effectiveVerdict.reasons ?? []).join("; ")}`,
+        verdict: effectiveVerdict
       });
     }
 
