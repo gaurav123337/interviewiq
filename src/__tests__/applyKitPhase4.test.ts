@@ -192,7 +192,7 @@ describe("JD-aware tailoring — two postings never produce the same kit", () =>
     const c = buildCoverLetter(PROFILE, IOS_JOB, MATCH);
     expect(c).toMatch(/iOS Engineer role at Globex/i);
     expect(c).toMatch(/based in Bengaluru, India/);
-    expect(c).toMatch(/₹2\.5M–₹3\.5M/);
+    expect(c).toMatch(/₹25L–₹35L/); /* ₹-style L formatting, not $ M/k */
     expect(c).toMatch(/Architect SwiftUI features used by millions/i);
   });
 
@@ -376,7 +376,10 @@ describe("job feed filters", () => {
   it("filters by remote, size, and currency", () => {
     expect(filterJobs([a, b], { ...base, remote: true }).map(j => j.id)).toEqual(["a"]);
     expect(filterJobs([a, b], { ...base, companySize: "small" }).map(j => j.id)).toEqual(["b"]);
-    expect(filterJobs([a, b], { ...base, currency: "INR" }).map(j => j.id)).toEqual(["b"]);
+    /* currency is the display/comparison unit now — it no longer EXCLUDES
+       other-currency postings, it converts them for salary comparisons */
+    expect(filterJobs([a, b], { ...base, currency: "INR" }).map(j => j.id)).toEqual(["a", "b"]);
+    expect(filterJobs([a, b], { ...base, currency: "INR", salaryMin: 1000000 }).map(j => j.id)).toEqual(["a"]);
   });
 
   it("filters by salary band with null-salary jobs excluded when a band is set", () => {

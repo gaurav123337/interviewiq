@@ -218,14 +218,16 @@ export function offerVerdict(offer: OfferInput, band: { min: number; max: number
 }
 
 /** Negotiation talking points given an offer vs the market band. Honest —
-    never fabricates a number, only reframes what the band already shows. */
-export function negotiationPoints(offer: OfferInput, band: { min: number; max: number }, market: Market): string[] {
+    never fabricates a number, only reframes what the band already shows.
+    displayCurrency (default: the market's own) is used for the numbers so
+    the card reads in the app-wide currency. */
+export function negotiationPoints(offer: OfferInput, band: { min: number; max: number }, market: Market, displayCurrency = market.currency): string[] {
   const v = offerVerdict(offer, band);
   const mid = Math.round((band.min + band.max) / 2);
-  const midS = fmtAmount(mid, market.currency);
+  const midS = fmtAmount(mid, displayCurrency);
   const pts: string[] = [];
   if (v.kind === "below") {
-    pts.push(`Your offer (${fmtAmount(v.total, market.currency)}) sits below the ${market.label} band — anchor at the market mid-point (${midS}), which is the market rate, not a stretch.`);
+    pts.push(`Your offer (${fmtAmount(v.total, displayCurrency)}) sits below the ${market.label} band — anchor at the market mid-point (${midS}), which is the market rate, not a stretch.`);
     pts.push(`If the band is firm, ask what unlocks more: equity/ESOP, a sign-on bonus, or a title step that widens the range.`);
   } else if (v.kind === "in-range") {
     pts.push(`You're inside the ${market.label} band at the ${v.pct}th percentile — ask for a specific number near the mid-point (${midS}), not "more".`);

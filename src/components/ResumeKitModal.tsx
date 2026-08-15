@@ -6,6 +6,7 @@ import { diffLines } from "../services/diff";
 import { matchJob } from "../services/jobs";
 import { markAppliedVia } from "../services/applyTrack";
 import { sourceLabel } from "../services/importJob";
+import { getDisplayCurrency } from "../services/currency";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
 import { openResumePrint } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
@@ -33,6 +34,7 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
   onAddSkill?: (skill: string) => void;
   onClose: () => void;
 }) {
+  const displayCurrency = getDisplayCurrency(profile.location);
   const [kit, setKit] = useState<ApplyKit | null>(() => getApplyKit(job.id));
   const [tab, setTab] = useState<"resume" | "cover">("resume");
   const [aiBusy, setAiBusy] = useState(false);
@@ -78,7 +80,7 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
       jobTitle: job.title,
       company: job.company,
       resume: buildResume(profile, job, match),
-      coverLetter: buildCoverLetter(profile, job, match),
+      coverLetter: buildCoverLetter(profile, job, match, displayCurrency),
       ai: false,
       createdAt: Date.now()
     };
@@ -113,14 +115,14 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
     const nextProfile = { ...profile, skills: [...profile.skills, skill] };
     const m = matchJob(nextProfile, job);
     const resume = tab === "resume" ? buildResume(nextProfile, job, m) : (kit?.resume ?? buildResume(nextProfile, job, m));
-    const cover = tab === "cover" ? buildCoverLetter(nextProfile, job, m) : (kit?.coverLetter ?? buildCoverLetter(nextProfile, job, m));
+    const cover = tab === "cover" ? buildCoverLetter(nextProfile, job, m, displayCurrency) : (kit?.coverLetter ?? buildCoverLetter(nextProfile, job, m, displayCurrency));
     refresh(resume, cover, kit?.ai ?? false);
     toast(tab === "cover" ? `✉️ Cover letter regenerated with “${skill}”` : `📄 Resume regenerated with “${skill}” — ATS coverage updated`);
   };
 
   const toggleEdit = () => {
     if (editing) {
-      const other = tab === "resume" ? (kit?.coverLetter ?? buildCoverLetter(profile, job, match)) : (kit?.resume ?? buildResume(profile, job, match));
+      const other = tab === "resume" ? (kit?.coverLetter ?? buildCoverLetter(profile, job, match, displayCurrency)) : (kit?.resume ?? buildResume(profile, job, match));
       refresh(tab === "resume" ? editText : other, tab === "resume" ? other : editText, kit?.ai ?? false);
       setEditing(false);
       toast("💾 Edits saved — exports use this text");
@@ -140,7 +142,7 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
     try {
       if (tab === "resume") {
         const resume = await aiTailorResume(profile, job, match);
-        refresh(resume, kit?.coverLetter ?? buildCoverLetter(profile, job, match), true, { aiResume: resume });
+        refresh(resume, kit?.coverLetter ?? buildCoverLetter(profile, job, match, displayCurrency), true, { aiResume: resume });
       } else {
         const cover = await aiTailorCoverLetter(profile, job, match);
         refresh(kit?.resume ?? buildResume(profile, job, match), cover, true, { aiCover: cover });
@@ -309,7 +311,7 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
           compareBase === "prev" && prevKit
             ? prevKit[tab === "resume" ? "resume" : "coverLetter"]
             : compareBase === "template"
-              ? (tab === "resume" ? buildResume(profile, job, match) : buildCoverLetter(profile, job, match))
+              ? (tab === "resume" ? buildResume(profile, job, match) : buildCoverLetter(profile, job, match, displayCurrency))
               : compareBase === "ai"
                 ? (tab === "resume" ? kit?.aiResume : kit?.aiCover)
                 : null;

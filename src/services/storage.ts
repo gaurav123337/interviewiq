@@ -59,6 +59,7 @@ export const STORAGE_KEYS = {
   playgroundFocus: "iq.playgroundFocus",
   feedPageSize: "iq.feedPageSize",
   resumeStrictBanner: "iq.resumeStrictBanner",
+  displayCurrency: "iq.displayCurrency",
   externalApplyHint: "iq.externalApplyHint"
 } as const;
 

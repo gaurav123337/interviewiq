@@ -11,6 +11,8 @@ import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 import { withGrounding } from "./tutor";
 import { recordAiCall } from "./entitlements";
+import { salaryInCurrency } from "./currency";
+import { fmtAmount } from "./salaryBench";
 
 export interface ApplyKit {
   jobId: string;
@@ -200,15 +202,17 @@ export function buildResume(profile: CareerProfile, job: JobPosting, match: JobM
   return lines.join("\n");
 }
 
-/** Builds a plain-text cover letter tailored to the job. Pure + testable. */
-export function buildCoverLetter(profile: CareerProfile, job: JobPosting, match: JobMatch | null): string {
+/** Builds a plain-text cover letter tailored to the job. Pure + testable.
+    When displayCurrency is given the salary band is converted so the
+    letter matches what the rest of the app shows. */
+export function buildCoverLetter(profile: CareerProfile, job: JobPosting, match: JobMatch | null, displayCurrency?: string): string {
   const stack = (match?.matched.length ? match.matched.slice(0, 4) : profile.skills.slice(0, 4)).join(", ");
   const strengths = match?.matched.length
     ? match.matched.slice(0, 3).map(s => s.trim()).join(", ")
     : profile.skills.slice(0, 3).join(", ");
   const topGap = match?.missing[0];
   const resp = jdResponsibilities(job, 2);
-  const salary = job.salary ? salaryRange(job.salary) : null;
+  const salary = job.salary ? salaryRange(job.salary, displayCurrency) : null;
   const specifics = [
     job.remote ? "remote-friendly" : job.location ? `based in ${job.location}` : null,
     job.level ? `a ${job.level}-level opening` : null,
@@ -246,12 +250,11 @@ export function buildCoverLetter(profile: CareerProfile, job: JobPosting, match:
   return body.join("\n");
 }
 
-/** Human-readable salary band for the cover letter, e.g. "$120k–$150k". */
-function salaryRange(s: NonNullable<JobPosting["salary"]>): string {
-  const sym: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", INR: "₹" };
-  const c = sym[s.currency] ?? `${s.currency} `;
-  const k = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
-  return `${c}${k(s.min)}–${c}${k(s.max)}`;
+/** Human-readable salary band for the cover letter, e.g. "$120k–$150k".
+    Converted to the display currency first (₹-style L/Cr formatting). */
+function salaryRange(s: NonNullable<JobPosting["salary"]>, displayCurrency?: string): string {
+  const band = displayCurrency && displayCurrency !== s.currency ? salaryInCurrency(s, displayCurrency) : s;
+  return `${fmtAmount(band.min, band.currency)}–${fmtAmount(band.max, band.currency)}`;
 }
 
 /* ------------------------------------------------------------------ */

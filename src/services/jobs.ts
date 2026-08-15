@@ -10,6 +10,8 @@ import { getCloudState, getSupabaseClient } from "./cloud";
 import { getGoal, getProfile } from "./goal";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 import { sourceLabel } from "./importJob";
+import { salaryInCurrency } from "./currency";
+import { fmtAmount } from "./salaryBench";
 
 /* ------------------------------------------------------------------ */
 /* Career profile                                                      */
@@ -178,12 +180,14 @@ export function filterJobs(jobs: JobPosting[], f: JobFilters): JobPosting[] {
     if (f.remote === true && !j.remote) return false;
     if (f.remote === false && j.remote) return false;
     if (f.companySize && j.companySize !== f.companySize) return false;
-    if (f.currency && j.salary?.currency && j.salary.currency !== f.currency) return false;
-    if (f.salaryMin !== null) {
-      if (!j.salary || j.salary.max < f.salaryMin) return false;
-    }
-    if (f.salaryMax !== null) {
-      if (!j.salary || j.salary.min > f.salaryMax) return false;
+    /* salary min/max are expressed in the chosen display currency — each
+       posting's band is converted first, so a mixed USD/INR feed compares
+       fairly instead of silently dropping other-currency postings */
+    if (f.salaryMin !== null || f.salaryMax !== null) {
+      if (!j.salary) return false;
+      const s = f.currency ? salaryInCurrency(j.salary, f.currency) : j.salary;
+      if (f.salaryMin !== null && s.max < f.salaryMin) return false;
+      if (f.salaryMax !== null && s.min > f.salaryMax) return false;
     }
     if (q) {
       const hay = `${j.title} ${j.company} ${j.location} ${j.description}`.toLowerCase();
@@ -202,14 +206,16 @@ export function sortJobsByMatch(jobs: JobPosting[], scoreOf: (id: string) => num
     .map(x => x.j);
 }
 
-/** Human-readable salary band for a job (e.g. "$120k–$150k") or null. */
-export function salaryLabel(j: JobPosting): string | null {
+/** Human-readable salary band for a job (e.g. "$120k–$150k"). When
+    displayCurrency is given the band is converted first, so a feed mixing
+    USD and INR postings reads in ONE currency (₹-style L/Cr included). */
+export function salaryLabel(j: JobPosting, displayCurrency?: string | null): string | null {
   if (!j.salary) return null;
-  const { min, max, currency } = j.salary;
-  const sym: Record<string, string> = { USD: "$", GBP: "£", EUR: "€", INR: "₹" };
-  const s = sym[currency] ?? (currency + " ");
-  const fmt = (n: number) => n >= 1000000 ? `${s}${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${s}${Math.round(n / 1000)}k` : `${s}${n}`;
-  return `${fmt(min)}–${fmt(max)} ${currency}${j.salary.source === "estimate" ? " est." : ""}`;
+  const raw = j.salary;
+  const s = displayCurrency && displayCurrency !== raw.currency
+    ? { ...salaryInCurrency(raw, displayCurrency), source: raw.source }
+    : raw;
+  return `${fmtAmount(s.min, s.currency)}–${fmtAmount(s.max, s.currency)} ${s.currency}${s.source === "estimate" ? " est." : ""}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -593,11 +599,18 @@ export function indiaDigest(profile: CareerProfile | null, jobs: JobPosting[], t
 }
 
 /** Pure filter over the ranked companies — the view stays dumb. */
-export function filterRanks(ranks: CompanyRank[], f: RankFilters, shortlist: ReadonlySet<string>): CompanyRank[] {
+export function filterRanks(ranks: CompanyRank[], f: RankFilters, shortlist: ReadonlySet<string>, displayCurrency?: string): CompanyRank[] {
   return ranks.filter(r => {
     if (f.remoteOnly && !r.best.remote) return false;
     if (f.minScore > 0 && r.score < f.minScore) return false;
-    if (f.minSalary > 0 && (!r.best.salary || r.best.salary.max < f.minSalary)) return false;
+    /* minSalary is expressed in the display currency — convert each
+       company's best-role band before comparing (defaults to the band's
+       own currency when no display currency is given) */
+    if (f.minSalary > 0) {
+      if (!r.best.salary) return false;
+      const s = displayCurrency ? salaryInCurrency(r.best.salary, displayCurrency) : r.best.salary;
+      if (s.max < f.minSalary) return false;
+    }
     if (f.shortlistOnly && !shortlist.has(r.company.toLowerCase())) return false;
     return true;
   });

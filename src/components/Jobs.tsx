@@ -15,11 +15,12 @@ import {
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
 import { importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls, trustOf } from "../services/importJob";
+import { getDisplayCurrency, setDisplayCurrency, toCurrency } from "../services/currency";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { buildCoverLetter, buildResume, getApplyKit, jdKeywords, saveApplyKit } from "../services/applyKit";
 import { applyDigest, dueFollowUps, followUpDraft, getTrack, listTracks, markAppliedVia, markFollowUpNotified, removeRound, saveRound, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, trackSummary, weeklyReport, type ApplyStatus, type ApplyTrack, type InterviewRound } from "../services/applyTrack";
-import { BENCHMARK, BENCH_LEVELS, benchLevelForYears, companyBands, detectMarket, fmtAmount, fmtBand, marketBand, MARKETS, negotiationPoints, offerVerdict, ordinal, positionInBand, positionRead, type BenchLevel, type Market } from "../services/salaryBench";
+import { BENCHMARK, BENCH_LEVELS, benchLevelForYears, companyBands, currencySymbol, detectMarket, fmtAmount, fmtBand, marketBand, MARKETS, negotiationPoints, offerVerdict, ordinal, positionInBand, positionRead, type BenchLevel, type Market } from "../services/salaryBench";
 import { fire } from "../services/notifications";
 import { downloadZip } from "../services/zip";
 import { practiceForRound, type DrillCard } from "../services/drill";
@@ -72,6 +73,8 @@ const SAMPLE_IMPORT_URLS = [
 
 export function Jobs() {
   const [profile, setProfile] = useState<CareerProfile | null>(() => getCareerProfile());
+  /* one currency everywhere — persisted preference, defaults from location */
+  const displayCurrency = getDisplayCurrency(profile?.location);
   const [jobs, setJobs] = useState<JobPosting[]>(() => listJobs());
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -217,7 +220,7 @@ export function Jobs() {
   /* company leaderboard — best match % per company, descending (deduped so
      the same role on Greenhouse + RSS doesn't double-count a company) */
   const ranks = useMemo(() => rankCompanies(profile, dedupeJobs(jobs)), [profile, jobs]);
-  const filteredRanks = useMemo(() => filterRanks(ranks, rankFilters, shortlist), [ranks, rankFilters, shortlist]);
+  const filteredRanks = useMemo(() => filterRanks(ranks, rankFilters, shortlist, displayCurrency), [ranks, rankFilters, shortlist, displayCurrency]);
   /* recommendations — the top picks, with a concrete next step for #1 */
   const topPicks = useMemo(() => filteredRanks.slice(0, 3), [filteredRanks]);
   /* what learning the #1 pick's most-missing skill is worth */
@@ -428,7 +431,7 @@ export function Jobs() {
       const m = matchOf.get(id) ?? null;
       const existing = getApplyKit(id);
       const resume = existing?.resume ?? buildResume(profile, job, m);
-      const cover = existing?.coverLetter ?? buildCoverLetter(profile, job, m);
+      const cover = existing?.coverLetter ?? buildCoverLetter(profile, job, m, displayCurrency);
       if (!existing) saveApplyKit({ jobId: id, jobTitle: job.title, company: job.company, resume, coverLetter: cover, ai: false, createdAt: Date.now() });
       const safe = job.company.replace(/[^\w-]+/g, "-");
       entries.push({ name: `${safe}/${job.title.replace(/[^\w-]+/g, "-")}-resume.txt`, content: resume });
@@ -657,10 +660,10 @@ export function Jobs() {
             Min salary
             <input
               type="number" min={0} step={5000} className="w-[92px] rounded-full border border-line/20 bg-deep/40 px-2.5 py-1.5 text-[12px] font-bold text-fnt outline-none"
-              placeholder="$0"
+              placeholder={`${currencySymbol(displayCurrency)}0`}
               value={rankFilters.minSalary || ""}
               onChange={e => setRankFilters(f => ({ ...f, minSalary: e.target.value ? Number(e.target.value) : 0 }))}
-              title="Minimum annual salary of the best role (in its own currency)"
+              title={`Minimum annual salary of the best role (in ${displayCurrency})`}
             />
           </label>
           <button
@@ -726,7 +729,7 @@ export function Jobs() {
                       <span className="text-[12px] text-mut">{r.openings} role{r.openings === 1 ? "" : "s"} · {r.best.title}</span>
                     </>
                   )}
-                  {(() => { const s = salaryLabel(r.best); return s ? <span className="text-[11.5px] font-bold text-ok">💰 {s}</span> : null; })()}
+                  {(() => { const s = salaryLabel(r.best, displayCurrency); return s ? <span className="text-[11.5px] font-bold text-ok">💰 {s}</span> : null; })()}
                   {!proGated && r.missing.length > 0 && (
                     <span className="text-[11.5px] text-mut">gap: <span className="font-bold text-bad">{r.missing.slice(0, 2).join(", ")}</span></span>
                   )}
@@ -937,14 +940,15 @@ export function Jobs() {
               <input
                 className="inp w-[150px] py-1.5 text-[12px]"
                 type="number" min={0}
-                placeholder={`annual, ${market.currency}`}
+                placeholder={`annual, ${displayCurrency}`}
                 value={expected}
                 onChange={e => setExpected(e.target.value)}
-                title={`Annual expected compensation in ${market.currency}`}
+                title={`Annual expected compensation in ${displayCurrency}`}
               />
               {expected && (() => {
                 const mb = marketBand(BENCHMARK[benchLvl], market);
-                const pct = positionInBand(Number(expected) || 0, mb.min, mb.max);
+                const mbd = { min: toCurrency(mb.min, mb.currency, displayCurrency), max: toCurrency(mb.max, mb.currency, displayCurrency) };
+                const pct = positionInBand(Number(expected) || 0, mbd.min, mbd.max);
                 const read = positionRead(pct);
                 return (
                   <Chip tone={read.tone === "high" ? "ok" : read.tone === "low" ? "bad" : "co"}>
@@ -960,14 +964,15 @@ export function Jobs() {
                 const active = l === benchLvl;
                 const band = BENCHMARK[l];
                 const mb = marketBand(band, market);
+                const mbd = { min: toCurrency(mb.min, mb.currency, displayCurrency), max: toCurrency(mb.max, mb.currency, displayCurrency) };
                 return (
                   <div key={l} className={`rounded-xl border p-3.5 ${active ? "border-acc1/40 bg-acc1/10" : "border-line/15 bg-deep/30"}`}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[12px] font-extrabold">{band.label}</span>
                       {active && <Chip tone="co">your level</Chip>}
                     </div>
-                    <div className="mt-1 text-[15px] font-extrabold text-acc1">{fmtBand(mb.min, mb.max, mb.currency)}</div>
-                    <div className="text-[10.5px] text-mut">{mb.currency} · {market.label} · indicative market range</div>
+                    <div className="mt-1 text-[15px] font-extrabold text-acc1">{fmtBand(mbd.min, mbd.max, displayCurrency)}</div>
+                    <div className="text-[10.5px] text-mut">{displayCurrency} · {market.label} · indicative market range</div>
                   </div>
                 );
               })}
@@ -987,14 +992,14 @@ export function Jobs() {
                     <input
                       className="inp w-[170px] py-1.5 text-[12px]"
                       type="number" min={0}
-                      placeholder={`Base / yr (${market.currency})`}
+                      placeholder={`Base / yr (${displayCurrency})`}
                       value={offerBase}
                       onChange={e => setOfferBase(e.target.value)}
                     />
                     <input
                       className="inp w-[170px] py-1.5 text-[12px]"
                       type="number" min={0}
-                      placeholder={`Equity / yr (${market.currency})`}
+                      placeholder={`Equity / yr (${displayCurrency})`}
                       value={offerEquity}
                       onChange={e => setOfferEquity(e.target.value)}
                     />
@@ -1002,19 +1007,20 @@ export function Jobs() {
                   {(() => {
                     if (!offerBase) return <p className="text-[11.5px] text-mut">Enter at least a base to compare it against the {BENCHMARK[benchLvl].label} band for {market.label}.</p>;
                     const mb = marketBand(BENCHMARK[benchLvl], market);
-                    const offer = { base: Number(offerBase) || 0, equity: Number(offerEquity) || 0, currency: market.currency };
-                    const v = offerVerdict(offer, mb);
+                    const mbd = { min: toCurrency(mb.min, mb.currency, displayCurrency), max: toCurrency(mb.max, mb.currency, displayCurrency) };
+                    const offer = { base: Number(offerBase) || 0, equity: Number(offerEquity) || 0, currency: displayCurrency };
+                    const v = offerVerdict(offer, mbd);
                     return (
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <Chip tone={v.kind === "below" ? "bad" : v.kind === "above" ? "ok" : "co"}>{v.label}</Chip>
-                          <span className="text-[12px] text-fnt">Total {fmtAmount(v.total, market.currency)} · {ordinal(v.pct)} percentile of the band</span>
+                          <span className="text-[12px] text-fnt">Total {fmtAmount(v.total, displayCurrency)} · {ordinal(v.pct)} percentile of the band</span>
                         </div>
                         {v.kind === "below" && (
-                          <p className="text-[11.5px] text-warn">Gap to the low end: {fmtAmount(v.gapToMin, market.currency)}</p>
+                          <p className="text-[11.5px] text-warn">Gap to the low end: {fmtAmount(v.gapToMin, displayCurrency)}</p>
                         )}
                         <ul className="space-y-1.5">
-                          {negotiationPoints(offer, mb, market).map((p, i) => (
+                          {negotiationPoints(offer, mbd, market, displayCurrency).map((p, i) => (
                             <li key={i} className="flex gap-2 text-[12px] leading-relaxed text-fnt">
                               <span className="font-extrabold text-acc1">•</span>
                               <span>{p}</span>
@@ -1051,7 +1057,10 @@ export function Jobs() {
                     {live.map(c => (
                       <div key={c.company} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/30 px-3 py-2 text-[12px]">
                         <span className="min-w-[120px] font-extrabold">{c.company}</span>
-                        {c.median && <span className="font-bold text-acc1">{fmtBand(c.median.min, c.median.max, c.median.currency)}</span>}
+                        {c.median && (() => {
+                          const md = { min: toCurrency(c.median.min, c.median.currency, displayCurrency), max: toCurrency(c.median.max, c.median.currency, displayCurrency) };
+                          return <span className="font-bold text-acc1">{fmtBand(md.min, md.max, displayCurrency)}</span>;
+                        })()}
                         <span className="text-[10.5px] text-mut">median of {c.bands.length} band{c.bands.length === 1 ? "" : "s"} {c.bands.some(b => b.source === "estimate") ? "(incl. est.)" : ""}</span>
                       </div>
                     ))}
@@ -1131,21 +1140,28 @@ export function Jobs() {
             <option value="mid">Mid (50–999)</option>
             <option value="small">Small (&lt;50)</option>
           </select>
-          <select className="inp w-auto cursor-pointer" value={filters.currency ?? ""}
-            onChange={e => setFilters(f => ({ ...f, currency: e.target.value || null }))}>
-            <option value="">💱 Any currency</option>
-            <option value="USD">$ USD</option>
-            <option value="INR">₹ INR</option>
-            <option value="EUR">€ EUR</option>
-            <option value="GBP">£ GBP</option>
+          <select
+            className="inp w-auto cursor-pointer"
+            value={displayCurrency}
+            onChange={e => {
+              const c = e.target.value;
+              setDisplayCurrency(c);
+              setFilters(f => ({ ...f, currency: c }));
+            }}
+            title="One currency for every salary in the app — postings are converted to it"
+          >
+            <option value="USD">💱 $ USD</option>
+            <option value="INR">💱 ₹ INR</option>
+            <option value="EUR">💱 € EUR</option>
+            <option value="GBP">💱 £ GBP</option>
           </select>
           <input
             type="number" min={0} step={5000}
             className="inp w-[110px]"
-            placeholder="Min salary"
+            placeholder={`Min (${displayCurrency})`}
             value={filters.salaryMin ?? ""}
             onChange={e => setFilters(f => ({ ...f, salaryMin: e.target.value ? Number(e.target.value) : null }))}
-            title="Minimum annual salary (in the chosen currency)"
+            title={`Minimum annual salary (in ${displayCurrency}, converted)`}
           />
           {(filters.query || filters.remote !== null || filters.companySize || filters.currency || filters.salaryMin !== null || filters.salaryMax !== null || filters.source) && (
             <button className={btnGhost + btnSm} onClick={() => setFilters(EMPTY_FILTERS)}>✕ Clear</button>
@@ -1239,7 +1255,7 @@ export function Jobs() {
                         ＋{j.alsoSources.length} on {j.alsoSources.join(", ")}
                       </Chip>
                     )}
-                    {(() => { const s = salaryLabel(j); return s ? <span className="font-bold text-ok">💰 {s}</span> : null; })()}
+                    {(() => { const s = salaryLabel(j, displayCurrency); return s ? <span className="font-bold text-ok">💰 {s}</span> : null; })()}
                     <span className="inline-flex items-center gap-1 text-[11px] text-mut" title={trustOf(j.source).title}>
                       <span aria-hidden>{trustOf(j.source).icon}</span> {trustOf(j.source).label}
                     </span>
