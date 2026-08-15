@@ -42,6 +42,11 @@ const FUNCTION_SECRETS = [
 
 /* optional secrets: only set when provided via env */
 const OPTIONAL = [
+  { slug: "mfa-recovery",              name: "SUPABASE_SERVICE_ROLE_KEY", env: "SUPABASE_SERVICE_ROLE_KEY" },
+  { slug: "revalidate-resources",      name: "SUPABASE_SERVICE_ROLE_KEY", env: "SUPABASE_SERVICE_ROLE_KEY" },
+  { slug: "submit-resource",           name: "SUPABASE_SERVICE_ROLE_KEY", env: "SUPABASE_SERVICE_ROLE_KEY" },
+  { slug: "trends-refresh",            name: "SUPABASE_SERVICE_ROLE_KEY", env: "SUPABASE_SERVICE_ROLE_KEY" },
+  { slug: "send-security-digest",      name: "SUPABASE_SERVICE_ROLE_KEY", env: "SUPABASE_SERVICE_ROLE_KEY" },
   { slug: "submit-resource",           name: "SAFE_BROWSING_API_KEY", env: "SAFE_BROWSING_API_KEY" },
   { slug: "trends-refresh",            name: "GITHUB_TOKEN",          env: "GITHUB_TOKEN" },
   { slug: "send-recommendations-digest", name: "RESEND_API_KEY",      env: "RESEND_API_KEY" },
