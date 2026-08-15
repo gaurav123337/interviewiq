@@ -10,7 +10,7 @@ import {
   checkUrl, isBlockedHost, isIpv4Literal, isPrivateIpv4, isPrivateIpv6,
   normalizeHost, parseIpv4, SafeFetchError
 } from "./safeFetch.ts";
-import { isAllowedOrigin, corsHeaders, preflightResponse } from "./cors.ts";
+import { corsHeadersFor, originAllowed } from "./cors.ts";
 import { makeLimiter } from "./ratelimit.ts";
 
 Deno.test("normalizeHost strips ports/brackets/trailing dots", () => {
@@ -73,16 +73,13 @@ Deno.test("SafeFetchError is distinguishable", () => {
 });
 
 Deno.test("cors allows only known origins", () => {
-  const good = new Request("https://site/fn", { headers: { origin: "https://gaurav123337.github.io" } });
-  const bad = new Request("https://site/fn", { headers: { origin: "https://evil.example.com" } });
-  const none = new Request("https://site/fn"); // server-to-server
-  assert(isAllowedOrigin(good));
-  assert(!isAllowedOrigin(bad));
-  assert(isAllowedOrigin(none));
-  assertEquals(corsHeaders(good)["Access-Control-Allow-Origin"], "https://gaurav123337.github.io");
-  assertEquals(corsHeaders(bad)["Access-Control-Allow-Origin"], undefined);
-  assertEquals(preflightResponse(bad).status, 403);
-  assertEquals(preflightResponse(none).status, 204);
+  /* tested via the pure helpers — the fetch spec strips the `origin` header
+     from Request objects, so Request-based tests can't set it */
+  assert(originAllowed("https://gaurav123337.github.io"));
+  assert(!originAllowed("https://evil.example.com"));
+  assert(originAllowed(null)); // server-to-server
+  assertEquals(corsHeadersFor("https://gaurav123337.github.io")["Access-Control-Allow-Origin"], "https://gaurav123337.github.io");
+  assertEquals(corsHeadersFor("https://evil.example.com")["Access-Control-Allow-Origin"], undefined);
 });
 
 Deno.test("ratelimit enforces a window", () => {

@@ -13,25 +13,34 @@ export const ALLOWED_ORIGINS: string[] = [
   "http://127.0.0.1:8138"
 ];
 
-export function isAllowedOrigin(req: Request): boolean {
-  const origin = req.headers.get("origin");
+/* Pure origin checks (unit-testable — the fetch spec strips the `origin`
+   header from Request objects, so the Request-taking wrappers below are
+   thin and the logic lives in these pure functions). */
+export function originAllowed(origin: string | null): boolean {
   if (!origin) return true; /* server-to-server — not a browser request */
   return ALLOWED_ORIGINS.includes(origin);
 }
 
-export function corsHeaders(req: Request, extraAllowHeaders?: string): Record<string, string> {
+export function corsHeadersFor(origin: string | null, extraAllowHeaders?: string): Record<string, string> {
   const h: Record<string, string> = {
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers":
       `authorization, x-client-info, apikey, content-type${extraAllowHeaders ? `, ${extraAllowHeaders}` : ""}`,
     "Access-Control-Max-Age": "86400"
   };
-  const origin = req.headers.get("origin");
   if (origin && ALLOWED_ORIGINS.includes(origin)) {
     h["Access-Control-Allow-Origin"] = origin;
     h["Vary"] = "Origin";
   }
   return h;
+}
+
+export function isAllowedOrigin(req: Request): boolean {
+  return originAllowed(req.headers.get("origin"));
+}
+
+export function corsHeaders(req: Request, extraAllowHeaders?: string): Record<string, string> {
+  return corsHeadersFor(req.headers.get("origin"), extraAllowHeaders);
 }
 
 /** Standard preflight answer (204) when the origin is allowed. */
