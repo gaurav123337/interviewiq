@@ -1,6 +1,6 @@
 # 🛡️ Resource Safety Guard — full spec
 
-*Companion to `skill-counselor.md` §6. Status: proposed. Motivating incident class: the 2026 wave of **web-based indirect prompt injection** observed in the wild (Unit42, Mar 2026) and poisoned-content attacks on AI products — a user-submitted link or a single text line must never be able to compromise the app or mislead other users.*
+*Companion to `skill-counselor.md` §6, and a subsystem of the umbrella **`app-security.md`**. Status: proposed. Motivating incident class: the 2026 wave of **web-based indirect prompt injection** observed in the wild (Unit42, Mar 2026) and poisoned-content attacks on AI products — a user-submitted link or a single text line must never be able to compromise the app or mislead other users.*
 
 ## 1. Threat model
 
