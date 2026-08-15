@@ -44,29 +44,24 @@ Deno.serve(async (req) => {
     }
 
     const service = serviceClient();
-    /* resolve email → user id via the admin API (avoids PostgREST schema
-       resolution across auth.* tables) */
-    const { data: page, error: userErr } = await service.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    if (userErr) {
-      return new Response(JSON.stringify({ ok: false, error: userErr.message }), { status: 500, headers });
-    }
-    const user = (page?.users ?? []).find((u: { email?: string | null }) =>
-      (u.email ?? "").toLowerCase() === email
-    );
 
     /* record the attempt regardless of outcome (rate-limit + forensics) */
     await service.from("recovery_attempts").insert({ email }).then(() => {});
 
-    if (!user) {
-      return new Response(JSON.stringify({ ok: false, error: "no matching account" }), { status: 404, headers });
-    }
-
-    const { data: rows } = await service.from("recovery_codes")
+    /* codes are looked up by the denormalized owner_email — no auth.users
+       access needed; admin_reset_mfa resolves email → user inside SQL */
+    const { data: rows, error: codesErr } = await service.from("recovery_codes")
       .select("id, code_hash")
-      .eq("owner_id", user.id)
+      .eq("owner_email", email)
       .is("used_at", null)
       .is("revoked_at", null)
       .limit(50);
+    if (codesErr) {
+      return new Response(JSON.stringify({ ok: false, error: codesErr.message }), { status: 500, headers });
+    }
+    if (!rows || rows.length === 0) {
+      return new Response(JSON.stringify({ ok: false, error: "no recovery codes on file for this account" }), { status: 404, headers });
+    }
 
     const want = await hashRecoveryCode(email, code);
     const match = (rows ?? []).find((r: { id: number; code_hash: string }) => r.code_hash === want);

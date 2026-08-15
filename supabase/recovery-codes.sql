@@ -21,6 +21,9 @@
 create table if not exists public.recovery_codes (
   id bigint generated always as identity primary key,
   owner_id uuid not null references auth.users(id) on delete cascade,
+  owner_email text not null,        -- denormalized for redemption lookup (the
+                                    -- edge function queries by email without
+                                    -- needing auth.users access)
   code_hash text not null,          -- sha256(lower(email) || ':' || code)
   used_at timestamptz,              -- set when redeemed
   revoked_at timestamptz,           -- set when a newer set replaces this one
@@ -28,6 +31,7 @@ create table if not exists public.recovery_codes (
 );
 
 create index if not exists recovery_codes_owner_idx on public.recovery_codes (owner_id);
+create index if not exists recovery_codes_email_idx on public.recovery_codes (owner_email);
 
 create table if not exists public.recovery_attempts (
   id bigint generated always as identity primary key,
@@ -63,8 +67,9 @@ begin
   /* revoke any outstanding codes first — a fresh set invalidates the old */
   update public.recovery_codes set revoked_at = now()
     where owner_id = v_uid and revoked_at is null and used_at is null;
-  insert into public.recovery_codes (owner_id, code_hash)
-  select v_uid, h from unnest(p_hashes) as h;
+  insert into public.recovery_codes (owner_id, owner_email, code_hash)
+  select v_uid, lower(coalesce(nullif(auth.jwt() ->> 'email', ''), 'unknown')), h
+  from unnest(p_hashes) as h;
 end $$;
 
 grant execute on function public.save_recovery_codes(text[]) to authenticated;
