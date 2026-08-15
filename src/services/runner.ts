@@ -421,9 +421,12 @@ export async function runUiInDoc(
   style.textContent = css;
   const script = host.createElement("script");
   /* IIFE-scoped so consecutive problems in the same window (tests) never
-     collide on top-level const/let; production uses a fresh iframe anyway */
-  script.textContent = `(function(){${js}
-})();`;
+     collide on top-level const/let; production uses a fresh iframe anyway.
+     The try/catch CONTAINS a throwing reference inside jsdom's async script
+     queue — an escape there surfaces as an uncaught exception that crashes
+     the whole vitest run, instead of a clean per-assertion failure. The
+     assertion checks still run and fail normally either way. */
+  script.textContent = `(function(){try{${js}\n}catch(e){window.__uiJudgeError=e&&e.message&&String(e.message)}}());`;
   host.body.appendChild(root);
   host.head.appendChild(style);
   for (const lib of libs ?? []) {

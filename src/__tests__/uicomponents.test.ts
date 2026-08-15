@@ -17,7 +17,12 @@ import { runUiInDoc } from "../services/runner";
 const ALL_UI_PROBLEMS = [...UI_COMPONENT_PROBLEMS, ...UI_ADVANCED_PROBLEMS, ...UI_FRAMEWORK_PROBLEMS];
 
 /* Fetches each lib once and injects it as an inline script (the script realm,
-   where the user's code runs — window expandos don't cross realms in jsdom). */
+   where the user's code runs — window expandos don't cross realms in jsdom).
+   The UMD is wrapped in a guarded IIFE: a lib that throws during jsdom's
+   ASYNC script evaluation would otherwise escape the try/catch below as an
+   uncaught exception and crash the whole vitest process. Contained, it just
+   marks the lib unavailable → the framework problems skip cleanly (the
+   designed offline path) instead of failing the build on a CDN hiccup. */
 const libCache = new Map<string, Promise<boolean>>();
 function ensureLib(lib: { url: string; global: string }): Promise<boolean> {
   if (!libCache.has(lib.url)) {
@@ -31,7 +36,7 @@ function ensureLib(lib: { url: string; global: string }): Promise<boolean> {
         const src = await res.text();
         const s = document.createElement("script");
         s.dataset.lib = lib.global;
-        s.textContent = src;
+        s.textContent = `(function(){ try { ${src}\n } catch (e) { window.__uiLibError = e && e.message; } })();`;
         document.head.appendChild(s);
         return true;
       } catch {
