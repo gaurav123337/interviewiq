@@ -523,6 +523,25 @@ drop policy if exists "recovery attempts hidden" on public.recovery_attempts;
 create policy "recovery attempts hidden" on public.recovery_attempts for select using (false);
 
 /* ------------------------------------------------------------------ */
+/* 1b. Email-backup rate limit (recovery-backup edge function)          */
+/* ------------------------------------------------------------------ */
+
+create table if not exists public.recovery_backup_requests (
+  id bigint generated always as identity primary key,
+  email text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists recovery_backup_email_idx
+  on public.recovery_backup_requests (email, created_at desc);
+
+alter table public.recovery_backup_requests enable row level security;
+
+/* hidden from every role — the edge function writes via its service key */
+drop policy if exists "recovery backup hidden" on public.recovery_backup_requests;
+create policy "recovery backup hidden" on public.recovery_backup_requests for select using (false);
+
+/* ------------------------------------------------------------------ */
 /* 2. Save (replace) my recovery code hashes                           */
 /* ------------------------------------------------------------------ */
 

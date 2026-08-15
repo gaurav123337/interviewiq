@@ -276,6 +276,40 @@ export async function cloudSaveRecoveryCodes(hashes: string[]): Promise<{ ok: bo
   }
 }
 
+/** Unused recovery codes remaining (the Settings management card). */
+export async function cloudRecoveryStatus(): Promise<{ ok: boolean; unused: number; total: number; error?: string }> {
+  const client = await resolveClient();
+  if (!client) return { ok: false, unused: 0, total: 0, error: "Cloud sync isn't configured" };
+  try {
+    const [unused, total] = await Promise.all([
+      client.from("recovery_codes").select("id", { count: "exact", head: true }).is("used_at", null).is("revoked_at", null),
+      client.from("recovery_codes").select("id", { count: "exact", head: true })
+    ]);
+    const err = unused.error?.message ?? total.error?.message;
+    if (err) return { ok: false, unused: 0, total: 0, error: err };
+    return { ok: true, unused: unused.count ?? 0, total: total.count ?? 0 };
+  } catch (e) {
+    return { ok: false, unused: 0, total: 0, error: (e as Error).message };
+  }
+}
+
+/** Emails a backup copy of the given recovery codes to the signed-in user
+    (recovery-backup edge function; one email per 24h). */
+export async function cloudEmailRecoveryBackup(codes: string[]): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${CONFIG.supabase.url}/functions/v1/recovery-backup`, {
+      method: "POST",
+      headers: await cloudFnHeaders(),
+      body: JSON.stringify({ codes })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || !body.ok) return { ok: false, error: body.error ?? `backup failed (${res.status})` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
 export async function cloudSignUp(email: string, password: string): Promise<{ ok: boolean; needsConfirmation?: boolean; error?: string }> {
   const client = await resolveClient();
   if (!client) return { ok: false, error: "Cloud sync isn't configured — add your Supabase URL and anon key in src/config.ts." };

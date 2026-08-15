@@ -53,6 +53,8 @@ const OPTIONAL = [
   { slug: "send-apply-digest",         name: "RESEND_API_KEY",        env: "RESEND_API_KEY" },
   { slug: "send-security-digest",      name: "RESEND_API_KEY",        env: "RESEND_API_KEY" },
   { slug: "send-rag-digest",           name: "RESEND_API_KEY",        env: "RESEND_API_KEY" },
+  { slug: "recovery-backup",           name: "RESEND_API_KEY",        env: "RESEND_API_KEY" },
+  { slug: "recovery-backup",           name: "SUPABASE_SERVICE_ROLE_KEY", env: "SUPABASE_SERVICE_ROLE_KEY" },
 ];
 
 const CRON_FILES = [

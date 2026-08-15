@@ -10,7 +10,7 @@ import { cancelSubscription, fmtMinor, getMyPayments, getMySubscription, type My
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
 import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
-import { cloudMfaEnroll, cloudMfaFactors, cloudMfaRecover, cloudMfaUnenroll, cloudMfaVerify, cloudOAuthSignIn, cloudSaveRecoveryCodes, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud, type EnrolledTotp, type TotpFactor } from "../services/cloud";
+import { cloudEmailRecoveryBackup, cloudMfaEnroll, cloudMfaFactors, cloudMfaRecover, cloudMfaUnenroll, cloudMfaVerify, cloudOAuthSignIn, cloudRecoveryStatus, cloudSaveRecoveryCodes, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud, type EnrolledTotp, type TotpFactor } from "../services/cloud";
 import { generateRecoveryCodes, hashRecoveryCodeSet } from "../services/recoveryCodes";
 import type { OAuthProvider } from "../services/cloud";
 import { useApp } from "../store";
@@ -48,6 +48,7 @@ export function Settings() {
   const [mfaRecoveryCode, setMfaRecoveryCode] = useState("");
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [recoveryStatus, setRecoveryStatus] = useState<{ unused: number; total: number } | null>(null);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaBusy, setMfaBusy] = useState(false);
   const [mfaFactors, setMfaFactors] = useState<TotpFactor[]>([]);
@@ -149,13 +150,30 @@ export function Settings() {
       const r = await cloudSaveRecoveryCodes(hashes);
       if (!r.ok) { toast("✗ " + (r.error ?? "Couldn't save codes")); return; }
       setRecoveryCodes(null);
+      await refreshRecoveryStatus();
       toast("🔑 Recovery codes saved — store them somewhere safe");
+    } finally { setRecoveryBusy(false); }
+  };
+
+  /* email a backup copy of the freshly generated codes (one per 24h) */
+  const emailBackup = async () => {
+    if (!recoveryCodes) return;
+    setRecoveryBusy(true);
+    try {
+      const r = await cloudEmailRecoveryBackup(recoveryCodes);
+      if (!r.ok) { toast("✗ " + (r.error ?? "Email backup failed")); return; }
+      toast("📧 Backup emailed — check your inbox");
     } finally { setRecoveryBusy(false); }
   };
 
   const refreshMfa = async () => {
     const r = await cloudMfaFactors();
     if (r.ok) setMfaFactors(r.factors);
+  };
+
+  const refreshRecoveryStatus = async () => {
+    const r = await cloudRecoveryStatus();
+    if (r.ok) setRecoveryStatus({ unused: r.unused, total: r.total });
   };
   const enrollMfa = async () => {
     setMfaBusy(true);
@@ -189,8 +207,10 @@ export function Settings() {
     } finally { setMfaBusy(false); }
   };
 
-  /* refresh the factor list whenever the signed-in user changes */
-  useEffect(() => { if (getCloudState().user) void refreshMfa(); }, [cloud.user?.id]);
+  /* refresh factor list + recovery-code status whenever the user changes */
+  useEffect(() => {
+    if (getCloudState().user) { void refreshMfa(); void refreshRecoveryStatus(); }
+  }, [cloud.user?.id]);
 
   const doCancelSub = async () => {
     if (!sub) return;
@@ -609,6 +629,20 @@ export function Settings() {
                 </button>
               )
             )}
+            {recoveryStatus && recoveryStatus.total > 0 && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line/10 bg-wht/5 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-[12.5px] font-bold text-ink">🔑 Recovery codes</p>
+                  <p className="mt-0.5 text-[12px] text-mut">{recoveryStatus.unused} of {recoveryStatus.total} unused</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {recoveryStatus.unused < 3 && <Chip tone="warn">⚠️ Few left — regenerate</Chip>}
+                  <button className={btnGhost + btnSm} onClick={() => setRecoveryCodes(generateRecoveryCodes(10))} disabled={recoveryBusy}>
+                    Regenerate
+                  </button>
+                </div>
+              </div>
+            )}
             {recoveryCodes && (
               <div className="mt-4 rounded-xl border border-co/40 bg-co/10 px-4 py-4">
                 <p className="text-[13px] font-bold text-co">🔑 Recovery codes — save these now</p>
@@ -626,6 +660,9 @@ export function Settings() {
                     {recoveryBusy ? <><span className="spinner" />…</> : "✅ I've saved them"}
                   </button>
                   <button className={btnGhost + btnSm} onClick={() => setRecoveryCodes(generateRecoveryCodes(10))}>Regenerate</button>
+                  <button className={btnGhost + btnSm} onClick={emailBackup} disabled={recoveryBusy}>
+                    {recoveryBusy ? <><span className="spinner" />…</> : "📧 Email me a backup copy"}
+                  </button>
                 </div>
               </div>
             )}
