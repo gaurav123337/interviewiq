@@ -26,25 +26,29 @@ async function main() {
 
   const { readFileSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
-  const schemaPath = fileURLToPath(new URL("../supabase/security.sql", import.meta.url));
-  const sql = readFileSync(schemaPath, "utf8");
+  const files = ["security.sql", "resources.sql"];
 
-  console.log(`Applying supabase/security.sql to project ${projectRef}…`);
-  const res = await fetch(`${API}/projects/${projectRef}/database/query`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query: sql })
-  });
-
-  const text = await res.text();
-  if (!res.ok) {
-    console.error(red(`Failed (${res.status}):`));
-    console.error(text.slice(0, 1500));
-    process.exit(1);
+  for (const f of files) {
+    const schemaPath = fileURLToPath(new URL(`../supabase/${f}`, import.meta.url));
+    const sql = readFileSync(schemaPath, "utf8");
+    console.log(`Applying supabase/${f} to project ${projectRef}…`);
+    const res = await fetch(`${API}/projects/${projectRef}/database/query`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: sql })
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      console.error(red(`Failed (${res.status}) on ${f}:`));
+      console.error(text.slice(0, 1500));
+      process.exit(1);
+    }
+    console.log(green(`Done. ${f} applied (idempotent).`));
   }
-  console.log(green("Done. Schema applied (idempotent)."));
+
   console.log("Next: set up TOTP in Settings → 🔐 Security, then flip");
   console.log("app_config admin_security.mfa = true from the Admin dashboard.");
+  console.log("Then deploy the new functions: supabase functions deploy submit-resource revalidate-resources");
 }
 
 main().catch(e => { console.error(red(String(e))); process.exit(1); });

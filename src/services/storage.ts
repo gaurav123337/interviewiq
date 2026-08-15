@@ -58,6 +58,8 @@ export const STORAGE_KEYS = {
   feedPageSize: "iq.feedPageSize",
   resumeStrictBanner: "iq.resumeStrictBanner",
   displayCurrency: "iq.displayCurrency",
+  resourcesPersonal: "iq.resources.personal",
+  resourcesApproved: "iq.resources.approved",
   externalApplyHint: "iq.externalApplyHint"
 } as const;
 

@@ -84,3 +84,9 @@ jobs:
           npx supabase functions deploy send-rag-digest \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
+          npx supabase functions deploy submit-resource \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt
+          npx supabase functions deploy revalidate-resources \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt

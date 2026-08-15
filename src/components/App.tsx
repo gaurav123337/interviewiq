@@ -19,6 +19,7 @@ import { Admin } from "./Admin";
 import { Landing } from "./Landing";
 import { Team } from "./Team";
 import { Jobs } from "./Jobs";
+import { Resources } from "./Resources";
 import { Legal } from "./Legal";
 import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
@@ -42,6 +43,7 @@ const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
   { id: "jobs", label: "Jobs", icon: "💼" },
+  { id: "resources", label: "Resources", icon: "🔗" },
   { id: "progress", label: "Progress", icon: "📈" },
   { id: "history", label: "History", icon: "🗂️" },
   { id: "settings", label: "Settings", icon: "⚙️" },
@@ -232,6 +234,7 @@ export function App() {
         {view === "team" && <Team />}
         {view === "legal" && <Legal />}
         {view === "jobs" && <Jobs />}
+        {view === "resources" && <Resources />}
       </main>
 
       {/* app-wide footer — branding + the four legal pages on every view
