@@ -44,13 +44,15 @@ Deno.serve(async (req) => {
     }
 
     const service = createClient(Deno.env.get("SUPABASE_URL") ?? "", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "");
-    const { data: user, error: userErr } = await service.from("users", { schema: "auth" })
-      .select("id, email")
-      .eq("email", email)
-      .maybeSingle();
+    /* resolve email → user id via the admin API (avoids PostgREST schema
+       resolution across auth.* tables) */
+    const { data: page, error: userErr } = await service.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (userErr) {
       return new Response(JSON.stringify({ ok: false, error: userErr.message }), { status: 500, headers });
     }
+    const user = (page?.users ?? []).find((u: { email?: string | null }) =>
+      (u.email ?? "").toLowerCase() === email
+    );
 
     /* record the attempt regardless of outcome (rate-limit + forensics) */
     await service.from("recovery_attempts").insert({ email }).then(() => {});
