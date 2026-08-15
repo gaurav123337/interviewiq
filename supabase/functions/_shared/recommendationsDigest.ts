@@ -80,6 +80,10 @@ function inferDomain(text: string): string {
   return "other";
 }
 
+const DOMAIN_LABELS: Record<string, string> = Object.fromEntries(DOMAIN_RULES.map(([id, label]) => [id, label]));
+
+const domainLabel = (id: string): string => DOMAIN_LABELS[id] ?? "Other";
+
 /* ------------------------------------------------------------------ */
 /* Skill normalization — mirrors the client tokenizer                   */
 /* ------------------------------------------------------------------ */
@@ -238,25 +242,46 @@ export function skillImpact(profile: Profile | null, rank: Rank): { skill: strin
 /* recommendationsDigest — the weekly email body                        */
 /* ------------------------------------------------------------------ */
 
+/** One-line "why this pick" — mirror of the client helper (services/jobs.ts). */
+function recommendationReason(profile: Profile | null, rank: Rank): string {
+  const parts: string[] = [];
+  if (profile) {
+    const mine = profileLevel(profile.years);
+    const lvl = rank.best.level;
+    if (lvl && lvl in LEVEL_ORDER) {
+      const diff = LEVEL_ORDER[lvl] - LEVEL_ORDER[mine];
+      parts.push(diff > 0 ? `Targets above your level (${lvl})` : diff === 0 ? `Matches your level (${lvl})` : diff === -1 ? `One rung below your level (${lvl})` : `Below your level (${lvl})`);
+    }
+    const profileDomain = inferDomain([profile.headline ?? "", ...(profile.targetTitles ?? [])].join(" "));
+    const jobDomain = inferDomain(rank.best.title);
+    if (profileDomain !== "other" && jobDomain !== "other") parts.push(domainLabel(jobDomain) + " role");
+  }
+  if (rank.matched.length) parts.push(`covers ${rank.matched.slice(0, 4).join(", ")}`);
+  return parts.join(" · ") || "";
+}
+
+/** One digest pick line with its one-line reason + learnable gain. */
+function digestPickLine(profile: Profile | null, r: Rank, i: number): string {
+  const base = `${i + 1}. ${r.company} — ${r.score}% match (${VERDICT_META[r.verdict].label}) · ${r.openings} open role${r.openings === 1 ? "" : "s"} · best fit: ${r.best.title}`;
+  const why = recommendationReason(profile, r);
+  if (!why) return base;
+  const gain = skillImpact(profile, r);
+  return `${base}\n   Why: ${why}${gain ? ` · learn ${gain.skill} → ${gain.to}%` : ""}`;
+}
+
 export function recommendationsDigest(profile: Profile | null, ranks: Rank[], top = 3): string {
   const picks = ranks.slice(0, top);
   if (!picks.length) {
     return "InterviewIQ — no companies to recommend yet. Upload a resume or save your career profile to rank companies.";
   }
-  const impact = skillImpact(profile, picks[0]);
   const lines = [
     "InterviewIQ — weekly company recommendations",
     "",
     ...(profile ? [`Based on your profile: ${profile.headline || "—"} (${profile.years} yrs).`, ""] : []),
-    ...picks.map((r, i) =>
-      `${i + 1}. ${r.company} — ${r.score}% match (${VERDICT_META[r.verdict].label}) · ${r.openings} open role${r.openings === 1 ? "" : "s"} · best fit: ${r.best.title}`
-    )
+    ...picks.map((r, i) => digestPickLine(profile, r, i))
   ];
-  if (impact) {
-    lines.push("", `Biggest learnable gain: learn ${impact.skill} and ${picks[0].company} jumps from ${impact.from}% → ${impact.to}%.`);
-  }
   if (picks[0].missing.length) {
-    lines.push(`Closest gap for ${picks[0].company}: ${picks[0].missing.slice(0, 4).join(", ")}.`);
+    lines.push("", `Closest gap for ${picks[0].company}: ${picks[0].missing.slice(0, 4).join(", ")}.`);
   }
   return lines.join("\n");
 }
@@ -306,13 +331,7 @@ export function composeIndiaDigest(profile: Profile | null, jobs: Job[]): string
     "InterviewIQ — weekly 🇮🇳 India & startup recommendations",
     "",
     ...(profile ? [`Based on your profile: ${profile.headline || "—"} (${profile.years} yrs).`, ""] : []),
-    ...picks.map((r, i) =>
-      `${i + 1}. ${r.company} — ${r.score}% match (${VERDICT_META[r.verdict].label}) · ${r.openings} open role${r.openings === 1 ? "" : "s"} · best fit: ${r.best.title}`
-    )
+    ...picks.map((r, i) => digestPickLine(profile, r, i))
   ];
-  const impact = skillImpact(profile, picks[0]);
-  if (impact) {
-    lines.push("", `Biggest learnable gain: learn ${impact.skill} and ${picks[0].company} jumps from ${impact.from}% → ${impact.to}%.`);
-  }
   return lines.join("\n");
 }

@@ -99,6 +99,9 @@ describe("parity: server composer vs client engine", () => {
     expect(server).toContain("weekly company recommendations");
     /* Stripe and Lyft sit below the principal profile — capped at 55 */
     expect(server).toContain("2. Stripe — 55% match");
+    /* each pick carries its one-line reason, mirrored exactly */
+    expect(server).toContain("Why: Matches your level (principal)");
+    expect(server).toMatch(/learn aws → \d+%/);
   });
 
   it("composeRecommendationsDigest returns null without a profile or jobs", () => {

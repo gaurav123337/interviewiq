@@ -134,11 +134,12 @@ describe("recommendationsDigest — the weekly email body", () => {
     expect(d).toContain("best fit: Senior Frontend Engineer");
   });
 
-  it("calls out the biggest learnable gain when one exists", () => {
+  it("shows the one-line why + learnable gain on the pick", () => {
     /* a job with a skill the profile lacks → missing[0] boosts the score */
     const ranks = rankCompanies(PROFILE, [job({ id: "d1", title: "Fullstack Engineer", skills: ["react", "typescript", "python"] })]);
     const d = recommendationsDigest(PROFILE, ranks);
-    expect(d).toMatch(/learn python and .* jumps from \d+% → \d+%/);
+    expect(d).toContain("Why:");
+    expect(d).toMatch(/learn python → \d+%/);
   });
 
   it("is safe with no profile and no ranks", () => {
