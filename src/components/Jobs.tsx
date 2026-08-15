@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CareerProfile, JobPosting, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
-import { getCloudState, getSupabaseClient, isCloudConfigured } from "../services/cloud";
+import { cloudFnHeaders, getCloudState, getSupabaseClient, isCloudConfigured } from "../services/cloud";
 import { CONFIG } from "../config";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
@@ -1592,18 +1592,7 @@ function ReportModal({ onClose }: { onClose: () => void }) {
     if (!user?.email) { fallback(); return; }
     setSending(true);
     try {
-      const client = await getSupabaseClient();
-      const { data: session } = await client!.auth.getSession();
-      const token = session?.session?.access_token;
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${token}`,
-        apikey: CONFIG.supabase.anonKey,
-        "Content-Type": "application/json"
-      };
-      const secret = storageGet<string>(STORAGE_KEYS.applyEmailSecret, "");
-      if (secret) headers["x-apply-secret"] = secret;
-      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
-      if (key) headers["x-resend-key"] = key;
+      const headers = await cloudFnHeaders();
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-apply-digest`, {
         method: "POST",
         headers,
@@ -2001,18 +1990,7 @@ function RecsDigestModal({ profile, ranks, onClose }: { profile: CareerProfile; 
     if (!user?.email) { fallback(); return; }
     setSending(true);
     try {
-      const client = await getSupabaseClient();
-      const { data: session } = await client!.auth.getSession();
-      const token = session?.session?.access_token;
-      const headers: Record<string, string> = {
-        Authorization: `Bearer ${token}`,
-        apikey: CONFIG.supabase.anonKey,
-        "Content-Type": "application/json"
-      };
-      const secret = storageGet<string>(STORAGE_KEYS.applyEmailSecret, "");
-      if (secret) headers["x-apply-secret"] = secret;
-      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
-      if (key) headers["x-resend-key"] = key;
+      const headers = await cloudFnHeaders();
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-apply-digest`, {
         method: "POST",
         headers,

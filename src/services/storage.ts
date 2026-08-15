@@ -29,11 +29,9 @@ export const STORAGE_KEYS = {
   ragAlertWeek: "iq.ragAlertWeek",
   ragDigestWeek: "iq.ragDigestWeek",
   ragGapNotif: "iq.ragGapNotif",
-  /* admin-local (never published) keys for native digest email */
-  ragEmailSecret: "iq.ragEmailSecret",
-  ragEmailKey: "iq.ragEmailKey",
-  applyEmailSecret: "iq.applyEmailSecret",
-  recsEmailSecret: "iq.recsEmailSecret",
+  /* NOTE: the former admin email secrets (iq.ragEmailSecret, iq.ragEmailKey,
+     iq.applyEmailSecret, iq.recsEmailSecret) were removed — secrets now live
+     only as edge-function env vars (docs/app-security.md G3). */
   code: "iq.code",
   uiCode: "iq.uiCode",
   codingTrack: "iq.codingTrack",

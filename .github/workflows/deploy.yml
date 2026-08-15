@@ -18,12 +18,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      # actions pinned to commit SHAs (docs/app-security.md G7) — upgrade
+      # deliberately: bump the tag, then re-pin its SHA
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      # supply-chain gate (docs/app-security.md §9): no high/critical vulns in
+      # production deps, or the deploy stops
+      - run: npm audit --omit=dev --audit-level=high
       # fast retrieval-regression gate: a golden-set failure here stops the deploy
       - run: npm run eval:rag
       # build BEFORE test so the offline-readiness suite (service-worker precache
@@ -34,7 +39,7 @@ jobs:
       # edge-function shared code is pure TS — verify it with Deno so the
       # import-job extraction logic is tested in the pipeline (mirrors the
       # client suite, which exercises the same file)
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
       - run: deno test supabase/functions/_shared/
@@ -42,7 +47,7 @@ jobs:
       # visible at a glance, not just in the test logs (also re-gates on it)
       - name: Report offline-shell check
         run: node scripts/report-offline.mjs
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: dist
 
@@ -55,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
       # deploy the edge functions automatically when the Supabase access
       # token secret exists; inert otherwise so the pipeline stays green
       # without it
@@ -71,5 +76,11 @@ jobs:
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
           npx supabase functions deploy send-recommendations-digest \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt
+          npx supabase functions deploy send-apply-digest \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt
+          npx supabase functions deploy send-rag-digest \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt

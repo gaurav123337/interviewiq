@@ -1,16 +1,15 @@
 /* send-rag-digest — serverless email delivery for the weekly RAG digest.
    Invoked by the admin dashboard instead of a webhook bridge. Sends via
-   Resend when RESEND_API_KEY is configured as a function secret; otherwise
-   it answers sent:false with a clear reason so the UI can say what's missing.
+   Resend using the RESEND_API_KEY function secret — the client no longer
+   supplies any key (docs/app-security.md G3/G6).
 
-   Security: when RAG_DIGEST_SECRET is set (recommended), requests must carry
-   it in the x-rag-secret header. The function never touches user data — it
-   only formats and sends what the admin client passes in. */
+   Security: the caller must be a signed-in ADMIN (Supabase JWT verified
+   server-side against app_admins / the owner). The function never touches
+   user data — it only formats and sends what the admin client passes in.
+   CORS is restricted to the app's origins. */
 
-const cors = (req: Request): Record<string, string> => ({
-  "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*",    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-rag-secret, x-resend-key",
-  "Access-Control-Allow-Methods": "POST, OPTIONS"
-});
+import { requireAdmin } from "../_shared/auth.ts";
+import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 
 function renderDigest(d: Record<string, unknown>): string {
   const lines = [
@@ -33,14 +32,16 @@ function renderDigest(d: Record<string, unknown>): string {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
+  if (req.method === "OPTIONS") return preflightResponse(req);
 
-  const headers = { ...cors(req), "Content-Type": "application/json" };
+  const headers = { ...corsHeaders(req), "Content-Type": "application/json" };
+  if (!isAllowedOrigin(req)) {
+    return new Response(JSON.stringify({ sent: false, reason: "origin not allowed" }), { status: 403, headers });
+  }
   try {
-    /* optional shared secret — reject calls that don't know it */
-    const secret = Deno.env.get("RAG_DIGEST_SECRET") ?? "";
-    if (secret && req.headers.get("x-rag-secret") !== secret) {
-      return new Response(JSON.stringify({ sent: false, reason: "forbidden — missing or wrong x-rag-secret" }), { status: 401, headers });
+    const admin = await requireAdmin(req);
+    if (!admin) {
+      return new Response(JSON.stringify({ sent: false, reason: "forbidden — admin session required" }), { status: 401, headers });
     }
 
     const body = await req.json().catch(() => ({})) as { to?: string[]; from?: string; digest?: Record<string, unknown> };
@@ -48,11 +49,10 @@ Deno.serve(async (req) => {
     const digest = body.digest ?? {};
     const from = body.from ?? "InterviewIQ <digest@interviewiq.app>";
 
-    /* provider key: function secret wins, else the admin-supplied per-request
-       key (stored only in the admin's browser, never published to clients) */
-    const apiKey = Deno.env.get("RESEND_API_KEY") ?? req.headers.get("x-resend-key") ?? "";
+    /* provider key: function secret only — never accepted from the client */
+    const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
     if (!apiKey) {
-      return new Response(JSON.stringify({ sent: false, reason: "no Resend key — set the function secret RESEND_API_KEY or enter one in the RAG digest card" }), { status: 200, headers });
+      return new Response(JSON.stringify({ sent: false, reason: "no Resend key — set the function secret RESEND_API_KEY" }), { status: 200, headers });
     }
     if (!to.length) {
       return new Response(JSON.stringify({ sent: false, reason: "no valid recipient emails" }), { status: 200, headers });

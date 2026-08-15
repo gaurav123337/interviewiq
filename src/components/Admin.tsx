@@ -4,7 +4,7 @@ import type { LevelId } from "../types";
 import { COMPANIES, FIELDS, LEVELS, companyById } from "../data";
 import { codingProblemById } from "../data/coding";
 import { COMPANY_FREQ, problemsForCompany } from "../data/codingCompanies";
-import { getCloudState, subscribeCloud } from "../services/cloud";
+import { cloudFnHeaders, getCloudState, subscribeCloud } from "../services/cloud";
 import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../services/teams";
 import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
@@ -2219,14 +2219,12 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [enrProvider, setEnrProvider] = useState<string>(() => config.jobs?.salaryEnrichment?.provider ?? "none");
   const [enrCountry, setEnrCountry] = useState<string>(() => config.jobs?.salaryEnrichment?.country ?? "us");
   const [enrCap, setEnrCap] = useState<number>(() => config.jobs?.salaryEnrichment?.cap ?? 30);
-  /* apply digest email — shared secret (stored locally only, never published) */
-  const [applySecret, setApplySecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.applyEmailSecret, ""));
+  /* apply digest email — authenticated by the admin session; no local secrets */
   const [digestTesting, setDigestTesting] = useState<null | "dryrun" | "send">(null);
   const [applyPreview, setApplyPreview] = useState<string | null>(null);
   const [applyRecipients, setApplyRecipients] = useState<string[] | null>(null);
   const previewApply = () => setApplyPreview(applyDigest());
-  /* recommendations digest — same secret-gated broadcast, with a dry-run preview */
-  const [recsSecret, setRecsSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.recsEmailSecret, ""));
+  /* recommendations digest — admin-session broadcast, with a dry-run preview */
   const [recsBusy, setRecsBusy] = useState<null | "dryrun" | "send">(null);
   const [recsPreview, setRecsPreview] = useState<string | null>(null);
   const [recsRecipients, setRecsRecipients] = useState<string[] | null>(null);
@@ -2234,13 +2232,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [indiaRecsBusy, setIndiaRecsBusy] = useState<null | "dryrun" | "send">(null);
   const [indiaRecsPreview, setIndiaRecsPreview] = useState<string | null>(null);
   const [indiaRecsRecipients, setIndiaRecsRecipients] = useState<string[] | null>(null);
-  const recsHeaders = (): Record<string, string> => {
-    const h: Record<string, string> = { apikey: CONFIG.supabase.anonKey, "Content-Type": "application/json" };
-    if (recsSecret) h["x-apply-secret"] = recsSecret;
-    const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
-    if (key) h["x-resend-key"] = key;
-    return h;
-  };
+  const recsHeaders = (): Promise<Record<string, string>> => cloudFnHeaders();
   const previewRecs = () => {
     const p = getCareerProfile();
     const jobs = listJobs();
@@ -2252,7 +2244,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setRecsBusy(dryRun ? "dryrun" : "send");
     try {
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-recommendations-digest`, {
-        method: "POST", headers: recsHeaders(), body: dryRun ? JSON.stringify({ dryRun: true }) : "{}"
+        method: "POST", headers: await recsHeaders(), body: dryRun ? JSON.stringify({ dryRun: true }) : "{}"
       });
       const body = await res.json().catch(() => ({})) as { sent?: boolean; dryRun?: boolean; wouldEmail?: number; emailsSent?: number; recipients?: string[]; reason?: string };
       if (dryRun && body.dryRun) {
@@ -2280,7 +2272,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     setIndiaRecsBusy(dryRun ? "dryrun" : "send");
     try {
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-recommendations-digest`, {
-        method: "POST", headers: recsHeaders(), body: JSON.stringify({ dryRun, kind: "india" })
+        method: "POST", headers: await recsHeaders(), body: JSON.stringify({ dryRun, kind: "india" })
       });
       const body = await res.json().catch(() => ({})) as { sent?: boolean; dryRun?: boolean; wouldEmail?: number; emailsSent?: number; recipients?: string[]; reason?: string };
       if (dryRun && body.dryRun) {
@@ -2300,13 +2292,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const runApplyDigest = async (dryRun: boolean) => {
     setDigestTesting(dryRun ? "dryrun" : "send");
     try {
-      const headers: Record<string, string> = {
-        apikey: CONFIG.supabase.anonKey,
-        "Content-Type": "application/json"
-      };
-      if (applySecret) headers["x-apply-secret"] = applySecret;
-      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
-      if (key) headers["x-resend-key"] = key;
+      const headers = await cloudFnHeaders();
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-apply-digest`, {
         method: "POST", headers, body: dryRun ? JSON.stringify({ dryRun: true }) : "{}"
       });
@@ -2325,9 +2311,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
       setDigestTesting(null);
     }
   };
-  /* native digest email keys — stored locally only (never published to clients) */
-  const [secret, setSecret] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailSecret, ""));
-  const [key, setKey] = useState<string>(() => storageGet<string>(STORAGE_KEYS.ragEmailKey, ""));
+  /* native digest email — authenticated by the admin session; no local secrets */
   /* company question-frequency editor + publish audit (weekly digest) */
   const [freqCo, setFreqCo] = useState<string | null>(null);
   const freqCompanies = COMPANIES.filter(c => c.id !== "general");
@@ -2574,20 +2558,10 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           </p>
         </div>
         <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Apply digest email — function secret (x-apply-secret) — {storageGet(STORAGE_KEYS.applyEmailSecret, "") ? "saved in this browser" : "not set"}</span>
-            <input
-              type="password"
-              className="inp w-full font-mono"
-              value={applySecret}
-              onChange={e => { setApplySecret(e.target.value); storageSet(STORAGE_KEYS.applyEmailSecret, e.target.value); }}
-              placeholder="leave empty if the send-apply-digest function has no secret"
-            />
-          </label>
-          <p className="mt-2 text-[11px] text-mut">
-            Used by the weekly report's ✉️ Email button. The Resend key comes from the RAG digest card
-            (<span className="font-mono">x-resend-key</span>) or the function secret <span className="font-mono">RESEND_API_KEY</span> — set it in
-            Supabase dashboard → Edge Functions → send-apply-digest → Secrets.
+          <p className="mt-2 text-[11.5px] text-mut">
+            🔒 No secrets are stored in the browser — sends are authenticated by your admin session. The Resend key lives
+            only as the function secret <span className="font-mono">RESEND_API_KEY</span> (Supabase → Edge Functions → send-apply-digest → Secrets),
+            and the weekly pg_cron broadcast uses <span className="font-mono">APPLY_DIGEST_SECRET</span>.
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button className={btnGhost + btnSm} onClick={previewApply}>👀 Preview my digest</button>
@@ -2601,19 +2575,10 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
           <p className="mt-2 text-[11px] text-mut">Dry run counts recipients and shows their emails without sending — the broadcast fires the same empty-body request the pg_cron job sends every Monday.</p>
         </div>
         <div className="mt-4 rounded-xl border border-line/10 bg-deep/30 p-4">
-          <label className="block">
-            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Recommendations digest email — function secret (x-apply-secret) — {storageGet(STORAGE_KEYS.recsEmailSecret, "") ? "saved in this browser" : "not set"}</span>
-            <input
-              type="password"
-              className="inp w-full font-mono"
-              value={recsSecret}
-              onChange={e => { setRecsSecret(e.target.value); storageSet(STORAGE_KEYS.recsEmailSecret, e.target.value); }}
-              placeholder="leave empty if the send-recommendations-digest function has no secret"
-            />
-          </label>
           <p className="mt-2 text-[11.5px] text-mut">
-            Same guard as the apply digest — the pg_cron job fires this function every Monday. Preview, dry-run, then send the blast
-            here before the cron goes live.
+            🔒 No secrets in the browser — sends are authenticated by your admin session. The weekly pg_cron broadcast
+            uses <span className="font-mono">RECS_DIGEST_SECRET</span> and delivery needs <span className="font-mono">RESEND_API_KEY</span> (function secrets).
+            Preview, dry-run, then send the blast here before the cron goes live.
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button className={btnGhost + btnSm} onClick={previewRecs}>👀 Preview my digest</button>
@@ -2887,28 +2852,9 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
                   className="inp w-full"
                 />
               </label>
-              <label className="block">
-                <span className="mb-1 block text-[12px] font-bold text-mut">Function secret (x-rag-secret) — {storageGet(STORAGE_KEYS.ragEmailSecret, "") ? "saved in this browser" : "not set"}</span>
-                <input
-                  type="password"
-                  placeholder="rag… — must match the RAG_DIGEST_SECRET on the function"
-                  value={secret}
-                  onChange={e => { setSecret(e.target.value); storageSet(STORAGE_KEYS.ragEmailSecret, e.target.value); }}
-                  className="inp w-full"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[12px] font-bold text-mut">Resend API key — {storageGet(STORAGE_KEYS.ragEmailKey, "") ? "saved in this browser" : "not set"}</span>
-                <input
-                  type="password"
-                  placeholder="re_…"
-                  value={key}
-                  onChange={e => { setKey(e.target.value); storageSet(STORAGE_KEYS.ragEmailKey, e.target.value); }}
-                  className="inp w-full"
-                />
-              </label>
               <p className="text-[11px] text-fnt">
-                🔒 Both keys stay <span className="font-bold">only in this browser</span> (never published to clients) and travel only to the Edge Function over HTTPS. Set the Resend key here, or as the function secret <span className="font-mono">RESEND_API_KEY</span> in Supabase.
+                🔒 No secrets are stored in the browser — this digest is sent with your admin session and the
+                <span className="font-mono"> RESEND_API_KEY</span> function secret (Supabase → Edge Functions → send-rag-digest → Secrets).
               </p>
             </div>
           )}
@@ -3194,7 +3140,7 @@ Practice questions:
   /* Sends the FULL weekly digest (metrics + top queries + top documents) to
      the configured webhook / email bridge. Shared by the scheduled effect
      and the manual “Send now” button. */
-  const deliverDigest = (wk: string) => {
+  const deliverDigest = async (wk: string) => {
     const opts = getRagDigestOpts();
     const dig = ragDigest;
     if (!dig) return;
@@ -3220,11 +3166,7 @@ Practice questions:
     if (opts.nativeEmail) {
       /* native delivery — send-rag-digest Edge Function (no webhook needed) */
       const fnUrl = `${CONFIG.supabase.url}/functions/v1/send-rag-digest`;
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      const secret = storageGet<string>(STORAGE_KEYS.ragEmailSecret, "");
-      const key = storageGet<string>(STORAGE_KEYS.ragEmailKey, "");
-      if (secret) headers["x-rag-secret"] = secret;
-      if (key) headers["x-resend-key"] = key;
+      const headers = await cloudFnHeaders();
       void fetch(fnUrl, { method: "POST", headers, body: JSON.stringify({ ...payload, from: opts.from ?? "InterviewIQ <digest@interviewiq.app>" }) })
         .then(async r => {
           const j = await r.json().catch(() => ({}));

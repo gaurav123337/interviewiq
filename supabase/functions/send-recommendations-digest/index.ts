@@ -8,19 +8,19 @@
         every user's uploaded resume (uploaded_resumes → extracted profile),
         ranks the live feed with the SAME match engine the app uses
         (_shared/recommendationsDigest.ts), and emails each user their picks.
-        The broadcast path requires the shared secret (x-apply-secret ===
-        RECS_DIGEST_SECRET) so random callers can't trigger mass mail.
-   Sends via Resend when RESEND_API_KEY is configured as a function secret;
-   otherwise it answers sent:false with a clear reason. */
+        The broadcast path accepts the shared secret (x-apply-secret ===
+        RECS_DIGEST_SECRET, env) for pg_cron, OR a signed-in admin's JWT for
+        the dashboard's dry-run/send.
+   On demand, a signed-in user emails their OWN digest ({ to, text }) — the
+   JWT is verified and `to` must be their own email (admins may send to
+   anyone). Sends via Resend using the RESEND_API_KEY function secret only —
+   the client never supplies a key (docs/app-security.md G3/G6). CORS is
+   restricted to the app's origins. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { composeIndiaDigest, composeRecommendationsDigest, type Job, type Profile } from "../_shared/recommendationsDigest.ts";
-
-const cors = (req: Request): Record<string, string> => ({
-  "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-apply-secret, x-resend-key",
-  "Access-Control-Allow-Methods": "POST, OPTIONS"
-});
+import { requireUser, requireAdmin } from "../_shared/auth.ts";
+import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 
 /** Minimal text→HTML so the digest reads well in email clients. */
 function renderHtml(text: string, title: string, subtitle: string): string {
@@ -54,14 +54,13 @@ async function sendOne(apiKey: string, to: string, text: string, from: string, s
 /* ------------------------------------------------------------------ */
 
 async function handleBroadcast(req: Request, dryRun: boolean, kind: string): Promise<Response> {
-  const headers = { ...cors(req), "Content-Type": "application/json" };
+  const headers = { ...corsHeaders(req), "Content-Type": "application/json" };
+  /* pg_cron carries the shared secret; the dashboard authenticates as admin */
   const secret = Deno.env.get("RECS_DIGEST_SECRET") ?? "";
-  const provided = req.headers.get("x-apply-secret");
-  if (!secret) {
-    return new Response(JSON.stringify({ sent: false, reason: "broadcast disabled — set the function secret RECS_DIGEST_SECRET and the pg_cron job" }), { status: 200, headers });
-  }
-  if (provided !== secret) {
-    return new Response(JSON.stringify({ sent: false, reason: "forbidden — missing or wrong x-apply-secret" }), { status: 401, headers });
+  const provided = req.headers.get("x-apply-secret") ?? "";
+  const caller = await requireAdmin(req);
+  if (!caller && !(secret && provided === secret)) {
+    return new Response(JSON.stringify({ sent: false, reason: "forbidden — broadcast needs the cron secret or an admin session" }), { status: 401, headers });
   }
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY");
   const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
@@ -122,9 +121,12 @@ async function handleBroadcast(req: Request, dryRun: boolean, kind: string): Pro
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
+  if (req.method === "OPTIONS") return preflightResponse(req);
 
-  const headers = { ...cors(req), "Content-Type": "application/json" };
+  const headers = { ...corsHeaders(req), "Content-Type": "application/json" };
+  if (!isAllowedOrigin(req)) {
+    return new Response(JSON.stringify({ sent: false, reason: "origin not allowed" }), { status: 403, headers });
+  }
   try {
     const body = await req.json().catch(() => ({})) as { to?: string; subject?: string; text?: string; from?: string; dryRun?: boolean };
 
@@ -133,20 +135,32 @@ Deno.serve(async (req) => {
        { kind: "india" } for the India & startup digest */
     if (!body.to) return handleBroadcast(req, !!body.dryRun, (body as { kind?: string }).kind ?? "default");
 
+    /* on-demand — signed-in user emails their OWN digest */
+    const auth = await requireUser(req, { selfEmailOnly: true });
+    if (!auth) {
+      return new Response(JSON.stringify({ sent: false, reason: "forbidden — sign in to email your digest" }), { status: 401, headers });
+    }
     const to = body.to ?? "";
     const text = body.text ?? "";
     if (!to.includes("@") || !text.trim()) {
       return new Response(JSON.stringify({ sent: false, reason: "recipient email and digest text are required" }), { status: 200, headers });
     }
+    if (!auth.admin && to.trim().toLowerCase() !== auth.caller.email) {
+      return new Response(JSON.stringify({ sent: false, reason: "forbidden — you can only email your own digest" }), { status: 403, headers });
+    }
     const subject = body.subject ?? "InterviewIQ — weekly company recommendations";
     const from = body.from ?? "InterviewIQ <digest@interviewiq.app>";
 
-    const apiKey = Deno.env.get("RESEND_API_KEY") ?? req.headers.get("x-resend-key") ?? "";
+    /* provider key: function secret only — never accepted from the client */
+    const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
     if (!apiKey) {
-      return new Response(JSON.stringify({ sent: false, reason: "no Resend key — set the function secret RESEND_API_KEY or enter one in the admin digest card" }), { status: 200, headers });
+      return new Response(JSON.stringify({ sent: false, reason: "no Resend key — set the function secret RESEND_API_KEY" }), { status: 200, headers });
     }
 
-    const r = await sendOne(apiKey, to, text, from);
+    /* on-demand is the caller's own digest (default kind) — pass the full
+       subject/title/subtitle; previously these were undefined here, so the
+       email went out without a subject. */
+    const r = await sendOne(apiKey, to, text, from, subject, "🏆 InterviewIQ — weekly company recommendations", "Your best-fit companies, scored from your resume.");
     return new Response(
       JSON.stringify({ sent: r.ok, id: r.id ?? null, reason: r.ok ? "sent" : "provider error" }),
       { status: r.ok ? 200 : 502, headers }

@@ -94,6 +94,23 @@ export function getSupabaseClient(): Promise<SupabaseClient | null> {
   return resolveClient();
 }
 
+/** Headers for calling an Edge Function as the signed-in user — the JWT is
+    verified server-side, and no secrets ever live in the client bundle
+    (docs/app-security.md G3/G6). Include the publishable apikey for the
+    Supabase gateway, exactly like the rest of the app does. */
+export async function cloudFnHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  const client = await getSupabaseClient();
+  const session = await client?.auth.getSession().catch(() => null);
+  const token = session?.data?.session?.access_token;
+  const h: Record<string, string> = {
+    "Content-Type": "application/json",
+    apikey: CONFIG.supabase.anonKey
+  };
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  if (extra) Object.assign(h, extra);
+  return h;
+}
+
 /** Starts the sync engine for the signed-in user (idempotent). */
 async function startEngine(client: SupabaseClient): Promise<void> {
   if (!engine) engine = new SyncEngine();

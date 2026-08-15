@@ -1,0 +1,18 @@
+# Supply-chain hygiene (docs/app-security.md G7): keep npm deps and the
+# third-party Actions we pin by SHA up to date. Updates arrive as PRs that
+# run the full deploy pipeline (typecheck, tests, build, npm audit).
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      patch-updates:
+        update-types: ["patch"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10

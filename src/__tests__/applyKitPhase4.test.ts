@@ -536,10 +536,14 @@ describe("export text override — edits survive PDF/HTML/docx", () => {
 });
 
 describe("designed resume HTML", () => {
-  it("renders sections with the accent color and print hook", () => {
+  it("renders sections with the accent color and no inline scripts (CSP-safe)", () => {
     const html = buildResumeHtml(PROFILE, JOB, MATCH);
     expect(html).toContain("<!doctype html>");
-    expect(html).toContain("window.print");
+    /* print is triggered by the OPENER (openResumePrint calls w.print())
+       because the blank window inherits the strict CSP — an inline script
+       would be blocked (docs/app-security.md G2). */
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("window.print");
     expect(html).toContain("#4f46e5"); /* default accent */
     expect(html).toContain("SUMMARY");
     expect(html).toContain("Airbnb");

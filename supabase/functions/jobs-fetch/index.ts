@@ -1,7 +1,14 @@
 /* jobs-fetch — pulls open job postings from ATS boards into the jobs table.
    Sources are admin-tunable via app_config → job_sources (defaults below).
-   Signed-in users trigger a refresh (verify_jwt); a Deno.cron also refreshes
-   every 6 hours so the feed stays fresh without user interaction.
+   Signed-in users trigger a refresh (JWT-gated — the function enforces it
+   in code even though it's deployed --no-verify-jwt); a shared secret
+   (JOBS_FETCH_SECRET) is accepted for future cron/manual admin runs.
+
+   Security (docs/app-security.md G1/G5): every outbound fetch goes through
+   safeFetch (https-only, private-IP/metadata ranges blocked, redirect hops
+   re-validated), and the ATS providers additionally allow-list their exact
+   API hosts so a tampered board value can't point elsewhere. Best-effort
+   per-user rate limit + explicit CORS allow-list.
 
    Skill extraction uses a curated dictionary against the description — the
    same vocabulary family as the app's resume analyzer. The match VERDICT is
@@ -11,6 +18,40 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
 import { companyFromLink, feedTitle, parseRss, splitRssTitle, stripJobNumberPrefix } from "../_shared/rss.ts";
+import { safeFetch, readBodyText, SafeFetchError } from "../_shared/safeFetch.ts";
+import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
+import { callerFrom } from "../_shared/auth.ts";
+import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
+
+/* ATS provider → exact API hosts (defense-in-depth: a tampered board value
+   can only ever hit these hosts). RSS/RemoteOK are public-host validated by
+   safeFetch instead (their URLs are admin-configurable by design). */
+const PROVIDER_HOSTS: Record<string, string[]> = {
+  greenhouse: ["boards-api.greenhouse.io"],
+  ashby: ["api.ashbyhq.com"],
+  lever: ["api.lever.co"],
+  remoteok: ["remoteok.com"]
+};
+
+async function fetchJson<T = unknown>(provider: string, url: string, headers?: Record<string, string>): Promise<T> {
+  const allowed = PROVIDER_HOSTS[provider];
+  if (allowed) {
+    const host = new URL(url).hostname.toLowerCase();
+    if (!allowed.includes(host)) throw new Error(`host ${host} not allowed for provider ${provider}`);
+  }
+  const res = await safeFetch(url, { headers });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json().catch(() => { throw new Error("invalid JSON from source"); })) as T;
+}
+
+async function fetchText(url: string, headers?: Record<string, string>): Promise<{ ok: boolean; status: number; text: string }> {
+  const res = await safeFetch(url, { headers });
+  if (!res.ok) return { ok: false, status: res.status, text: "" };
+  return { ok: true, status: res.status, text: await readBodyText(res, 2_000_000) };
+}
+
+/* best-effort per-user cap: 5 refreshes/min (clients refresh ~1/day) */
+const limitRefresh = makeLimiter(5, 60_000);
 
 /* default sources — verified live; admins can override via app_config.
    Global ATS boards + public RSS feeds + Indian startup boards (fampay,
@@ -116,10 +157,11 @@ interface EnrichConfig {
 }
 
 async function fetchGreenhouse(board: string): Promise<{ company: string; jobs: unknown[] }> {
-  const info = await fetch(`https://boards-api.greenhouse.io/v1/boards/${board}`).then(r => r.json()).catch(() => null);
+  const info = await fetchJson<{ name?: string }>("greenhouse", `https://boards-api.greenhouse.io/v1/boards/${board}`).catch(() => null);
   const company = (info?.name as string) ?? board;
-  const res = await fetch(`https://boards-api.greenhouse.io/v1/boards/${board}/jobs`);
-  const data = await res.json();
+  const data = await fetchJson<{
+    jobs: { id: string | number; title: string; absolute_url: string; location?: { name?: string }; content?: string; updated_at?: string }[]
+  }>("greenhouse", `https://boards-api.greenhouse.io/v1/boards/${board}/jobs`);
   const jobs = (data.jobs ?? []).map((j: {
     id: string | number; title: string; absolute_url: string;
     location?: { name?: string }; content?: string; updated_at?: string;
@@ -145,8 +187,9 @@ async function fetchGreenhouse(board: string): Promise<{ company: string; jobs: 
 }
 
 async function fetchAshby(board: string): Promise<{ company: string; jobs: unknown[] }> {
-  const res = await fetch(`https://api.ashbyhq.com/posting-api/job-board/${board}`);
-  const data = await res.json();
+  const data = await fetchJson<{
+    jobs: { id: string | number; title: string; location?: string | null; secondaryLocations?: { location?: string }[]; employmentType?: string; publishedAt?: string; descriptionHtml?: string; jobUrl?: string; companyName?: string }[]
+  }>("ashby", `https://api.ashbyhq.com/posting-api/job-board/${board}`);
   const jobs = (data.jobs ?? []).map((j: {
     id: string | number; title: string; location?: string | null;
     secondaryLocations?: { location?: string }[]; employmentType?: string;
@@ -177,9 +220,9 @@ async function fetchAshby(board: string): Promise<{ company: string; jobs: unkno
    Config entry: rss:https://feed.example.com/jobs.rss. The feed title
    becomes the company label; each <item> becomes one posting. */
 async function fetchRss(feedUrl: string): Promise<{ company: string; jobs: unknown[] }> {
-  const res = await fetch(feedUrl);
-  if (!res.ok) throw new Error(`RSS feed returned HTTP ${res.status}`);
-  const xml = await res.text();
+  const fetched = await fetchText(feedUrl);
+  if (!fetched.ok) throw new Error(`RSS feed returned HTTP ${fetched.status}`);
+  const xml = fetched.text;
   const title = feedTitle(xml);
   const company = (title || new URL(feedUrl).hostname.replace(/^www\./, "") || "RSS").slice(0, 60);
   const jobs = parseRss(xml).map((item, i) => {
@@ -218,9 +261,7 @@ async function fetchRss(feedUrl: string): Promise<{ company: string; jobs: unkno
    satisfying both. The first array element is a legal/terms object, not a
    job — it's skipped. Config entry: remoteok:remoteok */
 async function fetchRemoteOk(): Promise<{ company: string; jobs: unknown[] }> {
-  const res = await fetch("https://remoteok.com/api", { headers: { "User-Agent": "InterviewIQ/job-feed (attribution per remoteok.com/api terms)" } });
-  if (!res.ok) throw new Error(`RemoteOK API returned HTTP ${res.status}`);
-  const data = (await res.json()) as unknown[];
+  const data = await fetchJson<Record<string, unknown>[]>("remoteok", "https://remoteok.com/api", { "User-Agent": "InterviewIQ/job-feed (attribution per remoteok.com/api terms)" });
   const jobs = data
     .filter((d): d is Record<string, unknown> => !!d && typeof d === "object" && typeof (d as Record<string, unknown>).position === "string")
     .map((d) => {
@@ -261,8 +302,9 @@ function simpleHash(s: string): string {
 }
 
 async function fetchLever(org: string): Promise<{ company: string; jobs: unknown[] }> {
-  const res = await fetch(`https://api.lever.co/v0/postings/${org}?mode=json`);
-  const data = await res.json();
+  const data = await fetchJson<{
+    id: string; text?: string; hostedUrl?: string; categories?: { location?: string; commitment?: string }; createdAt?: number; descriptionPlain?: string
+  }[]>("lever", `https://api.lever.co/v0/postings/${org}?mode=json`);
   const jobs = (Array.isArray(data) ? data : []).map((j: {
     id: string; text?: string; hostedUrl?: string;
     categories?: { location?: string; commitment?: string };
@@ -367,14 +409,23 @@ async function getConfig(admin: ReturnType<typeof createClient>): Promise<{ sour
   };
 }
 
-const cors = (req: Request): Record<string, string> => ({
-  "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, GET, OPTIONS"
-});
-
 async function handle(req: Request): Promise<Response> {
-  const headers = { ...cors(req), "Content-Type": "application/json" };
+  const headers = { ...corsHeaders(req), "Content-Type": "application/json" };
+  if (!isAllowedOrigin(req)) {
+    return new Response(JSON.stringify({ error: "origin not allowed" }), { status: 403, headers });
+  }
+
+  /* auth: a signed-in user's JWT, or the shared cron/admin secret */
+  const user = await callerFrom(req);
+  const secret = Deno.env.get("JOBS_FETCH_SECRET") ?? "";
+  const provided = req.headers.get("x-jobs-secret") ?? "";
+  if (!user && !(secret && provided === secret)) {
+    return new Response(JSON.stringify({ error: "unauthorized — sign in to refresh the feed" }), { status: 401, headers });
+  }
+  if (!limitRefresh(user ? user.uid : clientKey(req))) {
+    return new Response(JSON.stringify({ error: "too many refreshes — try again in a minute" }), { status: 429, headers });
+  }
+
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY");
   if (!serviceKey) return new Response(JSON.stringify({ error: "service role key not configured" }), { status: 500, headers });
   const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
@@ -384,11 +435,11 @@ async function handle(req: Request): Promise<Response> {
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
+  if (req.method === "OPTIONS") return preflightResponse(req);
   try {
     return await handle(req);
   } catch (e) {
-    return new Response(JSON.stringify({ ok: false, error: (e as Error).message ?? "jobs-fetch failed" }), { status: 500, headers: { ...cors(req), "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: false, error: (e as Error).message ?? "jobs-fetch failed" }), { status: 500, headers: { ...corsHeaders(req), "Content-Type": "application/json" } });
   }
 });
 

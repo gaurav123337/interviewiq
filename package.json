@@ -6,7 +6,7 @@
   "description": "InterviewIQ — AI interviewer PWA. Pick a level, field and company; get tailored interview questions with solutions, from junior developer to CEO.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && node scripts/check-no-innerhtml.mjs && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "eval:rag": "vitest run src/__tests__/rag-eval.test.ts",
