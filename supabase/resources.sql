@@ -36,6 +36,7 @@ create table if not exists public.resources (
   reviewed_by text,                            -- admin email who made the call
   reviewed_at timestamptz,
   flags integer not null default 0,
+  votes integer not null default 0,            -- community quality signal (resourceQuality)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -111,7 +112,42 @@ begin
 end $$;
 
 /* ------------------------------------------------------------------ */
-/* 5. Audit trail — every resource mutation lands in admin_audit        */
+/* 5. Community voting — per-user votes feed the quality score          */
+/* ------------------------------------------------------------------ */
+
+alter table public.resources add column if not exists votes integer not null default 0;
+
+create table if not exists public.resource_votes (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  resource_id uuid not null references public.resources(id) on delete cascade,
+  direction integer not null default 1 check (direction in (-1, 1)),
+  created_at timestamptz not null default now(),
+  primary key (user_id, resource_id)
+);
+
+alter table public.resource_votes enable row level security;
+drop policy if exists "resource votes own" on public.resource_votes;
+create policy "resource votes own" on public.resource_votes
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+/* One vote per user per resource (upsert re-votes, never duplicates);
+   the resource's running total is recomputed from the votes table. */
+create or replace function public.vote_resource(p_id uuid, p_direction integer)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_uid uuid := auth.uid();
+begin
+  if v_uid is null then raise exception 'not authenticated'; end if;
+  if p_direction not in (-1, 1) then raise exception 'invalid direction'; end if;
+  insert into public.resource_votes (user_id, resource_id, direction)
+    values (v_uid, p_id, p_direction)
+  on conflict (user_id, resource_id) do update set direction = excluded.direction;
+  update public.resources r
+    set votes = coalesce((select sum(v.direction) from public.resource_votes v where v.resource_id = r.id), 0)
+    where r.id = p_id;
+end $$;
+
+/* ------------------------------------------------------------------ */
+/* 6. Audit trail — every resource mutation lands in admin_audit        */
 /* ------------------------------------------------------------------ */
 
 drop trigger if exists admin_audit_resources on public.resources;

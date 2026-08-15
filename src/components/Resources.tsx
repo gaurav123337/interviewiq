@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getCloudState, subscribeCloud } from "../services/cloud";
 import {
-  approvedResources, deleteMyResource, myResources, reportResource, submitResource,
+  approvedResources, deleteMyResource, myResources, reportResource, submitResource, voteResource,
   type ResourceMode, type ResourceRow
 } from "../services/resources";
 import { toast } from "../toast";
@@ -74,6 +74,14 @@ export function Resources() {
     const r = await reportResource(id);
     if (!r.ok) { toast("✗ " + (r.error ?? "Couldn't report")); return; }
     toast("🚩 Thanks — 3 flags auto-quarantine the link");
+  };
+
+  const vote = async (id: string, direction: 1 | -1) => {
+    if (!cloud.user) { toast("✋ Sign in to vote"); return; }
+    const r = await voteResource(id, direction);
+    if (!r.ok) { toast("✗ " + (r.error ?? "Couldn't vote")); return; }
+    setApproved(a => a.map(x => x.id === id ? { ...x, votes: (x.votes ?? 0) + direction } : x));
+    toast(direction === 1 ? "👍 Voted up" : "👎 Voted down");
   };
 
   const guardTone = (g: ResourceRow["guard"]) => {
@@ -214,10 +222,14 @@ export function Resources() {
                   </div>
                   {r.description && <p className="mt-1 text-[12.5px] text-mut">{r.description}</p>}
                   <p className="mt-1 text-[11.5px] text-fnt">
-                    by {r.suggested_by ?? "a user"} · {new Date(r.created_at).toLocaleDateString()}
+                    by {r.suggested_by ?? "a user"} · {new Date(r.created_at).toLocaleDateString()} · 👍 {r.votes ?? 0}
                   </p>
                 </div>
-                <button className={btnGhost + btnSm} onClick={() => void flag(r.id)} title="Report as unsafe — 3 flags auto-quarantine">🚩</button>
+                <div className="flex flex-none items-center gap-1.5">
+                  <button className={btnGhost + btnSm} onClick={() => void vote(r.id, 1)} title="This resource helped me">👍</button>
+                  <button className={btnGhost + btnSm} onClick={() => void vote(r.id, -1)} title="Not useful">👎</button>
+                  <button className={btnGhost + btnSm} onClick={() => void flag(r.id)} title="Report as unsafe — 3 flags auto-quarantine">🚩</button>
+                </div>
               </div>
             ))}
           </div>

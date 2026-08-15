@@ -9,12 +9,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { BAND_LABEL, BAND_ORDER, FIELDS, type Band } from "../data/skillCatalog";
+import { applyManifestDiff, markManifestSeen, qualityBand, resourceFreshness, resourceQuality } from "../services/catalogMeta";
 import { getCareerProfile } from "../services/jobs";
 import { myResources, submitResource, type ResourceRow } from "../services/resources";
 import { buildPlan, gapAnalysis, levelUpDelta } from "../services/skillCounselor";
+import { latestSignals, STAGE_META, type SkillSignal } from "../services/trendSignals";
 import { getCloudState, subscribeCloud } from "../services/cloud";
 import { toast } from "../toast";
-import { btnGhost, btnSm, cardCls, Chip } from "./ui";
+import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
 
 const BANDS: Band[] = ["junior", "mid", "senior", "staff", "principal", "cto"];
 
@@ -31,6 +33,9 @@ export function Counselor() {
   const [gapsOnly, setGapsOnly] = useState(false);
   const [saved, setSaved] = useState<ResourceRow[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
+  const [signals, setSignals] = useState<Record<string, SkillSignal>>({});
+  const diff = useMemo(() => applyManifestDiff(), []);
+  const [showNew, setShowNew] = useState(diff.isNew);
 
   const field = FIELDS.find(f => f.id === fieldId)!;
   const track = field.tracks.find(t => t.id === trackId) ?? field.tracks[0];
@@ -38,6 +43,7 @@ export function Counselor() {
   useEffect(() => subscribeCloud(setCloud), []);
 
   useEffect(() => { void myResources().then(setSaved).catch(() => {}); }, []);
+  useEffect(() => { void latestSignals().then(setSignals).catch(() => {}); }, []);
 
   useEffect(() => {
     /* when the field changes, snap to its first track and a sane target */
@@ -84,6 +90,20 @@ export function Counselor() {
           and only the <span className="font-bold">delta</span> between your current level and the target.
         </p>
       </div>
+
+      {/* what's new in the catalog (manifest diff) */}
+      {showNew && diff.isNew && (
+        <div className="mx-auto mt-5 max-w-[680px] rounded-2xl border border-acc1/40 bg-acc1/10 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-[14.5px] font-extrabold text-acc2">🆕 What's new in the catalog (v{diff.version})</h2>
+            <button className={btnPrimary + btnSm} onClick={() => { markManifestSeen(); setShowNew(false); }}>Got it</button>
+          </div>
+          <p className="mt-1 text-[12px] text-mut">Reviewed {diff.lastReviewedAt} · {diff.skillCount} skills · {diff.resourceCount} curated resources</p>
+          <ul className="mt-2 space-y-1">
+            {diff.changes.map((c, i) => <li key={i} className="text-[12.5px] text-ink">{c}</li>)}
+          </ul>
+        </div>
+      )}
 
       {/* selectors */}
       <div className="mt-6 flex flex-wrap justify-center gap-2">
@@ -172,6 +192,12 @@ export function Counselor() {
                           <span className="text-[14px] font-extrabold">{s.name}</span>
                           <span className="text-[12px] text-fnt">{dots(s.difficulty)}</span>
                           {isOwned ? <Chip tone="ok">✓ owned</Chip> : s.id === gap.next?.id ? <Chip tone="co">⬆ learn next</Chip> : <Chip tone="warn">○ gap</Chip>}
+                          {(() => {
+                            const sig = signals[s.id];
+                            if (!sig) return null;
+                            const m = STAGE_META[sig.stage] ?? STAGE_META.nascent;
+                            return <Chip tone={sig.stage === "declining" ? "bad" : sig.stage === "growing" || sig.stage === "mainstream" ? "ok" : "default"} title={`market trend ${sig.trend_score.toFixed(0)}/100`}>{m.icon} {m.label}</Chip>;
+                          })()}
                         </div>
                         <p className="mt-1 text-[12.5px] text-mut">{s.why}</p>
                         {s.prerequisites && s.prerequisites.length > 0 && (
@@ -179,23 +205,29 @@ export function Counselor() {
                         )}
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <span className="text-[10.5px] font-bold uppercase tracking-wider text-fnt">🔍 App suggested:</span>
-                          {s.resources.map(r => (
-                            <span key={r.url} className="inline-flex items-center gap-1 rounded-full border border-line/15 px-2.5 py-1 text-[11.5px]">
-                              <a href={r.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-acctxt hover:underline">{r.title}</a>
-                              <span className="text-fnt">{r.kind}</span>
-                              {r.free ? <span className="text-ok">free</span> : <span className="text-warn">paid</span>}
-                              {isSaved(r.url) ? (
-                                <span title="Already in your saved resources" className="text-ok">✓</span>
-                              ) : (
-                                <button
-                                  className="text-acctxt hover:opacity-70 disabled:opacity-40"
-                                  title="Save to my resources (guard-checked)"
-                                  disabled={saving === r.url}
-                                  onClick={e => { e.preventDefault(); void saveResource(r, s.why); }}
-                                >⭐</button>
-                              )}
-                            </span>
-                          ))}
+                          {s.resources.map(r => {
+                            const fres = resourceFreshness(r);
+                            const q = resourceQuality(r);
+                            return (
+                              <span key={r.url} className="inline-flex items-center gap-1 rounded-full border border-line/15 px-2.5 py-1 text-[11.5px]">
+                                <a href={r.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-acctxt hover:underline">{r.title}</a>
+                                <span className="text-fnt">{r.kind}</span>
+                                {r.free ? <span className="text-ok">free</span> : <span className="text-warn">paid</span>}
+                                <span className={fres.status === "current" ? "text-fnt" : "text-warn"} title={fres.label}>{fres.status === "current" ? `'${String(r.publishedYear).slice(2)}` : "⚠️"}</span>
+                                <span title={`quality score ${q}/100`} className={q >= 85 ? "text-ok" : q >= 55 ? "text-fnt" : "text-warn"}>{q} {qualityBand(q)}</span>
+                                {isSaved(r.url) ? (
+                                  <span title="Already in your saved resources" className="text-ok">✓</span>
+                                ) : (
+                                  <button
+                                    className="text-acctxt hover:opacity-70 disabled:opacity-40"
+                                    title="Save to my resources (guard-checked)"
+                                    disabled={saving === r.url}
+                                    onClick={e => { e.preventDefault(); void saveResource(r, s.why); }}
+                                  >⭐</button>
+                                )}
+                              </span>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>

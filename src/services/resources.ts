@@ -31,6 +31,7 @@ export interface ResourceRow {
   guard: GuardRecord | null;
   suggested_by?: string;
   flags: number;
+  votes: number;
   created_at: string;
 }
 
@@ -101,7 +102,7 @@ export async function myResources(): Promise<ResourceRow[]> {
   const client = await getSupabaseClient();
   if (!client) return cached;
   const { data, error } = await client.from("resources")
-    .select("id, url, title, description, category, mode, status, guard, flags, created_at")
+    .select("id, url, title, description, category, mode, status, guard, flags, votes, created_at")
     .eq("mode", "personal")
     .order("created_at", { ascending: false });
   if (error) return cached;
@@ -116,7 +117,7 @@ export async function approvedResources(): Promise<ResourceRow[]> {
   const client = await getSupabaseClient();
   if (!client) return cached;
   const { data, error } = await client.from("resources")
-    .select("id, url, title, description, category, mode, status, guard, flags, created_at")
+    .select("id, url, title, description, category, mode, status, guard, flags, votes, created_at")
     .eq("mode", "community")
     .eq("status", "approved")
     .order("created_at", { ascending: false });
@@ -135,7 +136,7 @@ export async function pendingCommunityResources(): Promise<ResourceRow[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
   const { data, error } = await client.from("resources")
-    .select("id, url, title, description, category, mode, status, guard, suggested_by, flags, created_at")
+    .select("id, url, title, description, category, mode, status, guard, suggested_by, flags, votes, created_at")
     .eq("mode", "community")
     .in("status", ["pending", "quarantined"])
     .order("created_at", { ascending: false })
@@ -166,5 +167,14 @@ export async function deleteMyResource(id: string): Promise<{ ok: boolean; error
   const { error } = await client.rpc("delete_my_resource", { p_id: id });
   if (error) return { ok: false, error: error.message };
   dropFromCache("personal", id);
+  return { ok: true };
+}
+
+/** Community quality vote (one per user; re-vote replaces, never duplicates). */
+export async function voteResource(id: string, direction: 1 | -1): Promise<{ ok: boolean; error?: string }> {
+  const client = await getSupabaseClient();
+  if (!client) return { ok: false, error: "Cloud not configured" };
+  const { error } = await client.rpc("vote_resource", { p_id: id, p_direction: direction });
+  if (error) return { ok: false, error: error.message };
   return { ok: true };
 }

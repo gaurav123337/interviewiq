@@ -11,6 +11,22 @@
 
 export type Band = "junior" | "mid" | "senior" | "staff" | "principal" | "cto";
 
+/* ------------------------------------------------------------------ */
+/* Manifest — versioned catalog metadata (docs/skill-counselor.md §4.1) */
+/* ------------------------------------------------------------------ */
+
+/** Bump `version` on every catalog content change and append the human
+    changelog lines — the client diffs its stored version against this to
+    surface "What's new in your paths". `lastReviewedAt` drives the catalog
+    freshness banner. */
+export const CATALOG_MANIFEST = {
+  version: "1.0.0",
+  lastReviewedAt: "2026-08-15",
+  changes: [
+    "🚀 Initial catalog: Frontend, Backend & Leadership paths (7 tracks, 48 skills, ~90 curated resources)."
+  ]
+} as const;
+
 export const BAND_ORDER: Record<Band, number> = {
   junior: 0, mid: 1, senior: 2, staff: 3, principal: 4, cto: 5
 };
@@ -33,6 +49,8 @@ export interface CatalogResource {
   url: string;
   kind: "docs" | "course" | "video" | "book" | "interactive" | "article";
   free: boolean;
+  /** Publication year of THIS resource — drives the recency/freshness check. */
+  publishedYear: number;
 }
 
 export interface CatalogSkill {
@@ -71,8 +89,8 @@ export interface CatalogField {
 /* ------------------------------------------------------------------ */
 
 const R = (
-  title: string, url: string, kind: CatalogResource["kind"] = "docs", free = true
-): CatalogResource => ({ title, url, kind, free });
+  title: string, url: string, kind: CatalogResource["kind"] = "docs", free = true, publishedYear = 2025
+): CatalogResource => ({ title, url, kind, free, publishedYear });
 
 export const SKILLS: Record<string, CatalogSkill> = {
   /* ---- foundation (junior) ---- */
@@ -86,11 +104,11 @@ export const SKILLS: Record<string, CatalogSkill> = {
   },
   javascript: {
     id: "javascript", name: "JavaScript", band: "junior", difficulty: 1, why: "The language of the web — closures, the event loop, async.",
-    resources: [R("javascript.info", "https://javascript.info", "course"), R("MDN — JavaScript", "https://developer.mozilla.org/en-US/docs/Web/JavaScript"), R("Eloquent JavaScript (free)", "https://eloquentjavascript.net", "book")]
+    resources: [R("javascript.info", "https://javascript.info", "course", true, 2024), R("MDN — JavaScript", "https://developer.mozilla.org/en-US/docs/Web/JavaScript", "docs", true, 2024), R("Eloquent JavaScript (free)", "https://eloquentjavascript.net", "book", true, 2018)]
   },
   typescript: {
     id: "typescript", name: "TypeScript", band: "junior", difficulty: 2, why: "Static types catch whole bug classes before they ship.",
-    resources: [R("TypeScript Handbook", "https://www.typescriptlang.org/docs/handbook/intro.html"), R("TypeScript Deep Dive (free)", "https://basarat.gitbook.io/typescript", "book")]
+    resources: [R("TypeScript Handbook", "https://www.typescriptlang.org/docs/handbook/intro.html", "docs", true, 2024), R("TypeScript Deep Dive (free)", "https://basarat.gitbook.io/typescript", "book", true, 2019)]
   },
   git: {
     id: "git", name: "Git", band: "junior", difficulty: 1, why: "Branching, rebasing and reviewing — how teams actually collaborate.",
@@ -102,11 +120,11 @@ export const SKILLS: Record<string, CatalogSkill> = {
   },
   sql: {
     id: "sql", name: "SQL", band: "junior", difficulty: 2, why: "Joins, indexes and aggregation — querying is the core of data work.",
-    resources: [R("PostgreSQL tutorial", "https://www.postgresql.org/docs/current/tutorial.html"), R("SQLBolt (interactive)", "https://sqlbolt.com", "interactive"), R("Mode — SQL tutorial", "https://mode.com/sql-tutorial", "course")]
+    resources: [R("PostgreSQL tutorial", "https://www.postgresql.org/docs/current/tutorial.html", "docs", true, 2024), R("SQLBolt (interactive)", "https://sqlbolt.com", "interactive", true, 2019), R("Mode — SQL tutorial", "https://mode.com/sql-tutorial", "course", true, 2020)]
   },
   "data-structures": {
     id: "data-structures", name: "Data structures & algorithms", band: "junior", difficulty: 3, why: "The interview gate and the vocabulary for reasoning about cost.",
-    resources: [R("neetcode.io (interactive)", "https://neetcode.io", "interactive"), R("The Odin Project — algorithms", "https://www.theodinproject.com/paths/full-stack-javascript/courses/javascript", "course")]
+    resources: [R("neetcode.io (interactive)", "https://neetcode.io", "interactive", true, 2022), R("The Odin Project — algorithms", "https://www.theodinproject.com/paths/full-stack-javascript/courses/javascript", "course", true, 2024)]
   },
   "networking-basics": {
     id: "networking-basics", name: "Networking basics", band: "junior", difficulty: 2, why: "TCP, DNS, TLS — the layers your code runs on.",
@@ -156,7 +174,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   },
   docker: {
     id: "docker", name: "Docker", band: "mid", difficulty: 2, why: "Containerize anything — the baseline for modern deploys.",
-    resources: [R("Docker — get started", "https://docs.docker.com/get-started/"), R("Docker curriculum (free)", "https://docker-curriculum.com", "course")]
+    resources: [R("Docker — get started", "https://docs.docker.com/get-started/", "docs", true, 2024), R("Docker curriculum (free)", "https://docker-curriculum.com", "course", true, 2019)]
   },
   graphql: {
     id: "graphql", name: "GraphQL", band: "mid", difficulty: 2, why: "Typed queries that collapse N+1 round trips — when it fits.",
@@ -178,7 +196,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   /* ---- senior ---- */
   "system-design": {
     id: "system-design", name: "System design", band: "senior", difficulty: 3, why: "Trade-offs at scale — load, data, consistency, cost.",
-    resources: [R("system-design-primer (free)", "https://github.com/donnemartin/system-design-primer", "book"), R("ByteByteGo — newsletter", "https://blog.bytebytego.com", "article")]
+    resources: [R("system-design-primer (free)", "https://github.com/donnemartin/system-design-primer", "book", true, 2021), R("ByteByteGo — newsletter", "https://blog.bytebytego.com", "article", true, 2024)]
   },
   "architecture": {
     id: "architecture", name: "Software architecture", band: "senior", difficulty: 3, why: "Patterns, boundaries and when complexity earns its keep.",
@@ -190,7 +208,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   },
   "distributed-systems": {
     id: "distributed-systems", name: "Distributed systems", band: "senior", difficulty: 3, why: "Consistency, partitioning and failure — the hard 20% of backend.",
-    resources: [R("MIT 6.824 (free lectures)", "https://pdos.csail.mit.edu/6.824/", "course"), R("Designing Data-Intensive Applications", "https://dataintensive.net", "book", false)]
+    resources: [R("MIT 6.824 (free lectures)", "https://pdos.csail.mit.edu/6.824/", "course", true, 2023), R("Designing Data-Intensive Applications", "https://dataintensive.net", "book", false, 2017)]
   },
   kubernetes: {
     id: "kubernetes", name: "Kubernetes", band: "senior", difficulty: 3, why: "Orchestrating containers — the default platform abstraction.",
@@ -214,7 +232,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   },
   "database-scaling": {
     id: "database-scaling", name: "Database scaling", band: "senior", difficulty: 3, why: "Read replicas, partitioning and connection pooling under load.",
-    resources: [R("Use the Index, Luke", "https://use-the-index-luke.com", "book"), R("PostgreSQL — partitioning", "https://www.postgresql.org/docs/current/ddl-partitioning.html")]
+    resources: [R("Use the Index, Luke", "https://use-the-index-luke.com", "book", true, 2012), R("PostgreSQL — partitioning", "https://www.postgresql.org/docs/current/ddl-partitioning.html", "docs", true, 2024)]
   },
   "engineering-communication": {
     id: "engineering-communication", name: "Engineering communication", band: "senior", difficulty: 2, why: "Design docs, trade-off writeups and influencing without authority.",
@@ -228,7 +246,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   /* ---- staff ---- */
   "systems-thinking": {
     id: "systems-thinking", name: "Systems thinking", band: "staff", difficulty: 3, why: "Seeing second-order effects and leverage points across teams.",
-    resources: [R("staffeng.com — guides", "https://staffeng.com/guides/", "article"), R("The Staff Engineer's Path", "https://www.oreilly.com/library/view/the-staff-engineers/9781098118723/", "book", false)]
+    resources: [R("staffeng.com — guides", "https://staffeng.com/guides/", "article", true, 2023), R("The Staff Engineer's Path", "https://www.oreilly.com/library/view/the-staff-engineers/9781098118723/", "book", false, 2022)]
   },
   "cross-team-influence": {
     id: "cross-team-influence", name: "Cross-team influence", band: "staff", difficulty: 3, why: "Changing org-wide behavior without a reporting line.",
@@ -240,7 +258,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   },
   "reliability-engineering": {
     id: "reliability-engineering", name: "Reliability engineering (SRE)", band: "staff", difficulty: 3, why: "SLOs, incident response and blameless culture at scale.",
-    resources: [R("Google SRE book (free)", "https://sre.google/sre-book/table-of-contents/", "book"), R("SRE workbook (free)", "https://sre.google/workbook/table-of-contents/", "book")]
+    resources: [R("Google SRE book (free)", "https://sre.google/sre-book/table-of-contents/", "book", true, 2016), R("SRE workbook (free)", "https://sre.google/workbook/table-of-contents/", "book", true, 2018)]
   },
   "capacity-planning": {
     id: "capacity-planning", name: "Capacity planning", band: "staff", difficulty: 3, why: "Forecasting load and right-sizing before it becomes an incident.",
@@ -250,7 +268,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   /* ---- principal ---- */
   "org-leadership": {
     id: "org-leadership", name: "Org leadership", band: "principal", difficulty: 3, why: "Running the engineering org: hiring, reviews, culture and budget.",
-    resources: [R("An Elegant Puzzle (Will Larson)", "https://lethain.com/elegant-puzzle/", "book", false), R("lethain.com — blog", "https://lethain.com", "article")]
+    resources: [R("An Elegant Puzzle (Will Larson)", "https://lethain.com/elegant-puzzle/", "book", false, 2019), R("lethain.com — blog", "https://lethain.com", "article", true, 2024)]
   },
   "technical-vision": {
     id: "technical-vision", name: "Technical vision", band: "principal", difficulty: 3, why: "Articulating where the platform goes — and getting buy-in.",
@@ -258,7 +276,7 @@ export const SKILLS: Record<string, CatalogSkill> = {
   },
   "executive-communication": {
     id: "executive-communication", name: "Executive communication", band: "principal", difficulty: 3, why: "One-pagers for the CEO, risk framing, and saying no gracefully.",
-    resources: [R("Google — technical writing (advanced)", "https://developers.google.com/tech-writing", "course"), R("The Pyramid Principle", "https://www.mckinsey.com/capabilities/strategy-and-corporate-finance/our-insights/the-pyramid-principle", "book", false)]
+    resources: [R("Google — technical writing (advanced)", "https://developers.google.com/tech-writing", "course", true, 2024), R("The Pyramid Principle", "https://www.mckinsey.com/capabilities/strategy-and-corporate-finance/our-insights/the-pyramid-principle", "book", false, 2014)]
   },
   "architecture-ownership": {
     id: "architecture-ownership", name: "Architecture ownership", band: "principal", difficulty: 3, why: "Owning the big bets end-to-end — cost, risk and migration paths.",

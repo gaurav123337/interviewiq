@@ -26,7 +26,7 @@ async function main() {
 
   const { readFileSync } = await import("node:fs");
   const { fileURLToPath } = await import("node:url");
-  const files = ["security.sql", "resources.sql"];
+  const files = ["security.sql", "resources.sql", "trends.sql"];
 
   for (const f of files) {
     const schemaPath = fileURLToPath(new URL(`../supabase/${f}`, import.meta.url));
