@@ -32,6 +32,23 @@ import {
 /* one corrective retry when the model returns unparsable text */
 const RETRY_HINT = "That reply was not valid JSON. Return ONLY the strict JSON object described above — no markdown fences, no commentary, no extra text.";
 
+/* corrective retry when a draft is valid JSON but its reference FAILS the
+   self-test gate — show the model the actual diff so it can fix the code */
+function gateRetryHint(c) {
+  return `Your previous draft's reference solution failed its own test cases when run through the stdin/stdout judge.\n\n`
+    + `Problem: ${c.title}\n\n`
+    + `Here is exactly what happened on the first failing case:\n`
+    + `stdin: ${JSON.stringify(c.first?.stdin)}\n`
+    + `expected stdout:\n${c.first?.expect}\n\n`
+    + `your reference printed:\n${c.first?.got === "" ? "(nothing — empty output)" : c.first?.got}\n`
+    + `(error: ${c.first?.error || "none"})\n\n`
+    + `Fix the reference function so it solves the problem correctly. Remember:\n`
+    + `- Return ONLY the strict JSON object (no markdown fences).\n`
+    + `- Keep 'prompt'/'io' as before (they were fine).\n`
+    + `- The reference MUST be exactly the skeleton with your logic inside:\nfunction solve(lines) {\n  const out = [];\n  // your logic here — push one output line per element (strings only)\n  return out;\n}\n`
+    + `- Never return a single value — always the array. Push a string per output line.`;
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AI_GENERATED_PATH = join(__dirname, "..", "src", "data", "codingBank", "aiGenerated.ts");
 const DEFAULT_SOURCE = "https://raw.githubusercontent.com/hxu296/leetcode-company-wise-problems-2022/main/README.md";
@@ -63,10 +80,11 @@ const sourceUrl = (sourceIdx !== -1 ? args[sourceIdx + 1] : null) || DEFAULT_SOU
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** One chat completion → parsed strict JSON (or null). With `retry`, appends a
-    corrective hint when the first reply was unparsable. */
-async function draftOne(candidate, retry = false) {
+    corrective hint — either the unparsable-JSON hint, or (when `gate` is set)
+    the real stdin/expected/actual diff so the model can fix its reference. */
+async function draftOne(candidate, retry = false, gate = null) {
   const messages = [{ role: "user", content: buildDraftPrompt(candidate) }];
-  if (retry) messages.push({ role: "user", content: RETRY_HINT });
+  if (retry) messages.push({ role: "user", content: gate ? gateRetryHint({ ...candidate, first: gate.first }) : RETRY_HINT });
   const res = await fetch(`${aiBase}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
@@ -199,16 +217,27 @@ async function main() {
     try {
       let parsed = await draftOne(c);
       httpErrors = 0;
-      if (!parsed) parsed = await draftOne(c, true); /* one corrective retry */
+      if (!parsed) parsed = await draftOne(c, true); /* one corrective retry on unparsable */
       const v = validateProblem(c, parsed);
       if (!v.ok) { failed.push({ title: c.title, why: `invalid: ${v.errors.join("; ")}` }); console.warn(yellow(`  ✗ ${c.title} — ${v.errors.join("; ")}`)); continue; }
-      const problem = normalizeProblem(c, parsed);
-      const gate = gateProblem(problem);
+      let problem = normalizeProblem(c, parsed);
+      let gate = gateProblem(problem);
       if (!gate.pass) {
+        /* one corrective retry with the real diff — the model often fixes the
+           reference once it sees exactly what its code printed */
         const first = gate.results.find((r) => !r.pass);
-        failed.push({ title: c.title, why: `gate: stdin=${JSON.stringify(first?.stdin)} expect=${JSON.stringify(first?.expect)} got=${JSON.stringify(first?.got)}` });
-        console.warn(yellow(`  ✗ ${c.title} — gate: expect=${JSON.stringify(first?.expect)} got=${JSON.stringify(first?.got)}`));
-        continue;
+        calls++;
+        const retried = await draftOne(c, true, { first });
+        if (retried && validateProblem(c, retried).ok) {
+          problem = normalizeProblem(c, retried);
+          gate = gateProblem(problem);
+        }
+        if (!gate.pass) {
+          const f = gate.results.find((r) => !r.pass);
+          failed.push({ title: c.title, why: `gate: stdin=${JSON.stringify(f?.stdin)} expect=${JSON.stringify(f?.expect)} got=${JSON.stringify(f?.got)}` });
+          console.warn(yellow(`  ✗ ${c.title} — gate: expect=${JSON.stringify(f?.expect)} got=${JSON.stringify(f?.got)}${first?.got === "" && f?.got === "" ? " (reference printed nothing both times)" : ""}`));
+          continue;
+        }
       }
       passed.push(problem);
       console.log(green(`  ✓ ${c.title} (${problem.pattern}, ${["Easy", "Medium", "Hard"][problem.difficulty - 1]}) — ${problem.tests.length + problem.hidden.length} cases green`));

@@ -57,7 +57,9 @@ jobs:
           AI_CLEAN_KEY: ${{ secrets.AI_CLEAN_KEY }}
           AI_CLEAN_BASE: ${{ secrets.AI_CLEAN_BASE }}
           AI_CLEAN_MODEL: ${{ secrets.AI_CLEAN_MODEL }}
-          AI_DRAFT_MAX: "40"
+          # each candidate can cost up to 3 calls (draft + unparsable retry +
+          # gate-failure retry), so budget more than `count`
+          AI_DRAFT_MAX: "80"
         run: node scripts/ai-draft-problems.js --count ${{ github.event.inputs.count || '12' }} --write ${{ github.event.inputs.force == 'true' && '--force' || '' }} ${{ github.event.inputs.easy != 'false' && '--easy' || '' }}
       - name: Open/update the review PR when problems changed
         env:
