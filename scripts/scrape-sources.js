@@ -38,13 +38,14 @@ async function runSql(sql) {
 async function loadSources() {
   try {
     const rows = await runSql(
-      `select id, url, type, field_id, level, max_items, enabled, note
+      `select id, url, type, field_id, level, max_items, enabled, note, config
        from public.scraper_sources where enabled = true order by id`
     );
     if (Array.isArray(rows) && rows.length) {
       return rows.map((r) => ({
         id: r.id, url: r.url, type: r.type ?? "markdown",
-        fieldId: r.field_id, level: r.level, maxItems: r.max_items ?? 20, note: r.note ?? ""
+        fieldId: r.field_id, level: r.level, maxItems: r.max_items ?? 20, note: r.note ?? "",
+        ...(r.config && typeof r.config === "object" ? r.config : {})
       }));
     }
   } catch (e) {
@@ -93,12 +94,21 @@ async function main() {
   for (const source of sources) {
     try {
       console.log(`  ↳ ${source.id ?? source.url} — ${source.url}`);
-      const res = await fetch(source.url, { headers: { "User-Agent": "interviewiq-scraper/1.0 (+github.com/gaurav123337/interviewiq)" } });
+      /* polite fetching: single 429 backoff, then a small inter-source delay */
+      let res = await fetch(source.url, { headers: { "User-Agent": "interviewiq-scraper/1.0 (+github.com/gaurav123337/interviewiq)" } });
+      if (res.status === 429) {
+        const wait = Math.max(1000, Number(res.headers.get("retry-after") ?? 2) * 1000 || 2000);
+        console.warn(`     429 — backing off ${Math.round(wait / 1000)}s`);
+        await new Promise((r) => setTimeout(r, wait));
+        res = await fetch(source.url, { headers: { "User-Agent": "interviewiq-scraper/1.0 (+github.com/gaurav123337/interviewiq)" } });
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = source.type === "json" ? await res.json() : await res.text();
+      const isJson = source.type === "json" || source.type === "hackernews";
+      const body = isJson ? await res.json() : await res.text();
       const items = extractItems(body, source).slice(0, source.maxItems ?? 20);
       console.log(`     extracted ${items.length} item(s)`);
       all.push(...items);
+      await new Promise((r) => setTimeout(r, 500));
     } catch (e) {
       errors++;
       console.error(red(`  ✗ ${source.id ?? source.url}: ${e.message}`));

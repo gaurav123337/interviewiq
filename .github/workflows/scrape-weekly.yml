@@ -26,3 +26,9 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: node scripts/scrape-sources.js
+      - name: AI-clean drafts (optional — skips without AI_CLEAN_KEY)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          AI_CLEAN_KEY: ${{ secrets.AI_CLEAN_KEY }}
+        run: node scripts/ai-clean.js

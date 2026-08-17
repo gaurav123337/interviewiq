@@ -10,12 +10,13 @@ import { extractItems } from "../../scripts/scrape-lib.js";
 export interface ScraperSourceRow {
   id: string;
   url: string;
-  type: "json" | "html" | "markdown";
+  type: "json" | "html" | "markdown" | "company-list" | "hackernews";
   fieldId: string;
   level: string;
   maxItems: number;
   enabled: boolean;
   note: string;
+  config?: Record<string, unknown>;
 }
 
 export interface RunResult {
@@ -36,14 +37,15 @@ export async function listScraperSources(): Promise<ScraperSourceRow[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
   const { data, error } = await client.from("scraper_sources")
-    .select("id, url, type, field_id, level, max_items, enabled, note")
+    .select("id, url, type, field_id, level, max_items, enabled, note, config")
     .order("id");
   if (error) return [];
   return ((data ?? []) as Record<string, unknown>[]).map(r => ({
     id: String(r.id), url: String(r.url),
     type: (String(r.type) as ScraperSourceRow["type"]) || "markdown",
     fieldId: String(r.field_id), level: String(r.level),
-    maxItems: Number(r.max_items ?? 20), enabled: !!r.enabled, note: String(r.note ?? "")
+    maxItems: Number(r.max_items ?? 20), enabled: !!r.enabled, note: String(r.note ?? ""),
+    config: (r.config && typeof r.config === "object" ? r.config as Record<string, unknown> : {})
   }));
 }
 
@@ -130,17 +132,20 @@ export async function runScraperNow(sources: ScraperSourceRow[]): Promise<RunRes
     try {
       const res = await fetch(s.url, { headers: { "User-Agent": "interviewiq-scraper/1.0" } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = s.type === "json" ? await res.json() : await res.text();
+      const isJson = s.type === "json" || s.type === "hackernews";
+      const body = isJson ? await res.json() : await res.text();
       const items = extractItems(body, {
         id: s.id, url: s.url, type: s.type, fieldId: s.fieldId, level: s.level,
-        maxItems: s.maxItems, keyPoints: []
+        maxItems: s.maxItems, keyPoints: [], ...(s.config ?? {})
       }).slice(0, s.maxItems || 20);
       report.extracted = items.length;
       if (items.length) {
         const { error } = await client.from("published_questions").upsert(
           items.map(i => ({
             field_id: i.fieldId, level: i.level, question: i.question,
-            answer: i.answer || "", key_points: i.keyPoints ?? [], published: false
+            answer: i.answer || "", key_points: i.keyPoints ?? [],
+            source_id: i.sourceId || s.id, source_url: i.sourceUrl || s.url,
+            meta: i.meta ?? {}, published: false
           })),
           { onConflict: "question" }
         );

@@ -1,5 +1,5 @@
 {
-  "_comment": "Weekly question-bank scraper sources. Enable a source by setting \"enabled\": true. The workflow runs every Monday 03:00 UTC (edit .github/workflows/scrape-weekly.yml for frequency). Everything scraped lands as DRAFT in the Admin → Question bank → review & publish. Types: \"json\" (array or {questions|items|data: [...]}), \"html\", \"markdown\" (marker-based: `N. ### Q` + answer body, `#### Topic` + question sentence, or line-based `?` fallback).",
+  "_comment": "Question-bank scraper sources. Enable a source by setting \"enabled\": true. The workflow runs daily 03:00 UTC and the script enforces the admin-configured schedule (edit .github/workflows/scrape-weekly.yml for frequency). Everything scraped lands as DRAFT in the Admin → Question bank → review & publish. Types: \"json\" (array or {questions|items|data: [...]}), \"html\", \"markdown\" (marker-based: `N. ### Q` + answer body, `#### Topic` + question sentence, or line-based `?` fallback), \"company-list\" (company/pattern-grouped problem titles — facts only, never statements), \"hackernews\" (official Algolia API `{hits:[...]}`, keyless). Legal posture: raw.githubusercontent.com + official public APIs only; titles/topics kept, answers are AI-original (see docs/question-bank-expansion.md).",
   "sources": [
     {
       "id": "backend-arialdo-questions",
@@ -40,6 +40,50 @@
       "level": "mid",
       "maxItems": 25,
       "note": "Data-science theory questions (ML, stats, validation). Line-based `?` extraction; difficulty emoji stripped."
+    },
+    {
+      "id": "system-design-primer",
+      "enabled": true,
+      "url": "https://raw.githubusercontent.com/donnemartin/system-design-primer/master/README.md",
+      "type": "markdown",
+      "fieldId": "backend",
+      "level": "senior",
+      "maxItems": 30,
+      "headingDepth": 3,
+      "questionFromHeading": true,
+      "headingPrefix": "Design ",
+      "note": "System-design 'Design X' topics (CC BY-SA 4.0). Titles only are kept — answers are written fresh by the AI cleaner, never copied; source attributed via source_url."
+    },
+    {
+      "id": "hn-ask-interview",
+      "enabled": true,
+      "url": "https://hn.algolia.com/api/v1/search?query=interview&tags=ask_hn&hitsPerPage=40",
+      "type": "hackernews",
+      "fieldId": "fullstack",
+      "level": "mid",
+      "maxItems": 25,
+      "note": "Official Hacker News Algolia API (keyless, public). 'Ask HN: interview' threads → drafts with thread links + engagement."
+    },
+    {
+      "id": "hn-system-design",
+      "enabled": true,
+      "url": "https://hn.algolia.com/api/v1/search?query=system%20design%20interview&tags=story&hitsPerPage=40",
+      "type": "hackernews",
+      "fieldId": "backend",
+      "level": "senior",
+      "maxItems": 25,
+      "note": "Official Hacker News Algolia API. System-design interview threads → drafts."
+    },
+    {
+      "id": "company-wise-metadata",
+      "enabled": false,
+      "url": "https://raw.githubusercontent.com/hxu296/leetcode-company-wise-problems-2022/main/README.md",
+      "type": "company-list",
+      "groupAs": "company",
+      "fieldId": "backend",
+      "level": "senior",
+      "maxItems": 40,
+      "note": "Company-tagged coding-problem titles (facts only — never statements). Feeds the coding-bank pipeline; enable once AI cleaning (scripts/ai-clean.js + AI_CLEAN_KEY) is configured."
     }
   ]
 }
