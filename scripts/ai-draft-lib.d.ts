@@ -36,6 +36,7 @@ export function slugify(title: string): string;
 export function normalizeTitle(title: string): string;
 export function companyIdForName(name: string): string | null;
 export function buildCandidates(items: unknown[], existingIds?: Set<string>): DraftCandidate[];
+export function easyCandidates(candidates: DraftCandidate[]): DraftCandidate[];
 export function buildDraftPrompt(candidate: DraftCandidate): string;
 export function parseDraftJson(text: string): Record<string, unknown> | null;
 export function validateProblem(candidate: DraftCandidate, parsed: unknown): { ok: boolean; errors: string[] };

@@ -8,7 +8,12 @@ name: Scrape question sources
 on:
   schedule:
     - cron: "0 3 * * *" # every day 03:00 UTC — script enforces the schedule
-  workflow_dispatch: {} # allow manual runs from the Actions tab
+  workflow_dispatch:
+    inputs:
+      clean-max:
+        description: "Drafts to AI-clean this run (default 40)"
+        required: false
+        default: "40"
 
 permissions:
   contents: read
@@ -33,4 +38,5 @@ jobs:
           AI_CLEAN_KEY: ${{ secrets.AI_CLEAN_KEY }}
           AI_CLEAN_BASE: ${{ secrets.AI_CLEAN_BASE }}
           AI_CLEAN_MODEL: ${{ secrets.AI_CLEAN_MODEL }}
+          AI_CLEAN_MAX: ${{ github.event.inputs.clean-max || '40' }}
         run: node scripts/ai-clean.js

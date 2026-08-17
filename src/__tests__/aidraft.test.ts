@@ -4,9 +4,9 @@
 import { describe, expect, it } from "vitest";
 import {
   PATTERNS, PATTERN_TOPIC as LIB_PATTERN_TOPIC, buildCandidates, canonicalPattern,
-  emitProblemsFile, existingAiIds, gateProblem, matchesExpected, normalizeProblem,
-  normalizeTitle, parseDraftJson, parseGeneratedProblems, patternFromTitle, runJudge,
-  slugify, validateProblem
+  easyCandidates, emitProblemsFile, existingAiIds, gateProblem, matchesExpected,
+  normalizeProblem, normalizeTitle, parseDraftJson, parseGeneratedProblems,
+  patternFromTitle, runJudge, slugify, validateProblem
 } from "../../scripts/ai-draft-lib.js";
 import { PATTERN_LABELS, PATTERN_TOPIC } from "../data/patterns";
 
@@ -101,6 +101,15 @@ describe("candidate building", () => {
     ];
     const cands = buildCandidates(items, new Set(["two-sum"]));
     expect(cands.map(c => c.slug)).toEqual(["number-of-islands"]);
+  });
+
+  it("easyCandidates keeps Easy/Medium/unrated and drops Hard-only titles", () => {
+    const mk = (slug: string, diffs: number[]) => ({
+      title: slug, slug, companies: new Set(["google"]), difficulties: new Set(diffs), urls: new Set()
+    });
+    const cands = [mk("easy-one", [1]), mk("medium-one", [2]), mk("mixed-12", [1, 2]), mk("hard-one", [3]), mk("mixed-23", [2, 3]), mk("unrated", [])];
+    const kept = easyCandidates(cands).map(c => c.slug);
+    expect(kept.sort()).toEqual(["easy-one", "medium-one", "mixed-12", "unrated"]);
   });
 });
 

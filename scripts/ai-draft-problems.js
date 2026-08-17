@@ -10,7 +10,7 @@
    runs this, commits the gated file to a branch and opens a PR.
 
    Usage:
-     node scripts/ai-draft-problems.js [--dry-run|--list-candidates|--pr-body] [--count N] [--write] [--source URL]
+     node scripts/ai-draft-problems.js [--dry-run|--list-candidates|--pr-body] [--count N] [--write] [--source URL] [--easy]
 
    Env:
      AI_CLEAN_KEY   — OpenAI-compatible key (required to actually generate)
@@ -24,8 +24,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { extractCompanyList } from "./scrape-lib.js";
 import {
-  CURATED_TITLES, PATTERN_TOPIC, buildCandidates, buildDraftPrompt, emitProblemsFile,
-  gateProblem, normalizeProblem, parseDraftJson, parseGeneratedProblems,
+  CURATED_TITLES, PATTERN_TOPIC, buildCandidates, buildDraftPrompt, easyCandidates,
+  emitProblemsFile, gateProblem, normalizeProblem, parseDraftJson, parseGeneratedProblems,
   patternFromTitle, slugify, validateProblem
 } from "./ai-draft-lib.js";
 
@@ -52,6 +52,10 @@ const listCandidates = args.includes("--list-candidates");
 const prBody = args.includes("--pr-body");
 const write = args.includes("--write");
 const force = args.includes("--force");
+/* --easy: only draft titles the mirror rates Easy/Medium (or unrated) —
+   hard problems are the main gate-failure class, so this raises the pass
+   rate and costs less per run */
+const easyOnly = args.includes("--easy");
 const count = Number(args[args.indexOf("--count") + 1] ?? process.env.AI_DRAFT_COUNT ?? 12) || 12;
 const sourceIdx = args.indexOf("--source");
 const sourceUrl = (sourceIdx !== -1 ? args[sourceIdx + 1] : null) || DEFAULT_SOURCE;
@@ -151,7 +155,8 @@ async function main() {
   const existingBank = force ? { problems: [], companies: {}, topics: {} } : parseGeneratedProblems(readGenerated());
   const existing = new Set(CURATED_TITLES.map(slugify));
   if (!force) for (const id of existingBank.problems.map((p) => p.id)) existing.add(id);
-  const candidates = buildCandidates(items, existing);
+  const candidates = easyOnly ? easyCandidates(buildCandidates(items, existing)) : buildCandidates(items, existing);
+  if (easyOnly) console.log(green(`--easy: ${candidates.length} Easy/Medium-or-unrated candidate(s) (hard titles filtered out).`));
 
   if (!candidates.length) {
     console.log(yellow("No new candidates — every mirror title is already in the bank (or unmatched to a company)."));

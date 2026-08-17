@@ -178,6 +178,13 @@ export function buildCandidates(items, existingIds = new Set()) {
     .sort((a, b) => b.companies.size - a.companies.size || a.title.localeCompare(b.title));
 }
 
+/** Keeps only candidates the mirror rates Easy/Medium (1-2) or that carry no
+    difficulty rating — hard (3) titles are the main gate-failure class, so
+    drafting without them raises the pass rate and cuts cost. */
+export function easyCandidates(candidates) {
+  return candidates.filter((c) => c.difficulties.size === 0 || [...c.difficulties].every((d) => d <= 2));
+}
+
 /* ---------- AI contract ---------- */
 
 /** Strict-JSON contract the model must return for one candidate. */

@@ -18,6 +18,10 @@ on:
         description: "true = regenerate already-generated titles too"
         required: false
         default: "false"
+      easy:
+        description: "true = only draft Easy/Medium-or-unrated titles (higher pass rate)"
+        required: false
+        default: "true"
 
 permissions:
   contents: write
@@ -54,7 +58,7 @@ jobs:
           AI_CLEAN_BASE: ${{ secrets.AI_CLEAN_BASE }}
           AI_CLEAN_MODEL: ${{ secrets.AI_CLEAN_MODEL }}
           AI_DRAFT_MAX: "40"
-        run: node scripts/ai-draft-problems.js --count ${{ github.event.inputs.count || '12' }} --write ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+        run: node scripts/ai-draft-problems.js --count ${{ github.event.inputs.count || '12' }} --write ${{ github.event.inputs.force == 'true' && '--force' || '' }} ${{ github.event.inputs.easy != 'false' && '--easy' || '' }}
       - name: Open/update the review PR when problems changed
         env:
           GH_TOKEN: ${{ github.token }}
