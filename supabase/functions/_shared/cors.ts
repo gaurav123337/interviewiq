@@ -43,10 +43,14 @@ export function corsHeaders(req: Request, extraAllowHeaders?: string): Record<st
   return corsHeadersFor(req.headers.get("origin"), extraAllowHeaders);
 }
 
-/** Standard preflight answer (204) when the origin is allowed. */
+/** Standard preflight answer when the origin is allowed. Returns 200 with
+    the CORS headers — the canonical Supabase pattern. Do NOT use a 204 with
+    a body here: the edge runtime throws "Response with null body status
+    cannot have body", which 500s every OPTIONS preflight and surfaces as
+    "Failed to fetch" in the browser. */
 export function preflightResponse(req: Request): Response {
   if (!isAllowedOrigin(req)) {
     return new Response("origin not allowed", { status: 403 });
   }
-  return new Response("ok", { status: 204, headers: corsHeaders(req) });
+  return new Response("ok", { status: 200, headers: corsHeaders(req) });
 }
