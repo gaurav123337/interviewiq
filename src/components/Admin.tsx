@@ -49,10 +49,11 @@ import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { pendingCommunityResources, reviewResource, type ResourceRow } from "../services/resources";
 import { adminDecisionProposal, adminPendingProposals, type UpdateProposalRow } from "../services/trendSignals";
+import { fetchSecretStatus, type SecretStatusReport, type SecretStatusRow } from "../services/secrets";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "resources" | "trends";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -68,6 +69,7 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "quality", label: "Quality", icon: "🔎" },
   { id: "teams", label: "Teams", icon: "🏢" },
   { id: "security", label: "Security", icon: "🔐" },
+  { id: "secrets", label: "Secrets", icon: "🔑" },
   { id: "resources", label: "Resources", icon: "🔗" },
   { id: "trends", label: "Trends", icon: "📈" }
 ];
@@ -848,6 +850,7 @@ export function Admin() {
         )}
         {section === "teams" && <AdminTeams teamState={teamState} />}
         {section === "security" && <SecuritySection />}
+        {section === "secrets" && <SecretsSection />}
         {section === "resources" && <ResourcesSection />}
         {section === "trends" && <TrendsSection />}
       </div>
@@ -4170,6 +4173,135 @@ function SecuritySection() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Secrets — which Edge Function secrets are configured vs missing.    */
+/* Backed by the secret-status Edge Function (server-side presence      */
+/* check via Deno.env.has — values are never readable or returned).    */
+/* ------------------------------------------------------------------ */
+
+function SecretsSection() {
+  const [report, setReport] = useState<SecretStatusReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setReport(await fetchSecretStatus());
+    } catch (e) {
+      setReport(null);
+      setError((e as Error).message || "Failed to load secret status");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  /* missing required → missing optional → set → auto-injected (builtin) */
+  const rows = useMemo(() => {
+    if (!report) return [];
+    const order = (s: SecretStatusRow): number =>
+      s.builtin ? 3 : s.configured ? 2 : s.required ? 0 : 1;
+    return [...report.secrets].sort((a, b) => order(a) - order(b) || a.name.localeCompare(b.name));
+  }, [report]);
+
+  const statusChip = (s: SecretStatusRow) => {
+    if (s.builtin) return <Chip tone="default">🔒 Auto-injected</Chip>;
+    if (s.configured) return <Chip tone="ok">✅ Set</Chip>;
+    return s.required ? <Chip tone="bad">⚠️ Missing</Chip> : <Chip tone="warn">⚠️ Missing (optional)</Chip>;
+  };
+
+  const projectRef = CONFIG.supabase.url.replace("https://", "").replace(".supabase.co", "");
+
+  return (
+    <div className="space-y-4">
+      <div className={`${cardCls} p-5`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-[16px] font-extrabold">🔑 Edge Function secrets</h2>
+            <p className="mt-1 max-w-[700px] text-[12.5px] text-mut">
+              Which secrets the Edge Functions need to fully work — <span className="font-bold">configured vs missing</span>, checked
+              from the function runtime. Supabase never exposes secret <span className="font-bold">values</span>, so this reports presence only;
+              a missing <span className="font-bold">required</span> secret means a feature is silently degraded (emails answer sent:false,
+              crons 401, verdicts stay pending).
+            </p>
+          </div>
+          <button className={btnGhost + btnSm} onClick={() => void load()} disabled={busy}>Refresh</button>
+        </div>
+
+        {error && (
+          <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-[12.5px] text-warn">
+            <span className="font-bold">Couldn't read secret status.</span> {error}
+            <div className="mt-1.5 text-mut">
+              If the function isn't deployed yet, run{" "}
+              <code className="font-mono">supabase functions deploy secret-status --project-ref {projectRef}</code>{" "}
+              (or re-run <code className="font-mono">scripts/setup-live.js</code>) and hit Refresh.
+            </div>
+          </div>
+        )}
+
+        {busy && !report && !error && <p className="mt-3 text-[12px] text-mut"><span className="spinner inline-block" /> Checking…</p>}
+
+        {report && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Chip tone={report.summary.missingRequired > 0 ? "bad" : "ok"}>
+              {report.summary.configured}/{report.summary.total} secrets in place
+            </Chip>
+            {report.summary.missingRequired > 0 && (
+              <Chip tone="bad">{report.summary.missingRequired} required missing — setup isn't finished</Chip>
+            )}
+            {report.summary.missingRequired === 0 && report.summary.missingOptional > 0 && (
+              <Chip tone="warn">{report.summary.missingOptional} optional missing — degraded, not broken</Chip>
+            )}
+            {report.summary.missingRequired === 0 && report.summary.missingOptional === 0 && (
+              <Chip tone="ok">All required secrets configured 🎉</Chip>
+            )}
+            <Chip tone={report.serviceRoleAvailable ? "ok" : "bad"}>
+              {report.serviceRoleAvailable ? "✅ Service-role access available" : "⚠️ No service-role key — admin functions can't reach the DB"}
+            </Chip>
+          </div>
+        )}
+      </div>
+
+      {report && rows.length > 0 && (
+        <div className={`${cardCls} overflow-hidden`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[12.5px]">
+              <thead className="bg-panel text-[11px] uppercase tracking-wider text-fnt">
+                <tr>
+                  <th className="px-5 py-2">Secret</th>
+                  <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Needed by</th>
+                  <th className="px-5 py-2">Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(s => (
+                  <tr key={s.name} className={`border-t border-line/10 ${!s.configured && !s.builtin && s.required ? "bg-warn/5" : ""}`}>
+                    <td className="px-5 py-2 font-mono text-[11.5px] font-bold text-ink">{s.name}</td>
+                    <td className="px-3 py-2">{statusChip(s)}</td>
+                    <td className="max-w-[260px] px-3 py-2 text-fnt">{s.functions.join(", ")}</td>
+                    <td className="max-w-[280px] px-5 py-2 text-mut">{s.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <p className="px-1 text-[11.5px] text-mut">
+        Where to add secrets: Supabase dashboard → Edge Functions → Secrets — secrets are project-wide, so every
+        function sees them (one <code className="font-mono">RESEND_API_KEY</code> covers all digest, backup and refund emails).
+        Or set them one-command via <code className="font-mono">scripts/setup-live.js</code> with a personal access token.
+        Values can't be read back once saved — only replaced.
+      </p>
     </div>
   );
 }
