@@ -33,21 +33,20 @@ jobs:
           node-version: 22
       # Work on the ai/problem-bank branch (create it from main if it doesn't
       # exist) so repeated runs accumulate problems and the PR stays open.
-      - name: Checkout ai/problem-bank branch (rebased on latest main)
+      - name: Rebuild ai/problem-bank on latest main
         run: |
           BR="ai/problem-bank"
-          # The default checkout is shallow (depth 1), which breaks rebase — the
-          # merge-base is missing, so it would fail and the reset fallback would
-          # WIPE the branch's previously generated problems. Unshallow first.
-          git fetch --unshallow origin
+          # Rebuild the branch as main + one commit so its workflow files are
+          # always identical to main's (GitHub rejects pushes that touch
+          # workflow files from the GITHUB_TOKEN) and history never conflicts.
+          # The branch's accumulated aiGenerated.ts is carried over by file, not
+          # by replaying history — so shallow checkouts can't wipe it.
           git fetch origin main
           git fetch origin "$BR" 2>/dev/null || true
-          git checkout -B "$BR" "origin/$BR" 2>/dev/null || git checkout -b "$BR"
-          # Keep the branch's workflow files identical to main's — GitHub rejects
-          # pushes that touch workflow files from the GITHUB_TOKEN, so a stale
-          # copy of a workflow file (changed on main since this branch was cut)
-          # would block the push. Rebase only carries the aiGenerated.ts commit.
-          git rebase origin/main || exit 1
+          git checkout -B "$BR" origin/main
+          if git rev-parse --verify "origin/$BR" >/dev/null 2>&1; then
+            git checkout "origin/$BR" -- src/data/codingBank/aiGenerated.ts
+          fi
       - name: Generate + gate AI-drafted problems
         id: gen
         env:
