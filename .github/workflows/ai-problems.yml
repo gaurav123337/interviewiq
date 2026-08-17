@@ -22,6 +22,9 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # the ai/problem-bank branch is based on main, which contains workflow files;
+  # GitHub rejects pushes that touch workflow files from a token without this
+  workflows: write
 
 jobs:
   generate:
@@ -58,7 +61,7 @@ jobs:
           git config user.email "bot@users.noreply.github.com"
           git add src/data/codingBank/aiGenerated.ts
           git commit -m "ai-bank: add self-tested AI-drafted coding problems"
-          git push -f origin "ai/problem-bank"
+          git push -f origin HEAD:"ai/problem-bank"
           BODY="$(node scripts/ai-draft-problems.js --pr-body)"
           PR_NUM="$(gh pr list --head ai/problem-bank --json number --jq '.[0].number // empty')"
           if [ -n "$PR_NUM" ]; then

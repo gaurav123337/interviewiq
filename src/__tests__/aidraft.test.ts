@@ -3,9 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  PATTERNS, PATTERN_TOPIC as LIB_PATTERN_TOPIC, buildCandidates, emitProblemsFile,
-  existingAiIds, gateProblem, matchesExpected, normalizeProblem, normalizeTitle,
-  parseDraftJson, patternFromTitle, runJudge, slugify, validateProblem
+  PATTERNS, PATTERN_TOPIC as LIB_PATTERN_TOPIC, buildCandidates, canonicalPattern,
+  emitProblemsFile, existingAiIds, gateProblem, matchesExpected, normalizeProblem,
+  normalizeTitle, parseDraftJson, patternFromTitle, runJudge, slugify, validateProblem
 } from "../../scripts/ai-draft-lib.js";
 import { PATTERN_LABELS, PATTERN_TOPIC } from "../data/patterns";
 
@@ -54,6 +54,23 @@ describe("title + id helpers", () => {
     expect(patternFromTitle("Merge Intervals")).toBe("interval");
     expect(patternFromTitle("Climbing Stairs")).toBe("dynamic-programming");
     expect(patternFromTitle("Something Totally Unique")).toBe("mixed");
+  });
+
+  it("canonicalizes model-written pattern labels", () => {
+    expect(canonicalPattern("hash table")).toBe("hash-map");
+    expect(canonicalPattern("Hash Table")).toBe("hash-map");
+    expect(canonicalPattern("two pointers")).toBe("two-pointer");
+    expect(canonicalPattern("dp")).toBe("dynamic-programming");
+    expect(canonicalPattern("priority queue")).toBe("heap");
+    expect(canonicalPattern("sliding-window")).toBe("sliding-window");
+    expect(canonicalPattern("binary-search")).toBe("binary-search");
+    expect(canonicalPattern("some nonsense label")).toBeNull();
+    expect(canonicalPattern("")).toBeNull();
+  });
+
+  it("accepts a canonicalized pattern in a draft", () => {
+    expect(validateProblem(CAND, { ...GOOD_PARSED, pattern: "Hash Table" }).ok).toBe(true);
+    expect(normalizeProblem(CAND, { ...GOOD_PARSED, pattern: "two pointers" }).pattern).toBe("two-pointer");
   });
 });
 

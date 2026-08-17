@@ -29,6 +29,9 @@ import {
   slugify, validateProblem
 } from "./ai-draft-lib.js";
 
+/* one corrective retry when the model returns unparsable text */
+const RETRY_HINT = "That reply was not valid JSON. Return ONLY the strict JSON object described above — no markdown fences, no commentary, no extra text.";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AI_GENERATED_PATH = join(__dirname, "..", "src", "data", "codingBank", "aiGenerated.ts");
 const DEFAULT_SOURCE = "https://raw.githubusercontent.com/hxu296/leetcode-company-wise-problems-2022/main/README.md";
@@ -55,8 +58,11 @@ const sourceUrl = (sourceIdx !== -1 ? args[sourceIdx + 1] : null) || DEFAULT_SOU
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** One chat completion → parsed strict JSON (or null). */
-async function draftOne(candidate) {
+/** One chat completion → parsed strict JSON (or null). With `retry`, appends a
+    corrective hint when the first reply was unparsable. */
+async function draftOne(candidate, retry = false) {
+  const messages = [{ role: "user", content: buildDraftPrompt(candidate) }];
+  if (retry) messages.push({ role: "user", content: RETRY_HINT });
   const res = await fetch(`${aiBase}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
@@ -64,7 +70,7 @@ async function draftOne(candidate) {
       model: aiModel,
       temperature: 0.3,
       max_tokens: 900,
-      messages: [{ role: "user", content: buildDraftPrompt(candidate) }]
+      messages
     })
   });
   if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
@@ -167,8 +173,9 @@ async function main() {
     if (calls >= maxCalls) { console.log(yellow("Cost cap reached — stopping early.")); break; }
     calls++;
     try {
-      const parsed = await draftOne(c);
+      let parsed = await draftOne(c);
       httpErrors = 0;
+      if (!parsed) parsed = await draftOne(c, true); /* one corrective retry */
       const v = validateProblem(c, parsed);
       if (!v.ok) { failed.push({ title: c.title, why: `invalid: ${v.errors.join("; ")}` }); console.warn(yellow(`  ✗ ${c.title} — ${v.errors.join("; ")}`)); continue; }
       const problem = normalizeProblem(c, parsed);

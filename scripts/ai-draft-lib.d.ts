@@ -29,6 +29,7 @@ export interface DraftProblem {
 export const PATTERNS: DraftPattern[];
 export const PATTERN_IDS: string[];
 export const PATTERN_TOPIC: Record<string, string>;
+export function canonicalPattern(raw: unknown): string | null;
 export const CURATED_TITLES: string[];
 export function patternFromTitle(title: string): string;
 export function slugify(title: string): string;

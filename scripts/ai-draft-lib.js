@@ -39,6 +39,44 @@ export const PATTERNS = [
 
 export const PATTERN_IDS = PATTERNS.map((p) => p.id);
 
+/* Model-friendly variants → canonical pattern id (the model is told the exact
+   ids, but it still writes "hash table", "two pointers", "dp" … — map them
+   instead of rejecting a good draft over a label). */
+const PATTERN_ALIASES = {
+  "two-pointer": ["two-pointer", "two pointer", "two-pointers", "two pointers", "pointer technique"],
+  "sliding-window": ["sliding-window", "sliding window", "sliding-window technique"],
+  "hash-map": ["hash-map", "hash map", "hashmap", "hash table", "hash-table", "hashing", "hash set", "hash"],
+  "binary-search": ["binary-search", "binary search", "binarysearch"],
+  "dynamic-programming": ["dynamic-programming", "dynamic programming", "dp"],
+  "greedy": ["greedy", "greed"],
+  "heap": ["heap", "priority-queue", "priority queue", "priorityqueue", "min-heap", "max-heap"],
+  "stack": ["stack", "monotonic stack", "monotonic-stack"],
+  "queue": ["queue", "deque"],
+  "graph": ["graph", "union-find", "union find", "topological sort", "topological"],
+  "interval": ["interval", "intervals", "merge intervals", "merge-intervals"],
+  "linked-list": ["linked-list", "linked list", "linkedlist"],
+  "tree": ["tree", "binary-tree", "binary tree", "bst", "binary search tree"],
+  "trie": ["trie", "prefix tree"],
+  "bit": ["bit-manipulation", "bit manipulation", "bitmask"],
+  "backtracking": ["backtracking", "backtrack", "dfs+backtracking"],
+  "math": ["math", "mathematical", "maths"],
+  "string": ["string", "strings", "string manipulation"],
+  "sorting": ["sorting", "sort", "quickselect", "quick-select"],
+  "mixed": ["mixed", "design", "data structure design", "simulation", "miscellaneous", "array", "arrays", "greedy/hash"]
+};
+
+/** Maps a model-provided pattern label to a canonical id, or null. */
+export function canonicalPattern(raw) {
+  const t = String(raw ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!t) return null;
+  for (const [id, aliases] of Object.entries(PATTERN_ALIASES)) {
+    if (aliases.includes(t)) return id;
+    const hit = aliases.find((a) => a.length >= 5 && t.includes(a));
+    if (hit) return id;
+  }
+  return null;
+}
+
 /* pattern id → CLI topic bucket — must match src/data/patterns.ts PATTERN_TOPIC
    (a cross-check test locks this) */
 export const PATTERN_TOPIC = {
@@ -150,10 +188,14 @@ export function buildDraftPrompt(candidate) {
     "HARD RULES:",
     "1. The TITLE is a well-known interview topic (a fact). NEVER copy the problem statement from any website — LeetCode, GeeksforGeeks or any other source. Write an ORIGINAL prompt, YOUR OWN input/output contract, YOUR OWN variable names and YOUR OWN test cases. Do not reproduce anyone's wording.",
     "2. 'tests' are the visible cases (2-5), 'hidden' are judge-only edge cases (1-3) — never identical inputs.",
-    "3. 'reference' is a JavaScript function: `function solve(lines) { ... return out; }` where lines is stdin split by newline and out is an array of output strings (console.log is NOT available). It MUST be correct and pass every test you write.",
+    "3. 'reference' is a JavaScript function: `function solve(lines) { ... return out; }` where lines is stdin split by newline and out is an ARRAY OF STRINGS (console.log is NOT available). Never return a single value — always an array, one output line per element.",
     "4. 'hint': one short nudge (under 160 chars), no full solution.",
     "5. 'pattern': one of: " + PATTERN_IDS.join(", ") + ".",
     "6. 'difficulty': 1 (easy), 2 (medium), or 3 (hard).",
+    "7. OUTPUT IS LINE-ORIENTED (this is a stdin/stdout judge): each element of the array you return prints on its OWN line.",
+    "8. In 'tests'/'hidden', the 'expect' string must be EXACTLY what the judge sees. If the answer is a list, write one element PER LINE joined by \\n (e.g. \"1 6\\n8 10\\n15 18\"). If it is a single value, write the value alone (e.g. \"3\"). NEVER write JSON-style single-line arrays like [[1,6],[8,10]] as an expect — the judge compares raw stdout lines.",
+    "9. Keep 'prompt' under ~700 chars and 'io' under ~450 chars.",
+    "10. Mentally run your reference against EVERY test you write (including hidden) and make sure the printed lines match 'expect' exactly.",
     "",
     "Return ONLY strict JSON (no markdown fences, no commentary):",
     '{"prompt": string, "io": string, "tests": [{"stdin": string, "expect": string}], "hidden": [{"stdin": string, "expect": string}], "reference": string, "hint": string, "pattern": string, "difficulty": 1|2|3}',
@@ -185,9 +227,9 @@ export function parseDraftJson(text) {
 export function validateProblem(candidate, parsed) {
   const errors = [];
   if (!parsed || typeof parsed !== "object") return { ok: false, errors: ["not an object"] };
-  if (typeof parsed.prompt !== "string" || !parsed.prompt.trim() || parsed.prompt.length > 500)
+  if (typeof parsed.prompt !== "string" || !parsed.prompt.trim() || parsed.prompt.length > 700)
     errors.push("prompt missing/too long");
-  if (typeof parsed.io !== "string" || !parsed.io.trim() || parsed.io.length > 300)
+  if (typeof parsed.io !== "string" || !parsed.io.trim() || parsed.io.length > 450)
     errors.push("io missing/too long");
   const testsOk = Array.isArray(parsed.tests) && parsed.tests.length >= 2 && parsed.tests.length <= 6
     && parsed.tests.every((t) => t && typeof t.stdin === "string" && typeof t.expect === "string");
@@ -205,7 +247,7 @@ export function validateProblem(candidate, parsed) {
   if (typeof parsed.hint !== "string" || !parsed.hint.trim() || parsed.hint.length > 180)
     errors.push("hint missing/too long");
   if (![1, 2, 3].includes(Number(parsed.difficulty))) errors.push("difficulty must be 1|2|3");
-  if (typeof parsed.pattern !== "string" || !PATTERN_IDS.includes(parsed.pattern))
+  if (typeof parsed.pattern !== "string" || !canonicalPattern(parsed.pattern))
     errors.push("pattern must be a known pattern id");
   return { ok: errors.length === 0, errors };
 }
@@ -234,7 +276,7 @@ export function normalizeProblem(candidate, parsed) {
     hidden: parsed.hidden,
     hint: String(parsed.hint).trim(),
     reference: String(parsed.reference).trim(),
-    pattern: String(parsed.pattern)
+    pattern: canonicalPattern(parsed.pattern) ?? "mixed"
   };
 }
 
