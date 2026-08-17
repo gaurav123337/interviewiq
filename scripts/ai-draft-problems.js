@@ -25,8 +25,8 @@ import { dirname, join } from "node:path";
 import { extractCompanyList } from "./scrape-lib.js";
 import {
   CURATED_TITLES, PATTERN_TOPIC, buildCandidates, buildDraftPrompt, emitProblemsFile,
-  existingAiIds, gateProblem, normalizeProblem, parseDraftJson, patternFromTitle,
-  slugify, validateProblem
+  gateProblem, normalizeProblem, parseDraftJson, parseGeneratedProblems,
+  patternFromTitle, slugify, validateProblem
 } from "./ai-draft-lib.js";
 
 /* one corrective retry when the model returns unparsable text */
@@ -146,9 +146,11 @@ async function main() {
   /* --- candidate discovery (facts from the mirror, keyless) --- */
   const md = await fetchMirror();
   const items = extractCompanyList(md, { id: "company-wise-metadata", url: sourceUrl, type: "company-list", groupAs: "company", fieldId: "backend", level: "senior" });
-  /* curated human-bank titles are never regenerated; --force also re-drafts the AI bank */
+  /* the existing AI bank is carried forward and merged (never overwritten);
+     curated human-bank titles are never regenerated; --force re-drafts it all */
+  const existingBank = force ? { problems: [], companies: {}, topics: {} } : parseGeneratedProblems(readGenerated());
   const existing = new Set(CURATED_TITLES.map(slugify));
-  if (!force) for (const id of existingAiIds(readGenerated())) existing.add(id);
+  if (!force) for (const id of existingBank.problems.map((p) => p.id)) existing.add(id);
   const candidates = buildCandidates(items, existing);
 
   if (!candidates.length) {
@@ -231,18 +233,20 @@ async function main() {
     process.exit(0);
   }
 
-  /* rebuild the companies + topics side-tables from the surviving problems */
-  const companies = {};
-  const topics = {};
+  /* merge the new survivors into the existing bank (dedupe by id, newest wins) */
+  const merged = new Map(existingBank.problems.map((p) => [p.id, p]));
+  const companies = { ...existingBank.companies };
+  const topics = { ...existingBank.topics };
   for (const c of candidates) {
     const kept = passed.find((p) => p.id === c.slug);
     if (!kept) continue;
+    merged.set(c.slug, kept);
     companies[c.slug] = [...c.companies].sort();
     topics[c.slug] = PATTERN_TOPIC[kept.pattern] ?? "Algorithms";
   }
-  const src = emitProblemsFile({ problems: passed, companies, topics, generatedAt: new Date().toISOString() });
+  const src = emitProblemsFile({ problems: [...merged.values()], companies, topics, generatedAt: new Date().toISOString() });
   writeFileSync(AI_GENERATED_PATH, src);
-  console.log(green(`\n✓ Wrote ${passed.length} problem(s) to src/data/codingBank/aiGenerated.ts (${companies ? Object.keys(companies).length : 0} company-tagged, ${topics ? Object.keys(topics).length : 0} topic-mapped).`));
+  console.log(green(`\n✓ Bank now has ${merged.size} problem(s) (${passed.length} new this run) — src/data/codingBank/aiGenerated.ts (${Object.keys(companies).length} company-tagged, ${Object.keys(topics).length} topic-mapped).`));
   process.exit(0);
 }
 

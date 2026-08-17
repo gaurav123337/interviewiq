@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import {
   PATTERNS, PATTERN_TOPIC as LIB_PATTERN_TOPIC, buildCandidates, canonicalPattern,
   emitProblemsFile, existingAiIds, gateProblem, matchesExpected, normalizeProblem,
-  normalizeTitle, parseDraftJson, patternFromTitle, runJudge, slugify, validateProblem
+  normalizeTitle, parseDraftJson, parseGeneratedProblems, patternFromTitle, runJudge,
+  slugify, validateProblem
 } from "../../scripts/ai-draft-lib.js";
 import { PATTERN_LABELS, PATTERN_TOPIC } from "../data/patterns";
 
@@ -166,7 +167,7 @@ describe("local judge (gate)", () => {
   });
 });
 
-describe("aiGenerated.ts emission", () => {
+describe("aiGenerated.ts emission + merge", () => {
   it("round-trips problems + side-tables and exposes their ids", () => {
     const p = normalizeProblem(CAND, GOOD_PARSED);
     const src = emitProblemsFile({
@@ -193,6 +194,23 @@ describe("aiGenerated.ts emission", () => {
     expect(mod.AI_GENERATED_PROBLEMS).toHaveLength(1);
     expect(mod.AI_GENERATED_PROBLEMS[0].id).toBe("merge-intervals");
     expect(mod.AI_PROBLEM_COMPANIES["merge-intervals"]).toEqual(["google", "amazon"]);
+  });
+
+  it("parses an emitted file back into problems + side-tables (accumulation)", () => {
+    const p = normalizeProblem(CAND, GOOD_PARSED);
+    const src = emitProblemsFile({
+      problems: [p],
+      companies: { "merge-intervals": ["google"] },
+      topics: { "merge-intervals": "Arrays & hashing" },
+      generatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const parsed = parseGeneratedProblems(src);
+    expect(parsed.problems.map(x => x.id)).toEqual(["merge-intervals"]);
+    expect(parsed.problems[0].prompt).toBe(p.prompt);
+    expect(parsed.companies["merge-intervals"]).toEqual(["google"]);
+    expect(parsed.topics["merge-intervals"]).toBe("Arrays & hashing");
+    /* garbage input degrades to an empty bank, never a crash */
+    expect(parseGeneratedProblems("not a ts file")).toEqual({ problems: [], companies: {}, topics: {} });
   });
 });
 

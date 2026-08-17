@@ -405,3 +405,26 @@ export function existingAiIds(fileContent) {
   while ((m = re.exec(String(fileContent ?? "")))) ids.add(m[1]);
   return ids;
 }
+
+/** Parses an emitted aiGenerated.ts file back into its data (the file is
+    machine-generated JSON in a fixed shape, so stripping the TS annotations
+    and evaling it is robust). Used so a run MERGES new problems into the
+    existing bank instead of overwriting it. */
+export function parseGeneratedProblems(fileContent) {
+  const s = String(fileContent ?? "")
+    .replace(/^import .*$/m, "")
+    .replace(/^export const /gm, "const ")
+    .replace(": CliProblem[]", "")
+    .replace(": Record<string, string[]>", "")
+    .replace(": Record<string, string>", "");
+  try {
+    const mod = new Function(`${s}\nreturn { AI_GENERATED_PROBLEMS, AI_PROBLEM_COMPANIES, AI_CLI_TOPICS };`)();
+    return {
+      problems: Array.isArray(mod.AI_GENERATED_PROBLEMS) ? mod.AI_GENERATED_PROBLEMS : [],
+      companies: (mod.AI_PROBLEM_COMPANIES && typeof mod.AI_PROBLEM_COMPANIES === "object") ? mod.AI_PROBLEM_COMPANIES : {},
+      topics: (mod.AI_CLI_TOPICS && typeof mod.AI_CLI_TOPICS === "object") ? mod.AI_CLI_TOPICS : {}
+    };
+  } catch {
+    return { problems: [], companies: {}, topics: {} };
+  }
+}
