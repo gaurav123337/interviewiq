@@ -105,7 +105,7 @@ describe("candidate building", () => {
 
   it("easyCandidates keeps Easy/Medium/unrated and drops Hard-only titles", () => {
     const mk = (slug: string, diffs: number[]) => ({
-      title: slug, slug, companies: new Set(["google"]), difficulties: new Set(diffs), urls: new Set()
+      title: slug, slug, companies: new Set(["google"]), difficulties: new Set(diffs), urls: new Set<string>()
     });
     const cands = [mk("easy-one", [1]), mk("medium-one", [2]), mk("mixed-12", [1, 2]), mk("hard-one", [3]), mk("mixed-23", [2, 3]), mk("unrated", [])];
     const kept = easyCandidates(cands).map(c => c.slug);
