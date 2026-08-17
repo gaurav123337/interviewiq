@@ -68,9 +68,9 @@ jobs:
           BODY="$(node scripts/ai-draft-problems.js --pr-body)"
           PR_NUM="$(gh pr list --head ai/problem-bank --json number --jq '.[0].number // empty')"
           if [ -n "$PR_NUM" ]; then
-            gh pr edit "$PR_NUM" --body "$BODY"
-            echo "Updated PR #$PR_NUM (ai/problem-bank)."
+            gh pr edit "$PR_NUM" --body "$BODY" && echo "Updated PR #$PR_NUM (ai/problem-bank)." || echo "PR body update failed (run is still green — branch is pushed)."
           else
             gh pr create --base main --head ai/problem-bank \
-              --title "AI-drafted coding problems (self-tested)" --body "$BODY"
+              --title "AI-drafted coding problems (self-tested)" --body "$BODY" \
+              || echo "PR auto-create unavailable (repo setting) — open it at https://github.com/gaurav123337/interviewiq/pull/new/ai/problem-bank"
           fi

@@ -188,7 +188,7 @@ export function buildDraftPrompt(candidate) {
     "HARD RULES:",
     "1. The TITLE is a well-known interview topic (a fact). NEVER copy the problem statement from any website — LeetCode, GeeksforGeeks or any other source. Write an ORIGINAL prompt, YOUR OWN input/output contract, YOUR OWN variable names and YOUR OWN test cases. Do not reproduce anyone's wording.",
     "2. 'tests' are the visible cases (2-5), 'hidden' are judge-only edge cases (1-3) — never identical inputs.",
-    "3. 'reference' is a JavaScript function: `function solve(lines) { ... return out; }` where lines is stdin split by newline and out is an ARRAY OF STRINGS (console.log is NOT available). Never return a single value — always an array, one output line per element.",
+    "3. 'reference' MUST be exactly this skeleton (write your logic inside it):\nfunction solve(lines) {\n  const out = [];\n  // your logic here — push one output line per element (strings only)\n  return out;\n}\n(lines is stdin split by newline; console.log is NOT available. Never return a single value — always the array.)",
     "4. 'hint': one short nudge (under 160 chars), no full solution.",
     "5. 'pattern': one of: " + PATTERN_IDS.join(", ") + ".",
     "6. 'difficulty': 1 (easy), 2 (medium), or 3 (hard).",
