@@ -36,6 +36,10 @@ jobs:
       - name: Checkout ai/problem-bank branch (rebased on latest main)
         run: |
           BR="ai/problem-bank"
+          # The default checkout is shallow (depth 1), which breaks rebase — the
+          # merge-base is missing, so it would fail and the reset fallback would
+          # WIPE the branch's previously generated problems. Unshallow first.
+          git fetch --unshallow origin
           git fetch origin main
           git fetch origin "$BR" 2>/dev/null || true
           git checkout -B "$BR" "origin/$BR" 2>/dev/null || git checkout -b "$BR"
@@ -43,7 +47,7 @@ jobs:
           # pushes that touch workflow files from the GITHUB_TOKEN, so a stale
           # copy of a workflow file (changed on main since this branch was cut)
           # would block the push. Rebase only carries the aiGenerated.ts commit.
-          git rebase origin/main 2>/dev/null || git reset --hard origin/main
+          git rebase origin/main || exit 1
       - name: Generate + gate AI-drafted problems
         id: gen
         env:
