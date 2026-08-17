@@ -22,8 +22,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  # the ai/problem-bank branch is based on main, which contains workflow files;
-  # GitHub rejects pushes that touch workflow files from a token without this
   workflows: write
 
 jobs:
