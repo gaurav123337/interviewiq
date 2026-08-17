@@ -46,3 +46,9 @@ export function matchesExpected(got: string, expect: string): boolean;
 export function gateProblem(problem: DraftProblem): { pass: boolean; results: { stdin: string; expect: string; got: string; error?: string; pass: boolean }[] };
 export function emitProblemsFile(args: { problems: DraftProblem[]; companies: Record<string, string[]>; topics: Record<string, string>; generatedAt?: string }): string;
 export function existingAiIds(fileContent: string): Set<string>;
+export interface GeneratedBank {
+  problems: DraftProblem[];
+  companies: Record<string, string[]>;
+  topics: Record<string, string>;
+}
+export function parseGeneratedProblems(fileContent: string): GeneratedBank;
