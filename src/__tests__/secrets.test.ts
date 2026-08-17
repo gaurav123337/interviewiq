@@ -69,3 +69,28 @@ describe("fetchSecretStatus", () => {
     await expect(fetchSecretStatus()).rejects.toThrow(/signed out/);
   });
 });
+
+describe("sendTestEmail", () => {
+  it("POSTs to test-email with the session token and returns the send result", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, sent: true, note: "Test email sent to a@b.c" }) });
+    vi.stubGlobal("fetch", fetchMock);
+    getSession.mockResolvedValue({ data: { session: { access_token: "tok-test" } } });
+
+    const { sendTestEmail } = await import("../services/secrets");
+    const r = await sendTestEmail();
+
+    expect(r.sent).toBe(true);
+    const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/functions/v1/test-email");
+    expect(opts.method).toBe("POST");
+    expect((opts.headers as Record<string, string>).Authorization).toBe("Bearer tok-test");
+  });
+
+  it("throws the server reason when the send fails (missing/invalid key)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, json: async () => ({ ok: false, error: "Email not configured — set RESEND_API_KEY to enable emails." }) }));
+    getSession.mockResolvedValue({ data: { session: { access_token: "tok" } } });
+
+    const { sendTestEmail } = await import("../services/secrets");
+    await expect(sendTestEmail()).rejects.toThrow(/RESEND_API_KEY/);
+  });
+});

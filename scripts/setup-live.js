@@ -127,6 +127,40 @@ async function main() {
   if (!process.env.RESEND_API_KEY)
     console.log(dim("  (RESEND_API_KEY not set — digests will answer sent:false until you add it)"));
 
+  /* 2.5 — deploy the admin status/email-check functions so the Admin →
+     Secrets tab and its one-click test email work. The Management API
+     deploy accepts ONE bundled file, so shared imports (auth.ts, cors.ts)
+     are inlined here, mirroring scripts/deploy-functions.mjs. */
+  const SHARED_AUTH = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/auth.ts", import.meta.url)), "utf8");
+  const SHARED_CORS = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/cors.ts", import.meta.url)), "utf8");
+  const SHARED_EMAIL = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/email.ts", import.meta.url)), "utf8");
+  const DEPLOY = [
+    { slug: "secret-status", entry: "secret-status/index.ts" },
+    { slug: "test-email", entry: "test-email/index.ts" }
+  ];
+  const inlineShared = (src) => {
+    const re = (path) => new RegExp(`import\\s*\\{[^}]*\\}\\s*from\\s*"${path}";\\s*`);
+    let out = src;
+    if (re("\\.\\./_shared/auth\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/auth\\.ts"), SHARED_AUTH + "\n");
+    if (re("\\.\\./_shared/cors\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/cors\\.ts"), SHARED_CORS + "\n");
+    if (re("\\.\\./_shared/email\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/email\\.ts"), SHARED_EMAIL + "\n");
+    return out;
+  };
+  for (const fn of DEPLOY) {
+    if (dry) { console.log(green(`✓ would deploy ${fn.slug} (dry-run)`)); continue; }
+    const src = readFileSync(fileURLToPath(new URL(`../supabase/functions/${fn.entry}`, import.meta.url)), "utf8");
+    const fd = new FormData();
+    fd.append("metadata", JSON.stringify({ entrypoint_path: "index.ts", name: fn.slug, verify_jwt: false }));
+    fd.append("file", new Blob([inlineShared(src)], { type: "text/typescript" }), "index.ts");
+    const res = await fetch(`${API}/projects/${ref}/functions/deploy?slug=${fn.slug}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`deploy ${fn.slug} → ${res.status}: ${text.slice(0, 400)}`);
+    console.log(green(`✓ deployed ${fn.slug}`));
+  }
+
   /* 3 — cron schedules */
   for (const f of CRON_FILES) {
     let sql = readFileSync(sqlPath(f), "utf8");

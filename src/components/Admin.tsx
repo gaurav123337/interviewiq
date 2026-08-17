@@ -49,7 +49,7 @@ import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { pendingCommunityResources, reviewResource, type ResourceRow } from "../services/resources";
 import { adminDecisionProposal, adminPendingProposals, type UpdateProposalRow } from "../services/trendSignals";
-import { fetchSecretStatus, type SecretStatusReport, type SecretStatusRow } from "../services/secrets";
+import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../services/secrets";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
@@ -815,7 +815,7 @@ export function Admin() {
       </div>
 
       <div className="mt-6">
-        {section === "overview" && <Overview metrics={metrics} loading={loading} />}
+        {section === "overview" && <Overview metrics={metrics} loading={loading} onOpenSecrets={() => setSection("secrets")} />}
         {section === "users" && <Users users={users} admins={admins} busy={busy} setBusy={setBusy} onChanged={load} />}
         {section === "announcements" && (
           <Announcements list={announcements} busy={busy} setBusy={setBusy} onChanged={async () => { setAnnouncements(getAnnouncements()); }} />
@@ -862,7 +862,7 @@ export function Admin() {
 /* Overview — business KPIs                                            */
 /* ------------------------------------------------------------------ */
 
-function Overview({ metrics, loading }: { metrics: AdminMetrics | null; loading: boolean }) {
+function Overview({ metrics, loading, onOpenSecrets }: { metrics: AdminMetrics | null; loading: boolean; onOpenSecrets: () => void }) {
   if (loading && !metrics) {
     return <div className="text-center text-mut"><span className="spinner inline-block" /> Loading metrics…</div>;
   }
@@ -879,17 +879,52 @@ function Overview({ metrics, loading }: { metrics: AdminMetrics | null; loading:
     { label: "Engagement", value: m.totalUsers ? Math.round((m.active7d / m.totalUsers) * 100) + "%" : "—", icon: "📈", sub: "active 7d / total" }
   ];
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-      {cards.map(c => (
-        <div key={c.label} className={`${cardCls} p-5`}>
-          <div className="flex items-center justify-between">
-            <span className="text-[12px] font-extrabold uppercase tracking-wider text-mut">{c.label}</span>
-            <span className="text-[18px]">{c.icon}</span>
+    <div className="space-y-4">
+      <SecretGapsBanner onOpen={onOpenSecrets} />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+        {cards.map(c => (
+          <div key={c.label} className={`${cardCls} p-5`}>
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-extrabold uppercase tracking-wider text-mut">{c.label}</span>
+              <span className="text-[18px]">{c.icon}</span>
+            </div>
+            <div className="mt-1.5 text-[26px] font-extrabold tabular-nums">{c.value}</div>
+            <div className="mt-0.5 text-[12px] text-fnt">{c.sub}</div>
           </div>
-          <div className="mt-1.5 text-[26px] font-extrabold tabular-nums">{c.value}</div>
-          <div className="mt-0.5 text-[12px] text-fnt">{c.sub}</div>
-        </div>
-      ))}
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* SecretGapsBanner — missing required function secrets surfaced on the */
+/* Overview so setup gaps are visible without opening the Secrets tab. */
+/* ------------------------------------------------------------------ */
+
+function SecretGapsBanner({ onOpen }: { onOpen: () => void }) {
+  const [report, setReport] = useState<SecretStatusReport | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchSecretStatus()
+      .then(r => { if (alive) setReport(r); })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+  }, []);
+
+  /* function not deployed yet — the Secrets tab explains how to deploy it */
+  if (failed || !report || report.summary.missingRequired === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-[12.5px]">
+      <span className="font-bold text-warn">
+        ⚠️ {report.summary.missingRequired} required function secret{report.summary.missingRequired === 1 ? "" : "s"} missing:{" "}
+      </span>
+      <span className="font-mono font-bold text-ink">{report.summary.missingRequiredNames.join(", ")}</span>
+      <span className="text-mut"> — emails answer sent:false, crons 401, verdicts stay pending.</span>{" "}
+      <button className="font-bold text-acctxt underline" onClick={onOpen}>Review in Secrets →</button>
     </div>
   );
 }
@@ -4186,6 +4221,7 @@ function SecuritySection() {
 function SecretsSection() {
   const [report, setReport] = useState<SecretStatusReport | null>(null);
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
@@ -4202,6 +4238,19 @@ function SecretsSection() {
   };
 
   useEffect(() => { void load(); }, []);
+
+  /* one-click RESEND_API_KEY validation — sends to the admin's own inbox */
+  const test = async () => {
+    setTesting(true);
+    try {
+      const r = await sendTestEmail();
+      toast(r.sent ? "📧 " + (r.note ?? "Test email sent — check your inbox") : "✗ " + (r.note ?? "Send failed"));
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Test email failed"));
+    } finally {
+      setTesting(false);
+    }
+  };
 
   /* missing required → missing optional → set → auto-injected (builtin) */
   const rows = useMemo(() => {
@@ -4232,7 +4281,12 @@ function SecretsSection() {
               crons 401, verdicts stay pending).
             </p>
           </div>
-          <button className={btnGhost + btnSm} onClick={() => void load()} disabled={busy}>Refresh</button>
+          <div className="flex items-center gap-2">
+            <button className={btnPrimary + btnSm} onClick={() => void test()} disabled={testing || busy} title="Sends a test email to your own inbox to validate RESEND_API_KEY end-to-end">
+              {testing ? "Sending…" : "📧 Send test email"}
+            </button>
+            <button className={btnGhost + btnSm} onClick={() => void load()} disabled={busy}>Refresh</button>
+          </div>
         </div>
 
         {error && (
