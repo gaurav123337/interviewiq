@@ -107,18 +107,21 @@ async function main() {
   for (const s of FUNCTION_SECRETS) {
     const value = gen();
     set.set(s.name, value);
-    if (!dry) await api(`/projects/${ref}/functions/${s.slug}/secrets`, {
+    /* project-level endpoint: secrets are project-wide (every function sees
+       them) and the old per-function path was removed from the Management
+       API — the body is a bare array of { name, value } */
+    if (!dry) await api(`/projects/${ref}/secrets`, {
       method: "POST",
-      body: JSON.stringify({ secrets: [{ name: s.name, value }] }),
+      body: JSON.stringify([{ name: s.name, value }]),
     });
     console.log(green(`✓ ${s.slug} → ${s.name} ${dry ? "(dry-run)" : "(generated)"}`));
   }
   for (const s of OPTIONAL) {
     const value = process.env[s.env];
     if (!value) continue;
-    if (!dry) await api(`/projects/${ref}/functions/${s.slug}/secrets`, {
+    if (!dry) await api(`/projects/${ref}/secrets`, {
       method: "POST",
-      body: JSON.stringify({ secrets: [{ name: s.name, value }] }),
+      body: JSON.stringify([{ name: s.name, value }]),
     });
     console.log(green(`✓ ${s.slug} → ${s.name} ${dry ? "(dry-run)" : "(from env)"}`));
   }
