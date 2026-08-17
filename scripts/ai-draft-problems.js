@@ -161,12 +161,14 @@ async function main() {
   const passed = [];
   const failed = [];
   let calls = 0;
+  let httpErrors = 0;
   for (const c of candidates) {
     if (passed.length >= plan) break;
     if (calls >= maxCalls) { console.log(yellow("Cost cap reached — stopping early.")); break; }
     calls++;
     try {
       const parsed = await draftOne(c);
+      httpErrors = 0;
       const v = validateProblem(c, parsed);
       if (!v.ok) { failed.push({ title: c.title, why: `invalid: ${v.errors.join("; ")}` }); console.warn(yellow(`  ✗ ${c.title} — ${v.errors.join("; ")}`)); continue; }
       const problem = normalizeProblem(c, parsed);
@@ -180,8 +182,15 @@ async function main() {
       passed.push(problem);
       console.log(green(`  ✓ ${c.title} (${problem.pattern}, ${["Easy", "Medium", "Hard"][problem.difficulty - 1]}) — ${problem.tests.length + problem.hidden.length} cases green`));
     } catch (e) {
-      failed.push({ title: c.title, why: e.message });
-      console.warn(yellow(`  ✗ ${c.title} — ${e.message}`));
+      const msg = e && e.message ? String(e.message) : String(e);
+      const isHttp = /^AI HTTP \d{3}/.test(msg);
+      httpErrors = isHttp ? httpErrors + 1 : 0;
+      failed.push({ title: c.title, why: msg });
+      console.warn(yellow(`  ✗ ${c.title} — ${msg}${msg === "AI HTTP 401" ? " (check AI_CLEAN_KEY — or AI_CLEAN_BASE/AI_CLEAN_MODEL for a non-OpenAI provider)" : ""}`));
+      if (httpErrors >= 3) {
+        console.error(red(`\n${httpErrors} consecutive API HTTP errors — aborting. Verify AI_CLEAN_KEY (and AI_CLEAN_BASE / AI_CLEAN_MODEL if the key is not an OpenAI key), then re-run.`));
+        break;
+      }
     }
     await sleep(250); /* polite rate limit */
   }
