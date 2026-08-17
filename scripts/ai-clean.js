@@ -93,6 +93,7 @@ async function main() {
 
   let ok = 0;
   let failed = 0;
+  let dedup = 0;
   for (const row of rows) {
     try {
       const clean = await cleanOne({ question: row.question, fieldId: row.field_id, level: row.level, meta: row.meta });
@@ -111,6 +112,16 @@ async function main() {
       ok++;
       console.log(`  ✓ id=${row.id} — ${applied.question.slice(0, 70)}`);
     } catch (e) {
+      /* the AI's reworded question already exists in the bank (unique key) —
+         that's dedup working, not a failure: drop the redundant draft */
+      if (/23505|duplicate key/i.test(String(e.message))) {
+        dedup++;
+        try {
+          await runSql(`delete from public.published_questions where id = ${Number(row.id)}`);
+          console.log(yellow(`  ↺ id=${row.id} — duplicate of an existing question — removed`));
+          continue;
+        } catch { /* best effort — fall through to ai_failed marking */ }
+      }
       failed++;
       console.warn(yellow(`  ✗ id=${row.id}: ${e.message}`));
       try {
@@ -120,7 +131,7 @@ async function main() {
     await sleep(200); /* polite rate limit */
   }
 
-  console.log(green(`\n✓ Cleaned ${ok} draft(s)${failed ? `, ${failed} failed (marked ai_failed — review manually)` : ""}. Review in Admin → Review inbox.`));
+  console.log(green(`\n✓ Cleaned ${ok} draft(s)${dedup ? `, ${dedup} were duplicates (removed)` : ""}${failed ? `, ${failed} failed (marked ai_failed — review manually)` : ""}. Review in Admin → Review inbox.`));
   process.exit(failed ? 1 : 0);
 }
 
