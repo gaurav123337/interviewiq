@@ -31,4 +31,6 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           AI_CLEAN_KEY: ${{ secrets.AI_CLEAN_KEY }}
+          AI_CLEAN_BASE: ${{ secrets.AI_CLEAN_BASE }}
+          AI_CLEAN_MODEL: ${{ secrets.AI_CLEAN_MODEL }}
         run: node scripts/ai-clean.js
