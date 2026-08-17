@@ -79,9 +79,26 @@ async function draftOne(candidate, retry = false) {
 }
 
 async function fetchMirror() {
-  const res = await fetch(sourceUrl, { headers: { "User-Agent": "interviewiq-content-pipeline" } });
-  if (!res.ok) throw new Error(`mirror fetch HTTP ${res.status} (${sourceUrl})`);
-  return res.text();
+  /* raw.githubusercontent.com rate-limits shared CI egress — retry with backoff */
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const res = await fetch(sourceUrl, { headers: { "User-Agent": "interviewiq-content-pipeline" } });
+      if (res.ok) return await res.text();
+      lastErr = new Error(`mirror fetch HTTP ${res.status} (${sourceUrl})`);
+      if (res.status === 429 || res.status >= 500) {
+        const wait = (Number(res.headers.get("retry-after")) || 0) || 8 * attempt;
+        console.warn(yellow(`  mirror HTTP ${res.status} — retrying in ${wait}s (attempt ${attempt}/4)`));
+        await sleep(wait * 1000);
+        continue;
+      }
+      break; /* other 4xx — don't retry */
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      await sleep(3 * attempt * 1000);
+    }
+  }
+  throw lastErr ?? new Error(`mirror fetch failed (${sourceUrl})`);
 }
 
 function readGenerated() {
