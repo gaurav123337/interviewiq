@@ -53,11 +53,13 @@ export async function fetchSecretStatus(): Promise<SecretStatusReport> {
   return body as SecretStatusReport;
 }
 
-/** POST the test-email Edge Function as the signed-in admin. The function
-    sends a plain test email to the CALLER's own verified address only and
-    reports whether the RESEND_API_KEY secret is valid end-to-end. Throws
-    with the server's message when it isn't an admin or the send fails. */
-export async function sendTestEmail(): Promise<{ ok: boolean; sent?: boolean; note?: string }> {
+/** POST the test-email Edge Function as the signed-in admin. Sends a plain
+    test email and reports whether the RESEND_API_KEY secret is valid
+    end-to-end. `to` is optional: it defaults to the caller's own address,
+    but an admin may pick the recipient — needed because Resend TEST keys
+    only deliver to the key owner's own inbox. Throws with the server's
+    message when it isn't an admin or the send fails. */
+export async function sendTestEmail(to?: string): Promise<{ ok: boolean; sent?: boolean; note?: string }> {
   const client = await getSupabaseClient();
   if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
   const { data: session } = await client.auth.getSession();
@@ -67,7 +69,7 @@ export async function sendTestEmail(): Promise<{ ok: boolean; sent?: boolean; no
   const res = await fetch(`${CONFIG.supabase.url}/functions/v1/test-email`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: "{}"
+    body: JSON.stringify({ to: to ?? "" })
   });
   const body = (await res.json().catch(() => ({}))) as { ok?: boolean; sent?: boolean; note?: string; error?: string };
   if (!res.ok || body.ok === false) throw new Error(body.error ?? `HTTP ${res.status}`);

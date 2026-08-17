@@ -28,8 +28,16 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: false, error: "forbidden — admin session required" }), { status: 401, headers });
     }
 
+    /* the admin may pick the recipient (default: their own address). Resend
+       TEST keys only deliver to the key owner's own inbox (e.g. a
+       garudagaura@gmail.com-owned key), so an optional `to` lets the admin
+       verify against the address the key can actually reach. Admin-gated,
+       so a non-admin can never use this as an open relay. */
+    const body = (await req.json().catch(() => ({}))) as { to?: unknown };
+    const to = typeof body?.to === "string" && body.to.includes("@") ? body.to.trim().toLowerCase() : admin.email;
+
     const r = await sendEmail({
-      to: admin.email,
+      to,
       apiKey: Deno.env.get("RESEND_API_KEY") ?? "",
       subject: "InterviewIQ — test email ✅",
       html: `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#0f172a">
@@ -42,7 +50,7 @@ Deno.serve(async (req) => {
     if (!r.sent) {
       return new Response(JSON.stringify({ ok: false, sent: false, error: r.note }), { status: 200, headers });
     }
-    return new Response(JSON.stringify({ ok: true, sent: true, note: `Test email sent to ${admin.email} — check your inbox` }), { status: 200, headers });
+    return new Response(JSON.stringify({ ok: true, sent: true, note: `Test email sent to ${to} — check that inbox` }), { status: 200, headers });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: "error: " + String(e) }), { status: 500, headers });
   }

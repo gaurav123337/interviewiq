@@ -4222,6 +4222,7 @@ function SecretsSection() {
   const [report, setReport] = useState<SecretStatusReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testTo, setTestTo] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
@@ -4239,11 +4240,14 @@ function SecretsSection() {
 
   useEffect(() => { void load(); }, []);
 
-  /* one-click RESEND_API_KEY validation — sends to the admin's own inbox */
+  /* one-click RESEND_API_KEY validation. Defaults to the admin's own
+     inbox; a recipient can be supplied because Resend TEST keys only
+     deliver to the key owner's address (e.g. a garudagaura@gmail.com-owned
+     key), so testing against that inbox proves the key end-to-end. */
   const test = async () => {
     setTesting(true);
     try {
-      const r = await sendTestEmail();
+      const r = await sendTestEmail(testTo.trim() || undefined);
       toast(r.sent ? "📧 " + (r.note ?? "Test email sent — check your inbox") : "✗ " + (r.note ?? "Send failed"));
     } catch (e) {
       toast("✗ " + ((e as Error).message || "Test email failed"));
@@ -4281,8 +4285,16 @@ function SecretsSection() {
               crons 401, verdicts stay pending).
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <button className={btnPrimary + btnSm} onClick={() => void test()} disabled={testing || busy} title="Sends a test email to your own inbox to validate RESEND_API_KEY end-to-end">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="email"
+              value={testTo}
+              onChange={e => setTestTo(e.target.value)}
+              placeholder="Send to (defaults to your email)"
+              className="w-56 rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+              title="Resend TEST keys only deliver to the key owner's inbox — enter that address to validate the key"
+            />
+            <button className={btnPrimary + btnSm} onClick={() => void test()} disabled={testing || busy} title="Sends a test email to validate RESEND_API_KEY end-to-end (admin-only recipient choice)">
               {testing ? "Sending…" : "📧 Send test email"}
             </button>
             <button className={btnGhost + btnSm} onClick={() => void load()} disabled={busy}>Refresh</button>

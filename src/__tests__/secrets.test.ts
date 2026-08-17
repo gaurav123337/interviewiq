@@ -71,19 +71,20 @@ describe("fetchSecretStatus", () => {
 });
 
 describe("sendTestEmail", () => {
-  it("POSTs to test-email with the session token and returns the send result", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, sent: true, note: "Test email sent to a@b.c" }) });
+  it("POSTs to test-email with the session token, the optional recipient, and returns the send result", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, sent: true, note: "Test email sent to garudagaura@gmail.com — check that inbox" }) });
     vi.stubGlobal("fetch", fetchMock);
     getSession.mockResolvedValue({ data: { session: { access_token: "tok-test" } } });
 
     const { sendTestEmail } = await import("../services/secrets");
-    const r = await sendTestEmail();
+    const r = await sendTestEmail("garudagaura@gmail.com");
 
     expect(r.sent).toBe(true);
     const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/functions/v1/test-email");
     expect(opts.method).toBe("POST");
     expect((opts.headers as Record<string, string>).Authorization).toBe("Bearer tok-test");
+    expect(JSON.parse(String(opts.body))).toEqual({ to: "garudagaura@gmail.com" });
   });
 
   it("throws the server reason when the send fails (missing/invalid key)", async () => {
