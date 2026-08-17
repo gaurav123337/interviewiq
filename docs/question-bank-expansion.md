@@ -147,10 +147,10 @@ in docs; both respect the platform guardrails in `phase2-platform-integrations.m
 
 | Phase | Effort | Impact | Ships |
 |---|---|---|---|
-| **P1 GitHub raw** | S (extractor + sources) | High — 4–5 new domains, system-design gap closed | ~1 session |
-| **P2 HN API** | S–M (extractor + politeness) | High — freshness + trends signal | 1 session |
-| **P3 AI cleaning** | M (script + contract + gates) | **Critical** — makes "no humans" viable | 1–2 sessions |
-| **P4 Coding bank 60** | M–L (AI drafts + self-tests) | High — answers the #1 con | 2–3 sessions |
+| **P1 GitHub raw** | S (extractor + sources) | High — 4–5 new domains, system-design gap closed | ✅ shipped (8 sources live, 158 drafts) |
+| **P2 HN API** | S–M (extractor + politeness) | High — freshness + trends signal | ✅ shipped (2 HN sources live) |
+| **P3 AI cleaning** | M (script + contract + gates) | **Critical** — makes "no humans" viable | ✅ shipped (`ai-clean.js` + `AI_CLEAN_KEY` in CI) |
+| **P4 Coding bank 60** | M–L (AI drafts + self-tests) | High — answers the #1 con | 🚧 machinery shipped (`ai-draft-problems.js` + `ai-problems.yml` → review PR); bank grows via the workflow |
 | **P5 GfG / Blind** | L / S | Low–Med | Defer / manual |
 
 Order: **P1 → P3 → P2 → P4**, P5 when the rest is breathing. Each phase ships with unit tests

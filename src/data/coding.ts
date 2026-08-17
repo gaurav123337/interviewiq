@@ -48,6 +48,8 @@ export interface CliProblem {
   hint?: string;
   /** Reference solution (JavaScript) — used for the Pro solution + bank self-test. */
   reference?: string;
+  /** P4 pattern id (see src/data/patterns.ts) — powers the picker filter + topic mapping. */
+  pattern?: string;
 }
 
 /* Function problem: implement a named function; the judge calls it with typed
@@ -356,12 +358,15 @@ import { UI_COMPONENT_PROBLEMS } from "./codingBank/uiComponents";
 import { UI_ADVANCED_PROBLEMS } from "./codingBank/uiAdvanced";
 /* React / Vue component challenges (render with real libs in the sandbox). */
 import { UI_FRAMEWORK_PROBLEMS } from "./codingBank/uiFramework";
+/* P4 — AI-authored algorithm problems (self-tested by scripts/ai-draft-problems.js). */
+import { AI_GENERATED_PROBLEMS } from "./codingBank/aiGenerated";
 /* Per-language starter skeletons (own module to avoid an import cycle). */
 import { PY, JS, TS, CPP, JAVA, GO } from "./starters";
 
 export const CODING_PROBLEMS: CodingProblem[] = [
   ...CLI_PROBLEMS,
   ...ALGORITHM_PROBLEMS,
+  ...AI_GENERATED_PROBLEMS,
   ...JS_FUNCTION_PROBLEMS,
   ...UI_COMPONENT_PROBLEMS,
   ...UI_ADVANCED_PROBLEMS,

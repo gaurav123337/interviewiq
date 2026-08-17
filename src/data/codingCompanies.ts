@@ -6,13 +6,17 @@
 
 import type { CodingProblem } from "./coding";
 import { CODING_PROBLEMS } from "./coding";
+/* P4 — AI-generated problems carry their own tags/topics in aiGenerated.ts;
+   merged below so the curated tables stay hand-written and clean. */
+import { AI_CLI_TOPICS, AI_PROBLEM_COMPANIES } from "./codingBank/aiGenerated";
+import { PATTERN_TOPIC } from "./patterns";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { getCodingTrack } from "../services/codingTrack";
 import { getProfile } from "../services/goal";
 import { STORAGE_KEYS, storageGet } from "../services/storage";
 import type { SavedSession } from "../types";
 
-export const PROBLEM_COMPANIES: Record<string, string[]> = {
+const PROBLEM_COMPANIES_CURATED: Record<string, string[]> = {
   /* original CLI six */
   "two-sum": ["google", "meta", "amazon", "microsoft", "apple", "uber", "airbnb"],
   "valid-parens": ["google", "meta", "amazon", "microsoft", "apple", "netflix", "spotify"],
@@ -56,6 +60,12 @@ export const PROBLEM_COMPANIES: Record<string, string[]> = {
   "fn-binary-search": ["google", "meta", "amazon", "microsoft", "uber"],
   "fn-lru-cache": ["google", "meta", "amazon", "microsoft", "apple", "uber", "netflix"],
   "fn-range": ["google", "stripe", "datadog"]
+};
+
+/** Company tags for every problem — curated bank + AI-generated bank. */
+export const PROBLEM_COMPANIES: Record<string, string[]> = {
+  ...PROBLEM_COMPANIES_CURATED,
+  ...AI_PROBLEM_COMPANIES
 };
 
 /** Every CLI + fn problem should carry at least one company tag so the target
@@ -112,7 +122,7 @@ export function freqForProblem(companyId: string, problemId: string): CompanyFre
    so give them real topic buckets — the same themes the roadmap uses — to make
    the per-company topic view meaningful. Every CLI id must appear here (locked
    by a test). */
-export const CLI_TOPICS: Record<string, string> = {
+const CLI_TOPICS_CURATED: Record<string, string> = {
   "two-sum": "Arrays & hashing",
   "contains-duplicate": "Arrays & hashing",
   "majority-element": "Arrays & hashing",
@@ -135,9 +145,16 @@ export const CLI_TOPICS: Record<string, string> = {
   "fizzbuzz": "Language basics"
 };
 
-/** Topic bucket for a problem — CLI via CLI_TOPICS, fn via its category, UI via kind. */
+/** Topic bucket for every CLI problem — curated + AI-generated. */
+export const CLI_TOPICS: Record<string, string> = {
+  ...CLI_TOPICS_CURATED,
+  ...AI_CLI_TOPICS
+};
+
+/** Topic bucket for a problem — CLI via CLI_TOPICS (falling back to its P4
+    pattern), fn via its category, UI via kind. */
 export function codingTopicFor(p: CodingProblem): string {
-  if (p.kind === "cli") return CLI_TOPICS[p.id] ?? "Algorithms";
+  if (p.kind === "cli") return CLI_TOPICS[p.id] ?? (p.pattern ? PATTERN_TOPIC[p.pattern] ?? "Algorithms" : "Algorithms");
   if (p.kind === "fn") return p.category;
   return "UI components";
 }

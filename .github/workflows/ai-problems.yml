@@ -1,0 +1,70 @@
+name: AI problem bank (P4)
+
+# Manual dispatch — asks the AI (AI_CLEAN_KEY) to draft ORIGINAL algorithm
+# problems from public problem-title metadata, gates each one through the local
+# judge (reference must pass its own visible + hidden cases), then commits the
+# survivors to the `ai/problem-bank` branch and opens/updates a review PR.
+# The owner reviewing + merging that PR is the P4 review gate — nothing ships
+# to main without it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: "Problems to generate this run (existing bank titles are skipped)"
+        required: false
+        default: "12"
+      force:
+        description: "true = regenerate already-generated titles too"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+      # Work on the ai/problem-bank branch (create it from main if it doesn't
+      # exist) so repeated runs accumulate problems and the PR stays open.
+      - name: Checkout ai/problem-bank branch
+        run: |
+          BR="ai/problem-bank"
+          git fetch origin "$BR" 2>/dev/null || true
+          git checkout -B "$BR" "origin/$BR" 2>/dev/null || git checkout -b "$BR"
+      - name: Generate + gate AI-drafted problems
+        id: gen
+        env:
+          AI_CLEAN_KEY: ${{ secrets.AI_CLEAN_KEY }}
+          AI_CLEAN_BASE: ${{ secrets.AI_CLEAN_BASE }}
+          AI_CLEAN_MODEL: ${{ secrets.AI_CLEAN_MODEL }}
+          AI_DRAFT_MAX: "40"
+        run: node scripts/ai-draft-problems.js --count ${{ github.event.inputs.count || '12' }} --write ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+      - name: Open/update the review PR when problems changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- src/data/codingBank/aiGenerated.ts; then
+            echo "No new problems passed the gate — aiGenerated.ts unchanged."
+            exit 0
+          fi
+          git config user.name "interviewiq-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add src/data/codingBank/aiGenerated.ts
+          git commit -m "ai-bank: add self-tested AI-drafted coding problems"
+          git push -f origin "ai/problem-bank"
+          BODY="$(node scripts/ai-draft-problems.js --pr-body)"
+          PR_NUM="$(gh pr list --head ai/problem-bank --json number --jq '.[0].number // empty')"
+          if [ -n "$PR_NUM" ]; then
+            gh pr edit "$PR_NUM" --body "$BODY"
+            echo "Updated PR #$PR_NUM (ai/problem-bank)."
+          else
+            gh pr create --base main --head ai/problem-bank \
+              --title "AI-drafted coding problems (self-tested)" --body "$BODY"
+          fi

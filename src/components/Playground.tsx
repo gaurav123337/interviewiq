@@ -11,6 +11,7 @@ import { go } from "@codemirror/lang-go";
 import { html as htmlLang } from "@codemirror/lang-html";
 import { css as cssLang } from "@codemirror/lang-css";
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
+import { PATTERN_LABELS } from "../data/patterns";
 import { companyById } from "../data";
 import { companyFrequency, companyInterviewPlan, freqForProblem, hasPersonalSignals, personalPlan, problemIsForCompany } from "../data/codingCompanies";
 import { useApp } from "../store";
@@ -104,6 +105,13 @@ export function Playground() {
   /* P3 — search + category filter + daily pick */
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState<CatFilter>("All");
+  /* P4 — pattern filter (visible once the AI bank ships problems with patterns) */
+  const [patternFilter, setPatternFilter] = useState<string | null>(null);
+  const patternCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of CODING_PROBLEMS) if (p.kind === "cli" && p.pattern) m.set(p.pattern, (m.get(p.pattern) ?? 0) + 1);
+    return m;
+  }, []);
   const dailyId = useMemo(dailyProblemId, []);
   /* company surfacing — the user's target company highlights + filters its tagged problems */
   const { state } = useApp();
@@ -351,6 +359,26 @@ export function Playground() {
                 </button>
               ))}
             </div>
+            {patternCounts.size > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-line/10 pt-2">
+                <span className="text-[10.5px] font-bold uppercase tracking-wider text-fnt">Pattern:</span>
+                <button
+                  onClick={() => setPatternFilter(null)}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${patternFilter === null ? "grad-bg text-white" : "border border-line/15 text-mut hover:border-acc1/40"}`}
+                >
+                  All
+                </button>
+                {[...patternCounts.keys()].sort().map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setPatternFilter(p)}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition-all ${patternFilter === p ? "grad-bg text-white" : "border border-line/15 text-mut hover:border-acc1/40"}`}
+                  >
+                    {PATTERN_LABELS[p] ?? p} <span className="opacity-70">({patternCounts.get(p)})</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {goalCompany && (
               <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-line/10 pt-2">
                 <span className="text-[10.5px] font-bold uppercase tracking-wider text-fnt">Target:</span>
@@ -447,6 +475,7 @@ export function Playground() {
           {CODING_PROBLEMS.filter(p =>
             (cat === "All" || catOf(p) === cat) &&
             (!companyFilter || problemIsForCompany(p, companyFilter)) &&
+            (!patternFilter || (p.kind === "cli" && p.pattern === patternFilter)) &&
             p.title.toLowerCase().includes(search.trim().toLowerCase())
           ).map(p => (
             <button
@@ -471,7 +500,10 @@ export function Playground() {
               </div>
               <div className="mt-0.5 flex items-center justify-between">
                 <Difficulty level={p.difficulty} />
-                <span className="text-[10px] uppercase tracking-wide text-fnt">
+                <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-fnt">
+                  {p.kind === "cli" && p.pattern && (
+                    <span className="rounded-full bg-acc1/10 px-1.5 py-0.5 font-bold text-acctxt">{PATTERN_LABELS[p.pattern] ?? p.pattern}</span>
+                  )}
                   {p.kind === "ui" && proGated ? "🎨 UI · 🔒 Pro" : catOf(p)}
                 </span>
               </div>
@@ -487,6 +519,7 @@ export function Playground() {
           <div className="flex flex-wrap items-center gap-2 border-b border-line/10 bg-wht/5 px-4 py-3">
             <span className="text-[14.5px] font-extrabold">{problem.title}</span>
             <span className={`text-[11px] font-extrabold uppercase ${DIFF_COLOR[problem.difficulty]}`}>{["Easy", "Medium", "Hard"][problem.difficulty - 1]}</span>
+            {problem.kind === "cli" && problem.pattern && <Chip tone="acc">{PATTERN_LABELS[problem.pattern] ?? problem.pattern}</Chip>}
             {!isFn && problem.kind !== "cli" && <Chip tone="acc">{problem.category}</Chip>}
             {isFn && <Chip tone="acc">{problem.category}</Chip>}
             <span className="flex-1" />

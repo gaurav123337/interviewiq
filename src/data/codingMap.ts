@@ -6,6 +6,11 @@
 
 import type { CodingProblem } from "./coding";
 import { CODING_PROBLEMS } from "./coding";
+/* P4 pattern taxonomy — roadmap topics surface generated problems by pattern. */
+const PATTERN_TOPIC_LINKS: Record<string, string[]> = {
+  "data structures": ["hash-map", "stack", "queue", "linked-list", "tree", "graph", "trie", "heap"],
+  "algorithms": ["two-pointer", "sliding-window", "binary-search", "dynamic-programming", "greedy", "interval", "backtracking", "sorting", "bit", "math", "string"]
+};
 
 /** Curated label fragments (normalized lowercase) → problem ids. */
 const TOPIC_MAP: Record<string, string[]> = {
@@ -66,6 +71,21 @@ export function codingForTopicLabels(labels: string[], limit = 3): CodingProblem
   }
   /* 2) keyword fallback */
   if (out.length < limit) keywordFallback(labels).forEach(push);
+  /* 2b) P4 pattern-matched problems — a roadmap topic pulls the generated
+     problems whose pattern belongs to that topic (adds difficulty-3 picks the
+     difficulty ≤ 2 keyword fallback skips) */
+  if (out.length < limit) {
+    const wanted = new Set<string>();
+    for (const [key, pats] of Object.entries(PATTERN_TOPIC_LINKS)) {
+      if (text.includes(key)) pats.forEach(p => wanted.add(p));
+    }
+    if (wanted.size > 0) {
+      for (const p of CODING_PROBLEMS) {
+        if (p.kind === "cli" && p.pattern && wanted.has(p.pattern)) push(p);
+        if (out.length >= limit) break;
+      }
+    }
+  }
   /* 3) deterministic daily pick */
   if (out.length === 0) {
     const day = Math.floor(Date.now() / 86_400_000);
