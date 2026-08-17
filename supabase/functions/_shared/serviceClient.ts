@@ -18,8 +18,10 @@ export function serviceClient(): SupabaseClient {
     const json = Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}";
     try {
       const parsed = JSON.parse(json) as Record<string, unknown>;
-      const first = Object.values(parsed)[0];
-      if (typeof first === "string" && first.length > 0) key = first;
+      /* prefer the service_role entry by name — dict key order isn't guaranteed */
+      const named = parsed["service_role"];
+      const candidate = typeof named === "string" && named.length > 0 ? named : Object.values(parsed)[0];
+      if (typeof candidate === "string" && candidate.length > 0) key = candidate;
     } catch {
       /* unparseable — leave key empty; the caller's request will 401/500 */
     }
