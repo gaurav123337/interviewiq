@@ -64,7 +64,8 @@ export const STORAGE_KEYS = {
   trendSignals: "iq.trendSignals",
   counselorPlan: "iq.counselorPlan",
   counselorProgress: "iq.counselorProgress",
-  externalApplyHint: "iq.externalApplyHint"
+  externalApplyHint: "iq.externalApplyHint",
+  moduleModels: "iq.moduleModels"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {

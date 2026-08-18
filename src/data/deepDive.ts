@@ -17,12 +17,23 @@ export interface DeepDiveQa {
   a: string;
 }
 
+export interface DeepDiveArchitecture {
+  name: string;
+  blurb: string;
+  components: string[];
+  tradeoffs: string[];
+  scaleNotes: string;
+  failureModes: string[];
+  followUpQa: DeepDiveQa[];
+}
+
 export interface DeepDive {
   concepts: DeepDiveConcept[];
   points: string[];
   traps: string[];
   qa: DeepDiveQa[];
   related: string[];
+  architectures?: DeepDiveArchitecture[];
 }
 
 const norm = (s: string) => s.toLowerCase().trim().replace(/\s+/g, " ");
@@ -301,7 +312,33 @@ const APIS_SERVICES: DeepDive = {
     { q: "Design a REST API for creating and canceling orders.", a: "POST /orders to create (201 + location), with an Idempotency-Key so retries don't double-order. Cancel as a state transition: POST /orders/{id}/cancel, or PATCH status — I'd model it explicitly so the flow is visible. Errors as a stable shape: code + message + field. List endpoints paginated. I'd also mention webhooks/status endpoints for async fulfillment." },
     { q: "How do you evolve an API without breaking clients?", a: "Additive changes first: new fields are additive, new endpoints are safe. Never repurpose an existing field's meaning. Deprecate loudly and slowly — announce, keep serving, then remove on a schedule clients can plan for. Version when the change is breaking, but treat versioning as a last resort because it forks the surface." }
   ],
-  related: ["Databases & caching", "system design", "Distributed systems", "Auth & real-time"]
+  related: ["Databases & caching", "system design", "Distributed systems", "Auth & real-time"],
+  architectures: [
+    {
+      name: "Rate Limiter Service",
+      blurb: "Protect backend services from abuse while allowing legitimate bursts.",
+      components: [
+        "Client → API Gateway → Rate Limiter (Redis-backed) → Upstream Service",
+        "Rate Limiter checks: token bucket / sliding window counter in Redis",
+        "Config: per-endpoint limits stored in DB, hot-reloaded into Redis"
+      ],
+      tradeoffs: [
+        "Token bucket (allows bursts, smooth rate) vs sliding window (stricter, simpler)",
+        "Centralized Redis (consistent, single point of failure) vs local counters (fast, eventual consistency)",
+        "Per-user limits vs per-IP limits vs per-API-key limits"
+      ],
+      scaleNotes: "Redis: ~100K rate-limit checks/sec per instance. At 10K RPS, a single Redis instance handles it. For >50K RPS, use Redis Cluster with sharded rate-limit keys.",
+      failureModes: [
+        "Redis down → fail open (allow traffic) or fail closed (reject all)? Choose based on business risk.",
+        "Clock skew in distributed counters → use Redis TIME command, not local clock",
+        "Race condition on concurrent increments → use Redis MULTI/EXEC or Lua scripts for atomicity"
+      ],
+      followUpQa: [
+        { q: "How do you rate-limit a distributed system with multiple API servers?", a: "Centralized rate limiter in Redis: each API server checks the same Redis key for the user's quota. Use INCR + EXPIRE (or Lua script for atomicity) so concurrent requests from multiple servers count correctly. Alternative: local counters with periodic sync — faster but allows slight over-counting." },
+        { q: "How do you handle rate limit headers for clients?", a: "Return X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset headers on every response. When limited, return 429 with Retry-After header. Clients use these to implement backoff. Document the limits in your API docs." }
+      ]
+    }
+  ]
 };
 
 const DATABASES_CACHING: DeepDive = {
@@ -328,7 +365,57 @@ const DATABASES_CACHING: DeepDive = {
     { q: "A query is slow. How do you fix it?", a: "EXPLAIN it — check for a full table scan, look at the plan. Common fixes: add the right index (covering if possible), avoid functions on indexed columns, reduce rows returned (paginate, filter early), or restructure the query. Measure before and after. If it's still slow at scale, consider caching or denormalizing — but index first." },
     { q: "How would you scale a database hitting read limits?", a: "Ladder of options, cheapest first: add read replicas and route read traffic; cache hot reads (Redis/CDN) with an invalidation strategy; denormalize for the hot read patterns; only then consider sharding, which adds real complexity. I'd also check whether you can reduce reads at the app layer — fewer, bigger queries." }
   ],
-  related: ["APIs & services", "system design", "Distributed systems"]
+  related: ["APIs & services", "system design", "Distributed systems"],
+  architectures: [
+    {
+      name: "Read-Heavy Dashboard",
+      blurb: "Analytics dashboard that serves millions of reads/day from a small write volume.",
+      components: [
+        "Write path: App → API → OLTP DB (Postgres) → CDC (Debezium) → OLAP DB (ClickHouse)",
+        "Read path: Dashboard → API → OLAP DB (pre-aggregated materialized views)",
+        "Cache: Redis for hot dashboard queries (TTL 60s)"
+      ],
+      tradeoffs: [
+        "OLTP + OLAP split (CQRS): write-optimized DB for app, read-optimized for analytics",
+        "Pre-aggregate (fast reads, stale) vs compute on read (fresh, slow)",
+        "CDC streaming (near-real-time) vs batch ETL (simpler, 15min delay)"
+      ],
+      scaleNotes: "1K writes/s to OLTP, 50K reads/s from OLAP. Materialized views refresh every 5 min. Redis cache cuts OLAP load by 80% for hot dashboards.",
+      failureModes: [
+        "CDC lag → dashboard shows stale data → surface freshness indicator",
+        "OLAP query timeout → pre-computed views always fast, ad-hoc queries have timeout + fallback",
+        "Redis cache miss storm → cache-aside with singleflight to prevent stampede"
+      ],
+      followUpQa: [
+        { q: "When should you denormalize?", a: "When a read query joins 3+ tables on every request and the data doesn't change often. Denormalize the hot read path into a materialized view or a separate read-optimized table. Accept the write amplification cost for the read speed gain." },
+        { q: "How do you handle cache invalidation?", a: "TTL-based for most data (stale-while-revalidate). Event-driven for critical paths (write to DB → publish event → cache invalidator subscribes). Versioned cache keys for schema changes. The hard part is knowing when data changed — CDC makes this reliable." }
+      ]
+    },
+    {
+      name: "Multi-Tenant SaaS Database",
+      blurb: "Isolation, scaling, and cost efficiency across many tenants.",
+      components: [
+        "Per-tenant schema isolation (schema-per-tenant) or shared schema with tenant_id column",
+        "Connection pooler (PgBouncer) in front of Postgres",
+        "Read replicas for analytics queries"
+      ],
+      tradeoffs: [
+        "Schema-per-tenant (strong isolation, hard to migrate) vs shared schema (easy to manage, noisy neighbor risk)",
+        "Connection pooling ( PgBouncer: transaction mode for serverless) vs direct connections",
+        "Per-tenant backups (expensive) vs global backup + point-in-time recovery"
+      ],
+      scaleNotes: "100 tenants with 10M rows each = 1B rows total. Shared schema: one DB, index on tenant_id. Schema-per-tenant: 100 schemas, each independently scalable.",
+      failureModes: [
+        "Noisy neighbor (one tenant's query overwhelms) → query timeout per tenant + resource quotas",
+        "Cross-tenant data leak → RLS (Row Level Security) policies enforced at DB level",
+        "Migration across 100 schemas → automated migration scripts with dry-run mode"
+      ],
+      followUpQa: [
+        { q: "How do you prevent noisy neighbors?", a: "Per-tenant query timeout (pgStatementTimeout). Resource quotas via connection pooler. Separate read replicas for analytics-heavy tenants. Monitoring per-tenant query patterns to detect abuse early." },
+        { q: "When do you shard a multi-tenant DB?", a: "When a single tenant outgrows one machine (large enterprise with billions of rows). Shard by tenant_id — each shard is a Postgres instance with a subset of tenants. Use Citus for distributed Postgres or application-level sharding with a lookup service." }
+      ]
+    }
+  ]
 };
 
 const SYSTEM_DESIGN: DeepDive = {
@@ -355,7 +442,81 @@ const SYSTEM_DESIGN: DeepDive = {
     { q: "Design a URL shortener.", a: "Requirements: create short URLs, redirect at scale, maybe analytics and expiry. Scale estimate: reads >> writes, cache heavily. Design: a service that generates unique IDs (or hashes a counter/key), stores long→short mapping in a DB, redirects with 301/302, and serves hot reads from cache. Mention collisions, DB sharding if needed, and analytics as an async job." },
     { q: "Design a social feed. How do you handle scale?", a: "Two write paths: push (fan-out on publish — fast reads, heavy writes) vs pull (compute on read — light writes, slow reads), usually a hybrid: push for active users, pull for the long tail. Cache timelines, store posts in a log, and make the read path async where freshness isn't critical. Consistency: eventual is fine for most feeds." }
   ],
-  related: ["Distributed systems", "Databases & caching", "APIs & services", "large-scale systems"]
+  related: ["Distributed systems", "Databases & caching", "APIs & services", "large-scale systems"],
+  architectures: [
+    {
+      name: "URL Shortener",
+      blurb: "Write-light, read-heavy — the classic system design starter.",
+      components: [
+        "Client → Load Balancer → API Service → ID Generator → Key-Value Store",
+        "Read path: Client → LB → API → Cache (Redis) → DB (fallback)"
+      ],
+      tradeoffs: [
+        "Counter-based IDs (sequential, predictable) vs hash-based IDs (random, collision risk)",
+        "301 redirect (cached, faster) vs 302 redirect (trackable, analytics)",
+        "Single DB vs sharded — sharding adds complexity but handles write growth"
+      ],
+      scaleNotes: "100M URLs/day → ~1.2K writes/s (single DB). 10B redirects/day → ~115K reads/s → cache + read replicas.",
+      failureModes: [
+        "ID generator exhaustion → use wider ID space or switch to hash",
+        "Cache stampede on viral URL → cache-aside with TTL jitter",
+        "DB write failure → queue writes, serve stale from cache"
+      ],
+      followUpQa: [
+        { q: "How would you add click analytics?", a: "Async write: after redirect, fire event to Kafka. Analytics service consumes, writes to ClickHouse. Don't block the redirect on analytics — eventual consistency is fine for counts." },
+        { q: "How do you prevent abuse?", a: "Rate limiting per API key/IP (token bucket in Redis). CAPTCHA for anonymous users. URL allowlist/blocklist. Quotas per tier." }
+      ]
+    },
+    {
+      name: "Chat System",
+      blurb: "Real-time bidirectional messaging with delivery guarantees.",
+      components: [
+        "Client ← WebSocket → Gateway Service → Message Router → Message Store",
+        "Presence Service ← Heartbeat → Client (online/offline/last-seen)",
+        "Push Notification Service ← Event → APNs / FCM (for offline recipients)"
+      ],
+      tradeoffs: [
+        "WebSocket (stateful, low-latency) vs long-polling (simpler, higher latency)",
+        "Fan-out on write (pre-compute timelines) vs fan-out on read (light writes)",
+        "Exactly-once delivery (complex) vs at-least-once + idempotent consumers (practical)"
+      ],
+      scaleNotes: "WhatsApp: ~100B messages/day. Each message = 1 write + N reads (group). Gateway handles ~1M WebSocket connections per server (epoll).",
+      failureModes: [
+        "WebSocket disconnect → reconnect with sequence number, replay missed messages",
+        "Message store down → queue at gateway, drain on recovery",
+        "Push notification failure → retry with exponential backoff, fallback to SMS"
+      ],
+      followUpQa: [
+        { q: "How do you handle message ordering?", a: "Monotonically increasing sequence number per conversation (server-assigned). Clients buffer out-of-order messages. For distributed systems, use partition-by-conversation so ordering is per-partition." },
+        { q: "How does end-to-end encryption work?", a: "Signal Protocol (Double Ratchet + X3DH). Each device generates a key pair; server stores public keys only. Messages encrypted client-side. Server relays ciphertext — can't read content. Group encryption uses sender keys." }
+      ]
+    },
+    {
+      name: "News Feed",
+      blurb: "The push-vs-pull trade-off — the defining architecture decision.",
+      components: [
+        "Write path: Client → Post Service → Fan-out Service → Timeline Cache (per-user)",
+        "Read path: Client → Feed Service → Timeline Cache (Redis sorted sets)",
+        "Pull fallback: Feed Service → Post Storage (for high-follower accounts)"
+      ],
+      tradeoffs: [
+        "Fan-out on publish (push): fast reads, heavy writes — OK for most users, expensive for celebrities",
+        "Fan-out on read (pull): light writes, slow reads — OK for celebrities, slow for everyone else",
+        "Hybrid (Twitter's approach): push for normal users, pull for celebrities",
+        "Store full timeline vs store post IDs + hydrate on read"
+      ],
+      scaleNotes: "Twitter: ~500M tweets/day, ~350B timeline reads/day. Celebrity tweet = 50M followers → impossible to push, must pull.",
+      failureModes: [
+        "Fan-out delay → user sees stale feed → accept eventual consistency (up to 30s)",
+        "Celebrity tweet storm → fan-out queue backs up → serve from pull path",
+        "Cache eviction on cold users → pull path activates, slightly slower first load"
+      ],
+      followUpQa: [
+        { q: "How do you handle the celebrity problem?", a: "Don't fan-out for accounts >N followers. On read: merge pre-computed timeline (normal users) with real-time pulls for celebrity accounts followed. K-way merge on timestamp, bounded by page size." },
+        { q: "How do you rank relevant vs recent?", a: "Two layers: candidate generation (timeline cache gives recent posts) and ranking (ML model scores by predicted engagement). Features: author affinity, post type, recency decay, virality signals. A/B test the ranking function." }
+      ]
+    }
+  ]
 };
 
 const DISTRIBUTED_SYSTEMS: DeepDive = {
@@ -382,7 +543,57 @@ const DISTRIBUTED_SYSTEMS: DeepDive = {
     { q: "Explain the CAP theorem with a concrete example.", a: "When a network partition happens, you choose between consistency (all nodes agree) and availability (every request gets a response). A bank transfer needs consistency — better to reject during a partition. A social 'like' count tolerates eventual consistency — keep serving. The point: CAP forces you to decide what matters per feature, not per system." },
     { q: "Your service is slow in production. How do you find the cause?", a: "Start from observability: dashboards for latency/error rate, then distributed traces to find which hop is slow, then logs for the specific request. Common causes: a downstream dependency, a hot key, GC, or a slow query. Fix, then add an alert so it doesn't recur silently." }
   ],
-  related: ["system design", "Databases & caching", "SRE & observability", "APIs & services"]
+  related: ["system design", "Databases & caching", "SRE & observability", "APIs & services"],
+  architectures: [
+    {
+      name: "Distributed Task Queue",
+      blurb: "Reliable background job processing with retries and idempotency.",
+      components: [
+        "Producer → Message Broker (Kafka / SQS) → Consumer Workers → Database",
+        "Dead Letter Queue (DLQ) for permanently failed jobs",
+        "Monitoring: Grafana dashboards for queue depth, latency, error rate"
+      ],
+      tradeoffs: [
+        "At-least-once + idempotent consumers (practical) vs exactly-once (complex, slow)",
+        "Push (broker delivers, lower latency) vs pull (workers poll, simpler, better backpressure)",
+        "FIFO ordering (limited throughput) vs unordered (higher parallelism)"
+      ],
+      scaleNotes: "Kafka: millions of events/sec per topic. SQS: ~3K messages/sec standard, ~300/sec FIFO. Consumer parallelism = partition count.",
+      failureModes: [
+        "Consumer crash → broker redelivers → idempotent handler deduplicates",
+        "Poison message → max retries exceeded → moves to DLQ for inspection",
+        "Consumer lag → scale consumers horizontally (partition count limits this)"
+      ],
+      followUpQa: [
+        { q: "How do you handle poison messages that always fail?", a: "Move to a Dead Letter Queue (DLQ) after N retries with exponential backoff. Alert on DLQ depth. Inspect the message: often a schema change broke the handler. Fix the handler, replay from DLQ. Never block the main queue on a poison message." },
+        { q: "Kafka vs SQS — when do you choose which?", a: "Kafka: when you need replay (retention days/weeks), multiple consumer groups reading the same events, or high throughput (>100K/s). SQS: when you need simple work queue semantics, no replay, and AWS-managed infra. Kafka is a log; SQS is a queue. Use the log when the event matters beyond the first consumer." }
+      ]
+    },
+    {
+      name: "Service Mesh Pattern",
+      blurb: "Cross-cutting concerns (TLS, retries, tracing) extracted from application code into infrastructure.",
+      components: [
+        "Service A ← Sidecar Proxy (Envoy) → Service B ← Sidecar Proxy → Service C",
+        "Control Plane (Istio / Linkerd) — config distribution, cert management",
+        "Observability: Jaeger traces, Prometheus metrics, Kibana logs — all from sidecars"
+      ],
+      tradeoffs: [
+        "Sidecar overhead (latency, memory per pod) vs removing cross-cutting code from services",
+        "Istio (feature-rich, complex) vs Linkerd (lighter, simpler)",
+        "mTLS everywhere (security) vs permissive mode (easier migration)"
+      ],
+      scaleNotes: "Sidecar adds ~10ms p99 latency per hop, ~50MB memory per pod. At 100 services × 3 replicas = 300 sidecars. Acceptable for most; consider skip-perf for latency-critical paths.",
+      failureModes: [
+        "Sidecar crash → traffic fails → restart policy + readiness probes",
+        "Control plane down → new config can't propagate, existing proxies continue with last config",
+        "mTLS cert expiry → auto-rotation via control plane, monitor cert TTL"
+      ],
+      followUpQa: [
+        { q: "When should you NOT use a service mesh?", a: "When you have <10 services and no mTLS compliance requirement. The operational complexity of a mesh (debugging sidecar issues, resource overhead) outweighs the benefits. Start with per-service libraries for retries/tracing; graduate to a mesh when the cross-cutting code is duplicated across many teams." },
+        { q: "How does a service mesh handle canary deployments?", a: "Traffic splitting at the sidecar: route 5% of traffic to the new version's pods. The control plane configures the split; sidecars enforce it. Metrics from both versions are compared in real-time. If error rate spikes, automatic rollback shifts traffic back. This is how Argo Rollouts + Istio work together." }
+      ]
+    }
+  ]
 };
 
 const DESIGN_PATTERNS: DeepDive = {

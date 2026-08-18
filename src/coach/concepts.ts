@@ -121,14 +121,14 @@ const FAMILIES: Record<string, string[]> = {
   messaging: ["messaging", "message-queue", "message-queues", "queue", "queues", "kafka", "rabbitmq", "pub-sub", "pubsub", "message broker", "event-driven", "event-stream", "streaming", "backpressure"],
   testing: ["testing", "test", "tests", "unit-test", "unit-tests", "integration-test", "integration-tests", "e2e", "tdd", "mock", "mocks", "stub", "stubs", "test-coverage", "regression", "regressions", "assertion", "assertions"],
   observability: ["observability", "monitoring", "metrics", "logging", "logs", "tracing", "trace", "traces", "alerting", "alerts", "dashboards", "telemetry"],
-  resilience: ["resilience", "error handling", "errors", "exception", "exceptions", "retry", "retries", "backoff", "circuit-breaker", "fallback", "fallbacks", "graceful-degradation", "idempotency", "idempotent", "timeout", "timeouts"],
+  resilience: ["resilience", "error handling", "errors", "exception", "exceptions", "retry", "retries", "backoff", "circuit-breaker", "circuit breaker", "fallback", "fallbacks", "graceful-degradation", "graceful degradation", "idempotency", "idempotent", "timeout", "timeouts", "bulkhead", "rate limiting", "rate limit"],
   splitting: ["code-splitting", "lazy-loading", "lazy-load", "split", "splitting", "splitter", "bundle", "bundles", "bundling", "tree-shaking", "chunk", "chunks"],
   accessibility: ["accessibility", "a11y", "aria", "screen-reader", "keyboard-navigation", "semantic-html", "contrast", "focus-management", "reduced-motion", "landmark", "landmarks"],
   responsive: ["responsive", "responsive-design", "mobile-first", "breakpoint", "breakpoints", "fluid-layout", "adaptive"],
   typing: ["typing", "types", "type-system", "typescript", "static-typing", "generics", "type-inference", "union-types", "structural typing"],
   immutability: ["immutability", "immutable", "mutation", "mutations", "mutating", "pure-function", "pure-functions", "side effect", "side effects"],
   performance: ["performance", "profiling", "profiler", "bottleneck", "bottlenecks", "optimization", "optimize", "optimizing", "benchmark", "benchmarks", "web vitals", "lcp", "inp", "cls"],
-  patterns: ["patterns", "design-pattern", "design-patterns", "factory", "singleton", "strategy-pattern", "observer-pattern", "adapter", "decorator", "composition", "inheritance", "interface"],
+  patterns: ["patterns", "design-pattern", "design-patterns", "factory", "singleton", "strategy-pattern", "observer-pattern", "adapter", "decorator", "composition", "inheritance", "interface", "creational", "structural", "behavioral"],
   api: ["api", "apis", "rest", "http", "endpoint", "endpoints", "webhook", "webhooks", "graphql", "status-code", "status-codes", "idempotency", "pagination", "versioning", "crud"],
   realtime: ["real-time", "websocket", "websockets", "sse", "realtime"],
   storage: ["storage", "localstorage", "sessionstorage", "cookies", "indexeddb", "persistence", "persist", "persisting", "durable"],
@@ -144,7 +144,16 @@ const FAMILIES: Record<string, string[]> = {
   modeling: ["modeling", "data-model", "data-modeling", "entity", "entities", "relations", "relationship", "relationships", "foreign-key", "primary-key"],
   search: ["search", "search-engine", "ranking", "relevance", "full-text-search", "tokenizer", "inverted index"],
   ml: ["machine-learning", "ml", "model training", "training data", "inference", "embeddings", "vector", "vectors", "llm", "llms", "rag", "prompt", "prompts", "fine-tuning"],
-  async: ["async", "await", "callback", "callbacks", "event-loop", "microtask", "microtasks", "promise", "promises", "non-blocking", "nonblocking"]
+  async: ["async", "await", "callback", "callbacks", "event-loop", "microtask", "microtasks", "promise", "promises", "non-blocking", "nonblocking"],
+  architecture: ["architecture", "architectural", "system design", "high-level design", "component diagram", "data flow", "service diagram", "whiteboard", "design a"],
+  "cap-theorem": ["cap theorem", "consistency", "availability", "partition tolerance", "pacelc"],
+  sharding: ["sharding", "shard", "partitioning", "partition", "hash ring", "consistent hashing", "range partitioning", "shard key"],
+  replication: ["replication", "replica", "leader", "follower", "master", "slave", "quorum", "raft", "paxos", "replication lag"],
+  "message-queue": ["kafka", "rabbitmq", "sqs", "pub-sub", "event-driven", "event sourcing", "cqrs", "message broker", "backpressure"],
+  "load-balancing": ["load balancer", "load balancing", "round robin", "least connections", "cdn", "reverse proxy", "gateway"],
+
+  microservices: ["microservices", "service mesh", "api gateway", "service discovery", "sidecar", "istio", "grpc", "service-to-service"],
+  containerization: ["docker", "kubernetes", "k8s", "container", "orchestration", "pod", "deployment", "helm", "terraform"]
 };
 
 /** Family → synonyms index, and the full synonym → family reverse index. */

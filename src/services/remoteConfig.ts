@@ -33,6 +33,8 @@ export interface RemoteConfig {
     embeddingsModel?: string;
     maxTokens?: number;
     temperature?: number;
+    /** Admin-pushed per-module model defaults (user overrides take precedence). */
+    moduleDefaults?: Partial<Record<string, { model?: string; base?: string }>>;
   };
   /** Freemium quotas (override the baked-in free limits). */
   limits: {
@@ -147,9 +149,9 @@ export function getLimits(): { sessionsPerMonth: number; aiPerDay: number } {
 }
 
 /** AI defaults an admin can push instead of the baked-in ones. */
-export function getAiDefaults(): { model?: string; embeddingsModel?: string; maxTokens?: number; temperature?: number } {
+export function getAiDefaults(): { model?: string; embeddingsModel?: string; maxTokens?: number; temperature?: number; moduleDefaults?: Partial<Record<string, { model?: string; base?: string }>> } {
   const { ai } = getRemoteConfig();
-  return { model: ai.model, embeddingsModel: ai.embeddingsModel, maxTokens: ai.maxTokens, temperature: ai.temperature };
+  return { model: ai.model, embeddingsModel: ai.embeddingsModel, maxTokens: ai.maxTokens, temperature: ai.temperature, moduleDefaults: ai.moduleDefaults };
 }
 
 /** RAG retrieval defaults an admin can push instead of the baked-in ones. */
