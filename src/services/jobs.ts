@@ -269,7 +269,7 @@ function markJobsRefreshed(): void {
 }
 
 /** Trigger the jobs-fetch Edge Function (signed-in only). */
-export async function refreshJobs(): Promise<{ added: number; updated: number; total: number }> {
+export async function refreshJobs(): Promise<{ added: number; updated: number; total: number; errors: Record<string, string> }> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Sign in to refresh the job feed");
   const { data: session } = await client.auth.getSession();
@@ -283,7 +283,12 @@ export async function refreshJobs(): Promise<{ added: number; updated: number; t
   if (!res.ok) throw new Error((body as { error?: string }).error ?? "Refresh failed");
   await loadJobsFromCloud();
   markJobsRefreshed();
-  return { added: (body as { added?: number }).added ?? 0, updated: (body as { updated?: number }).updated ?? 0, total: (body as { total?: number }).total ?? 0 };
+  return {
+    added: (body as { added?: number }).added ?? 0,
+    updated: (body as { updated?: number }).updated ?? 0,
+    total: (body as { total?: number }).total ?? 0,
+    errors: (body as { errors?: Record<string, string> }).errors ?? {}
+  };
 }
 
 /* ------------------------------------------------------------------ */

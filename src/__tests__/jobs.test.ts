@@ -209,7 +209,7 @@ describe("feed services", () => {
     from.mockReturnValue({ select: vi.fn().mockReturnValue({ order }) });
     const { refreshJobs } = await import("../services/jobs");
     const r = await refreshJobs();
-    expect(r).toEqual({ added: 3, updated: 1, total: 12 });
+    expect(r).toEqual({ added: 3, updated: 1, total: 12, errors: {} });
     const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/functions/v1/jobs-fetch");
     expect((opts.headers as Record<string, string>).Authorization).toBe("Bearer tok-jobs");

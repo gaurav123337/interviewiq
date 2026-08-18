@@ -38,6 +38,7 @@ const FUNCTION_SECRETS = [
   { slug: "send-security-digest",        name: "SECURITY_DIGEST_SECRET", placeholder: "<YOUR_SECURITY_SECRET>" },
   { slug: "revalidate-resources",        name: "REVALIDATE_RESOURCES_SECRET", placeholder: "<YOUR_REVALIDATE_SECRET>" },
   { slug: "trends-refresh",              name: "TRENDS_REFRESH_SECRET", placeholder: "<YOUR_TRENDS_SECRET>" },
+  { slug: "jobs-fetch",                  name: "JOBS_FETCH_SECRET", placeholder: "<YOUR_JOBS_FETCH_SECRET>" },
 ];
 
 /* optional secrets: only set when provided via env */
@@ -63,6 +64,7 @@ const CRON_FILES = [
   "send-security-digest-cron.sql",
   "revalidate-resources-cron.sql",
   "trends-refresh-cron.sql",
+  "jobs-fetch-cron.sql",
 ];
 
 async function api(path, init = {}) {

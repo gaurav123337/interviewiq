@@ -159,7 +159,10 @@ export function Jobs() {
     try {
       const r = await refreshJobs();
       setJobs(listJobs());
-      toast(`💼 Feed refreshed — ${r.total} jobs (${r.added} new)`);
+      const fails = Object.keys(r.errors);
+      toast(fails.length
+        ? `💼 Feed refreshed — ${r.total} jobs (${r.added} new), ⚠️ ${fails.length} source${fails.length > 1 ? "s" : ""} failed: ${fails.join(", ")}`
+        : `💼 Feed refreshed — ${r.total} jobs (${r.added} new)`);
     } catch (e) {
       toast("✗ " + ((e as Error).message || "Refresh failed"));
     } finally {

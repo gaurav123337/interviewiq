@@ -23,10 +23,10 @@ import {
   adminAuditLog, adminListUsers, adminMetrics, adminMissCandidates, adminSecurityStatus, adminSetMfaEnforced,
   batchDeleteQuestions, batchSetQuestionsPublished, createAnnouncement, createPdfDocument, createQuestion,
   deleteAnnouncement, deletePdfDocument, deleteQuestion, grantAdmin, listAdmins, listPdfChunks,
-  listPdfDocuments, listQuestionAudit, revokeAdmin, saveJobSalaryEnrichment, saveRemoteConfig,
+  getLastJobsFetchReport, listPdfDocuments, listQuestionAudit, revokeAdmin, saveJobSalaryEnrichment, saveRemoteConfig,
   setAnnouncementPublished, setQuestionPublished, updatePdfDocument, updateQuestion,
   type AdminAuditRow, type AdminMetrics, type AdminSecurityStatus, type AdminUserRow, type AuditEntry,
-  type MissCandidate, type PdfDocumentRow
+  type JobsFetchReport, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
 import { prepareChunks, reindexDocument } from "../services/indexer";
 import {
@@ -2264,6 +2264,19 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
   const [jobsSources, setJobsSources] = useState<string>(() =>
     (config.jobs?.sources ?? []).map(s => `${s.provider}:${s.board}`).join("\n")
   );
+  /* last refresh report — per-source counts + failures, so a broken board
+     surfaces here instead of only in the function logs */
+  const [jobsReport, setJobsReport] = useState<JobsFetchReport | null>(null);
+  const [jobsReportErr, setJobsReportErr] = useState<string | null>(null);
+  const loadJobsReport = async () => {
+    try {
+      setJobsReport(await getLastJobsFetchReport());
+      setJobsReportErr(null);
+    } catch (e) {
+      setJobsReportErr((e as Error).message || "Failed to load refresh report");
+    }
+  };
+  useEffect(() => { void loadJobsReport(); }, []);
   /* compensation enrichment — provider + country for jobs the posting didn't price */
   const [enrProvider, setEnrProvider] = useState<string>(() => config.jobs?.salaryEnrichment?.provider ?? "none");
   const [enrCountry, setEnrCountry] = useState<string>(() => config.jobs?.salaryEnrichment?.country ?? "us");
@@ -2551,6 +2564,38 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
         <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
           <NumField label="Auto-refresh every (hours)" value={jobsHours} onChange={v => setJobsHours(Math.max(1, Math.round(v)))} />
         </div>
+
+        {/* last refresh health — a failing board shows up here, not just in logs */}
+        {jobsReport && (
+          <div className={`mb-3 rounded-xl border p-3 ${Object.keys(jobsReport.errors).length ? "border-warn/30 bg-warn/[.07]" : "border-ok/25 bg-ok/[.06]"}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[12px] font-extrabold">
+                {Object.keys(jobsReport.errors).length
+                  ? `⚠️ Last refresh (${new Date(jobsReport.ran_at).toLocaleString()}) — ${Object.keys(jobsReport.errors).length} source${Object.keys(jobsReport.errors).length > 1 ? "s" : ""} failed`
+                  : `✅ Last refresh (${new Date(jobsReport.ran_at).toLocaleString()}) — ${jobsReport.total} jobs (${jobsReport.added} new, ${jobsReport.updated} updated)`}
+              </p>
+              <button className={btnGhost + btnSm} onClick={() => void loadJobsReport()} title="Re-read the latest refresh report">↻</button>
+            </div>
+            {Object.keys(jobsReport.errors).length > 0 && (
+              <div className="mt-2 space-y-1">
+                {Object.entries(jobsReport.errors).map(([src, err]) => (
+                  <p key={src} className="text-[11.5px] text-warn">
+                    <span className="font-mono font-bold">{src}</span> — {err}
+                  </p>
+                ))}
+              </div>
+            )}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {Object.entries(jobsReport.per_source).map(([src, n]) => (
+                <span key={src} className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${jobsReport.errors[src] ? "bg-warn/15 text-warn" : "bg-ok/10 text-ok"}`}>
+                  {src.replace(/^https?:\/\/[^/]+\//, "")}: {n}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {jobsReportErr && <p className="mb-2 text-[11.5px] text-warn">⚠️ Couldn't load refresh report — {jobsReportErr}</p>}
+
         <label className="block">
           <span className="mb-1 block text-[12px] font-bold text-mut">Sources</span>
           <textarea

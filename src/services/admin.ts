@@ -221,6 +221,32 @@ export async function saveJobSalaryEnrichment(cfg: { provider: string; country: 
   if (error) throw new Error(error.message);
 }
 
+/** Latest jobs-fetch refresh report — per-source counts + any source errors,
+    persisted by the function so Admin can surface a failing board instead of
+    it living only in function logs. Admin-only via RLS. */
+export interface JobsFetchReport {
+  id: number;
+  ran_at: string;
+  added: number;
+  updated: number;
+  total: number;
+  per_source: Record<string, number>;
+  errors: Record<string, string>;
+}
+
+export async function getLastJobsFetchReport(): Promise<JobsFetchReport | null> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client
+    .from("jobs_fetch_reports")
+    .select("id, ran_at, added, updated, total, per_source, errors")
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data as JobsFetchReport | null;
+}
+
 export async function createAnnouncement(a: { title: string; body: string; badge?: string; published?: boolean }): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");

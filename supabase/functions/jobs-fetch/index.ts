@@ -477,6 +477,15 @@ async function handle(req: Request): Promise<Response> {
   const admin = createClient(Deno.env.get("SUPABASE_URL") ?? "", serviceKey);
   const { sources, enrich } = await getConfig(admin);
   const result = await refreshAll(admin, sources, enrich);
+  /* persist a per-source report so the Admin dashboard can surface a failing
+     board instead of it living only in function logs (best-effort — a report
+     write failure must never fail the refresh itself) */
+  try {
+    await admin.from("jobs_fetch_reports").insert({
+      added: result.added, updated: result.updated, total: result.total,
+      per_source: result.perSource, errors: result.errors
+    });
+  } catch { /* report is best-effort */ }
   return new Response(JSON.stringify({ ok: true, ...result }), { status: 200, headers });
 }
 
