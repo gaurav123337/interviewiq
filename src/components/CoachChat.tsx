@@ -8,7 +8,7 @@
    Both are grounded in the current question so the discussion stays on-task. */
 
 import { useEffect, useRef, useState } from "react";
-import { aiAvailable, chat, type ChatMessage } from "../ai";
+import { aiReachable, chat, type ChatMessage } from "../ai";
 import { codingTopicsFromText, suggestNextProblem } from "../data/codingCompanies";
 import { getCodingTrack } from "../services/codingTrack";
 import { queueEvent } from "../services/events";
@@ -120,7 +120,7 @@ export function saveCoachDiscussion(d: { prompt: string; mode: "api" | "local"; 
 export function CoachChat(ctx: CoachContext) {
   const { prompt, answer, kp } = ctx;
   const [open, setOpen] = useState(false);
-  const [mode, setMode] = useState<"api" | "local">(aiAvailable() ? "api" : "local");
+  const [mode, setMode] = useState<"api" | "local">(aiReachable() ? "api" : "local");
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -208,7 +208,7 @@ export function CoachChat(ctx: CoachContext) {
           ...msgs.map(m => ({ role: m.role, content: m.text }) as ChatMessage),
           { role: "user", content: text }
         ];
-        const reply = await chat(history, { maxTokens: 450 });
+        const reply = await chat(history, { maxTokens: 450, module: "coach" });
         setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded, checked, citationsSource: "vector" }]);
       } else {
         /* offline mode — no key needed. The deterministic coach answer is
@@ -254,7 +254,7 @@ export function CoachChat(ctx: CoachContext) {
         <div className="border-t border-line/10 px-4 pb-4 pt-3">
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">Mode</span>
-            <button type="button" className={seg(mode === "api")} onClick={() => setMode("api")}>🤖 AI · API key</button>
+            <button type="button" className={seg(mode === "api")} onClick={() => setMode("api")}>🤖 AI</button>
             <button type="button" className={seg(mode === "local")} onClick={() => setMode("local")}>📚 Knowledge · offline</button>
             {mode === "local" && <span className="text-[10.5px] text-mut">no key needed — grounded in the question bank</span>}
           </div>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { SessionQuestion } from "../types";
 import { companyById, levelById } from "../data";
 import { qaCategoryHeat } from "../data/codingCompanies";
-import { aiAvailable, getFeedback, getHint } from "../ai";
+import { aiReachable, getFeedback, getHint } from "../ai";
 import { grade } from "../engine";
 import { scoreBreakdown } from "../coach/reply";
 import { useApp } from "../store";
@@ -58,7 +58,7 @@ export function Interview() {
 
   const onSubmit = () => {
     submitAnswer(answer);
-    if (aiAvailable()) {
+    if (aiReachable()) {
       setAiLoading(true);
       getFeedback({
         question: q.q, userAnswer: answer,
@@ -70,7 +70,7 @@ export function Interview() {
 
   const onHint = async () => {
     let hint: string | null = null;
-    if (aiAvailable()) {
+    if (aiReachable()) {
       try { hint = await getHint(q.q, levelById(q.level).name); } catch { hint = null; }
     }
     if (!hint) hint = "Try to cover at least one of: " + (q.kp || []).slice(0, 3).join(" · ");
@@ -345,7 +345,7 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
           <h3 className="text-[17px] font-extrabold">Score: {fb.score}/5 · {gradeL}</h3>
           <div className="text-[13px] text-mut">Coverage {Math.round(pct * 100)}% · {fb.words} words · Level: {levelById(q.level).name}</div>
         </div>
-        {aiAvailable() ? <Chip tone="co">✨ AI coaching on</Chip> : <Chip>Offline engine</Chip>}
+        {aiReachable() ? <Chip tone="co">✨ AI coaching on</Chip> : <Chip>Offline engine</Chip>}
       </div>
 
       <div className="bg-gradient-to-b from-panel to-panel2 px-6 py-5">
@@ -402,7 +402,7 @@ function FeedbackPanel({ ai, aiLoading, onSkip, onNext, isLast }: {
           )}
         </div>
 
-        {aiAvailable() && (
+        {aiReachable() && (
           <div className="mb-5 rounded-xl border border-acc1/30 bg-gradient-to-b from-acc1/10 to-acc2/5 p-4">
             {aiLoading ? (
               <p className="text-[14.5px] text-ink"><span className="spinner" />Generating AI feedback…</p>

@@ -6,6 +6,9 @@ import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/
 import { aiCallsLeft, isPaywallEnabled, recordAiCall } from "./services/entitlements";
 import { aiEnabled, getAiDefaults } from "./services/remoteConfig";
 import { queueEvent } from "./services/events";
+import { getCloudState, getSupabaseClient } from "./services/cloud";
+import { CONFIG } from "./config";
+import type { AiModuleId } from "./services/aiProvider";
 
 export interface AISettings {
   key: string;
@@ -43,13 +46,31 @@ export function aiAvailable(): boolean {
   return !!getSettings().key;
 }
 
+/** True when generative AI is reachable: the user's own key, or a signed-in
+    session (the ai-chat proxy serves the admin-configured provider, with
+    per-module model wiring). Guests without a key keep the offline engine. */
+export function aiReachable(): boolean {
+  return aiAvailable() || !!getCloudState().user;
+}
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-export async function chat(messages: ChatMessage[], opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal } = {}): Promise<string> {
+export interface ChatOptions {
+  temperature?: number;
+  maxTokens?: number;
+  signal?: AbortSignal;
+  /** Route through the ai-chat proxy which resolves this module's model
+      (module:<id> override → configured provider). Only used when the user
+      has no local key — their own key always wins (BYOK). */
+  module?: AiModuleId;
+}
+
+export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
   const s = getSettings();
+  if (!s.key && opts.module) return cloudChat(messages, opts);
   if (!s.key) throw new Error("No API key configured");
   const res = await fetch(s.base + "/chat/completions", {
     method: "POST",
@@ -69,6 +90,31 @@ export async function chat(messages: ChatMessage[], opts: { temperature?: number
   }
   const j = await res.json();
   return (j.choices?.[0]?.message?.content || "").trim();
+}
+
+/** Server-side module-routed chat: the ai-chat edge function resolves the
+    module's model (per-module override → provider default) so the configured
+    provider key never reaches the client. Signed-in only. */
+async function cloudChat(messages: ChatMessage[], opts: ChatOptions): Promise<string> {
+  const client = await getSupabaseClient();
+  if (!client || !getCloudState().user) throw new Error("Sign in or add your own API key to use AI.");
+  const { data: session } = await client.auth.getSession();
+  const token = session?.session?.access_token;
+  if (!token) throw new Error("Sign in or add your own API key to use AI.");
+  const res = await fetch(`${CONFIG.supabase.url}/functions/v1/ai-chat`, {
+    method: "POST",
+    signal: opts.signal,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      module: opts.module,
+      messages,
+      temperature: opts.temperature,
+      maxTokens: opts.maxTokens
+    })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string }).error ?? "AI request failed");
+  return (body as { text?: string }).text ?? "";
 }
 
 export interface FeedbackContext {
@@ -97,7 +143,7 @@ export async function getFeedback(ctx: FeedbackContext): Promise<string> {
     "Evaluate: (1) Overall quality score /10 and why, (2) the strongest parts, " +
     "(3) the most important gaps for this level, (4) one concrete tip to improve. " +
     "If the answer is empty or off-topic, say so directly and coach them on how to approach it.";
-  const out = await chat([{ role: "system", content: sys }, { role: "user", content: usr }], { maxTokens: 500 });
+  const out = await chat([{ role: "system", content: sys }, { role: "user", content: usr }], { maxTokens: 500, module: "feedback" });
   recordAiCall();
   void queueEvent("ai_call", { pct: ctx.userAnswer.length });
   return out;
@@ -112,7 +158,7 @@ export async function getHint(question: string, levelName: string): Promise<stri
   }
   const sys = "You are a helpful interview coach. Give ONE short hint (under 60 words) to help a " +
     levelName + " candidate start answering this interview question. Do not give the full answer.";
-  const out = await chat([{ role: "system", content: sys }, { role: "user", content: "Question: " + question }], { maxTokens: 120, temperature: 0.8 });
+  const out = await chat([{ role: "system", content: sys }, { role: "user", content: "Question: " + question }], { maxTokens: 120, temperature: 0.8, module: "hint" });
   recordAiCall();
   void queueEvent("ai_call", { hint: true });
   return out;
