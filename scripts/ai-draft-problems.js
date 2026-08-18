@@ -109,11 +109,15 @@ async function draftOne(candidate, retry = false, gate = null, ai = null) {
 }
 
 async function fetchMirror() {
-  /* raw.githubusercontent.com rate-limits shared CI egress — retry with backoff */
+  /* raw.githubusercontent.com rate-limits shared CI egress — retry with backoff.
+     Each attempt is capped at 30s so a hanging connection can't stall the run
+     before the first line of output (this fetch runs before anything prints). */
   let lastErr = null;
   for (let attempt = 1; attempt <= 4; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 30_000);
     try {
-      const res = await fetch(sourceUrl, { headers: { "User-Agent": "interviewiq-content-pipeline" } });
+      const res = await fetch(sourceUrl, { headers: { "User-Agent": "interviewiq-content-pipeline" }, signal: ac.signal });
       if (res.ok) return await res.text();
       lastErr = new Error(`mirror fetch HTTP ${res.status} (${sourceUrl})`);
       if (res.status === 429 || res.status >= 500) {
@@ -126,6 +130,8 @@ async function fetchMirror() {
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
       await sleep(3 * attempt * 1000);
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastErr ?? new Error(`mirror fetch failed (${sourceUrl})`);
