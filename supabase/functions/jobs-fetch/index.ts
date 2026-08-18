@@ -16,6 +16,7 @@
    the feed. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { toEpochMs } from "../_shared/dates.ts";
 import { getSecret } from "../_shared/secrets.ts";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
 import { companyFromLink, feedTitle, parseRss, splitRssTitle, stripJobNumberPrefix } from "../_shared/rss.ts";
@@ -348,6 +349,7 @@ async function fetchLever(org: string): Promise<{ company: string; jobs: unknown
     const loc = j.categories?.location ?? "";
     const commit = j.categories?.commitment ?? "";
     const desc = `${j.text ?? ""}\n${loc}\n${commit}\n${(j.descriptionPlain ?? "").slice(0, 6000)}`;
+    const createdMs = toEpochMs(j.createdAt ?? 0);
     return {
       externalId: String(j.id),
       title: j.text ?? "",
@@ -356,7 +358,7 @@ async function fetchLever(org: string): Promise<{ company: string; jobs: unknown
       remote: isRemoteText(loc) || isRemoteText(commit),
       description: desc,
       url: j.hostedUrl ?? "",
-      postedAt: j.createdAt ? new Date(j.createdAt * 1000).toISOString() : null,
+      postedAt: createdMs ? new Date(createdMs).toISOString() : null,
       skills: extractSkills(j.text ?? "", desc),
       level: guessLevel(j.text ?? ""),
       salary: extractSalary(desc),
