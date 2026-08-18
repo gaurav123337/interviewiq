@@ -34,7 +34,7 @@ import {
   saveScraperSource, setScraperSourceEnabled, type RunResult, type ScraperSourceRow
 } from "../services/scraper";
 import { CONFIG } from "../config";
-import { getCareerProfile, indiaDigest, listJobs, rankCompanies, recommendationsDigest } from "../services/jobs";
+import { getCareerProfile, indiaDigest, lastJobsRefresh, listJobs, rankCompanies, recommendationsDigest, refreshJobs } from "../services/jobs";
 import { applyDigest } from "../services/applyTrack";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import {
@@ -2268,6 +2268,7 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
      surfaces here instead of only in the function logs */
   const [jobsReport, setJobsReport] = useState<JobsFetchReport | null>(null);
   const [jobsReportErr, setJobsReportErr] = useState<string | null>(null);
+  const [jobsRefreshing, setJobsRefreshing] = useState(false);
   const loadJobsReport = async () => {
     try {
       setJobsReport(await getLastJobsFetchReport());
@@ -2277,6 +2278,33 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
     }
   };
   useEffect(() => { void loadJobsReport(); }, []);
+  /* self-heal on view — if the feed is older than the auto-refresh interval,
+     kick a refresh right here (same rule as the Jobs page), so stale data
+     fixes itself instead of waiting for the next scheduled run */
+  useEffect(() => {
+    if (!jobsReport) return;
+    const hours = Math.max(1, Math.round(jobsHours) || 24);
+    const stale = Date.now() - new Date(jobsReport.ran_at).getTime() > hours * 3_600_000
+      && Date.now() - lastJobsRefresh() > hours * 3_600_000;
+    if (stale) void runJobsRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobsReport]);
+  const runJobsRefresh = async () => {
+    if (jobsRefreshing) return;
+    setJobsRefreshing(true);
+    try {
+      const r = await refreshJobs();
+      const fails = Object.keys(r.errors);
+      toast(fails.length
+        ? `🩺 Feed self-healed — ${r.total} jobs (${r.added} new), ⚠️ ${fails.length} source${fails.length > 1 ? "s" : ""} still failing: ${fails.join(", ")}`
+        : `🩺 Feed self-healed — ${r.total} jobs (${r.added} new), all sources clean`);
+      await loadJobsReport();
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Refresh failed"));
+    } finally {
+      setJobsRefreshing(false);
+    }
+  };
   /* compensation enrichment — provider + country for jobs the posting didn't price */
   const [enrProvider, setEnrProvider] = useState<string>(() => config.jobs?.salaryEnrichment?.provider ?? "none");
   const [enrCountry, setEnrCountry] = useState<string>(() => config.jobs?.salaryEnrichment?.country ?? "us");
@@ -2574,7 +2602,24 @@ function ConfigSection({ config, setConfig, busy, setBusy }: {
                   ? `⚠️ Last refresh (${new Date(jobsReport.ran_at).toLocaleString()}) — ${Object.keys(jobsReport.errors).length} source${Object.keys(jobsReport.errors).length > 1 ? "s" : ""} failed`
                   : `✅ Last refresh (${new Date(jobsReport.ran_at).toLocaleString()}) — ${jobsReport.total} jobs (${jobsReport.added} new, ${jobsReport.updated} updated)`}
               </p>
-              <button className={btnGhost + btnSm} onClick={() => void loadJobsReport()} title="Re-read the latest refresh report">↻</button>
+              <div className="flex flex-wrap items-center gap-2">
+                {(() => {
+                  const ageMs = Date.now() - new Date(jobsReport.ran_at).getTime();
+                  const hours = Math.max(1, Math.round(jobsHours) || 24);
+                  const stale = ageMs > hours * 3_600_000;
+                  const mins = Math.round(ageMs / 60_000);
+                  const label = mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`;
+                  return (
+                    <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${stale ? "bg-warn/15 text-warn" : "bg-ok/10 text-ok"}`}>
+                      {stale ? `⚠️ ${label} (stale)` : `🟢 ${label}`}
+                    </span>
+                  );
+                })()}
+                <button className={btnGhost + btnSm} disabled={jobsRefreshing} onClick={() => void runJobsRefresh()} title="Refresh the feed now (self-heal)">
+                  {jobsRefreshing ? "Refreshing…" : "🔄 Refresh now"}
+                </button>
+                <button className={btnGhost + btnSm} onClick={() => void loadJobsReport()} title="Re-read the latest refresh report">↻</button>
+              </div>
             </div>
             {Object.keys(jobsReport.errors).length > 0 && (
               <div className="mt-2 space-y-1">

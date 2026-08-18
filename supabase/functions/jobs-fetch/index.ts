@@ -368,6 +368,25 @@ async function fetchLever(org: string): Promise<{ company: string; jobs: unknown
   return { company: org, jobs };
 }
 
+/* Self-heal for transient source failures: a network blip or 5xx on one board
+   shouldn't leave the feed degraded until the next scheduled run (cron every
+   6h) — retry each source once with backoff inside this same run. */
+async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 2, backoffMs = 1500): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (attempt < attempts) {
+        console.warn(`[jobs-fetch] ${label} attempt ${attempt}/${attempts} failed — retrying in ${backoffMs}ms: ${(e as Error).message}`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { provider: string; board: string }[], enrich: EnrichConfig): Promise<{ added: number; updated: number; total: number; perSource: Record<string, number>; errors: Record<string, string> }> {
   let added = 0;
   let updated = 0;
@@ -375,70 +394,74 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
   const perSource: Record<string, number> = {};
   const errors: Record<string, string> = {};
   for (const src of sources) {
+    const label = `${src.provider}:${src.board}`;
     try {
-      const { jobs } = src.provider === "lever"
-        ? await fetchLever(src.board)
-        : src.provider === "ashby"
-          ? await fetchAshby(src.board)
-          : src.provider === "rss"
-            ? await fetchRss(src.board)
-            : src.provider === "remoteok"
-              ? await fetchRemoteOk()
-              : await fetchGreenhouse(src.board);
-      const rows = jobs.map((j): JobRow => {
-        const x = j as Record<string, unknown>;
-        return {
-          source: src.provider,
-          external_id: String(x.externalId ?? ""),
-          title: String(x.title ?? ""),
-          company: String(x.company ?? ""),
-          location: (x.location as string | null) ?? null,
-          remote: !!x.remote,
-          description: String(x.description ?? "").slice(0, 12000),
-          url: String(x.url ?? ""),
-          skills: (x.skills as string[]) ?? [],
-          level: (x.level as string | null) ?? null,
-          salary: (x.salary as SalaryBand | null) ?? null,
-          company_size: (x.companySize as string | null) ?? null,
-          posted_at: x.postedAt ? new Date(String(x.postedAt)).toISOString() : null
-        };
-      });
-      /* compensation enrichment — only fills jobs the posting didn't price
-         (honest: never overwrites an explicit range), capped per refresh */
-      if (enrich.provider) {
-        const cap = enrich.cap ?? 30;
-        const candidates = rows.filter(r => !r.salary).slice(0, cap);
-        const [adzunaAppId, adzunaAppKey] = await Promise.all([getSecret("ADZUNA_APP_ID"), getSecret("ADZUNA_APP_KEY")]);
-        const bands = await mapLimit(candidates, 5, (row) =>
-          enrichSalary(enrich.provider, {
-            appId: adzunaAppId,
-            appKey: adzunaAppKey,
-            country: enrich.country ?? "us"
-          }, { title: row.title, company: row.company, location: row.location ?? "", description: row.description })
-        );
-        let enriched = 0;
-        candidates.forEach((row, i) => {
-          const band = bands[i];
-          if (band) { row.salary = band; enriched++; }
+      const { rows, addedHere } = await withRetry(label, async () => {
+        const { jobs } = src.provider === "lever"
+          ? await fetchLever(src.board)
+          : src.provider === "ashby"
+            ? await fetchAshby(src.board)
+            : src.provider === "rss"
+              ? await fetchRss(src.board)
+              : src.provider === "remoteok"
+                ? await fetchRemoteOk()
+                : await fetchGreenhouse(src.board);
+        const rows = jobs.map((j): JobRow => {
+          const x = j as Record<string, unknown>;
+          return {
+            source: src.provider,
+            external_id: String(x.externalId ?? ""),
+            title: String(x.title ?? ""),
+            company: String(x.company ?? ""),
+            location: (x.location as string | null) ?? null,
+            remote: !!x.remote,
+            description: String(x.description ?? "").slice(0, 12000),
+            url: String(x.url ?? ""),
+            skills: (x.skills as string[]) ?? [],
+            level: (x.level as string | null) ?? null,
+            salary: (x.salary as SalaryBand | null) ?? null,
+            company_size: (x.companySize as string | null) ?? null,
+            posted_at: x.postedAt ? new Date(String(x.postedAt)).toISOString() : null
+          };
         });
-        console.log(`[jobs-fetch] enrichment → ${enriched}/${candidates.length} priced (cap ${cap})`);
-      }
-      /* PostgREST upsert count = ALL affected rows, so measure new vs existing
-         with a lightweight existence check to report honest added/updated */
-      const { data: existingRows } = await supabase.from("jobs").select("external_id").eq("source", src.provider);
-      const have = new Set((existingRows ?? []).map((r: { external_id: string }) => r.external_id));
-      const addedHere = rows.filter(r => !have.has(r.external_id)).length;
-      const { error } = await supabase.from("jobs").upsert(rows, { onConflict: "source,external_id", ignoreDuplicates: false });
-      if (error) throw error;
+        /* compensation enrichment — only fills jobs the posting didn't price
+           (honest: never overwrites an explicit range), capped per refresh */
+        if (enrich.provider) {
+          const cap = enrich.cap ?? 30;
+          const candidates = rows.filter(r => !r.salary).slice(0, cap);
+          const [adzunaAppId, adzunaAppKey] = await Promise.all([getSecret("ADZUNA_APP_ID"), getSecret("ADZUNA_APP_KEY")]);
+          const bands = await mapLimit(candidates, 5, (row) =>
+            enrichSalary(enrich.provider, {
+              appId: adzunaAppId,
+              appKey: adzunaAppKey,
+              country: enrich.country ?? "us"
+            }, { title: row.title, company: row.company, location: row.location ?? "", description: row.description })
+          );
+          let enriched = 0;
+          candidates.forEach((row, i) => {
+            const band = bands[i];
+            if (band) { row.salary = band; enriched++; }
+          });
+          console.log(`[jobs-fetch] enrichment → ${enriched}/${candidates.length} priced (cap ${cap})`);
+        }
+        /* PostgREST upsert count = ALL affected rows, so measure new vs existing
+           with a lightweight existence check to report honest added/updated */
+        const { data: existingRows } = await supabase.from("jobs").select("external_id").eq("source", src.provider);
+        const have = new Set((existingRows ?? []).map((r: { external_id: string }) => r.external_id));
+        const addedHere = rows.filter(r => !have.has(r.external_id)).length;
+        const { error } = await supabase.from("jobs").upsert(rows, { onConflict: "source,external_id", ignoreDuplicates: false });
+        if (error) throw error;
+        return { rows, addedHere };
+      });
       added += addedHere;
       updated += rows.length - addedHere;
       total += rows.length;
-      perSource[`${src.provider}:${src.board}`] = rows.length;
-      console.log(`[jobs-fetch] ${src.provider}:${src.board} → ${rows.length} jobs (${addedHere} new)`);
+      perSource[label] = rows.length;
+      console.log(`[jobs-fetch] ${label} → ${rows.length} jobs (${addedHere} new)`);
     } catch (e) {
-      console.warn(`[jobs-fetch] ${src.provider}:${src.board} failed:`, (e as Error).message);
-      errors[`${src.provider}:${src.board}`] = (e as Error).message ?? String(e);
-      perSource[`${src.provider}:${src.board}`] = 0;
+      console.warn(`[jobs-fetch] ${label} failed after retries:`, (e as Error).message);
+      errors[label] = (e as Error).message ?? String(e);
+      perSource[label] = 0;
     }
   }
   return { added, updated, total, perSource, errors };
