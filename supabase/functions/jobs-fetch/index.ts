@@ -146,6 +146,23 @@ function guessLevel(title: string): string | null {
 
 const isRemoteText = (s: string): boolean => /remote|hybrid/.test((s ?? "").toLowerCase());
 
+/* Run async work with bounded concurrency — Adzuna lookups are per-job HTTP
+   calls, and doing all of them serially blows past the function runtime limit
+   on a multi-source refresh (30/source × 6 sources ≈ 180 sequential calls).
+   Chunking to a small batch keeps total wall time ~1s per batch instead. */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
 /* Enrichment config — read from app_config (admin-published), absent = off.
    Provider keys stay in function secrets; only the provider + country ship
    in config. */
@@ -386,16 +403,21 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
       /* compensation enrichment — only fills jobs the posting didn't price
          (honest: never overwrites an explicit range), capped per refresh */
       if (enrich.provider) {
-        let done = 0;
-        for (const row of rows) {
-          if (done >= (enrich.cap ?? 30) || row.salary) continue;
-          const band = await enrichSalary(enrich.provider, {
+        const cap = enrich.cap ?? 30;
+        const candidates = rows.filter(r => !r.salary).slice(0, cap);
+        const bands = await mapLimit(candidates, 5, (row) =>
+          enrichSalary(enrich.provider, {
             appId: Deno.env.get("ADZUNA_APP_ID") ?? "",
             appKey: Deno.env.get("ADZUNA_APP_KEY") ?? "",
             country: enrich.country ?? "us"
-          }, { title: row.title, company: row.company, location: row.location ?? "", description: row.description });
-          if (band) { row.salary = band; done++; }
-        }
+          }, { title: row.title, company: row.company, location: row.location ?? "", description: row.description })
+        );
+        let enriched = 0;
+        candidates.forEach((row, i) => {
+          const band = bands[i];
+          if (band) { row.salary = band; enriched++; }
+        });
+        console.log(`[jobs-fetch] enrichment → ${enriched}/${candidates.length} priced (cap ${cap})`);
       }
       /* PostgREST upsert count = ALL affected rows, so measure new vs existing
          with a lightweight existence check to report honest added/updated */
