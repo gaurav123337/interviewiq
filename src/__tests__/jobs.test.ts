@@ -201,6 +201,32 @@ describe("feed services", () => {
     expect(from).toHaveBeenCalledWith("jobs");
   });
 
+  it("loadJobsFromCloud balances sources so a small board isn't starved by RSS", async () => {
+    /* 50 RSS rows (freshest) + 4 lever:cred rows (older) — the old
+       newest-80 behavior would keep only RSS; the balanced load must keep
+       the lever board visible. */
+    const rows = [
+      ...Array.from({ length: 50 }, (_, i) => ({
+        source: "rss", external_id: String(i), title: `RSS Job ${i}`, company: "WWR", location: null, remote: true,
+        description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: `2026-08-18T00:${String(i).padStart(2, "0")}:00Z`
+      })),
+      { source: "lever", external_id: "c1", title: "Web Developer", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: ["web"], level: null, salary: null, company_size: null, posted_at: "2026-08-13T00:00:00Z" },
+      { source: "lever", external_id: "c2", title: "BD", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-12T00:00:00Z" },
+      { source: "lever", external_id: "c3", title: "Growth", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-11T00:00:00Z" },
+      { source: "lever", external_id: "c4", title: "PM", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-10T00:00:00Z" }
+    ];
+    const order = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: rows, error: null }) });
+    from.mockReturnValue({ select: vi.fn().mockReturnValue({ order }) });
+    const { loadJobsFromCloud } = await import("../services/jobs");
+    const jobs = await loadJobsFromCloud();
+    const lever = jobs.filter(j => j.source === "lever");
+    const rss = jobs.filter(j => j.source === "rss");
+    expect(lever.length).toBe(4);
+    expect(rss.length).toBe(40);
+    expect(jobs).toHaveLength(44);
+    expect(jobs.some(j => j.company === "cred")).toBe(true);
+  });
+
   it("refreshJobs posts to jobs-fetch with the auth token and reloads the feed", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ added: 3, updated: 1, total: 12 }) });
     vi.stubGlobal("fetch", fetchMock);

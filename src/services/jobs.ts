@@ -131,17 +131,41 @@ export function addImportedJob(job: JobPosting): JobPosting[] {
   return next;
 }
 
-/** Pull the latest feed from the cloud (jobs are public-read). The user's
-    imported jobs ride along — merged at the front, never overwritten. */
+const JOB_SELECT = "source, external_id, title, company, location, remote, description, url, skills, level, salary, company_size, posted_at";
+
+/** How many of the 80 cached slots each source can claim. Balancing keeps a
+    small board (like lever:cred's 4 jobs) from being starved out by RSS,
+    which posts far more often and would otherwise own the whole newest-80
+    window. Imports ride at the front outside this budget. */
+const JOBS_PER_SOURCE = 40;
+const JOBS_CAP = 80;
+
+/** Pull the latest feed from the cloud (jobs are public-read), balanced so
+    every configured source gets a fair share of the cache instead of RSS
+    dominating the newest-80 window. The user's imported jobs ride along —
+    merged at the front, never overwritten. */
 export async function loadJobsFromCloud(): Promise<JobPosting[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
   const { data, error } = await client.from("jobs")
-    .select("source, external_id, title, company, location, remote, description, url, skills, level, salary, company_size, posted_at")
+    .select(JOB_SELECT)
     .order("posted_at", { ascending: false })
-    .limit(80);
+    .limit(JOBS_PER_SOURCE * 6);
   if (error || !data) return [];
-  const jobs = (data as unknown as DbJobRow[]).map(toJobPosting);
+  /* per-source round-robin: walk newest-first and take up to JOBS_PER_SOURCE
+     from each source until the cap fills — so lever:cred (4 jobs) appears
+     alongside greenhouse (40) and rss (40) instead of vanishing. */
+  const rows = data as unknown as DbJobRow[];
+  const perSource = new Map<string, number>();
+  const picked: DbJobRow[] = [];
+  for (const r of rows) {
+    const seen = perSource.get(r.source) ?? 0;
+    if (seen >= JOBS_PER_SOURCE) continue;
+    perSource.set(r.source, seen + 1);
+    picked.push(r);
+    if (picked.length >= JOBS_CAP) break;
+  }
+  const jobs = picked.map(toJobPosting);
   const imported = listJobs().filter(isImported);
   setJobs([...imported, ...jobs]);
   return [...imported, ...jobs];
