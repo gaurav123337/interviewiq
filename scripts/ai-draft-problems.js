@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { extractCompanyList } from "./scrape-lib.js";
+import { loadAiProviderConfig } from "./ai-config.js";
 import {
   CURATED_TITLES, PATTERN_TOPIC, buildCandidates, buildDraftPrompt, easyCandidates,
   emitProblemsFile, gateProblem, normalizeProblem, parseDraftJson, parseGeneratedProblems,
@@ -54,9 +55,6 @@ const AI_GENERATED_PATH = join(__dirname, "..", "src", "data", "codingBank", "ai
 const DEFAULT_SOURCE = "https://raw.githubusercontent.com/hxu296/leetcode-company-wise-problems-2022/main/README.md";
 
 const API = "https://api.supabase.com/v1";
-const aiKey = process.env.AI_CLEAN_KEY;
-const aiBase = (process.env.AI_CLEAN_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
-const aiModel = process.env.AI_CLEAN_MODEL || "gpt-4o-mini";
 const maxCalls = Number(process.env.AI_DRAFT_MAX ?? 30) || 30;
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -82,7 +80,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** One chat completion → parsed strict JSON (or null). With `retry`, appends a
     corrective hint — either the unparsable-JSON hint, or (when `gate` is set)
     the real stdin/expected/actual diff so the model can fix its reference. */
-async function draftOne(candidate, retry = false, gate = null) {
+async function draftOne(candidate, retry = false, gate = null, ai = null) {
+  const aiKey = ai?.key, aiBase = ai?.base, aiModel = ai?.model;
   const messages = [{ role: "user", content: buildDraftPrompt(candidate) }];
   if (retry) messages.push({ role: "user", content: gate ? gateRetryHint({ ...candidate, first: gate.first }) : RETRY_HINT });
   const res = await fetch(`${aiBase}/chat/completions`, {
@@ -191,20 +190,25 @@ async function main() {
   }
 
   const plan = Math.min(count, candidates.length);
+  /* provider config is editable from the Admin dashboard (Supabase row);
+     env AI_CLEAN_* are the legacy fallback — loaded before dry-run too so the
+     model name shown is the real one */
+  const ai = await loadAiProviderConfig();
+  if (ai.source === "supabase") console.log(green(`AI provider from Supabase (model ${ai.model}, base ${ai.base}).`));
   if (dryRun) {
-    console.log(green(`DRY RUN — would draft up to ${plan} problem(s) from ${candidates.length} candidates (model ${aiModel}, max ${maxCalls} calls). No API calls, no writes.`));
+    console.log(green(`DRY RUN — would draft up to ${plan} problem(s) from ${candidates.length} candidates (model ${ai.model}, max ${maxCalls} calls). No API calls, no writes.`));
     for (const c of candidates.slice(0, Math.min(plan, 15))) {
       console.log(`  · ${c.title} (${patternFromTitle(c.title)}) — ${[...c.companies].join(", ")}`);
     }
     console.log(yellow(`Cost estimate: ~${plan} model calls (${plan} × ~900 tokens out).`));
     process.exit(0);
   }
-  if (!aiKey) {
-    console.log("No AI_CLEAN_KEY — skipping AI problem drafting (optional step). Pass --list-candidates to see the candidate pool.");
+  if (!ai.key) {
+    console.log("No AI key configured — skipping AI problem drafting (optional step). Set it in Admin → Secrets → AI pipeline, or pass AI_CLEAN_KEY.");
     process.exit(0);
   }
 
-  console.log(green(`Drafting up to ${plan} problem(s) from ${candidates.length} candidates (model ${aiModel}, max ${maxCalls} calls).`));
+  console.log(green(`Drafting up to ${plan} problem(s) from ${candidates.length} candidates (model ${ai.model}, max ${maxCalls} calls).`));
 
   const passed = [];
   const failed = [];
@@ -215,9 +219,9 @@ async function main() {
     if (calls >= maxCalls) { console.log(yellow("Cost cap reached — stopping early.")); break; }
     calls++;
     try {
-      let parsed = await draftOne(c);
+      let parsed = await draftOne(c, false, null, ai);
       httpErrors = 0;
-      if (!parsed) parsed = await draftOne(c, true); /* one corrective retry on unparsable */
+      if (!parsed) parsed = await draftOne(c, true, null, ai); /* one corrective retry on unparsable */
       const v = validateProblem(c, parsed);
       if (!v.ok) { failed.push({ title: c.title, why: `invalid: ${v.errors.join("; ")}` }); console.warn(yellow(`  ✗ ${c.title} — ${v.errors.join("; ")}`)); continue; }
       let problem = normalizeProblem(c, parsed);
@@ -227,7 +231,7 @@ async function main() {
            reference once it sees exactly what its code printed */
         const first = gate.results.find((r) => !r.pass);
         calls++;
-        const retried = await draftOne(c, true, { first });
+        const retried = await draftOne(c, true, { first }, ai);
         if (retried && validateProblem(c, retried).ok) {
           problem = normalizeProblem(c, retried);
           gate = gateProblem(problem);

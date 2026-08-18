@@ -50,6 +50,7 @@ import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { pendingCommunityResources, reviewResource, type ResourceRow } from "../services/resources";
 import { adminDecisionProposal, adminPendingProposals, type UpdateProposalRow } from "../services/trendSignals";
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../services/secrets";
+import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, type AiProviderStatus } from "../services/aiProvider";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
@@ -4213,6 +4214,126 @@ function SecuritySection() {
 }
 
 /* ------------------------------------------------------------------ */
+/* AI pipeline provider — the live key/base/model the AI cleaner and the
+   AI problem bank use. Stored in the private ai_provider_config table
+   (admin-only RLS), editable HERE — no GitHub Actions secret edits. */
+/* ------------------------------------------------------------------ */
+
+function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus | null; onLoad: () => void; onToast: (m: string) => void }) {
+  const [key, setKey] = useState("");
+  const [base, setBase] = useState("");
+  const [model, setModel] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testNote, setTestNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (status) {
+      setBase(status.base || "https://openrouter.ai/api/v1");
+      setModel(status.model || "");
+    }
+  }, [status]);
+
+  const save = async () => {
+    setSaving(true);
+    setTestNote(null);
+    try {
+      await saveAiProviderConfig({ key, base, model });
+      onToast("🤖 AI pipeline key saved — the next scrape/problem-bank run uses it");
+      setKey("");
+      await onLoad();
+    } catch (e) {
+      onToast("✗ " + ((e as Error).message || "Save failed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    setTestNote(null);
+    try {
+      const r = await testAiProvider({ key, base });
+      setTestNote((r.ok ? "✅ " : "✗ ") + r.note);
+    } catch (e) {
+      setTestNote("✗ " + ((e as Error).message || "Test failed"));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className={`${cardCls} p-5`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[16px] font-extrabold">🤖 AI pipeline provider</h2>
+          <p className="mt-1 max-w-[700px] text-[12.5px] text-mut">
+            The <span className="font-bold">live key/model</span> the AI cleaner and AI problem bank use. Saved to your own
+            Supabase project (private, admin-only) and read by the workflows — so you change it{" "}
+            <span className="font-bold">here</span>, never on the GitHub dashboard.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {status && (
+            status.configured ? (
+              <Chip tone="ok">✅ Configured · {status.keyHint}{status.model ? ` · ${status.model}` : ""}</Chip>
+            ) : (
+              <Chip tone="warn">⚠️ Not configured — AI cleaning + problem bank idle</Chip>
+            )
+          )}
+          <button className={btnGhost + btnSm} onClick={onLoad} disabled={saving}>Refresh</button>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-[11.5px] font-bold text-fnt">Base URL</span>
+          <input
+            type="text"
+            value={base}
+            onChange={e => setBase(e.target.value)}
+            placeholder="https://openrouter.ai/api/v1"
+            className="mt-1 w-full rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+          />
+        </label>
+        <label className="block">
+          <span className="text-[11.5px] font-bold text-fnt">Model</span>
+          <input
+            type="text"
+            value={model}
+            onChange={e => setModel(e.target.value)}
+            placeholder="deepseek/deepseek-chat"
+            className="mt-1 w-full rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+          />
+        </label>
+      </div>
+      <label className="mt-3 block">
+        <span className="text-[11.5px] font-bold text-fnt">API key {status?.configured && <span className="font-normal text-mut">(leave blank to keep the saved one)</span>}</span>
+        <input
+          type="password"
+          value={key}
+          onChange={e => setKey(e.target.value)}
+          placeholder={status?.configured ? status.keyHint : "sk-or-v1-…"}
+          autoComplete="off"
+          className="mt-1 w-full rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+        />
+      </label>
+
+      {testNote && <p className={`mt-2 text-[12px] ${testNote.startsWith("✅") ? "text-ok" : "text-warn"}`}>{testNote}</p>}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button className={btnPrimary + btnSm} onClick={() => void save()} disabled={saving || testing}>
+          {saving ? "Saving…" : "💾 Save key"}
+        </button>
+        <button className={btnGhost + btnSm} onClick={() => void test()} disabled={saving || testing} title="One live call to the provider's /models endpoint with the entered key">
+          {testing ? "Testing…" : "🧪 Test key"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Secrets — which Edge Function secrets are configured vs missing.    */
 /* Backed by the secret-status Edge Function (server-side presence      */
 /* check via Deno.env.has — values are never readable or returned).    */
@@ -4224,6 +4345,15 @@ function SecretsSection() {
   const [testing, setTesting] = useState(false);
   const [testTo, setTestTo] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [aiStatus, setAiStatus] = useState<AiProviderStatus | null>(null);
+
+  const loadAi = async () => {
+    try {
+      setAiStatus(await getAiProviderConfig());
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Failed to load AI pipeline config"));
+    }
+  };
 
   const load = async () => {
     setBusy(true);
@@ -4238,7 +4368,7 @@ function SecretsSection() {
     }
   };
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); void loadAi(); }, []);
 
   /* one-click RESEND_API_KEY validation. Defaults to the admin's own
      inbox; a recipient can be supplied because Resend TEST keys only
@@ -4274,6 +4404,7 @@ function SecretsSection() {
 
   return (
     <div className="space-y-4">
+      <AiPipelineCard status={aiStatus} onLoad={loadAi} onToast={toast} />
       <div className={`${cardCls} p-5`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">

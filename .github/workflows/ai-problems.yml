@@ -54,6 +54,11 @@ jobs:
       - name: Generate + gate AI-drafted problems
         id: gen
         env:
+          # The provider config now comes from Supabase (Admin → Secrets → AI
+          # pipeline) — SUPABASE_ACCESS_TOKEN lets the script read it there.
+          # The legacy AI_CLEAN_* secrets remain as a fallback only.
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           AI_CLEAN_KEY: ${{ secrets.AI_CLEAN_KEY }}
           AI_CLEAN_BASE: ${{ secrets.AI_CLEAN_BASE }}
           AI_CLEAN_MODEL: ${{ secrets.AI_CLEAN_MODEL }}

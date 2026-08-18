@@ -19,14 +19,12 @@
  */
 
 import { buildCleanPrompt, parseCleanJson, applyClean } from "./ai-clean-lib.js";
+import { loadAiProviderConfig } from "./ai-config.js";
 import { sqlStr } from "./scrape-lib.js";
 
 const API = "https://api.supabase.com/v1";
 const token = process.env.SUPABASE_ACCESS_TOKEN;
 const projectRef = process.env.SUPABASE_PROJECT_REF;
-const aiKey = process.env.AI_CLEAN_KEY;
-const aiBase = (process.env.AI_CLEAN_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
-const aiModel = process.env.AI_CLEAN_MODEL || "gpt-4o-mini";
 const maxItems = Number(process.env.AI_CLEAN_MAX ?? 40) || 40;
 const dryRun = process.argv.includes("--dry-run");
 
@@ -69,8 +67,15 @@ async function main() {
     console.error(red("Missing SUPABASE_ACCESS_TOKEN or SUPABASE_PROJECT_REF."));
     process.exit(1);
   }
+  /* provider config is editable from the Admin dashboard (Supabase row);
+     env AI_CLEAN_* are the legacy fallback */
+  const aiCfg = await loadAiProviderConfig({ token, projectRef });
+  const aiKey = aiCfg.key;
+  const aiBase = aiCfg.base;
+  const aiModel = aiCfg.model;
+  if (aiCfg.source === "supabase") console.log(green(`AI provider from Supabase (model ${aiModel}, base ${aiBase}).`));
   if (!aiKey) {
-    console.log("No AI_CLEAN_KEY — skipping AI cleaning (optional step).");
+    console.log("No AI key configured — skipping AI cleaning (optional step). Set it in Admin → Secrets → AI pipeline.");
     process.exit(0);
   }
 
