@@ -189,10 +189,12 @@ describe("career profile persistence", () => {
 
 describe("feed services", () => {
   it("loadJobsFromCloud maps DB rows to postings and caches them", async () => {
-    const order = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [
-      { source: "greenhouse", external_id: "9", title: "Staff Engineer", company: "Lyft", location: "San Francisco", remote: false, description: "x", url: "u", skills: ["python"], level: "staff", posted_at: "2026-01-01T00:00:00Z" }
-    ], error: null }) });
-    from.mockReturnValue({ select: vi.fn().mockReturnValue({ order }) });
+    const rowsFor = (source: string) => ({
+      eq: vi.fn().mockReturnValue({ order: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: source === "greenhouse" ? [
+        { source: "greenhouse", external_id: "9", title: "Staff Engineer", company: "Lyft", location: "San Francisco", remote: false, description: "x", url: "u", skills: ["python"], level: "staff", posted_at: "2026-01-01T00:00:00Z" }
+      ] : [], error: null }) }) })
+    });
+    from.mockReturnValue({ select: vi.fn().mockReturnValue({ eq: vi.fn((_col: string, s: string) => rowsFor(s).eq()) }) });
     const { loadJobsFromCloud, listJobs } = await import("../services/jobs");
     const jobs = await loadJobsFromCloud();
     expect(jobs).toHaveLength(1);
@@ -201,22 +203,21 @@ describe("feed services", () => {
     expect(from).toHaveBeenCalledWith("jobs");
   });
 
-  it("loadJobsFromCloud balances sources so a small board isn't starved by RSS", async () => {
-    /* 50 RSS rows (freshest) + 4 lever:cred rows (older) — the old
-       newest-80 behavior would keep only RSS; the balanced load must keep
-       the lever board visible. */
-    const rows = [
-      ...Array.from({ length: 50 }, (_, i) => ({
-        source: "rss", external_id: String(i), title: `RSS Job ${i}`, company: "WWR", location: null, remote: true,
-        description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: `2026-08-18T00:${String(i).padStart(2, "0")}:00Z`
-      })),
-      { source: "lever", external_id: "c1", title: "Web Developer", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: ["web"], level: null, salary: null, company_size: null, posted_at: "2026-08-13T00:00:00Z" },
-      { source: "lever", external_id: "c2", title: "BD", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-12T00:00:00Z" },
-      { source: "lever", external_id: "c3", title: "Growth", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-11T00:00:00Z" },
-      { source: "lever", external_id: "c4", title: "PM", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-10T00:00:00Z" }
-    ];
-    const order = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: rows, error: null }) });
-    from.mockReturnValue({ select: vi.fn().mockReturnValue({ order }) });
+  it("loadJobsFromCloud fetches per source so a small board isn't starved by RSS", async () => {
+    /* per-source queries return lever's 4 rows plus 40 RSS rows — the old
+       single newest-80 window would keep only RSS; per-source fetch must
+       keep the lever board visible. */
+    const rowsFor = (source: string) => ({
+      eq: vi.fn().mockReturnValue({ order: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: source === "lever" ? [
+        { source: "lever", external_id: "c1", title: "Web Developer", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: ["web"], level: null, salary: null, company_size: null, posted_at: "2026-08-13T00:00:00Z" },
+        { source: "lever", external_id: "c2", title: "BD", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-12T00:00:00Z" },
+        { source: "lever", external_id: "c3", title: "Growth", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-11T00:00:00Z" },
+        { source: "lever", external_id: "c4", title: "PM", company: "cred", location: "Bengaluru", remote: false, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: "2026-08-10T00:00:00Z" }
+      ] : source === "rss" ?
+        Array.from({ length: 40 }, (_, i) => ({ source: "rss", external_id: String(i), title: `RSS Job ${i}`, company: "WWR", location: null, remote: true, description: "", url: "u", skills: [], level: null, salary: null, company_size: null, posted_at: `2026-08-18T00:${String(i).padStart(2, "0")}:00Z` }))
+        : [], error: null }) }) })
+    });
+    from.mockReturnValue({ select: vi.fn().mockReturnValue({ eq: vi.fn((_col: string, s: string) => rowsFor(s).eq()) }) });
     const { loadJobsFromCloud } = await import("../services/jobs");
     const jobs = await loadJobsFromCloud();
     const lever = jobs.filter(j => j.source === "lever");
@@ -232,7 +233,8 @@ describe("feed services", () => {
     vi.stubGlobal("fetch", fetchMock);
     getSession.mockResolvedValue({ data: { session: { access_token: "tok-jobs" } } });
     const order = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: [], error: null }) });
-    from.mockReturnValue({ select: vi.fn().mockReturnValue({ order }) });
+    const eq = vi.fn().mockReturnValue({ order });
+    from.mockReturnValue({ select: vi.fn().mockReturnValue({ eq }) });
     const { refreshJobs } = await import("../services/jobs");
     const r = await refreshJobs();
     expect(r).toEqual({ added: 3, updated: 1, total: 12, errors: {} });

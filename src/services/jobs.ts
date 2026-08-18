@@ -133,39 +133,38 @@ export function addImportedJob(job: JobPosting): JobPosting[] {
 
 const JOB_SELECT = "source, external_id, title, company, location, remote, description, url, skills, level, salary, company_size, posted_at";
 
-/** How many of the 80 cached slots each source can claim. Balancing keeps a
-    small board (like lever:cred's 4 jobs) from being starved out by RSS,
-    which posts far more often and would otherwise own the whole newest-80
-    window. Imports ride at the front outside this budget. */
+/** How many of the 80 cached slots each source can claim. Queried PER SOURCE
+    because a single newest-first window is always dominated by whatever
+    posts most often (RSS refreshes daily, so its fresh dates would starve
+    out a small board like lever:cred's 4 jobs entirely). Imports ride at
+    the front outside this budget. */
 const JOBS_PER_SOURCE = 40;
 const JOBS_CAP = 80;
 
-/** Pull the latest feed from the cloud (jobs are public-read), balanced so
-    every configured source gets a fair share of the cache instead of RSS
-    dominating the newest-80 window. The user's imported jobs ride along —
-    merged at the front, never overwritten. */
+/** The feed's source types (the `source` column values jobs-fetch writes). */
+const FEED_SOURCES = ["greenhouse", "ashby", "lever", "remoteok", "rss"];
+
+/** Pull the latest feed from the cloud (jobs are public-read) with one
+    newest-first query PER source, so every board gets a fair share of the
+    cache instead of RSS owning the whole window. The user's imported jobs
+    ride along — merged at the front, never overwritten. */
 export async function loadJobsFromCloud(): Promise<JobPosting[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
-  const { data, error } = await client.from("jobs")
-    .select(JOB_SELECT)
-    .order("posted_at", { ascending: false })
-    .limit(JOBS_PER_SOURCE * 6);
-  if (error || !data) return [];
-  /* per-source round-robin: walk newest-first and take up to JOBS_PER_SOURCE
-     from each source until the cap fills — so lever:cred (4 jobs) appears
-     alongside greenhouse (40) and rss (40) instead of vanishing. */
-  const rows = data as unknown as DbJobRow[];
-  const perSource = new Map<string, number>();
+  const results = await Promise.all(FEED_SOURCES.map(source =>
+    client.from("jobs")
+      .select(JOB_SELECT)
+      .eq("source", source)
+      .order("posted_at", { ascending: false })
+      .limit(JOBS_PER_SOURCE)
+  ));
   const picked: DbJobRow[] = [];
-  for (const r of rows) {
-    const seen = perSource.get(r.source) ?? 0;
-    if (seen >= JOBS_PER_SOURCE) continue;
-    perSource.set(r.source, seen + 1);
-    picked.push(r);
+  for (const { data, error } of results) {
+    if (error || !data) continue;
+    picked.push(...(data as unknown as DbJobRow[]));
     if (picked.length >= JOBS_CAP) break;
   }
-  const jobs = picked.map(toJobPosting);
+  const jobs = picked.slice(0, JOBS_CAP).map(toJobPosting);
   const imported = listJobs().filter(isImported);
   setJobs([...imported, ...jobs]);
   return [...imported, ...jobs];
