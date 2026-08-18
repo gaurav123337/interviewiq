@@ -158,11 +158,20 @@ export async function loadJobsFromCloud(): Promise<JobPosting[]> {
       .order("posted_at", { ascending: false })
       .limit(JOBS_PER_SOURCE)
   ));
+  /* true round-robin: interleave one job from each source per pass, so the
+     cap fills across ALL boards — not the first two sources that happen to
+     be queried first (that would starve lever/remoteok/rss again). */
+  const queues = results.map(({ data, error }) => (error || !data ? [] : data as unknown as DbJobRow[]));
   const picked: DbJobRow[] = [];
-  for (const { data, error } of results) {
-    if (error || !data) continue;
-    picked.push(...(data as unknown as DbJobRow[]));
-    if (picked.length >= JOBS_CAP) break;
+  let pass = 0;
+  let took = true;
+  while (took && picked.length < JOBS_CAP) {
+    took = false;
+    for (const q of queues) {
+      if (picked.length >= JOBS_CAP) break;
+      if (pass < q.length) { picked.push(q[pass]); took = true; }
+    }
+    pass++;
   }
   const jobs = picked.slice(0, JOBS_CAP).map(toJobPosting);
   const imported = listJobs().filter(isImported);
