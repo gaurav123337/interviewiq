@@ -47,19 +47,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** One chat completion → parsed strict JSON (or null). */
 async function cleanOne(item) {
-  const res = await fetch(`${aiBase}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: aiModel,
-      temperature: 0.2,
-      max_tokens: 700,
-      messages: [{ role: "user", content: buildCleanPrompt(item) }]
-    })
-  });
-  if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
-  const body = await res.json();
-  return parseCleanJson(body?.choices?.[0]?.message?.content);
+  /* free-tier providers can hang indefinitely — cap the call so a stuck
+     model can't stall the whole workflow run */
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 120_000);
+  try {
+    const res = await fetch(`${aiBase}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: aiModel,
+        temperature: 0.2,
+        max_tokens: 700,
+        messages: [{ role: "user", content: buildCleanPrompt(item) }]
+      }),
+      signal: ac.signal
+    });
+    if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
+    const body = await res.json();
+    return parseCleanJson(body?.choices?.[0]?.message?.content);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function main() {

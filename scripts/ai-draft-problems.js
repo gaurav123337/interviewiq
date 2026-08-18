@@ -84,19 +84,28 @@ async function draftOne(candidate, retry = false, gate = null, ai = null) {
   const aiKey = ai?.key, aiBase = ai?.base, aiModel = ai?.model;
   const messages = [{ role: "user", content: buildDraftPrompt(candidate) }];
   if (retry) messages.push({ role: "user", content: gate ? gateRetryHint({ ...candidate, first: gate.first }) : RETRY_HINT });
-  const res = await fetch(`${aiBase}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: aiModel,
-      temperature: 0.3,
-      max_tokens: 900,
-      messages
-    })
-  });
-  if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
-  const body = await res.json();
-  return parseDraftJson(body?.choices?.[0]?.message?.content);
+  /* free-tier providers can hang indefinitely — cap the call so a stuck
+     model can't stall the whole workflow run */
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 120_000);
+  try {
+    const res = await fetch(`${aiBase}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: aiModel,
+        temperature: 0.3,
+        max_tokens: 900,
+        messages
+      }),
+      signal: ac.signal
+    });
+    if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
+    const body = await res.json();
+    return parseDraftJson(body?.choices?.[0]?.message?.content);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchMirror() {
