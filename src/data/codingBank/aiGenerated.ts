@@ -3,17 +3,1147 @@
    Every problem below passed its own visible + hidden cases through the local
    judge before being written. Prompts, test cases and references are
    AI-ORIGINAL; titles, difficulty and companies come from public problem-title
-   metadata (facts). Generated 2026-08-17T00:00:00.000Z. */
+   metadata (facts). Generated 2026-08-17T14:37:26.611Z. */
 
 import type { CliProblem } from "../coding";
 
 export const AI_GENERATED_PROBLEMS: CliProblem[] = [
+  {
+    "kind": "cli",
+    "id": "basic-calculator-ii",
+    "title": "Basic Calculator II",
+    "difficulty": 2,
+    "prompt": "You are tasked with implementing a basic calculator that can evaluate simple expressions containing non-negative integers, addition (+), subtraction (-), multiplication (*), and division (/). The input is a string representing the expression, and you need to return the result as an integer. The expression is guaranteed to be valid and will not contain any parentheses. Note that integer division should truncate towards zero.",
+    "io": "input: \"3+2*2\"\noutput: \"7\"\ninput: \" 3/2 \"\noutput: \"1\"\ninput: \" 3+5 / 2 \"\noutput: \"5\"\ninput: \"14-3/2\"\noutput: \"13\"\ninput: \"2*3+4*5\"\noutput: \"26\"",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   input: \"3+2*2\"\noutput: \"7\"\ninput: \" 3/2 \"\noutput: \"1\"\ninput: \" 3+5 / 2 \"\noutput: \"5\"\ninput: \"14-3/2\"\noutput: \"13\"\ninput: \"2*3+4*5\"\noutput: \"26\"\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   input: \"3+2*2\"\noutput: \"7\"\ninput: \" 3/2 \"\noutput: \"1\"\ninput: \" 3+5 / 2 \"\noutput: \"5\"\ninput: \"14-3/2\"\noutput: \"13\"\ninput: \"2*3+4*5\"\noutput: \"26\"\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   input: \"3+2*2\"\noutput: \"7\"\ninput: \" 3/2 \"\noutput: \"1\"\ninput: \" 3+5 / 2 \"\noutput: \"5\"\ninput: \"14-3/2\"\noutput: \"13\"\ninput: \"2*3+4*5\"\noutput: \"26\"\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   input: \"3+2*2\"\noutput: \"7\"\ninput: \" 3/2 \"\noutput: \"1\"\ninput: \" 3+5 / 2 \"\noutput: \"5\"\ninput: \"14-3/2\"\noutput: \"13\"\ninput: \"2*3+4*5\"\noutput: \"26\"\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   input: \"3+2*2\"\noutput: \"7\"\ninput: \" 3/2 \"\noutput: \"1\"\ninput: \" 3+5 / 2 \"\noutput: \"5\"\ninput: \"14-3/2\"\noutput: \"13\"\ninput: \"2*3+4*5\"\noutput: \"26\"\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   input: \"3+2*2\"\noutput: \"7\"\ninput: \" 3/2 \"\noutput: \"1\"\ninput: \" 3+5 / 2 \"\noutput: \"5\"\ninput: \"14-3/2\"\noutput: \"13\"\ninput: \"2*3+4*5\"\noutput: \"26\"\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "3+2*2\n",
+        "expect": "7"
+      },
+      {
+        "stdin": " 3/2 \n",
+        "expect": "1"
+      },
+      {
+        "stdin": " 3+5 / 2 \n",
+        "expect": "5"
+      },
+      {
+        "stdin": "14-3/2\n",
+        "expect": "13"
+      },
+      {
+        "stdin": "2*3+4*5\n",
+        "expect": "26"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "10/2*3\n",
+        "expect": "15"
+      },
+      {
+        "stdin": "5-2*3+4\n",
+        "expect": "3"
+      },
+      {
+        "stdin": "1+1+1+1\n",
+        "expect": "4"
+      }
+    ],
+    "hint": "Consider using a stack to handle the operations and maintain the order of precedence.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const expression = lines[0];\n  const tokens = expression.match(/\\d+|[+\\-*/]/g);\n  let stack = [];\n  let currentNum = 0;\n  let operation = '+';\n\n  for (let token of tokens) {\n    if (!isNaN(token)) {\n      currentNum = parseInt(token);\n    }\n    if (isNaN(token) || token === tokens[tokens.length - 1]) {\n      if (operation === '+') stack.push(currentNum);\n      else if (operation === '-') stack.push(-currentNum);\n      else if (operation === '*') stack.push(stack.pop() * currentNum);\n      else if (operation === '/') stack.push(Math.trunc(stack.pop() / currentNum));\n      operation = token;\n      currentNum = 0;\n    }\n  }\n\n  out.push(stack.reduce((a, b) => a + b, 0).toString());\n  return out;\n}",
+    "pattern": "stack"
+  },
+  {
+    "kind": "cli",
+    "id": "can-place-flowers",
+    "title": "Can Place Flowers",
+    "difficulty": 2,
+    "prompt": "You have a flowerbed represented as an array where 0 means empty and 1 means a flower is planted. You want to plant a new flower in the flowerbed without violating the no-adjacent-flowers rule. Given the flowerbed and the number of new flowers you want to plant, determine if you can plant all of them. Return 'true' if you can plant all flowers, otherwise return 'false'.",
+    "io": "Input:\n[1,0,0,0,1]\n1\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n2\nOutput:\nfalse\n\nInput:\n[0,0,1,0,0]\n2\nOutput:\ntrue\n\nInput:\n[0,0,0,0,0]\n3\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n0\nOutput:\ntrue",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   Input:\n[1,0,0,0,1]\n1\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n2\nOutput:\nfalse\n\nInput:\n[0,0,1,0,0]\n2\nOutput:\ntrue\n\nInput:\n[0,0,0,0,0]\n3\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n0\nOutput:\ntrue\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   Input:\n[1,0,0,0,1]\n1\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n2\nOutput:\nfalse\n\nInput:\n[0,0,1,0,0]\n2\nOutput:\ntrue\n\nInput:\n[0,0,0,0,0]\n3\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n0\nOutput:\ntrue\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   Input:\n[1,0,0,0,1]\n1\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n2\nOutput:\nfalse\n\nInput:\n[0,0,1,0,0]\n2\nOutput:\ntrue\n\nInput:\n[0,0,0,0,0]\n3\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n0\nOutput:\ntrue\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   Input:\n[1,0,0,0,1]\n1\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n2\nOutput:\nfalse\n\nInput:\n[0,0,1,0,0]\n2\nOutput:\ntrue\n\nInput:\n[0,0,0,0,0]\n3\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n0\nOutput:\ntrue\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   Input:\n[1,0,0,0,1]\n1\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n2\nOutput:\nfalse\n\nInput:\n[0,0,1,0,0]\n2\nOutput:\ntrue\n\nInput:\n[0,0,0,0,0]\n3\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n0\nOutput:\ntrue\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   Input:\n[1,0,0,0,1]\n1\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n2\nOutput:\nfalse\n\nInput:\n[0,0,1,0,0]\n2\nOutput:\ntrue\n\nInput:\n[0,0,0,0,0]\n3\nOutput:\ntrue\n\nInput:\n[1,0,0,0,1]\n0\nOutput:\ntrue\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[1,0,0,0,1]\n1\n",
+        "expect": "true"
+      },
+      {
+        "stdin": "[1,0,0,0,1]\n2\n",
+        "expect": "false"
+      },
+      {
+        "stdin": "[0,0,1,0,0]\n2\n",
+        "expect": "true"
+      },
+      {
+        "stdin": "[0,0,0,0,0]\n3\n",
+        "expect": "true"
+      },
+      {
+        "stdin": "[1,0,0,0,1]\n0\n",
+        "expect": "true"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[0,0,0,0,0]\n5\n",
+        "expect": "false"
+      },
+      {
+        "stdin": "[0,1,0,0,0,1,0]\n1\n",
+        "expect": "true"
+      },
+      {
+        "stdin": "[1,0,0,1,0,0,1]\n1\n",
+        "expect": "false"
+      }
+    ],
+    "hint": "Consider the conditions for planting a flower carefully.",
+    "reference": "function solve(lines) { const flowerbed = JSON.parse(lines[0]); const n = parseInt(lines[1]); let count = 0; for (let i = 0; i < flowerbed.length; i++) { if (flowerbed[i] === 0 && (i === 0 || flowerbed[i - 1] === 0) && (i === flowerbed.length - 1 || flowerbed[i + 1] === 0)) { flowerbed[i] = 1; count++; } } return [count >= n ? 'true' : 'false']; }",
+    "pattern": "greedy"
+  },
+  {
+    "kind": "cli",
+    "id": "construct-k-palindrome-strings",
+    "title": "Construct K Palindrome Strings",
+    "difficulty": 2,
+    "prompt": "Given a string `s` and an integer `k`, determine if it is possible to construct `k` palindrome strings using all characters of `s`. Each palindrome string must use the characters from `s` without any leftover characters. A palindrome reads the same forwards and backwards. Return 'YES' if it's possible, otherwise return 'NO'.",
+    "io": "YES\nNO\nYES\nNO",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   YES\nNO\nYES\nNO\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   YES\nNO\nYES\nNO\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   YES\nNO\nYES\nNO\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   YES\nNO\nYES\nNO\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   YES\nNO\nYES\nNO\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   YES\nNO\nYES\nNO\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "aabb\n2\n",
+        "expect": "YES"
+      },
+      {
+        "stdin": "abc\n2\n",
+        "expect": "NO"
+      },
+      {
+        "stdin": "aaaabbbb\n3\n",
+        "expect": "YES"
+      },
+      {
+        "stdin": "abcdefg\n1\n",
+        "expect": "NO"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "aabbcc\n3\n",
+        "expect": "YES"
+      },
+      {
+        "stdin": "xyz\n2\n",
+        "expect": "NO"
+      }
+    ],
+    "hint": "Count character frequencies and check the number of odd counts against k.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const [s, k] = lines;\n  const charCount = {};\n  for (const char of s) {\n    charCount[char] = (charCount[char] || 0) + 1;\n  }\n  const oddCount = Object.values(charCount).filter(count => count % 2 !== 0).length;\n  out.push(oddCount <= k ? 'YES' : 'NO');\n  return out;\n}",
+    "pattern": "hash-map"
+  },
+  {
+    "kind": "cli",
+    "id": "dot-product-of-two-sparse-vectors",
+    "title": "Dot Product of Two Sparse Vectors",
+    "difficulty": 2,
+    "prompt": "You are given two sparse vectors represented as arrays of integers. Each vector contains non-negative integers, where a value of zero indicates the absence of a corresponding dimension. Your task is to compute the dot product of these two vectors. The dot product is defined as the sum of the products of the corresponding entries of the two sequences. If the vectors are of different lengths, consider the shorter length for the calculation. Return the result as a single integer.\n\nFor example, given vectors [1, 0, 0, 2] and [0, 3, 0, 4], the dot product is 0*1 + 3*0 + 0*0 + 4*2 = 8.",
+    "io": "8\n0",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   8\n0\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   8\n0\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   8\n0\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   8\n0\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   8\n0\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   8\n0\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[1, 0, 0, 2]\n[0, 3, 0, 4]\n",
+        "expect": "8\n"
+      },
+      {
+        "stdin": "[0, 0, 0]\n[0, 0, 0]\n",
+        "expect": "0\n"
+      },
+      {
+        "stdin": "[1, 2, 3]\n[4, 5, 6]\n",
+        "expect": "32\n"
+      },
+      {
+        "stdin": "[1, 2, 0, 0]\n[0, 0, 0, 3]\n",
+        "expect": "0\n"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[0, 1, 0, 0, 5]\n[0, 0, 2, 3, 0]\n",
+        "expect": "0\n"
+      },
+      {
+        "stdin": "[1, 2, 3, 4]\n[0, 0, 0, 0]\n",
+        "expect": "0\n"
+      }
+    ],
+    "hint": "Consider only the minimum length of the two vectors for the dot product calculation.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const vec1 = JSON.parse(lines[0]);\n  const vec2 = JSON.parse(lines[1]);\n  const minLength = Math.min(vec1.length, vec2.length);\n  let dotProduct = 0;\n  for (let i = 0; i < minLength; i++) {\n    dotProduct += vec1[i] * vec2[i];\n  }\n  out.push(dotProduct.toString());\n  return out;\n}",
+    "pattern": "mixed"
+  },
+  {
+    "kind": "cli",
+    "id": "first-bad-version",
+    "title": "First Bad Version",
+    "difficulty": 2,
+    "prompt": "You are given a function that checks if a version is bad. The versions are numbered from 1 to n. You need to find the first bad version among them. Implement a function that takes the total number of versions and returns the first bad version. The first bad version is defined as the lowest numbered version that is bad. You can assume that there is at least one bad version.",
+    "io": "1\n2\n3\n4\n5",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   1\n2\n3\n4\n5\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   1\n2\n3\n4\n5\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   1\n2\n3\n4\n5\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   1\n2\n3\n4\n5\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   1\n2\n3\n4\n5\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   1\n2\n3\n4\n5\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "5\n4\n",
+        "expect": "4"
+      },
+      {
+        "stdin": "10\n6\n",
+        "expect": "6"
+      },
+      {
+        "stdin": "7\n3\n",
+        "expect": "3"
+      },
+      {
+        "stdin": "1\n1\n",
+        "expect": "1"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "100\n50\n",
+        "expect": "50"
+      },
+      {
+        "stdin": "20\n15\n",
+        "expect": "15"
+      }
+    ],
+    "hint": "Use binary search to efficiently find the first bad version.",
+    "reference": "function solve(lines) {\n  const n = parseInt(lines[0]);\n  const badVersion = parseInt(lines[1]);\n  return [badVersion.toString()];\n}",
+    "pattern": "binary-search"
+  },
+  {
+    "kind": "cli",
+    "id": "first-missing-positive",
+    "title": "First Missing Positive",
+    "difficulty": 3,
+    "prompt": "Given an array of integers, find the smallest positive integer that is not present in the array. The solution should run in O(n) time and use O(1) space. You may assume the array contains no duplicates and can be of any length, including empty.",
+    "io": "3\n1\n2\n4\n5\n6",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   3\n1\n2\n4\n5\n6\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   3\n1\n2\n4\n5\n6\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   3\n1\n2\n4\n5\n6\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   3\n1\n2\n4\n5\n6\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   3\n1\n2\n4\n5\n6\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   3\n1\n2\n4\n5\n6\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[3, 4, -1, 1]\n",
+        "expect": "2"
+      },
+      {
+        "stdin": "[1, 2, 0]\n",
+        "expect": "3"
+      },
+      {
+        "stdin": "[-1, -2, -3]\n",
+        "expect": "1"
+      },
+      {
+        "stdin": "[7, 8, 9, 11, 12]\n",
+        "expect": "1"
+      },
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n",
+        "expect": "6"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[1, 2, 3, 5, 6, 7, 8, 9, 10]\n",
+        "expect": "4"
+      },
+      {
+        "stdin": "[2, 3, 4, 5, 6]\n",
+        "expect": "1"
+      },
+      {
+        "stdin": "[1, 1, 1, 1, 1]\n",
+        "expect": "2"
+      }
+    ],
+    "hint": "Consider using the array indices to place numbers in their correct positions.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const nums = lines[0].slice(1, -1).split(',').map(Number);\n  const n = nums.length;\n  for (let i = 0; i < n; i++) {\n    while (nums[i] > 0 && nums[i] <= n && nums[nums[i] - 1] !== nums[i]) {\n      const temp = nums[i];\n      nums[i] = nums[temp - 1];\n      nums[temp - 1] = temp;\n    }\n  }\n  for (let i = 0; i < n; i++) {\n    if (nums[i] !== i + 1) {\n      out.push(i + 1);\n      return out;\n    }\n  }\n  out.push(n + 1);\n  return out;\n}",
+    "pattern": "hash-map"
+  },
+  {
+    "kind": "cli",
+    "id": "flatten-2d-vector",
+    "title": "Flatten 2D Vector",
+    "difficulty": 2,
+    "prompt": "You are given a 2D grid of integers where each row may have a different number of columns. Your task is to flatten this grid into a single list of integers. The order of elements in the flattened list should follow the row-major order, meaning you traverse each row from left to right before moving to the next row. Implement a function that takes this grid as input and returns the flattened list as output.",
+    "io": "Input:\n[[1,2,3],[4,5],[6]]\nOutput:\n1\n2\n3\n4\n5\n6\nInput:\n[[7,8],[9]]\nOutput:\n7\n8\n9\nInput:\n[[],[1,2]]\nOutput:\n1\n2\nInput:\n[[10]]\nOutput:\n10\nInput:\n[[],[]]\nOutput:",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   Input:\n[[1,2,3],[4,5],[6]]\nOutput:\n1\n2\n3\n4\n5\n6\nInput:\n[[7,8],[9]]\nOutput:\n7\n8\n9\nInput:\n[[],[1,2]]\nOutput:\n1\n2\nInput:\n[[10]]\nOutput:\n10\nInput:\n[[],[]]\nOutput:\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   Input:\n[[1,2,3],[4,5],[6]]\nOutput:\n1\n2\n3\n4\n5\n6\nInput:\n[[7,8],[9]]\nOutput:\n7\n8\n9\nInput:\n[[],[1,2]]\nOutput:\n1\n2\nInput:\n[[10]]\nOutput:\n10\nInput:\n[[],[]]\nOutput:\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   Input:\n[[1,2,3],[4,5],[6]]\nOutput:\n1\n2\n3\n4\n5\n6\nInput:\n[[7,8],[9]]\nOutput:\n7\n8\n9\nInput:\n[[],[1,2]]\nOutput:\n1\n2\nInput:\n[[10]]\nOutput:\n10\nInput:\n[[],[]]\nOutput:\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   Input:\n[[1,2,3],[4,5],[6]]\nOutput:\n1\n2\n3\n4\n5\n6\nInput:\n[[7,8],[9]]\nOutput:\n7\n8\n9\nInput:\n[[],[1,2]]\nOutput:\n1\n2\nInput:\n[[10]]\nOutput:\n10\nInput:\n[[],[]]\nOutput:\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   Input:\n[[1,2,3],[4,5],[6]]\nOutput:\n1\n2\n3\n4\n5\n6\nInput:\n[[7,8],[9]]\nOutput:\n7\n8\n9\nInput:\n[[],[1,2]]\nOutput:\n1\n2\nInput:\n[[10]]\nOutput:\n10\nInput:\n[[],[]]\nOutput:\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   Input:\n[[1,2,3],[4,5],[6]]\nOutput:\n1\n2\n3\n4\n5\n6\nInput:\n[[7,8],[9]]\nOutput:\n7\n8\n9\nInput:\n[[],[1,2]]\nOutput:\n1\n2\nInput:\n[[10]]\nOutput:\n10\nInput:\n[[],[]]\nOutput:\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[[1,2,3],[4,5],[6]]\n",
+        "expect": "1\n2\n3\n4\n5\n6\n"
+      },
+      {
+        "stdin": "[[7,8],[9]]\n",
+        "expect": "7\n8\n9\n"
+      },
+      {
+        "stdin": "[[],[1,2]]\n",
+        "expect": "1\n2\n"
+      },
+      {
+        "stdin": "[[10]]\n",
+        "expect": "10\n"
+      },
+      {
+        "stdin": "[[],[]]\n",
+        "expect": ""
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[[1,2,3,4],[5,6],[7,8,9]]\n",
+        "expect": "1\n2\n3\n4\n5\n6\n7\n8\n9\n"
+      },
+      {
+        "stdin": "[[0,0],[0,0],[0,0]]\n",
+        "expect": "0\n0\n0\n0\n0\n0\n"
+      },
+      {
+        "stdin": "[[1],[2],[3],[4],[5]]\n",
+        "expect": "1\n2\n3\n4\n5\n"
+      }
+    ],
+    "hint": "Think about how to iterate through each row and then each column to collect the numbers.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const grid = JSON.parse(lines[0]);\n  for (const row of grid) {\n    for (const num of row) {\n      out.push(num);\n    }\n  }\n  return out;\n}",
+    "pattern": "mixed"
+  },
+  {
+    "kind": "cli",
+    "id": "generate-parentheses",
+    "title": "Generate Parentheses",
+    "difficulty": 2,
+    "prompt": "Given an integer n, generate all combinations of well-formed parentheses of length 2n. Each combination should be unique and in lexicographical order. For example, if n = 3, the valid combinations are: \"((()))\", \"(()())\", \"(())()\", \"()(())\", and \"()()()\". Return the combinations as an array of strings.",
+    "io": "((()))\n(()())\n(())()\n()(())\n()()()",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   ((()))\n(()())\n(())()\n()(())\n()()()\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   ((()))\n(()())\n(())()\n()(())\n()()()\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   ((()))\n(()())\n(())()\n()(())\n()()()\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   ((()))\n(()())\n(())()\n()(())\n()()()\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   ((()))\n(()())\n(())()\n()(())\n()()()\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   ((()))\n(()())\n(())()\n()(())\n()()()\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "3\n",
+        "expect": "((()))\n(()())\n(())()\n()(())\n()()()"
+      },
+      {
+        "stdin": "2\n",
+        "expect": "(())\n()()"
+      },
+      {
+        "stdin": "1\n",
+        "expect": "()"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "4\n",
+        "expect": "(((())))\n((()()))\n((())())\n((()))()\n(()(()))\n(()()())\n(()())()\n(())(())\n(())()()\n()((()))\n()(()())\n()(())()\n()()(())\n()()()()"
+      }
+    ],
+    "hint": "Use a recursive approach to build combinations while ensuring valid parentheses.",
+    "reference": "function solve(lines) {\n  const n = parseInt(lines[0]);\n  const out = [];\n  function generate(p, left, right) {\n    if (left === 0 && right === 0) {\n      out.push(p);\n      return;\n    }\n    if (left > 0) generate(p + '(', left - 1, right);\n    if (right > left) generate(p + ')', left, right - 1);\n  }\n  generate('', n, n);\n  return out;\n}",
+    "pattern": "backtracking"
+  },
+  {
+    "kind": "cli",
+    "id": "happy-number",
+    "title": "Happy Number",
+    "difficulty": 2,
+    "prompt": "A happy number is defined by the following process: starting with any positive integer, replace the number by the sum of the squares of its digits, and repeat the process until the number equals 1 (where it will stay), or it loops endlessly in a cycle that does not include 1. Write a function to determine if a given number is a happy number.",
+    "io": "Input: A single integer n (1 ≤ n ≤ 10^6).\nOutput: 'True' if n is a happy number, 'False' otherwise.",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   Input: A single integer n (1 ≤ n ≤ 10^6).\nOutput: 'True' if n is a happy number, 'False' otherwise.\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   Input: A single integer n (1 ≤ n ≤ 10^6).\nOutput: 'True' if n is a happy number, 'False' otherwise.\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   Input: A single integer n (1 ≤ n ≤ 10^6).\nOutput: 'True' if n is a happy number, 'False' otherwise.\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   Input: A single integer n (1 ≤ n ≤ 10^6).\nOutput: 'True' if n is a happy number, 'False' otherwise.\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   Input: A single integer n (1 ≤ n ≤ 10^6).\nOutput: 'True' if n is a happy number, 'False' otherwise.\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   Input: A single integer n (1 ≤ n ≤ 10^6).\nOutput: 'True' if n is a happy number, 'False' otherwise.\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "19",
+        "expect": "True"
+      },
+      {
+        "stdin": "2",
+        "expect": "False"
+      },
+      {
+        "stdin": "7",
+        "expect": "True"
+      },
+      {
+        "stdin": "4",
+        "expect": "False"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "1",
+        "expect": "True"
+      },
+      {
+        "stdin": "16",
+        "expect": "False"
+      }
+    ],
+    "hint": "Use a set to track seen numbers to detect cycles.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const isHappy = (n) => {\n    const seen = new Set();\n    while (n !== 1 && !seen.has(n)) {\n      seen.add(n);\n      n = n.toString().split('').reduce((sum, digit) => sum + Math.pow(parseInt(digit), 2), 0);\n    }\n    return n === 1;\n  };\n  const n = parseInt(lines[0]);\n  out.push(isHappy(n) ? 'True' : 'False');\n  return out;\n}",
+    "pattern": "hash-map"
+  },
+  {
+    "kind": "cli",
+    "id": "intersection-of-two-linked-lists",
+    "title": "Intersection of Two Linked Lists",
+    "difficulty": 2,
+    "prompt": "You are given two singly linked lists. Write a function to determine the node at which the two lists intersect. If they do not intersect, return null. The linked lists are represented as arrays of integers, where the last element of the first list points to the first element of the second list if they intersect. Otherwise, the last element of the first list points to null. Your task is to find the intersection node's value or return 'null' if there is no intersection.",
+    "io": "input: [1, 2, 3, 4, 5]\n[6, 7, 8]\noutput: null\n\ninput: [1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\noutput: 3\n\ninput: [1, 2, 3]\n[4, 5, 6, 3]\noutput: 3\n\ninput: [1, 2]\n[3, 4]\noutput: null\n\ninput: [1, 2, 3, 4]\n[5, 6, 3, 4]\noutput: 3",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   input: [1, 2, 3, 4, 5]\n[6, 7, 8]\noutput: null\n\ninput: [1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\noutput: 3\n\ninput: [1, 2, 3]\n[4, 5, 6, 3]\noutput: 3\n\ninput: [1, 2]\n[3, 4]\noutput: null\n\ninput: [1, 2, 3, 4]\n[5, 6, 3, 4]\noutput: 3\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   input: [1, 2, 3, 4, 5]\n[6, 7, 8]\noutput: null\n\ninput: [1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\noutput: 3\n\ninput: [1, 2, 3]\n[4, 5, 6, 3]\noutput: 3\n\ninput: [1, 2]\n[3, 4]\noutput: null\n\ninput: [1, 2, 3, 4]\n[5, 6, 3, 4]\noutput: 3\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   input: [1, 2, 3, 4, 5]\n[6, 7, 8]\noutput: null\n\ninput: [1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\noutput: 3\n\ninput: [1, 2, 3]\n[4, 5, 6, 3]\noutput: 3\n\ninput: [1, 2]\n[3, 4]\noutput: null\n\ninput: [1, 2, 3, 4]\n[5, 6, 3, 4]\noutput: 3\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   input: [1, 2, 3, 4, 5]\n[6, 7, 8]\noutput: null\n\ninput: [1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\noutput: 3\n\ninput: [1, 2, 3]\n[4, 5, 6, 3]\noutput: 3\n\ninput: [1, 2]\n[3, 4]\noutput: null\n\ninput: [1, 2, 3, 4]\n[5, 6, 3, 4]\noutput: 3\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   input: [1, 2, 3, 4, 5]\n[6, 7, 8]\noutput: null\n\ninput: [1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\noutput: 3\n\ninput: [1, 2, 3]\n[4, 5, 6, 3]\noutput: 3\n\ninput: [1, 2]\n[3, 4]\noutput: null\n\ninput: [1, 2, 3, 4]\n[5, 6, 3, 4]\noutput: 3\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   input: [1, 2, 3, 4, 5]\n[6, 7, 8]\noutput: null\n\ninput: [1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\noutput: 3\n\ninput: [1, 2, 3]\n[4, 5, 6, 3]\noutput: 3\n\ninput: [1, 2]\n[3, 4]\noutput: null\n\ninput: [1, 2, 3, 4]\n[5, 6, 3, 4]\noutput: 3\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n[6, 7, 8]\n",
+        "expect": "null"
+      },
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n[6, 7, 3, 4, 5]\n",
+        "expect": "3"
+      },
+      {
+        "stdin": "[1, 2, 3]\n[4, 5, 6, 3]\n",
+        "expect": "3"
+      },
+      {
+        "stdin": "[1, 2]\n[3, 4]\n",
+        "expect": "null"
+      },
+      {
+        "stdin": "[1, 2, 3, 4]\n[5, 6, 3, 4]\n",
+        "expect": "3"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n[6, 7, 8, 4, 5]\n",
+        "expect": "4"
+      },
+      {
+        "stdin": "[1, 2]\n[2]\n",
+        "expect": "2"
+      }
+    ],
+    "hint": "Use a set to track nodes from the first list and check for intersections in the second.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const list1 = lines[0].slice(1, -1).split(',').map(Number);\n  const list2 = lines[1].slice(1, -1).split(',').map(Number);\n  const set = new Set(list1);\n  for (const num of list2) {\n    if (set.has(num)) {\n      out.push(num);\n      return out;\n    }\n  }\n  out.push('null');\n  return out;\n}",
+    "pattern": "hash-map"
+  },
+  {
+    "kind": "cli",
+    "id": "kth-largest-element-in-an-array",
+    "title": "Kth Largest Element in an Array",
+    "difficulty": 2,
+    "prompt": "You are given an array of integers and an integer k. Your task is to find the k-th largest element in the array. Note that it is the k-th largest element in the sorted order, not the k-th distinct element. If k is greater than the number of elements in the array, return -1. The array can contain duplicate elements. Implement a function that reads the input and returns the k-th largest element as specified.",
+    "io": "Input:\n- The first line contains an integer n (1 ≤ n ≤ 10^5), the number of elements in the array.\n- The second line contains n integers (each between -10^9 and 10^9).\n- The third line contains an integer k (1 ≤ k ≤ n).\n\nOutput:\n- A single integer representing the k-th largest element in the array.",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   Input:\n- The first line contains an integer n (1 ≤ n ≤ 10^5), the number of elements in the array.\n- The second line contains n integers (each between -10^9 and 10^9).\n- The third line contains an integer k (1 ≤ k ≤ n).\n\nOutput:\n- A single integer representing the k-th largest element in the array.\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   Input:\n- The first line contains an integer n (1 ≤ n ≤ 10^5), the number of elements in the array.\n- The second line contains n integers (each between -10^9 and 10^9).\n- The third line contains an integer k (1 ≤ k ≤ n).\n\nOutput:\n- A single integer representing the k-th largest element in the array.\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   Input:\n- The first line contains an integer n (1 ≤ n ≤ 10^5), the number of elements in the array.\n- The second line contains n integers (each between -10^9 and 10^9).\n- The third line contains an integer k (1 ≤ k ≤ n).\n\nOutput:\n- A single integer representing the k-th largest element in the array.\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   Input:\n- The first line contains an integer n (1 ≤ n ≤ 10^5), the number of elements in the array.\n- The second line contains n integers (each between -10^9 and 10^9).\n- The third line contains an integer k (1 ≤ k ≤ n).\n\nOutput:\n- A single integer representing the k-th largest element in the array.\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   Input:\n- The first line contains an integer n (1 ≤ n ≤ 10^5), the number of elements in the array.\n- The second line contains n integers (each between -10^9 and 10^9).\n- The third line contains an integer k (1 ≤ k ≤ n).\n\nOutput:\n- A single integer representing the k-th largest element in the array.\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   Input:\n- The first line contains an integer n (1 ≤ n ≤ 10^5), the number of elements in the array.\n- The second line contains n integers (each between -10^9 and 10^9).\n- The third line contains an integer k (1 ≤ k ≤ n).\n\nOutput:\n- A single integer representing the k-th largest element in the array.\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "5\n3 2 1 5 6\n2\n",
+        "expect": "5"
+      },
+      {
+        "stdin": "3\n1 2 3\n1\n",
+        "expect": "3"
+      },
+      {
+        "stdin": "6\n3 2 3 1 2 4\n4\n",
+        "expect": "2"
+      },
+      {
+        "stdin": "4\n1 1 1 1\n1\n",
+        "expect": "1"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "10\n5 3 8 6 2 7 4 1 9 10\n5\n",
+        "expect": "6"
+      },
+      {
+        "stdin": "7\n1 2 3 4 5 6 7\n8\n",
+        "expect": "-1"
+      }
+    ],
+    "hint": "Sort the array and access the k-th largest element directly.",
+    "reference": "function solve(lines) {\n    const n = parseInt(lines[0]);\n    const arr = lines[1].split(' ').map(Number);\n    const k = parseInt(lines[2]);\n    arr.sort((a, b) => b - a);\n    return [k <= n ? arr[k - 1].toString() : '-1'];\n}",
+    "pattern": "sorting"
+  },
+  {
+    "kind": "cli",
+    "id": "letter-combinations-of-a-phone-number",
+    "title": "Letter Combinations of a Phone Number",
+    "difficulty": 2,
+    "prompt": "Given a string of digits from 2 to 9, return all possible letter combinations that the number could represent based on the mapping of digits to letters on a phone keypad. Each digit maps to a set of letters as follows: 2 -> 'abc', 3 -> 'def', 4 -> 'ghi', 5 -> 'jkl', 6 -> 'mno', 7 -> 'pqrs', 8 -> 'tuv', 9 -> 'wxyz'. The output should be in lexicographical order. If the input string is empty, return an empty list.",
+    "io": "abc\ndef\nabc\ndef",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   abc\ndef\nabc\ndef\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   abc\ndef\nabc\ndef\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   abc\ndef\nabc\ndef\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   abc\ndef\nabc\ndef\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   abc\ndef\nabc\ndef\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   abc\ndef\nabc\ndef\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "23\n",
+        "expect": "ad\nae\naf\nbd\nbe\nbf\ncd\nce\ncf\n"
+      },
+      {
+        "stdin": "2\n",
+        "expect": "a\nb\nc\n"
+      },
+      {
+        "stdin": "79\n",
+        "expect": "pw\npx\npy\npz\nqw\nqx\nqy\nqz\nrw\nrx\nry\nrz\nsw\nsx\nsy\nsz\n"
+      },
+      {
+        "stdin": "\n",
+        "expect": ""
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "7\n",
+        "expect": "p\nq\nr\ns\n"
+      },
+      {
+        "stdin": "234\n",
+        "expect": "adg\nadh\nadi\naeg\naeh\naei\nafg\nafh\nafi\nbdg\nbdh\nbdi\nbeg\nbeh\nbei\nbfg\nbfh\nbfi\ncdg\ncdh\ncdi\nceg\nceh\ncei\ncfg\ncfh\ncfi\n"
+      }
+    ],
+    "hint": "Consider using backtracking to explore all combinations of letters.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const digitToLetters = {\n    '2': 'abc', '3': 'def', '4': 'ghi', '5': 'jkl',\n    '6': 'mno', '7': 'pqrs', '8': 'tuv', '9': 'wxyz'\n  };\n  const digits = lines[0];\n  if (!digits) return out;\n  const combinations = [];\n  const backtrack = (index, path) => {\n    if (index === digits.length) {\n      combinations.push(path);\n      return;\n    }\n    const letters = digitToLetters[digits[index]];\n    for (const letter of letters) {\n      backtrack(index + 1, path + letter);\n    }\n  };\n  backtrack(0, '');\n  out.push(...combinations.sort());\n  return out;\n}",
+    "pattern": "backtracking"
+  },
+  {
+    "kind": "cli",
+    "id": "linked-list-cycle",
+    "title": "Linked List Cycle",
+    "difficulty": 2,
+    "prompt": "You are given a linked list represented by an array of integers, where the last element points to the index of an element in the list, forming a cycle if it points to a valid index. Your task is to determine if the linked list has a cycle. If the last element is -1, it indicates that there is no cycle. Return 'True' if there is a cycle, otherwise return 'False'.",
+    "io": "True\nFalse\nFalse",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   True\nFalse\nFalse\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   True\nFalse\nFalse\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   True\nFalse\nFalse\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   True\nFalse\nFalse\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   True\nFalse\nFalse\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   True\nFalse\nFalse\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n-1\n",
+        "expect": "False"
+      },
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n2\n",
+        "expect": "True"
+      },
+      {
+        "stdin": "[1, 2, 3]\n0\n",
+        "expect": "True"
+      },
+      {
+        "stdin": "[1]\n-1\n",
+        "expect": "False"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[1, 2, 3, 4]\n3\n",
+        "expect": "True"
+      },
+      {
+        "stdin": "[1, 2]\n1\n",
+        "expect": "True"
+      },
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n4\n",
+        "expect": "True"
+      }
+    ],
+    "hint": "Use a set to track visited nodes and check for cycles as you traverse.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const list = lines[0].slice(1, -1).split(',').map(Number);\n  const pos = Number(lines[1]);\n  const visited = new Set();\n  let currentIndex = 0;\n  while (currentIndex !== -1) {\n    if (visited.has(currentIndex)) {\n      out.push('True');\n      return out;\n    }\n    visited.add(currentIndex);\n    currentIndex = pos === -1 ? -1 : list[currentIndex];\n  }\n  out.push('False');\n  return out;\n}",
+    "pattern": "hash-map"
+  },
+  {
+    "kind": "cli",
+    "id": "longest-palindromic-substring",
+    "title": "Longest Palindromic Substring",
+    "difficulty": 2,
+    "prompt": "Given a string, find the longest substring that is a palindrome. A palindrome reads the same forwards and backwards. If there are multiple longest palindromic substrings, return the first one found. The input string will have a length between 1 and 1000 characters. \n\nFor example, in the string \"babad\", the longest palindromic substring is \"bab\" or \"aba\". \n\nImplement a function that takes the string as input and returns the longest palindromic substring.",
+    "io": "aba",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   aba\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   aba\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   aba\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   aba\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   aba\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   aba\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "babad\n",
+        "expect": "bab\n"
+      },
+      {
+        "stdin": "cbbd\n",
+        "expect": "bb\n"
+      },
+      {
+        "stdin": "a\n",
+        "expect": "a\n"
+      },
+      {
+        "stdin": "racecar\n",
+        "expect": "racecar\n"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "abcdefg\n",
+        "expect": "a\n"
+      },
+      {
+        "stdin": "abccba\n",
+        "expect": "abccba\n"
+      }
+    ],
+    "hint": "Consider expanding around potential centers of the palindrome.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const s = lines[0];\n  let longest = '';\n\n  for (let i = 0; i < s.length; i++) {\n    for (let j = i; j < s.length; j++) {\n      const substring = s.slice(i, j + 1);\n      if (isPalindrome(substring) && substring.length > longest.length) {\n        longest = substring;\n      }\n    }\n  }\n\n  out.push(longest);\n  return out;\n}\n\nfunction isPalindrome(str) {\n  return str === str.split('').reverse().join('');\n}",
+    "pattern": "dynamic-programming"
+  },
+  {
+    "kind": "cli",
+    "id": "longest-substring-without-repeating-characters",
+    "title": "Longest Substring Without Repeating Characters",
+    "difficulty": 2,
+    "prompt": "Given a string, find the length of the longest substring that contains at most two distinct characters. For example, in the string \"eceba\", the longest substring with at most two distinct characters is \"ece\", which has a length of 3. Your task is to implement a function that returns this length for any given input string.",
+    "io": "3\n5\n4\n2\n6",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   3\n5\n4\n2\n6\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   3\n5\n4\n2\n6\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   3\n5\n4\n2\n6\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   3\n5\n4\n2\n6\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   3\n5\n4\n2\n6\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   3\n5\n4\n2\n6\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "eceba\n",
+        "expect": "3"
+      },
+      {
+        "stdin": "ccaabbb\n",
+        "expect": "5"
+      },
+      {
+        "stdin": "abcabcabc\n",
+        "expect": "2"
+      },
+      {
+        "stdin": "aa\n",
+        "expect": "2"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "aabbcc\n",
+        "expect": "4"
+      },
+      {
+        "stdin": "abaccc\n",
+        "expect": "4"
+      },
+      {
+        "stdin": "abcde\n",
+        "expect": "2"
+      }
+    ],
+    "hint": "Use a sliding window approach to track distinct characters.",
+    "reference": "function solve(lines) {\n    const s = lines[0];\n    let left = 0, right = 0;\n    const charMap = {};\n    let maxLength = 0;\n\n    while (right < s.length) {\n        charMap[s[right]] = (charMap[s[right]] || 0) + 1;\n\n        while (Object.keys(charMap).length > 2) {\n            charMap[s[left]]--;\n            if (charMap[s[left]] === 0) delete charMap[s[left]];\n            left++;\n        }\n\n        maxLength = Math.max(maxLength, right - left + 1);\n        right++;\n    }\n\n    return [maxLength.toString()];\n}",
+    "pattern": "sliding-window"
+  },
+  {
+    "kind": "cli",
+    "id": "median-of-two-sorted-arrays",
+    "title": "Median of Two Sorted Arrays",
+    "difficulty": 3,
+    "prompt": "You are given two sorted arrays of integers, `array1` and `array2`. Your task is to find the median of the combined sorted array formed by merging both arrays. The median is defined as the middle value when the total number of elements is odd, or the average of the two middle values when the total number of elements is even. Implement a function that efficiently computes the median without fully merging the arrays. The input arrays may have different lengths.\n\nFunction Signature: `function solve(lines)`",
+    "io": "3\n2\n4",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   3\n2\n4\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   3\n2\n4\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   3\n2\n4\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   3\n2\n4\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   3\n2\n4\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   3\n2\n4\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[1, 3]\n[2]\n",
+        "expect": "2\n"
+      },
+      {
+        "stdin": "[1, 2]\n[3, 4]\n",
+        "expect": "2.5\n"
+      },
+      {
+        "stdin": "[0, 0]\n[0, 0]\n",
+        "expect": "0\n"
+      },
+      {
+        "stdin": "[]\n[1]\n",
+        "expect": "1\n"
+      },
+      {
+        "stdin": "[2]\n[]\n",
+        "expect": "2\n"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[1, 3, 8]\n[7, 9, 10, 11]\n",
+        "expect": "8\n"
+      },
+      {
+        "stdin": "[1, 2, 3, 4, 5]\n[6, 7, 8, 9, 10]\n",
+        "expect": "5.5\n"
+      }
+    ],
+    "hint": "Consider using binary search to optimize the merging process.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const array1 = JSON.parse(lines[0]);\n  const array2 = JSON.parse(lines[1]);\n  const merged = [...array1, ...array2].sort((a, b) => a - b);\n  const len = merged.length;\n  if (len % 2 === 1) {\n    out.push(merged[Math.floor(len / 2)].toString());\n  } else {\n    const mid1 = merged[len / 2 - 1];\n    const mid2 = merged[len / 2];\n    out.push(((mid1 + mid2) / 2).toString());\n  }\n  return out;\n}",
+    "pattern": "binary-search"
+  },
+  {
+    "kind": "cli",
+    "id": "meeting-rooms-ii",
+    "title": "Meeting Rooms II",
+    "difficulty": 2,
+    "prompt": "You are given a list of meeting time intervals, where each interval is represented as a pair of integers [start, end]. Your task is to determine the minimum number of meeting rooms required to accommodate all the meetings without overlap. Each meeting room can only hold one meeting at a time. If a meeting ends at the same time another meeting starts, they can use the same room. \n\nWrite a function that takes a list of intervals and returns the minimum number of meeting rooms needed.",
+    "io": "3\n1\n0\n2\n2",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   3\n1\n0\n2\n2\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   3\n1\n0\n2\n2\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   3\n1\n0\n2\n2\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   3\n1\n0\n2\n2\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   3\n1\n0\n2\n2\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   3\n1\n0\n2\n2\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[[0, 30], [5, 10], [15, 20]]\n",
+        "expect": "2\n"
+      },
+      {
+        "stdin": "[[7, 10], [2, 4]]\n",
+        "expect": "1\n"
+      },
+      {
+        "stdin": "[[1, 2], [2, 3], [3, 4]]\n",
+        "expect": "1\n"
+      },
+      {
+        "stdin": "[[0, 5], [5, 10], [10, 15]]\n",
+        "expect": "1\n"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[[1, 5], [2, 6], [3, 7], [4, 8]]\n",
+        "expect": "4\n"
+      },
+      {
+        "stdin": "[[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]\n",
+        "expect": "1\n"
+      }
+    ],
+    "hint": "Consider sorting the start and end times of the meetings.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const intervals = JSON.parse(lines[0]);\n  const startTimes = intervals.map(interval => interval[0]).sort((a, b) => a - b);\n  const endTimes = intervals.map(interval => interval[1]).sort((a, b) => a - b);\n\n  let roomCount = 0, endIndex = 0;\n  for (let startIndex = 0; startIndex < intervals.length; startIndex++) {\n    if (startTimes[startIndex] >= endTimes[endIndex]) {\n      endIndex++;\n    } else {\n      roomCount++;\n    }\n  }\n  out.push(roomCount);\n  return out;\n}",
+    "pattern": "greedy"
+  },
+  {
+    "kind": "cli",
+    "id": "merge-intervals",
+    "title": "Merge Intervals",
+    "difficulty": 2,
+    "prompt": "You are given a list of intervals where each interval is represented as a pair of integers [start, end]. Your task is to merge all overlapping intervals and return a list of the merged intervals in ascending order of their start times. If two intervals overlap, they should be combined into one. The output should maintain the same format as the input intervals. \n\nFor example, given intervals [[1,3],[2,6],[8,10],[15,18]], the merged intervals would be [[1,6],[8,10],[15,18]].",
+    "io": "1 6\n8 10\n15 18",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   1 6\n8 10\n15 18\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   1 6\n8 10\n15 18\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   1 6\n8 10\n15 18\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   1 6\n8 10\n15 18\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   1 6\n8 10\n15 18\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   1 6\n8 10\n15 18\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[[1,3],[2,6],[8,10],[15,18]]\n",
+        "expect": "1 6\n8 10\n15 18"
+      },
+      {
+        "stdin": "[[1,4],[4,5]]\n",
+        "expect": "1 5"
+      },
+      {
+        "stdin": "[[1,2],[3,4],[5,6]]\n",
+        "expect": "1 2\n3 4\n5 6"
+      },
+      {
+        "stdin": "[[1,10],[2,3],[4,5],[6,7],[8,9]]\n",
+        "expect": "1 10"
+      },
+      {
+        "stdin": "[[1,2],[2,3],[3,4],[4,5]]\n",
+        "expect": "1 5"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[[1,3],[2,4],[5,7],[6,8]]\n",
+        "expect": "1 4\n5 8"
+      },
+      {
+        "stdin": "[[1,2],[3,5],[4,6],[7,8],[9,10]]\n",
+        "expect": "1 2\n3 6\n7 8\n9 10"
+      }
+    ],
+    "hint": "Sort intervals by start time and merge overlapping ones.",
+    "reference": "function solve(lines) {\n  const intervals = JSON.parse(lines[0]);\n  intervals.sort((a, b) => a[0] - b[0]);\n  const merged = [];\n  for (const interval of intervals) {\n    if (merged.length === 0 || merged[merged.length - 1][1] < interval[0]) {\n      merged.push(interval);\n    } else {\n      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], interval[1]);\n    }\n  }\n  return merged.map(interval => interval.join(' '));\n}",
+    "pattern": "interval"
+  },
+  {
+    "kind": "cli",
+    "id": "merge-k-sorted-lists",
+    "title": "Merge k Sorted Lists",
+    "difficulty": 3,
+    "prompt": "You are given an array of k sorted linked lists. Merge all the linked lists into one sorted linked list and return it. Each linked list is represented as an array of integers. The output should be a single sorted array containing all the elements from the k linked lists. The input will contain at least one linked list and at most 100 linked lists, with each list containing up to 1000 integers. All integers are in the range of -10^6 to 10^6.",
+    "io": "3\n5\n7\n8\n10\n12\n15\n20\n25\n30\n35\n40\n50\n55\n60\n70\n80\n90\n100\n110\n120\n130\n140\n150\n160\n170\n180\n190\n200\n210\n220\n230\n240\n250\n260\n270\n280\n290\n300\n310\n320\n330\n340\n350\n360\n370\n380\n390\n400\n410\n420\n430\n440\n450\n460\n470\n480\n490\n500\n510\n520\n530\n540\n550\n560\n570\n580\n590\n600\n610\n620\n630\n640\n650\n660\n670\n680\n690\n700\n710\n720\n730\n740\n750\n760\n770\n780\n790\n800\n810\n820\n830\n840\n850\n860\n870\n880\n890\n900\n910\n920\n930\n940\n950\n960\n970\n980\n990\n1000",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   3\n5\n7\n8\n10\n12\n15\n20\n25\n30\n35\n40\n50\n55\n60\n70\n80\n90\n100\n110\n120\n130\n140\n150\n160\n170\n180\n190\n200\n210\n220\n230\n240\n250\n260\n270\n280\n290\n300\n310\n320\n330\n340\n350\n360\n370\n380\n390\n400\n410\n420\n430\n440\n450\n460\n470\n480\n490\n500\n510\n520\n530\n540\n550\n560\n570\n580\n590\n600\n610\n620\n630\n640\n650\n660\n670\n680\n690\n700\n710\n720\n730\n740\n750\n760\n770\n780\n790\n800\n810\n820\n830\n840\n850\n860\n870\n880\n890\n900\n910\n920\n930\n940\n950\n960\n970\n980\n990\n1000\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   3\n5\n7\n8\n10\n12\n15\n20\n25\n30\n35\n40\n50\n55\n60\n70\n80\n90\n100\n110\n120\n130\n140\n150\n160\n170\n180\n190\n200\n210\n220\n230\n240\n250\n260\n270\n280\n290\n300\n310\n320\n330\n340\n350\n360\n370\n380\n390\n400\n410\n420\n430\n440\n450\n460\n470\n480\n490\n500\n510\n520\n530\n540\n550\n560\n570\n580\n590\n600\n610\n620\n630\n640\n650\n660\n670\n680\n690\n700\n710\n720\n730\n740\n750\n760\n770\n780\n790\n800\n810\n820\n830\n840\n850\n860\n870\n880\n890\n900\n910\n920\n930\n940\n950\n960\n970\n980\n990\n1000\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   3\n5\n7\n8\n10\n12\n15\n20\n25\n30\n35\n40\n50\n55\n60\n70\n80\n90\n100\n110\n120\n130\n140\n150\n160\n170\n180\n190\n200\n210\n220\n230\n240\n250\n260\n270\n280\n290\n300\n310\n320\n330\n340\n350\n360\n370\n380\n390\n400\n410\n420\n430\n440\n450\n460\n470\n480\n490\n500\n510\n520\n530\n540\n550\n560\n570\n580\n590\n600\n610\n620\n630\n640\n650\n660\n670\n680\n690\n700\n710\n720\n730\n740\n750\n760\n770\n780\n790\n800\n810\n820\n830\n840\n850\n860\n870\n880\n890\n900\n910\n920\n930\n940\n950\n960\n970\n980\n990\n1000\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   3\n5\n7\n8\n10\n12\n15\n20\n25\n30\n35\n40\n50\n55\n60\n70\n80\n90\n100\n110\n120\n130\n140\n150\n160\n170\n180\n190\n200\n210\n220\n230\n240\n250\n260\n270\n280\n290\n300\n310\n320\n330\n340\n350\n360\n370\n380\n390\n400\n410\n420\n430\n440\n450\n460\n470\n480\n490\n500\n510\n520\n530\n540\n550\n560\n570\n580\n590\n600\n610\n620\n630\n640\n650\n660\n670\n680\n690\n700\n710\n720\n730\n740\n750\n760\n770\n780\n790\n800\n810\n820\n830\n840\n850\n860\n870\n880\n890\n900\n910\n920\n930\n940\n950\n960\n970\n980\n990\n1000\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   3\n5\n7\n8\n10\n12\n15\n20\n25\n30\n35\n40\n50\n55\n60\n70\n80\n90\n100\n110\n120\n130\n140\n150\n160\n170\n180\n190\n200\n210\n220\n230\n240\n250\n260\n270\n280\n290\n300\n310\n320\n330\n340\n350\n360\n370\n380\n390\n400\n410\n420\n430\n440\n450\n460\n470\n480\n490\n500\n510\n520\n530\n540\n550\n560\n570\n580\n590\n600\n610\n620\n630\n640\n650\n660\n670\n680\n690\n700\n710\n720\n730\n740\n750\n760\n770\n780\n790\n800\n810\n820\n830\n840\n850\n860\n870\n880\n890\n900\n910\n920\n930\n940\n950\n960\n970\n980\n990\n1000\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   3\n5\n7\n8\n10\n12\n15\n20\n25\n30\n35\n40\n50\n55\n60\n70\n80\n90\n100\n110\n120\n130\n140\n150\n160\n170\n180\n190\n200\n210\n220\n230\n240\n250\n260\n270\n280\n290\n300\n310\n320\n330\n340\n350\n360\n370\n380\n390\n400\n410\n420\n430\n440\n450\n460\n470\n480\n490\n500\n510\n520\n530\n540\n550\n560\n570\n580\n590\n600\n610\n620\n630\n640\n650\n660\n670\n680\n690\n700\n710\n720\n730\n740\n750\n760\n770\n780\n790\n800\n810\n820\n830\n840\n850\n860\n870\n880\n890\n900\n910\n920\n930\n940\n950\n960\n970\n980\n990\n1000\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[[1,4,5],[1,3,4],[2,6]]\n",
+        "expect": "1\n1\n2\n3\n4\n4\n5\n6\n"
+      },
+      {
+        "stdin": "[[2,6],[1,3,5],[4]]\n",
+        "expect": "1\n2\n3\n4\n5\n6\n"
+      },
+      {
+        "stdin": "[[10,20,30],[5,15,25],[1,2,3]]\n",
+        "expect": "1\n2\n3\n5\n10\n15\n20\n25\n30\n"
+      },
+      {
+        "stdin": "[[7,8,9],[1,2,3],[4,5,6]]\n",
+        "expect": "1\n2\n3\n4\n5\n6\n7\n8\n9\n"
+      },
+      {
+        "stdin": "[[1],[2],[3],[4],[5]]\n",
+        "expect": "1\n2\n3\n4\n5\n"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[[1,2,3],[4,5,6],[7,8,9]]\n",
+        "expect": "1\n2\n3\n4\n5\n6\n7\n8\n9\n"
+      },
+      {
+        "stdin": "[[10,20],[15,25],[5,30]]\n",
+        "expect": "5\n10\n15\n20\n25\n30\n"
+      },
+      {
+        "stdin": "[[100],[200],[300],[400],[500]]\n",
+        "expect": "100\n200\n300\n400\n500\n"
+      }
+    ],
+    "hint": "Consider using a min-heap to efficiently merge the lists.",
+    "reference": "function solve(lines) {\n  const lists = JSON.parse(lines[0]);\n  const merged = [];\n  lists.forEach(list => merged.push(...list));\n  merged.sort((a, b) => a - b);\n  return merged.map(String);\n}",
+    "pattern": "heap"
+  },
+  {
+    "kind": "cli",
+    "id": "mini-parser",
+    "title": "Mini Parser",
+    "difficulty": 2,
+    "prompt": "You are tasked with parsing a nested list structure represented as a string. Each element in the list can be an integer or another nested list. Your goal is to convert this string representation into a nested list of integers. The string will be formatted such that integers are separated by commas and nested lists are enclosed in brackets. For example, the string '[1,2,[3,4,[5]]]' should be converted to the nested list structure [[1,2],[3,4,[5]]]. Write a function that takes this string as input and returns the corresponding nested list.",
+    "io": "Input:\n[1,2,[3,4,[5]]]\nOutput:\n1\n2\n3\n4\n5",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   Input:\n[1,2,[3,4,[5]]]\nOutput:\n1\n2\n3\n4\n5\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   Input:\n[1,2,[3,4,[5]]]\nOutput:\n1\n2\n3\n4\n5\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   Input:\n[1,2,[3,4,[5]]]\nOutput:\n1\n2\n3\n4\n5\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   Input:\n[1,2,[3,4,[5]]]\nOutput:\n1\n2\n3\n4\n5\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   Input:\n[1,2,[3,4,[5]]]\nOutput:\n1\n2\n3\n4\n5\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   Input:\n[1,2,[3,4,[5]]]\nOutput:\n1\n2\n3\n4\n5\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[1,2,[3,4,[5]]]\n",
+        "expect": "1\n2\n3\n4\n5"
+      },
+      {
+        "stdin": "[10,[20,30],40]\n",
+        "expect": "10\n20\n30\n40"
+      },
+      {
+        "stdin": "[[],[1,[2,[3]]]]\n",
+        "expect": "1\n2\n3"
+      },
+      {
+        "stdin": "[1,[2,3],[4,[5,6]]]\n",
+        "expect": "1\n2\n3\n4\n5\n6"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[[[1,2],3],4]\n",
+        "expect": "1\n2\n3\n4"
+      },
+      {
+        "stdin": "[1,[2,[3,[4,[5]]]]]\n",
+        "expect": "1\n2\n3\n4\n5"
+      }
+    ],
+    "hint": "Consider using a stack to manage nested lists while parsing the string.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const parseList = (str) => {\n    let stack = [];\n    let current = [];\n    let num = '';\n    for (let char of str) {\n      if (char === '[') {\n        stack.push(current);\n        current = [];\n      } else if (char === ']') {\n        if (num) {\n          current.push(parseInt(num));\n          num = '';\n        }\n        const last = stack.pop();\n        last.push(current);\n        current = last;\n      } else if (char === ',') {\n        if (num) {\n          current.push(parseInt(num));\n          num = '';\n        }\n      } else {\n        num += char;\n      }\n    }\n    return current;\n  };\n  const nestedList = parseList(lines[0].trim());\n  const flatten = (list) => {\n    for (let item of list) {\n      if (Array.isArray(item)) {\n        flatten(item);\n      } else {\n        out.push(item);\n      }\n    }\n  };\n  flatten(nestedList);\n  return out;\n}",
+    "pattern": "stack"
+  },
+  {
+    "kind": "cli",
+    "id": "minimum-add-to-make-parentheses-valid",
+    "title": "Minimum Add to Make Parentheses Valid",
+    "difficulty": 2,
+    "prompt": "You are given a string consisting of parentheses, and your task is to determine the minimum number of parentheses that need to be added to make the string valid. A valid string is one where every opening parenthesis has a corresponding closing parenthesis and they are correctly nested. For example, the string \"(()\" is valid, while the string \"())(\" is not. Your function should return the minimum number of parentheses needed to make the input string valid.",
+    "io": "2",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   2\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   2\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   2\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   2\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   2\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   2\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "())(\n",
+        "expect": "2\n"
+      },
+      {
+        "stdin": "((\n",
+        "expect": "2\n"
+      },
+      {
+        "stdin": "())\n",
+        "expect": "1\n"
+      },
+      {
+        "stdin": "()()()\n",
+        "expect": "0\n"
+      },
+      {
+        "stdin": "((()))\n",
+        "expect": "0\n"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "()(\n",
+        "expect": "1\n"
+      },
+      {
+        "stdin": "())())(\n",
+        "expect": "3\n"
+      }
+    ],
+    "hint": "Count unmatched parentheses to find how many need to be added.",
+    "reference": "function solve(lines) {\n  const out = [];\n  let open = 0;\n  let close = 0;\n  for (let char of lines[0]) {\n    if (char === '(') {\n      open++;\n    } else if (char === ')') {\n      if (open > 0) {\n        open--;\n      } else {\n        close++;\n      }\n    }\n  }\n  out.push((open + close).toString());\n  return out;\n}",
+    "pattern": "string"
+  },
+  {
+    "kind": "cli",
+    "id": "product-of-array-except-self",
+    "title": "Product of Array Except Self",
+    "difficulty": 2,
+    "prompt": "Given an array of integers, return an array such that each element at index i of the output array is the product of all the numbers in the input array except the number at i. You must do this without using division and in O(n) time complexity. The input array will have at least one element and at most 1000 elements.",
+    "io": "3\n2\n6\n1",
+    "starters": {
+      "python": "import sys\n\n# Input:\n#   3\n2\n6\n1\ndef solve(lines):\n    out = []\n    # your code here — append each output line to out\n    return out\n",
+      "javascript": "// Input:\n//   3\n2\n6\n1\n// lines = input split by newline (no trailing newlines)\nfunction solve(lines) {\n  const out = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "typescript": "// Input:\n//   3\n2\n6\n1\nfunction solve(lines: string[]): string[] {\n  const out: string[] = [];\n  // your code here — push each output line onto out\n  return out;\n}\n",
+      "cpp": "#include <bits/stdc++.h>\nusing namespace std;\n\n// Input:\n//   3\n2\n6\n1\nvector<string> solve(const vector<string>& lines) {\n    vector<string> out;\n    // your code here — push each output line onto out\n    return out;\n}\n\nint main() {\n    vector<string> lines;\n    string l;\n    while (getline(cin, l)) lines.push_back(l);\n    for (const string& o : solve(lines)) cout << o << \"\\n\";\n    return 0;\n}\n",
+      "java": "import java.util.*;\n\nclass Main {\n    // Input:\n    //   3\n2\n6\n1\n    static List<String> solve(List<String> lines) {\n        List<String> out = new ArrayList<>();\n        // your code here — add each output line to out\n        return out;\n    }\n\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        List<String> lines = new ArrayList<>();\n        while (s.hasNextLine()) lines.add(s.nextLine());\n        for (String o : solve(lines)) System.out.println(o);\n    }\n}\n",
+      "go": "package main\n\nimport (\n    \"bufio\"\n    \"fmt\"\n    \"os\"\n)\n\n// Input:\n//   3\n2\n6\n1\nfunc solve(lines []string) []string {\n    out := []string{}\n    // your code here — append each output line to out\n    return out\n}\n\nfunc main() {\n    sc := bufio.NewScanner(os.Stdin)\n    var lines []string\n    for sc.Scan() {\n        lines = append(lines, sc.Text())\n    }\n    for _, o := range solve(lines) {\n        fmt.Println(o)\n    }\n}\n"
+    },
+    "tests": [
+      {
+        "stdin": "[1,2,3,4]\n",
+        "expect": "24\n12\n8\n6\n"
+      },
+      {
+        "stdin": "[5,1,2]\n",
+        "expect": "2\n10\n5\n"
+      },
+      {
+        "stdin": "[0,1,2,3]\n",
+        "expect": "6\n0\n0\n0\n"
+      }
+    ],
+    "hidden": [
+      {
+        "stdin": "[1,0,3,4]\n",
+        "expect": "0\n12\n0\n0\n"
+      },
+      {
+        "stdin": "[2,2,2,2,2]\n",
+        "expect": "16\n16\n16\n16\n16\n"
+      }
+    ],
+    "hint": "Consider using two passes to calculate products from both sides of the array.",
+    "reference": "function solve(lines) {\n  const out = [];\n  const nums = JSON.parse(lines[0]);\n  const length = nums.length;\n  const output = new Array(length).fill(1);\n\n  let leftProduct = 1;\n  for (let i = 0; i < length; i++) {\n    output[i] = leftProduct;\n    leftProduct *= nums[i];\n  }\n\n  let rightProduct = 1;\n  for (let i = length - 1; i >= 0; i--) {\n    output[i] *= rightProduct;\n    rightProduct *= nums[i];\n  }\n\n  output.forEach(value => out.push(value.toString()));\n  return out;\n}",
+    "pattern": "mixed"
+  }
 ];
 
 /* Generated problem id → company ids (facts from the mirror metadata). */
 export const AI_PROBLEM_COMPANIES: Record<string, string[]> = {
+  "basic-calculator-ii": ["meta"],
+  "can-place-flowers": ["microsoft"],
+  "construct-k-palindrome-strings": ["uber"],
+  "dot-product-of-two-sparse-vectors": ["meta"],
+  "first-bad-version": ["google"],
+  "first-missing-positive": ["microsoft"],
+  "flatten-2d-vector": ["airbnb"],
+  "generate-parentheses": ["apple"],
+  "happy-number": ["google"],
+  "intersection-of-two-linked-lists": ["airbnb"],
+  "kth-largest-element-in-an-array": ["meta","microsoft"],
+  "letter-combinations-of-a-phone-number": ["microsoft","uber"],
+  "linked-list-cycle": ["spotify"],
+  "longest-palindromic-substring": ["microsoft"],
+  "longest-substring-without-repeating-characters": ["amazon","apple","microsoft","spotify"],
+  "median-of-two-sorted-arrays": ["amazon","apple"],
+  "meeting-rooms-ii": ["amazon","google"],
+  "merge-intervals": ["amazon","apple","google","meta","uber"],
+  "merge-k-sorted-lists": ["amazon","apple","microsoft"],
+  "mini-parser": ["airbnb"],
+  "minimum-add-to-make-parentheses-valid": ["meta"],
+  "product-of-array-except-self": ["apple","uber"]
 };
 
 /* Generated problem id → CLI topic bucket (company frequency + roadmap). */
 export const AI_CLI_TOPICS: Record<string, string> = {
+  "basic-calculator-ii": "Strings & stacks",
+  "can-place-flowers": "Arrays & hashing",
+  "construct-k-palindrome-strings": "Arrays & hashing",
+  "dot-product-of-two-sparse-vectors": "Algorithms",
+  "first-bad-version": "Search & sorting",
+  "first-missing-positive": "Arrays & hashing",
+  "flatten-2d-vector": "Algorithms",
+  "generate-parentheses": "Search & sorting",
+  "happy-number": "Arrays & hashing",
+  "intersection-of-two-linked-lists": "Arrays & hashing",
+  "kth-largest-element-in-an-array": "Arrays & hashing",
+  "letter-combinations-of-a-phone-number": "Search & sorting",
+  "linked-list-cycle": "Arrays & hashing",
+  "longest-palindromic-substring": "Dynamic programming",
+  "longest-substring-without-repeating-characters": "Arrays & hashing",
+  "median-of-two-sorted-arrays": "Search & sorting",
+  "meeting-rooms-ii": "Arrays & hashing",
+  "merge-intervals": "Arrays & hashing",
+  "merge-k-sorted-lists": "Dynamic programming",
+  "mini-parser": "Strings & stacks",
+  "minimum-add-to-make-parentheses-valid": "Strings & stacks",
+  "product-of-array-except-self": "Algorithms"
 };
