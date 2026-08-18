@@ -52,17 +52,28 @@ async function cleanOne(item) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 120_000);
   try {
-    const res = await fetch(`${aiBase}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: aiModel,
-        temperature: 0.2,
-        max_tokens: 700,
-        messages: [{ role: "user", content: buildCleanPrompt(item) }]
-      }),
-      signal: ac.signal
-    });
+    /* 429 (free-tier rate limit) and 5xx are transient — retry with backoff */
+    let res;
+    for (let attempt = 1; ; attempt++) {
+      res = await fetch(`${aiBase}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: aiModel,
+          temperature: 0.2,
+          max_tokens: 700,
+          messages: [{ role: "user", content: buildCleanPrompt(item) }]
+        }),
+        signal: ac.signal
+      });
+      if (!res.ok && (res.status === 429 || res.status >= 500) && attempt < 4) {
+        const wait = Number(res.headers.get("retry-after")) || 4 * attempt;
+        console.warn(yellow(`  ↻ provider HTTP ${res.status} — retrying in ${wait}s (attempt ${attempt}/4)`));
+        await sleep(wait * 1000);
+        continue;
+      }
+      break;
+    }
     if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
     const body = await res.json();
     return parseCleanJson(body?.choices?.[0]?.message?.content);

@@ -89,17 +89,29 @@ async function draftOne(candidate, retry = false, gate = null, ai = null) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 120_000);
   try {
-    const res = await fetch(`${aiBase}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: aiModel,
-        temperature: 0.3,
-        max_tokens: 900,
-        messages
-      }),
-      signal: ac.signal
-    });
+    /* 429 (free-tier rate limit) and 5xx are transient — retry with backoff
+       instead of aborting the run after 3 consecutive errors */
+    let res;
+    for (let attempt = 1; ; attempt++) {
+      res = await fetch(`${aiBase}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${aiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: aiModel,
+          temperature: 0.3,
+          max_tokens: 900,
+          messages
+        }),
+        signal: ac.signal
+      });
+      if (!res.ok && (res.status === 429 || res.status >= 500) && attempt < 4) {
+        const wait = Number(res.headers.get("retry-after")) || 4 * attempt;
+        console.warn(yellow(`  ↻ provider HTTP ${res.status} — retrying in ${wait}s (attempt ${attempt}/4)`));
+        await sleep(wait * 1000);
+        continue;
+      }
+      break;
+    }
     if (!res.ok) throw new Error(`AI HTTP ${res.status}`);
     const body = await res.json();
     return parseDraftJson(body?.choices?.[0]?.message?.content);
