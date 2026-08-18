@@ -19,7 +19,7 @@
  */
 
 import { buildCleanPrompt, parseCleanJson, applyClean } from "./ai-clean-lib.js";
-import { loadAiProviderConfig } from "./ai-config.js";
+import { altProvider, loadAiProviderConfig } from "./ai-config.js";
 import { sqlStr } from "./scrape-lib.js";
 
 const API = "https://api.supabase.com/v1";
@@ -70,9 +70,9 @@ async function main() {
   /* provider config is editable from the Admin dashboard (Supabase row);
      env AI_CLEAN_* are the legacy fallback */
   const aiCfg = await loadAiProviderConfig({ token, projectRef });
-  const aiKey = aiCfg.key;
-  const aiBase = aiCfg.base;
-  const aiModel = aiCfg.model;
+  let aiKey = aiCfg.key;
+  let aiBase = aiCfg.base;
+  let aiModel = aiCfg.model;
   if (aiCfg.source === "supabase") console.log(green(`AI provider from Supabase (model ${aiModel}, base ${aiBase}).`));
   if (!aiKey) {
     console.log("No AI key configured — skipping AI cleaning (optional step). Set it in Admin → Secrets → AI pipeline.");
@@ -99,6 +99,7 @@ async function main() {
   let ok = 0;
   let failed = 0;
   let dedup = 0;
+  let authFallbackUsed = false;
   for (const row of rows) {
     try {
       const clean = await cleanOne({ question: row.question, fieldId: row.field_id, level: row.level, meta: row.meta });
@@ -117,6 +118,20 @@ async function main() {
       ok++;
       console.log(`  ✓ id=${row.id} — ${applied.question.slice(0, 70)}`);
     } catch (e) {
+      /* self-heal: the app-saved key was rejected (401/403 — e.g. the model
+         name got pasted into the key field) → retry this row once with the
+         legacy env key instead of failing the whole run */
+      if (/^AI HTTP (401|403)$/.test(String(e.message)) && !authFallbackUsed) {
+        const alt = altProvider(aiCfg);
+        if (alt) {
+          aiKey = alt.key;
+          aiBase = alt.base;
+          aiModel = alt.model;
+          authFallbackUsed = true;
+          console.warn(yellow(`  ↻ id=${row.id} — app-saved key rejected (${e.message}); retrying with the env AI_CLEAN_KEY fallback`));
+          continue;
+        }
+      }
       /* the AI's reworded question already exists in the bank (unique key) —
          that's dedup working, not a failure: drop the redundant draft */
       if (/23505|duplicate key/i.test(String(e.message))) {

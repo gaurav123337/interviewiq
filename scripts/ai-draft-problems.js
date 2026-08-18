@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { extractCompanyList } from "./scrape-lib.js";
-import { loadAiProviderConfig } from "./ai-config.js";
+import { altProvider, loadAiProviderConfig } from "./ai-config.js";
 import {
   CURATED_TITLES, PATTERN_TOPIC, buildCandidates, buildDraftPrompt, easyCandidates,
   emitProblemsFile, gateProblem, normalizeProblem, parseDraftJson, parseGeneratedProblems,
@@ -193,7 +193,7 @@ async function main() {
   /* provider config is editable from the Admin dashboard (Supabase row);
      env AI_CLEAN_* are the legacy fallback — loaded before dry-run too so the
      model name shown is the real one */
-  const ai = await loadAiProviderConfig();
+  let ai = await loadAiProviderConfig();
   if (ai.source === "supabase") console.log(green(`AI provider from Supabase (model ${ai.model}, base ${ai.base}).`));
   if (dryRun) {
     console.log(green(`DRY RUN — would draft up to ${plan} problem(s) from ${candidates.length} candidates (model ${ai.model}, max ${maxCalls} calls). No API calls, no writes.`));
@@ -214,6 +214,7 @@ async function main() {
   const failed = [];
   let calls = 0;
   let httpErrors = 0;
+  let authFallbackUsed = false;
   for (const c of candidates) {
     if (passed.length >= plan) break;
     if (calls >= maxCalls) { console.log(yellow("Cost cap reached — stopping early.")); break; }
@@ -247,6 +248,20 @@ async function main() {
       console.log(green(`  ✓ ${c.title} (${problem.pattern}, ${["Easy", "Medium", "Hard"][problem.difficulty - 1]}) — ${problem.tests.length + problem.hidden.length} cases green`));
     } catch (e) {
       const msg = e && e.message ? String(e.message) : String(e);
+      /* self-heal: the app-saved key was rejected (401/403 — e.g. the model
+         name got pasted into the key field) → retry this candidate once with
+         the legacy env key instead of failing the whole run */
+      if (/^AI HTTP (401|403)$/.test(msg) && !authFallbackUsed) {
+        const alt = altProvider(ai);
+        if (alt) {
+          ai = alt;
+          authFallbackUsed = true;
+          httpErrors = 0;
+          calls--; /* refund this attempt — retrying the same candidate */
+          console.warn(yellow(`  ↻ ${c.title} — app-saved key rejected (${msg}); retrying with the env AI_CLEAN_KEY fallback`));
+          continue;
+        }
+      }
       const isHttp = /^AI HTTP \d{3}/.test(msg);
       httpErrors = isHttp ? httpErrors + 1 : 0;
       failed.push({ title: c.title, why: msg });

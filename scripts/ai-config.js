@@ -60,3 +60,21 @@ export async function loadAiProviderConfig({ token, projectRef } = {}) {
     source: "env"
   };
 }
+
+/** Self-heal for a misconfigured app-saved key: when the ACTIVE config came
+    from Supabase but its key is rejected by the provider (401/403 — e.g. the
+    model name was pasted into the key field), callers swap to the legacy env
+    key and retry instead of dying. Returns null when there's no env key. */
+export function altProvider(active) {
+  if (active && active.source === "supabase") {
+    const k = process.env.AI_CLEAN_KEY;
+    if (!k) return null;
+    return {
+      key: k,
+      base: (process.env.AI_CLEAN_BASE || "https://api.openai.com/v1").replace(/\/+$/, ""),
+      model: process.env.AI_CLEAN_MODEL || "gpt-4o-mini",
+      source: "env"
+    };
+  }
+  return null;
+}

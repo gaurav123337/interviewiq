@@ -4326,10 +4326,18 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
   }, [status]);
 
   const save = async () => {
+    /* guard: a model ID (vendor/name, e.g. nvidia/nemotron-3.5-lightning:free)
+       is NOT a key — catching this here stops a broken config from silently
+       ​​killing every AI run until someone reads the workflow logs */
+    const k = key.trim();
+    if (/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]+$/.test(k)) {
+      onToast("✗ That looks like a MODEL name — paste your API key here (sk-…); the model goes in the Model field");
+      return;
+    }
     setSaving(true);
     setTestNote(null);
     try {
-      await saveAiProviderConfig({ key, base, model });
+      await saveAiProviderConfig({ key: k, base, model });
       onToast("🤖 AI pipeline key saved — the next scrape/problem-bank run uses it");
       setKey("");
       await onLoad();
