@@ -1,13 +1,10 @@
-/* AI provider config for the content pipeline (AI cleaner + AI problem bank)
-   AND per-module model wiring (docs/deep-dive-system-design-plan.md §2).
-   The live key/base/model live in public.ai_provider_config: key='provider'
-   is the DEFAULT every module falls back to; key='module:<id>' rows override
-   it per module (some models explain better, some are better at RAG).
-   The table is PRIVATE (RLS is_admin()); the Admin dashboard edits it here,
-   the pipeline scripts (scripts/ai-config.js) read it via the Management
-   API, and the ai-chat edge function resolves it server-side so app AI
-   calls never need a client key. Keep AI_MODULES in sync with
-   supabase/functions/_shared/module-model.ts and scripts/ai-config.js. */
+/* AI provider config for the content pipeline (AI cleaner + AI problem bank).
+   The live key/base/model live in public.ai_provider_config (key='provider')
+   — a PRIVATE admin-only table (RLS is_admin()), unlike app_config which is
+   publicly readable. The Admin dashboard edits it here; the pipeline scripts
+   (scripts/ai-config.js) read the same row server-side via the Management
+   API, so changing the key in the app is all that's needed — no GitHub
+   Actions secret edits. */
 
 import { getCloudState, getSupabaseClient } from "./cloud";
 
@@ -81,71 +78,6 @@ export async function saveAiProviderConfig(cfg: AiProviderConfig): Promise<void>
     { onConflict: "key" }
   );
   if (error) throw new Error(error.message);
-}
-
-/* ------------------------------------------------------------------ */
-/* Per-module model rows (Admin UI + preview)                          */
-/* ------------------------------------------------------------------ */
-
-export interface ModuleModelRow {
-  model: string;
-  key: string;
-  base: string;
-}
-
-/** Reads every module:<id> override row (admin-only via RLS). */
-export async function getModuleModels(): Promise<Record<string, ModuleModelRow>> {
-  const client = await getSupabaseClient();
-  if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
-  const { data, error } = await client.from("ai_provider_config").select("key, value").like("key", "module:%");
-  if (error) throw new Error(error.message);
-  const out: Record<string, ModuleModelRow> = {};
-  for (const r of (data ?? []) as { key: string; value: unknown }[]) {
-    const id = r.key.replace(/^module:/, "");
-    const v = (r.value ?? {}) as Partial<AiProviderConfig>;
-    out[id] = { model: v.model ?? "", key: v.key ?? "", base: v.base ?? "" };
-  }
-  return out;
-}
-
-/** Saves a module override (blank key/base = inherit from provider); pass
-    null/blank to delete the override and fall back to the default provider. */
-export async function saveModuleModel(id: string, cfg: { model: string; key?: string; base?: string } | null): Promise<void> {
-  const client = await getSupabaseClient();
-  if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
-  if (!cfg || (!cfg.model.trim() && !(cfg.key ?? "").trim())) {
-    const { error } = await client.from("ai_provider_config").delete().eq("key", `module:${id}`);
-    if (error) throw new Error(error.message);
-    return;
-  }
-  const value = {
-    model: cfg.model.trim(),
-    key: (cfg.key ?? "").trim(),
-    base: (cfg.base ?? "").trim().replace(/\/+$/, "")
-  };
-  const { error } = await client.from("ai_provider_config").upsert(
-    { key: `module:${id}`, value, updated_at: Date.now() },
-    { onConflict: "key" }
-  );
-  if (error) throw new Error(error.message);
-}
-
-/** Pure resolution preview — mirrors supabase/functions/_shared/module-model.ts.
-    moduleRow null/blank = provider; provider null = none. Display-only (the
-    real resolution happens server-side in the ai-chat function). */
-export function resolveModulePreview(
-  moduleRow: ModuleModelRow | null | undefined,
-  provider: { keyHint: string; model: string } | null | undefined
-): { model: string; source: "module" | "provider" | "none"; keyHint: string } {
-  if (moduleRow && (moduleRow.model || moduleRow.key)) {
-    return {
-      model: moduleRow.model || provider?.model || "",
-      source: "module",
-      keyHint: moduleRow.key ? hint(moduleRow.key) : (provider?.keyHint ?? "")
-    };
-  }
-  if (provider?.model) return { model: provider.model, source: "provider", keyHint: provider.keyHint ?? "" };
-  return { model: "", source: "none", keyHint: "" };
 }
 
 /** One live call to the provider's /models endpoint with the given key —
