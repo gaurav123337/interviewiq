@@ -8,6 +8,7 @@
    Email goes through the shared sendEmail helper (RESEND_API_KEY secret). */
 
 import { OWNER_EMAIL, requireAdmin } from "../_shared/auth.ts";
+import { getSecret } from "../_shared/secrets.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { sendEmail } from "../_shared/email.ts";
@@ -36,7 +37,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: false, error: "digest already sending" }), { status: 429, headers });
     }
 
-    const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+    const apiKey = await getSecret("RESEND_API_KEY");
     const service = serviceClient();
 
     /* ---- gather the week's state ---- */

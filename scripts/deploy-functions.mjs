@@ -22,6 +22,7 @@ if (!PAT) {
 
 const SHARED = readFileSync(join(root, "supabase/functions/_shared/payment.ts"), "utf8");
 const SHARED_EMAIL = readFileSync(join(root, "supabase/functions/_shared/email.ts"), "utf8");
+const SHARED_SECRETS = readFileSync(join(root, "supabase/functions/_shared/secrets.ts"), "utf8");
 
 const FUNCTIONS = [
   { slug: "pay-checkout", dir: "pay-checkout", verifyJwt: true },
@@ -41,6 +42,8 @@ function inline(indexSrc) {
   const named = indexSrc.match(paymentMarker)[0].match(/\{([^}]*)\}/)[1].split(",").map(s => s.trim()).filter(Boolean);
   let out = indexSrc.replace(paymentMarker, SHARED + "\n");
   if (emailMarker.test(out)) out = out.replace(emailMarker, SHARED_EMAIL + "\n");
+  const secretsMarker = /import\s*\{[^}]*\}\s*from\s*"\.\.\/_shared\/secrets\.ts";\s*/;
+  if (secretsMarker.test(out)) out = out.replace(secretsMarker, SHARED_SECRETS + "\n");
   return out + "\n/* (inlined exports: " + named.join(", ") + ") */\n";
 }
 

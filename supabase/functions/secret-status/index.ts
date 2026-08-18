@@ -13,6 +13,7 @@
 
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
+import { secretConfigured } from "../_shared/secrets.ts";
 
 interface ExpectedSecret {
   name: string;
@@ -67,14 +68,16 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ok: false, error: "forbidden — admin session required" }), { status: 401, headers });
     }
 
-    const secrets = EXPECTED.map(s => ({
+    /* app-managed credentials resolve from the edge_secrets table first
+       (env fallback) — so "configured" means table row OR env secret. */
+    const secrets = await Promise.all(EXPECTED.map(async s => ({
       name: s.name,
-      configured: Deno.env.has(s.name),
+      configured: await secretConfigured(s.name),
       required: s.required,
       builtin: !!s.builtin,
       functions: s.functions,
       note: s.note
-    }));
+    })));
 
     const serviceRoleAvailable =
       Deno.env.has("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.has("SERVICE_ROLE_KEY") || Deno.env.has("SUPABASE_SECRET_KEYS");

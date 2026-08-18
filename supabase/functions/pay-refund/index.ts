@@ -22,6 +22,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getPaymentProvider, refundPolicyCheck, type ProviderEnv, type RefundPolicy } from "../_shared/payment.ts";
+import { getSecret } from "../_shared/secrets.ts";
 import { sendRefundEmail } from "../_shared/email.ts";
 
 const cors = (req: Request): Record<string, string> => ({
@@ -134,7 +135,7 @@ Deno.serve(async (req) => {
       amountLabel,
       reason,
       refundId: providerRefundId,
-      apiKey: env.RESEND_API_KEY
+      apiKey: await getSecret("RESEND_API_KEY")
     });
 
     return new Response(JSON.stringify({

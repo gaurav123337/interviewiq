@@ -11,6 +11,7 @@
    radius: each emailed code works exactly once. */
 
 import { requireUser } from "../_shared/auth.ts";
+import { getSecret } from "../_shared/secrets.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { sendEmail } from "../_shared/email.ts";
 import { isValidRecoveryCode } from "../_shared/recoveryCodes.ts";
@@ -68,7 +69,7 @@ Deno.serve(async (req) => {
     const rowsHtml = codes.map(c => `<div style="font-family:monospace;font-size:15px;letter-spacing:1px;padding:8px 12px;margin:4px 0;background:#f1f5f9;border-radius:8px;color:#0f172a">${c}</div>`).join("");
     const r = await sendEmail({
       to: email,
-      apiKey: Deno.env.get("RESEND_API_KEY") ?? "",
+      apiKey: await getSecret("RESEND_API_KEY"),
       subject: "InterviewIQ — your recovery codes backup",
       html: `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:24px;color:#0f172a">
         <h2 style="margin:0 0 12px">🔑 InterviewIQ recovery codes</h2>

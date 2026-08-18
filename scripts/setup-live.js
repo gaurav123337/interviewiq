@@ -137,6 +137,7 @@ async function main() {
   const SHARED_AUTH = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/auth.ts", import.meta.url)), "utf8");
   const SHARED_CORS = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/cors.ts", import.meta.url)), "utf8");
   const SHARED_EMAIL = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/email.ts", import.meta.url)), "utf8");
+  const SHARED_SECRETS = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/secrets.ts", import.meta.url)), "utf8");
   const DEPLOY = [
     { slug: "secret-status", entry: "secret-status/index.ts" },
     { slug: "test-email", entry: "test-email/index.ts" }
@@ -147,6 +148,7 @@ async function main() {
     if (re("\\.\\./_shared/auth\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/auth\\.ts"), SHARED_AUTH + "\n");
     if (re("\\.\\./_shared/cors\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/cors\\.ts"), SHARED_CORS + "\n");
     if (re("\\.\\./_shared/email\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/email\\.ts"), SHARED_EMAIL + "\n");
+    if (re("\\.\\./_shared/secrets\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/secrets\\.ts"), SHARED_SECRETS + "\n");
     return out;
   };
   for (const fn of DEPLOY) {

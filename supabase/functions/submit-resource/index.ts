@@ -19,6 +19,7 @@ import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { cleanText, guardResource, looksInjected, textWithinLimits } from "../_shared/resourceGuard.ts";
 import { scanRemote, type ContentScanResult } from "../_shared/contentScan.ts";
+import { getSecret } from "../_shared/secrets.ts";
 import { makeReputationChecker } from "../_shared/reputation.ts";
 import { serviceClient } from "../_shared/serviceClient.ts";
 
@@ -61,8 +62,12 @@ Deno.serve(async (req) => {
       return json(headers, 400, { ok: false, error: `That text was flagged as a prompt-injection attempt (${inj.reason})` });
     }
 
-    /* L1 + L2 — the guard. Fail-closed: errors land as "pending". */
-    const verdict = await guardResource(url, { checkReputation: makeReputationChecker(Deno.env) });
+    /* L1 + L2 — the guard. Fail-closed: errors land as "pending". The Safe
+       Browsing key is app-managed (edge_secrets table) — resolve it once,
+       then hand the checker a plain env-like object (sync get). */
+    const safeBrowsingKey = await getSecret("SAFE_BROWSING_API_KEY");
+    const reputationEnv = { get: (k: string) => (k === "SAFE_BROWSING_API_KEY" ? safeBrowsingKey : Deno.env.get(k)) };
+    const verdict = await guardResource(url, { checkReputation: makeReputationChecker(reputationEnv) });
 
     /* L3 — server-side content scan (static heuristics on the fetched page;
        never executes anything). A scan failure is fail-closed: "pending". */

@@ -16,6 +16,7 @@
    the feed. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getSecret } from "../_shared/secrets.ts";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
 import { companyFromLink, feedTitle, parseRss, splitRssTitle, stripJobNumberPrefix } from "../_shared/rss.ts";
 import { safeFetch, readBodyText, SafeFetchError } from "../_shared/safeFetch.ts";
@@ -405,10 +406,11 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
       if (enrich.provider) {
         const cap = enrich.cap ?? 30;
         const candidates = rows.filter(r => !r.salary).slice(0, cap);
+        const [adzunaAppId, adzunaAppKey] = await Promise.all([getSecret("ADZUNA_APP_ID"), getSecret("ADZUNA_APP_KEY")]);
         const bands = await mapLimit(candidates, 5, (row) =>
           enrichSalary(enrich.provider, {
-            appId: Deno.env.get("ADZUNA_APP_ID") ?? "",
-            appKey: Deno.env.get("ADZUNA_APP_KEY") ?? "",
+            appId: adzunaAppId,
+            appKey: adzunaAppKey,
             country: enrich.country ?? "us"
           }, { title: row.title, company: row.company, location: row.location ?? "", description: row.description })
         );
@@ -459,7 +461,7 @@ async function handle(req: Request): Promise<Response> {
 
   /* auth: a signed-in user's JWT, or the shared cron/admin secret */
   const user = await callerFrom(req);
-  const secret = Deno.env.get("JOBS_FETCH_SECRET") ?? "";
+  const secret = Deno.env.get("JOBS_FETCH_SECRET") ?? "";  /* internal shared secret — env only, never app-edited */
   const provided = req.headers.get("x-jobs-secret") ?? "";
   if (!user && !(secret && provided === secret)) {
     return new Response(JSON.stringify({ error: "unauthorized — sign in to refresh the feed" }), { status: 401, headers });

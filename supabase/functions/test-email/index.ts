@@ -10,6 +10,7 @@
 
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
+import { getSecret } from "../_shared/secrets.ts";
 import { sendEmail } from "../_shared/email.ts";
 
 Deno.serve(async (req) => {
@@ -38,7 +39,7 @@ Deno.serve(async (req) => {
 
     const r = await sendEmail({
       to,
-      apiKey: Deno.env.get("RESEND_API_KEY") ?? "",
+      apiKey: await getSecret("RESEND_API_KEY"),
       subject: "InterviewIQ — test email ✅",
       html: `<div style="font-family:system-ui,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#0f172a">
         <h2 style="margin:0 0 12px">✅ InterviewIQ test email</h2>

@@ -51,6 +51,7 @@ import { pendingCommunityResources, reviewResource, type ResourceRow } from "../
 import { adminDecisionProposal, adminPendingProposals, type UpdateProposalRow } from "../services/trendSignals";
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../services/secrets";
 import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, type AiProviderStatus } from "../services/aiProvider";
+import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretStatus } from "../services/edgeSecrets";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 
@@ -4334,6 +4335,90 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
 }
 
 /* ------------------------------------------------------------------ */
+/* App-managed Edge Function secrets — the credentials the admin edits  */
+/* day-to-day (Resend, Adzuna, GitHub, Safe Browsing). Stored in the    */
+/* private edge_secrets table, editable HERE — no dashboard visits.     */
+/* ------------------------------------------------------------------ */
+
+const EDGE_SECRET_LABELS: Record<string, { label: string; placeholder: string; note: string }> = {
+  RESEND_API_KEY: { label: "Resend API key", placeholder: "re_…", note: "Emails (digests, recovery backup, refunds). Blank = keep the saved one." },
+  ADZUNA_APP_ID: { label: "Adzuna app ID", placeholder: "…", note: "Job salary enrichment (jobs-fetch)." },
+  ADZUNA_APP_KEY: { label: "Adzuna app key", placeholder: "…", note: "Job salary enrichment (jobs-fetch)." },
+  GITHUB_TOKEN: { label: "GitHub token", placeholder: "ghp_…", note: "Trends release recency — works keyless too." },
+  SAFE_BROWSING_API_KEY: { label: "Safe Browsing API key", placeholder: "AIza…", note: "Resource URL reputation — otherwise verdicts stay 'pending'." }
+};
+
+function EdgeSecretsCard({ statuses, onLoad, onToast }: { statuses: EdgeSecretStatus[] | null; onLoad: () => void; onToast: (m: string) => void }) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const save = async (name: string) => {
+    setSaving(name);
+    try {
+      await saveEdgeSecret(name, values[name] ?? "");
+      onToast(`🔑 ${EDGE_SECRET_LABELS[name].label} saved — the next function call uses it`);
+      setValues(v => ({ ...v, [name]: "" }));
+      await onLoad();
+    } catch (e) {
+      onToast("✗ " + ((e as Error).message || "Save failed"));
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <div className={`${cardCls} p-5`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[16px] font-extrabold">🔐 App-managed secrets</h2>
+          <p className="mt-1 max-w-[700px] text-[12.5px] text-mut">
+            The credentials you actually change day-to-day live in your own Supabase project (private, admin-only) —
+            save them <span className="font-bold">here</span>, never on the dashboard. The edge functions read this table first and
+            fall back to the old dashboard secrets, so saving here is all that's needed.
+          </p>
+        </div>
+        <button className={btnGhost + btnSm} onClick={onLoad} disabled={!!saving}>Refresh</button>
+      </div>
+
+      {!statuses ? (
+        <p className="mt-3 text-[12px] text-mut"><span className="spinner inline-block" /> Loading…</p>
+      ) : (
+        <div className="mt-3 space-y-3">
+          {APP_MANAGED_SECRETS.map(name => {
+            const meta = EDGE_SECRET_LABELS[name];
+            const st = statuses.find(s => s.name === name);
+            return (
+              <div key={name} className="rounded-xl border border-line/15 bg-deep/50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12px] font-bold text-fnt">{meta.label} <code className="font-mono text-mut">{name}</code></span>
+                  {st?.configured
+                    ? <Chip tone="ok">✅ Set · {st.keyHint}</Chip>
+                    : <Chip tone="warn">⚠️ Not set — env fallback only</Chip>}
+                </div>
+                <p className="mt-1 text-[11.5px] text-mut">{meta.note}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    type="password"
+                    value={values[name] ?? ""}
+                    onChange={e => setValues(v => ({ ...v, [name]: e.target.value }))}
+                    placeholder={st?.configured ? `${st.keyHint} — blank keeps it` : meta.placeholder}
+                    autoComplete="off"
+                    className="min-w-[220px] flex-1 rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+                  />
+                  <button className={btnPrimary + btnSm} onClick={() => void save(name)} disabled={saving === name || !(values[name] ?? "").trim()}>
+                    {saving === name ? "Saving…" : "💾 Save"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Secrets — which Edge Function secrets are configured vs missing.    */
 /* Backed by the secret-status Edge Function (server-side presence      */
 /* check via Deno.env.has — values are never readable or returned).    */
@@ -4355,6 +4440,16 @@ function SecretsSection() {
     }
   };
 
+  const [edgeSecrets, setEdgeSecrets] = useState<EdgeSecretStatus[] | null>(null);
+
+  const loadEdgeSecrets = async () => {
+    try {
+      setEdgeSecrets(await getEdgeSecrets());
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Failed to load app-managed secrets"));
+    }
+  };
+
   const load = async () => {
     setBusy(true);
     setError(null);
@@ -4368,7 +4463,7 @@ function SecretsSection() {
     }
   };
 
-  useEffect(() => { void load(); void loadAi(); }, []);
+  useEffect(() => { void load(); void loadAi(); void loadEdgeSecrets(); }, []);
 
   /* one-click RESEND_API_KEY validation. Defaults to the admin's own
      inbox; a recipient can be supplied because Resend TEST keys only
@@ -4405,6 +4500,7 @@ function SecretsSection() {
   return (
     <div className="space-y-4">
       <AiPipelineCard status={aiStatus} onLoad={loadAi} onToast={toast} />
+      <EdgeSecretsCard statuses={edgeSecrets} onLoad={loadEdgeSecrets} onToast={toast} />
       <div className={`${cardCls} p-5`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">

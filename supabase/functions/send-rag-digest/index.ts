@@ -10,6 +10,7 @@
 
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
+import { getSecret } from "../_shared/secrets.ts";
 
 function renderDigest(d: Record<string, unknown>): string {
   const lines = [
@@ -49,8 +50,8 @@ Deno.serve(async (req) => {
     const digest = body.digest ?? {};
     const from = body.from ?? "InterviewIQ <digest@interviewiq.app>";
 
-    /* provider key: function secret only — never accepted from the client */
-    const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+    /* provider key: app-managed secret only — never accepted from the client */
+    const apiKey = await getSecret("RESEND_API_KEY");
     if (!apiKey) {
       return new Response(JSON.stringify({ sent: false, reason: "no Resend key — set the function secret RESEND_API_KEY" }), { status: 200, headers });
     }

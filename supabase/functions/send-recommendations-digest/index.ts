@@ -18,6 +18,7 @@
    restricted to the app's origins. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { getSecret } from "../_shared/secrets.ts";
 import { composeIndiaDigest, composeRecommendationsDigest, type Job, type Profile } from "../_shared/recommendationsDigest.ts";
 import { requireUser, requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
@@ -63,7 +64,7 @@ async function handleBroadcast(req: Request, dryRun: boolean, kind: string): Pro
     return new Response(JSON.stringify({ sent: false, reason: "forbidden — broadcast needs the cron secret or an admin session" }), { status: 401, headers });
   }
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY");
-  const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+  const apiKey = await getSecret("RESEND_API_KEY");
   if (!serviceKey || !apiKey) {
     return new Response(JSON.stringify({ sent: false, reason: apiKey ? "service role key missing" : "no Resend key — set the function secret RESEND_API_KEY" }), { status: 200, headers });
   }
@@ -151,8 +152,8 @@ Deno.serve(async (req) => {
     const subject = body.subject ?? "InterviewIQ — weekly company recommendations";
     const from = body.from ?? "InterviewIQ <digest@interviewiq.app>";
 
-    /* provider key: function secret only — never accepted from the client */
-    const apiKey = Deno.env.get("RESEND_API_KEY") ?? "";
+    /* provider key: app-managed secret only — never accepted from the client */
+    const apiKey = await getSecret("RESEND_API_KEY");
     if (!apiKey) {
       return new Response(JSON.stringify({ sent: false, reason: "no Resend key — set the function secret RESEND_API_KEY" }), { status: 200, headers });
     }

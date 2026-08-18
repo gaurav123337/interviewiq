@@ -14,6 +14,7 @@
 
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { requireAdmin } from "../_shared/auth.ts";
+import { getSecret } from "../_shared/secrets.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { serviceClient } from "../_shared/serviceClient.ts";
@@ -160,7 +161,7 @@ async function fetchNpmDeltas(service: SupabaseClient): Promise<Record<string, n
 async function fetchGithubRecency(service: SupabaseClient): Promise<Record<string, boolean>> {
   void service;
   const out: Record<string, boolean> = {};
-  const token = Deno.env.get("GITHUB_TOKEN") ?? "";
+  const token = await getSecret("GITHUB_TOKEN");
   const day = 86_400_000;
   for (const [id, repo] of Object.entries(SKILL_REPO)) {
     try {
