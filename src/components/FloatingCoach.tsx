@@ -17,6 +17,7 @@ import { aiAvailable, chat, type ChatMessage } from "../ai";
 import { SYSTEM_DESIGN_CASES, type SystemDesignCase } from "../data/systemDesignBank";
 
 import { lexicalSearch, documentTitles, ragTuningInfo } from "../services/rag";
+import { getPrereqExplanation } from "../data/prerequisiteKnowledge";
 import { storageGet, storageSet } from "../services/storage";
 import { useApp } from "../store";
 import { useCoachTopic } from "../contexts/CoachContext";
@@ -190,6 +191,23 @@ function matchCaseStudy(question: string): SystemDesignCase | null {
   return bestScore >= 2 ? best : null;
 }
 
+/** Find if the question is asking about a specific prerequisite concept */
+function findPrereqMatch(question: string): string | null {
+  const q = question.toLowerCase();
+  const concepts = [
+    "http basics", "websockets", "web sockets", "load balancing", "caching",
+    "database design", "hashing", "message queues", "social graphs",
+    "database sharding", "rate limiting", "event-driven architecture",
+    "long polling", "pub-sub", "rest api", "microservices", "consistent hashing"
+  ];
+  for (const concept of concepts) {
+    if (q.includes(concept) || q.includes(concept.replace(" ", "-"))) {
+      return concept;
+    }
+  }
+  return null;
+}
+
 function detectIntent(q: string): "overview" | "tradeoffs" | "mistakes" | "scale" | "numbers" | "phase" | "qa" | "general" {
   const lower = q.toLowerCase();
   if (/overview|explain|walkthrough|step.by.step|architecture|how.*work|what.*is/.test(lower)) return "overview";
@@ -311,27 +329,45 @@ async function citationOnlyReply(
 
   let answer: VerifiedAnswer;
 
-  if (target) {
-    // Case study data — highest trust
+  // 1) Check prerequisite knowledge base first — beginner→advanced explanations
+  const prereqMatch = findPrereqMatch(question);
+  if (prereqMatch) {
+    const prereq = getPrereqExplanation(prereqMatch, target?.id);
+    if (prereq) {
+      const lines = [`📘 **${prereqMatch}**`];
+      lines.push(`\n🟢 **Beginner:**\n${prereq.beginner}\n`);
+      lines.push(`🟡 **Intermediate:**\n${prereq.intermediate}\n`);
+      lines.push(`🔴 **Advanced:**\n${prereq.advanced}\n`);
+      if (prereq.context) lines.push(`📌 **In ${target?.title ?? 'this system'}:**\n${prereq.context}`);
+      const citations: VerifiedCitation[] = [{
+        title: `${prereqMatch} — Knowledge Base`,
+        content: prereq.context ?? prereq.beginner,
+        grounded: true,
+        source: "deep-dive"
+      }];
+      answer = { lines, citations, trustScore: 90 };
+    } else if (target) {
+      answer = caseStudyFacts(target, intent);
+    } else if (kbCitations.length) {
+      const lines = ["**📚 From Knowledge Base:**\n"];
+      kbCitations.forEach(c => { lines.push(`• **[${c.title}]** ${c.content.slice(0, 300)}`); });
+      lines.push("\n💡 Ask about a specific system design topic for more detailed answers.");
+      answer = { lines, citations: kbCitations, trustScore: 70 };
+    } else {
+      answer = noVerifiedSource();
+    }
+  // 2) Case study match
+  } else if (target) {
     answer = caseStudyFacts(target, intent);
+  // 3) Knowledge base hits
   } else if (kbCitations.length) {
-    // Knowledge base hits — moderate trust
     const lines = ["**📚 From Knowledge Base:**\n"];
-    kbCitations.forEach(c => {
-      lines.push(`• **[${c.title}]** ${c.content.slice(0, 300)}`);
-    });
-    lines.push("\n💡 These are excerpts from the knowledge base. Ask about a specific system design topic for more detailed answers.");
+    kbCitations.forEach(c => { lines.push(`• **[${c.title}]** ${c.content.slice(0, 300)}`); });
+    lines.push("\n💡 Ask about a specific system design topic for more detailed answers.");
     answer = { lines, citations: kbCitations, trustScore: 70 };
+  // 4) Nothing found
   } else {
-    // No verified source — be honest
-    const lines = [
-      "**I don't have verified information on this specific topic.**\n",
-      "I can answer questions about these verified case studies:",
-      ...SYSTEM_DESIGN_CASES.map(c => `• ${c.icon} ${c.title}`),
-      "\nOr ask me about broad topics like: distributed systems, databases, caching, APIs, networking, security, or microservices.",
-      "\n💡 _All my answers come from verified sources — I never make up information._"
-    ];
-    answer = { lines, citations: [], trustScore: 0 };
+    answer = noVerifiedSource();
   }
 
   // Add trust footer
@@ -341,6 +377,20 @@ async function citationOnlyReply(
   }
 
   return { text: answer.lines.join("\n"), citations: answer.citations, trustScore: answer.trustScore };
+}
+
+function noVerifiedSource(): VerifiedAnswer {
+  return {
+    lines: [
+      "**I don't have verified information on this specific topic.**\n",
+      "I can answer questions about these verified case studies:",
+      ...SYSTEM_DESIGN_CASES.map(c => `• ${c.icon} ${c.title}`),
+      "\nOr ask about: distributed systems, databases, caching, APIs, networking, security, or microservices.",
+      "\n💡 _All my answers come from verified sources — I never make up information._"
+    ],
+    citations: [],
+    trustScore: 0
+  };
 }
 
 /* ------------------------------------------------------------------ */

@@ -14,6 +14,7 @@ import {
 } from "../data/systemDesignBank";
 import { explainSystemDesign, systemDesignChat } from "../services/systemDesignTutor";
 import { lexicalSearch, documentTitles, ragTuningInfo } from "../services/rag";
+import { getPrereqExplanation } from "../data/prerequisiteKnowledge";
 import { CitationChip } from "./CitationChip";
 import { GroundingNote } from "./GroundingNote";
 import { getGoal } from "../services/goal";
@@ -1132,29 +1133,41 @@ function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onM
               <button
                 key={p}
                 onClick={() => {
-                  const q = `Explain ${p} from beginner to advanced in the context of ${c.title}. How is ${p} used in this system? What should I know for the interview?`;
-                  setChatInput(q);
-                  /* Auto-send */
-                  const userMsg = { role: "user" as const, content: q };
-                  setChatMessages(prev => [...prev, userMsg]);
-                  setChatBusy(true);
-                  setChatCitations([]);
-                  (async () => {
-                    try {
-                      if (aiAvailable() && goal) {
-                        const history = [...chatMessages, userMsg];
-                        const reply = await systemDesignChat(c.title, goal, history);
-                        setChatMessages(prev => [...prev, { role: "assistant", content: reply.text }]);
-                        if (reply.citations?.length) setChatCitations(reply.citations.map(ct => ({ title: ct.title, content: ct.content })));
-                      } else {
-                        const { text, citations } = await offlineReply(q);
-                        setChatMessages(prev => [...prev, { role: "assistant", content: text }]);
-                        setChatCitations(citations);
-                      }
-                    } catch (e) {
-                      toast("✗ " + ((e as Error).message || "AI unavailable"));
-                    } finally { setChatBusy(false); }
-                  })();
+                  const explanation = getPrereqExplanation(p, c.id);
+                  if (explanation) {
+                    const lines = [`📘 **${p}** — in the context of ${c.title}\n`];
+                    lines.push(`🟢 **Beginner:**\n${explanation.beginner}\n`);
+                    lines.push(`🟡 **Intermediate:**\n${explanation.intermediate}\n`);
+                    lines.push(`🔴 **Advanced:**\n${explanation.advanced}\n`);
+                    if (explanation.context) lines.push(`📌 **In this system:**\n${explanation.context}`);
+                    const userMsg = { role: "user" as const, content: `Tell me about ${p} in the context of ${c.title}` };
+                    const assistantMsg = { role: "assistant" as const, content: lines.join("\n") };
+                    setChatMessages(prev => [...prev, userMsg, assistantMsg]);
+                    setChatCitations([{ title: `${p} — ${c.title}`, content: explanation.context ?? explanation.beginner }]);
+                  } else {
+                    const q = `Explain ${p} from beginner to advanced in the context of ${c.title}. How is ${p} used in this system? What should I know for the interview?`;
+                    setChatInput(q);
+                    const userMsg = { role: "user" as const, content: q };
+                    setChatMessages(prev => [...prev, userMsg]);
+                    setChatBusy(true);
+                    setChatCitations([]);
+                    (async () => {
+                      try {
+                        if (aiAvailable() && goal) {
+                          const history = [...chatMessages, userMsg];
+                          const reply = await systemDesignChat(c.title, goal, history);
+                          setChatMessages(prev => [...prev, { role: "assistant", content: reply.text }]);
+                          if (reply.citations?.length) setChatCitations(reply.citations.map(ct => ({ title: ct.title, content: ct.content })));
+                        } else {
+                          const { text, citations } = await offlineReply(q);
+                          setChatMessages(prev => [...prev, { role: "assistant", content: text }]);
+                          setChatCitations(citations);
+                        }
+                      } catch (e) {
+                        toast("✗ " + ((e as Error).message || "AI unavailable"));
+                      } finally { setChatBusy(false); }
+                    })();
+                  }
                 }}
                 className="cursor-pointer rounded-full border border-acc1/25 bg-acc1/10 px-2.5 py-1 text-[12px] font-semibold text-acctxt transition-all hover:border-acc1/50 hover:bg-acc1/20 hover:shadow-[0_2px_8px_rgba(99,102,241,.2)]"
               >
