@@ -1,161 +1,90 @@
 /* AdminContent — CMS for testimonials, ads, resources, and tip jar.
-   All data is stored in localStorage and can be published to remote config.
+   All data is stored in Supabase (database) with localStorage cache.
    Accessed via the Admin dashboard → "Content" tab. */
 
-import { useState } from "react";
-import { storageGet, storageSet, STORAGE_KEYS } from "../services/storage";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
-
-/* ------------------------------------------------------------------ */
-/* Types                                                               */
-/* ------------------------------------------------------------------ */
-
-interface Testimonial {
-  id: string;
-  name: string;
-  role: string;
-  company: string;
-  avatar: string;
-  rating: number;
-  text: string;
-  highlight?: string;
-  published: boolean;
-  order: number;
-}
-
-interface Ad {
-  id: string;
-  title: string;
-  description: string;
-  imageUrl: string;
-  linkUrl: string;
-  position: "landing-hero" | "landing-pricing" | "landing-footer" | "sidebar" | "interstitial";
-  startDate: string;
-  endDate: string;
-  published: boolean;
-  impressions: number;
-  clicks: number;
-  sponsor: string;
-}
-
-interface Resource {
-  id: string;
-  title: string;
-  author: string;
-  type: "book" | "course" | "tool";
-  description: string;
-  affiliateUrl: string;
-  icon: string;
-  price: string;
-  badge?: string;
-  published: boolean;
-  order: number;
-  clicks: number;
-}
-
-interface TipConfig {
-  amounts: number[];
-  labels: string[];
-  descriptions: string[];
-  stripeLink: string;
-  buymeacoffeeLink: string;
-  enabled: boolean;
-}
-
-/* ------------------------------------------------------------------ */
-/* Default data                                                        */
-/* ------------------------------------------------------------------ */
-
-const DEFAULT_TESTIMONIALS: Testimonial[] = [
-  { id: "t1", name: "Priya M.", role: "Frontend Engineer", company: "Google", avatar: "👩‍💻", rating: 5, text: "InterviewIQ was my daily practice tool for 3 months. The system design flashcards helped me nail the architecture round. Got my dream offer!", highlight: "Landed Google L4", published: true, order: 0 },
-  { id: "t2", name: "James K.", role: "Senior Backend Dev", company: "Amazon", avatar: "👨‍💼", rating: 5, text: "The AI coach explained distributed systems better than any course I've taken. The offline mode meant I could practice on my commute.", highlight: "Amazon SDE2 offer", published: true, order: 1 },
-  { id: "t3", name: "Ananya R.", role: "Full Stack Developer", company: "Microsoft", avatar: "👩‍🔬", rating: 5, text: "What sets this apart is the career roadmap. It identified my weak spots and built a plan. My interviewer even commented on how well-prepared I was.", highlight: "Microsoft L62", published: true, order: 2 },
-  { id: "t4", name: "Marcus L.", role: "ML Engineer", company: "Meta", avatar: "🧑‍💻", rating: 4, text: "The system design hub with 15 case studies is gold. I used it daily for a month. The spaced repetition flashcards made numbers stick.", highlight: "Meta E5 offer", published: true, order: 3 },
-  { id: "t5", name: "Sarah T.", role: "DevOps Engineer", company: "Netflix", avatar: "👩‍🏫", rating: 5, text: "I was skeptical about AI interview prep, but the grounded citations won me over. Every answer has a source. No hallucinated nonsense.", highlight: "Netflix Senior", published: true, order: 4 },
-  { id: "t6", name: "Rohit P.", role: "Backend Developer", company: "Stripe", avatar: "🧑‍🎓", rating: 5, text: "The mock interview mode with timed questions was a game-changer. I practiced 50+ sessions. The analytics showed exactly where I improved.", highlight: "Stripe L3 → L4", published: true, order: 5 },
-];
-
-const DEFAULT_ADS: Ad[] = [
-  { id: "ad1", title: "Educative — Grokking System Design", description: "Interactive course with 40+ system design problems and solutions.", imageUrl: "", linkUrl: "https://www.educative.io/courses/grokking-the-system-design-interview", position: "landing-pricing", startDate: "2026-01-01", endDate: "2026-12-31", published: true, impressions: 0, clicks: 0, sponsor: "Educative" },
-];
-
-const DEFAULT_RESOURCES: Resource[] = [
-  { id: "r1", title: "System Design Interview", author: "Alex Xu", type: "book", description: "The go-to book for system design prep. Clear diagrams, real-world examples, and step-by-step walkthroughs.", affiliateUrl: "https://www.amazon.com/dp/1736049127", icon: "📖", price: "$25", badge: "Best Seller", published: true, order: 0, clicks: 0 },
-  { id: "r2", title: "Designing Data-Intensive Applications", author: "Martin Kleppmann", type: "book", description: "Deep dive into distributed systems, databases, and streaming. Essential for senior+ roles.", affiliateUrl: "https://www.amazon.com/dp/1449373321", icon: "📖", price: "$40", badge: "Must Read", published: true, order: 1, clicks: 0 },
-  { id: "r3", title: "Grokking the System Design Interview", author: "Educative", type: "course", description: "Interactive course with 40+ system design problems and solutions.", affiliateUrl: "https://www.educative.io/courses/grokking-the-system-design-interview", icon: "🎓", price: "$79", published: true, order: 2, clicks: 0 },
-  { id: "r4", title: "LeetCode Premium", author: "LeetCode", type: "tool", description: "Premium coding practice with company-tagged questions and hints.", affiliateUrl: "https://leetcode.com/subscription/", icon: "💻", price: "$35/mo", badge: "Popular", published: true, order: 3, clicks: 0 },
-  { id: "r5", title: "ByteByteGo Newsletter", author: "Alex Xu", type: "course", description: "Weekly system design concepts with visual explanations. Free and paid tiers.", affiliateUrl: "https://blog.bytebytego.com/", icon: "📧", price: "Free", badge: "Free", published: true, order: 4, clicks: 0 },
-  { id: "r6", title: "Roadmap.sh", author: "Community", type: "tool", description: "Free learning roadmaps for every tech role. Great for career planning.", affiliateUrl: "https://roadmap.sh/", icon: "🗺️", price: "Free", badge: "Free", published: true, order: 5, clicks: 0 },
-];
-
-const DEFAULT_TIPS: TipConfig = {
-  amounts: [5, 15, 30],
-  labels: ["☕ Coffee", "🍕 Lunch", "🎉 Celebration"],
-  descriptions: ["Buy me a coffee", "Buy me lunch", "Celebrating a new offer?"],
-  stripeLink: "",
-  buymeacoffeeLink: "",
-  enabled: true,
-};
-
-/* ------------------------------------------------------------------ */
-/* Load / Save helpers                                                 */
-/* ------------------------------------------------------------------ */
-
-function load<T>(key: string, fallback: T): T {
-  return storageGet<T>(key, fallback);
-}
-
-function save(key: string, value: unknown): void {
-  storageSet(key, value);
-}
+import {
+  type Testimonial, type Ad, type Resource, type TipConfig,
+  fetchTestimonials, saveTestimonial, deleteTestimonial,
+  fetchAds, saveAd, deleteAd,
+  fetchResources, saveResource, deleteResource,
+  fetchTips, saveTips,
+} from "../services/contentService";
 
 /* ------------------------------------------------------------------ */
 /* TestimonialsTab                                                     */
 /* ------------------------------------------------------------------ */
 
 function TestimonialsTab() {
-  const [items, setItems] = useState<Testimonial[]>(() => load(STORAGE_KEYS.adminTestimonials, DEFAULT_TESTIMONIALS));
+  const [items, setItems] = useState<Testimonial[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Testimonial | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const persist = (next: Testimonial[]) => { setItems(next); save(STORAGE_KEYS.adminTestimonials, next); };
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setItems(await fetchTestimonials()); } catch { /* cache fallback */ }
+    setLoading(false);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const add = () => {
-    const t: Testimonial = { id: "t" + Date.now(), name: "", role: "", company: "", avatar: "👤", rating: 5, text: "", published: true, order: items.length };
-    setEditing(t);
+    setEditing({ id: "", name: "", role: "", company: "", avatar: "👤", rating: 5, text: "", published: true, sort_order: items.length });
     setIsAdding(true);
   };
 
-  const saveItem = () => {
+  const saveItem = async () => {
     if (!editing) return;
     if (!editing.name.trim() || !editing.text.trim()) { toast("Name and testimonial text are required"); return; }
-    const next = isAdding ? [...items, editing] : items.map(x => x.id === editing.id ? editing : x);
-    persist(next);
-    setEditing(null);
-    setIsAdding(false);
-    toast("💾 Testimonial saved");
+    setBusy(true);
+    try {
+      const saved = await saveTestimonial(editing);
+      const next = isAdding ? [...items, saved] : items.map(x => x.id === saved.id ? saved : x);
+      setItems(next);
+      setEditing(null); setIsAdding(false);
+      toast("💾 Testimonial saved to database");
+    } catch (e) { toast("✗ " + ((e as Error).message || "Save failed")); }
+    setBusy(false);
   };
 
-  const remove = (id: string) => {
+  const remove = async (id: string) => {
     if (!confirm("Delete this testimonial?")) return;
-    persist(items.filter(x => x.id !== id));
-    toast("🗑️ Testimonial deleted");
+    setBusy(true);
+    try {
+      await deleteTestimonial(id);
+      setItems(items.filter(x => x.id !== id));
+      toast("🗑️ Testimonial deleted");
+    } catch (e) { toast("✗ " + ((e as Error).message || "Delete failed")); }
+    setBusy(false);
   };
 
-  const togglePublish = (id: string) => {
-    persist(items.map(x => x.id === id ? { ...x, published: !x.published } : x));
+  const togglePublish = async (t: Testimonial) => {
+    setBusy(true);
+    try {
+      const saved = await saveTestimonial({ ...t, published: !t.published });
+      setItems(items.map(x => x.id === saved.id ? saved : x));
+    } catch (e) { toast("✗ " + ((e as Error).message || "Update failed")); }
+    setBusy(false);
   };
 
-  const move = (id: string, dir: -1 | 1) => {
-    const idx = items.findIndex(x => x.id === id);
+  const move = async (t: Testimonial, dir: -1 | 1) => {
+    const idx = items.findIndex(x => x.id === t.id);
     if (idx < 0) return;
-    const next = [...items];
     const swap = idx + dir;
-    if (swap < 0 || swap >= next.length) return;
-    [next[idx], next[swap]] = [next[swap], next[idx]];
-    next.forEach((x, i) => x.order = i);
-    persist(next);
+    if (swap < 0 || swap >= items.length) return;
+    const a = { ...items[idx], sort_order: items[swap].sort_order };
+    const b = { ...items[swap], sort_order: items[idx].sort_order };
+    setBusy(true);
+    try {
+      await Promise.all([saveTestimonial(a), saveTestimonial(b)]);
+      const next = [...items];
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      setItems(next);
+    } catch (e) { toast("✗ " + ((e as Error).message || "Reorder failed")); }
+    setBusy(false);
   };
 
   return (
@@ -164,13 +93,17 @@ function TestimonialsTab() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-[15px] font-extrabold">⭐ Testimonials</h3>
-            <p className="mt-0.5 text-[12px] text-mut">Manage customer reviews shown on the landing page. Toggle visibility, reorder, or add new ones.</p>
+            <p className="mt-0.5 text-[12px] text-mut">Manage customer reviews shown on the landing page. Data stored in Supabase — persists across devices.</p>
           </div>
-          <button className={btnPrimary + btnSm} onClick={add}>+ Add testimonial</button>
+          <button className={btnPrimary + btnSm} onClick={add} disabled={busy}>+ Add testimonial</button>
         </div>
       </div>
 
-      {items.map((t, i) => (
+      {loading ? (
+        <div className="text-center text-mut py-8"><span className="spinner inline-block" /> Loading from database…</div>
+      ) : items.length === 0 ? (
+        <div className={`${cardCls} p-8 text-center text-mut`}>No testimonials yet. Click "Add testimonial" to create one.</div>
+      ) : items.map((t, i) => (
         <div key={t.id} className={`${cardCls} p-4 transition-all ${!t.published ? "opacity-50" : ""}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -186,11 +119,11 @@ function TestimonialsTab() {
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button className={btnGhost + btnSm} onClick={() => move(t.id, -1)} disabled={i === 0} title="Move up">↑</button>
-              <button className={btnGhost + btnSm} onClick={() => move(t.id, 1)} disabled={i === items.length - 1} title="Move down">↓</button>
-              <button className={btnGhost + btnSm} onClick={() => togglePublish(t.id)} title={t.published ? "Hide" : "Show"}>{t.published ? "👁️" : "🚫"}</button>
-              <button className={btnGhost + btnSm} onClick={() => { setEditing({ ...t }); setIsAdding(false); }} title="Edit">✏️</button>
-              <button className={btnDanger + btnSm} onClick={() => remove(t.id)} title="Delete">🗑️</button>
+              <button className={btnGhost + btnSm} onClick={() => void move(t, -1)} disabled={i === 0 || busy} title="Move up">↑</button>
+              <button className={btnGhost + btnSm} onClick={() => void move(t, 1)} disabled={i === items.length - 1 || busy} title="Move down">↓</button>
+              <button className={btnGhost + btnSm} onClick={() => void togglePublish(t)} disabled={busy} title={t.published ? "Hide" : "Show"}>{t.published ? "👁️" : "🚫"}</button>
+              <button className={btnGhost + btnSm} onClick={() => { setEditing({ ...t }); setIsAdding(false); }} disabled={busy} title="Edit">✏️</button>
+              <button className={btnDanger + btnSm} onClick={() => void remove(t.id)} disabled={busy} title="Delete">🗑️</button>
             </div>
           </div>
         </div>
@@ -199,8 +132,7 @@ function TestimonialsTab() {
       {editing && (
         <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New testimonial" : "✏️ Edit testimonial"}>
           <div className="w-full max-w-[520px] p-6">
-            <h3 className="text-[16px] font-extrabold">{isAdding ? "➕ New testimonial" : "✏️ Edit testimonial"}</h3>
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Name</span>
                 <input className="inp" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Priya M." />
@@ -237,7 +169,7 @@ function TestimonialsTab() {
               </label>
               <div className="flex gap-2">
                 <button className={btnGhost + btnSm} onClick={() => { setEditing(null); setIsAdding(false); }}>Cancel</button>
-                <button className={btnPrimary + btnSm} onClick={saveItem}>💾 Save</button>
+                <button className={btnPrimary + btnSm} onClick={() => void saveItem()} disabled={busy}>💾 Save</button>
               </div>
             </div>
           </div>
@@ -252,45 +184,56 @@ function TestimonialsTab() {
 /* ------------------------------------------------------------------ */
 
 function AdsTab() {
-  const [items, setItems] = useState<Ad[]>(() => load(STORAGE_KEYS.adminAds, DEFAULT_ADS));
+  const [items, setItems] = useState<Ad[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Ad | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const persist = (next: Ad[]) => { setItems(next); save(STORAGE_KEYS.adminAds, next); };
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setItems(await fetchAds()); } catch { /* cache fallback */ }
+    setLoading(false);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const add = () => {
-    const a: Ad = { id: "ad" + Date.now(), title: "", description: "", imageUrl: "", linkUrl: "", position: "landing-pricing", startDate: "", endDate: "", published: true, impressions: 0, clicks: 0, sponsor: "" };
-    setEditing(a);
+    setEditing({ id: "", title: "", description: "", sponsor: "", image_url: "", link_url: "", position: "landing-pricing", start_date: null, end_date: null, published: true, impressions: 0, clicks: 0 });
     setIsAdding(true);
   };
 
-  const saveItem = () => {
+  const saveItem = async () => {
     if (!editing) return;
     if (!editing.title.trim()) { toast("Title is required"); return; }
-    const next = isAdding ? [...items, editing] : items.map(x => x.id === editing.id ? editing : x);
-    persist(next);
-    setEditing(null);
-    setIsAdding(false);
-    toast("💾 Ad saved");
+    setBusy(true);
+    try {
+      const saved = await saveAd(editing);
+      const next = isAdding ? [...items, saved] : items.map(x => x.id === saved.id ? saved : x);
+      setItems(next);
+      setEditing(null); setIsAdding(false);
+      toast("💾 Ad saved to database");
+    } catch (e) { toast("✗ " + ((e as Error).message || "Save failed")); }
+    setBusy(false);
   };
 
-  const remove = (id: string) => {
+  const remove = async (id: string) => {
     if (!confirm("Delete this ad?")) return;
-    persist(items.filter(x => x.id !== id));
-    toast("🗑️ Ad deleted");
+    setBusy(true);
+    try { await deleteAd(id); setItems(items.filter(x => x.id !== id)); toast("🗑️ Ad deleted"); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Delete failed")); }
+    setBusy(false);
   };
 
-  const togglePublish = (id: string) => {
-    persist(items.map(x => x.id === id ? { ...x, published: !x.published } : x));
+  const togglePublish = async (a: Ad) => {
+    setBusy(true);
+    try {
+      const saved = await saveAd({ ...a, published: !a.published });
+      setItems(items.map(x => x.id === saved.id ? saved : x));
+    } catch (e) { toast("✗ " + ((e as Error).message || "Update failed")); }
+    setBusy(false);
   };
 
-  const POSITION_LABELS: Record<string, string> = {
-    "landing-hero": "🎯 Hero section",
-    "landing-pricing": "💰 Pricing section",
-    "landing-footer": "📄 Footer section",
-    "sidebar": "📌 Sidebar",
-    "interstitial": "🔀 Interstitial (between views)"
-  };
+  const POS: Record<string, string> = { "landing-hero": "🎯 Hero", "landing-pricing": "💰 Pricing", "landing-footer": "📄 Footer", "sidebar": "📌 Sidebar", "interstitial": "🔀 Interstitial" };
 
   return (
     <div className="space-y-4">
@@ -298,34 +241,38 @@ function AdsTab() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-[15px] font-extrabold">📢 Advertisements</h3>
-            <p className="mt-0.5 text-[12px] text-mut">Manage sponsored banners and affiliate ads. Position them on the landing page or between views.</p>
+            <p className="mt-0.5 text-[12px] text-mut">Sponsored banners and affiliate ads. Data stored in Supabase — persists across devices.</p>
           </div>
-          <button className={btnPrimary + btnSm} onClick={add}>+ Add ad</button>
+          <button className={btnPrimary + btnSm} onClick={add} disabled={busy}>+ Add ad</button>
         </div>
       </div>
 
-      {items.map(a => (
+      {loading ? (
+        <div className="text-center text-mut py-8"><span className="spinner inline-block" /> Loading…</div>
+      ) : items.length === 0 ? (
+        <div className={`${cardCls} p-8 text-center text-mut`}>No ads yet. Click "Add ad" to create one.</div>
+      ) : items.map(a => (
         <div key={a.id} className={`${cardCls} p-4 transition-all ${!a.published ? "opacity-50" : ""}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[13px] font-extrabold">{a.title || "(no title)"}</span>
-                <Chip>{POSITION_LABELS[a.position] ?? a.position}</Chip>
+                <span className="text-[13px] font-extrabold">{a.title}</span>
+                <Chip>{POS[a.position] ?? a.position}</Chip>
                 {!a.published && <Chip>hidden</Chip>}
               </div>
               <p className="mt-1 max-w-[500px] text-[12px] leading-relaxed text-mut line-clamp-2">{a.description}</p>
               <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-fnt">
                 {a.sponsor && <span>🏢 {a.sponsor}</span>}
-                {a.linkUrl && <a href={a.linkUrl} target="_blank" rel="noopener noreferrer" className="text-acctxt hover:underline">{a.linkUrl.slice(0, 40)}…</a>}
-                {a.startDate && <span>📅 {a.startDate} → {a.endDate || "ongoing"}</span>}
+                {a.link_url && <span className="text-acctxt">🔗 {a.link_url.slice(0, 40)}…</span>}
+                {a.start_date && <span>📅 {a.start_date} → {a.end_date || "ongoing"}</span>}
                 <span>👁️ {a.impressions} views</span>
                 <span>🖱️ {a.clicks} clicks</span>
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button className={btnGhost + btnSm} onClick={() => togglePublish(a.id)} title={a.published ? "Hide" : "Show"}>{a.published ? "👁️" : "🚫"}</button>
-              <button className={btnGhost + btnSm} onClick={() => { setEditing({ ...a }); setIsAdding(false); }} title="Edit">✏️</button>
-              <button className={btnDanger + btnSm} onClick={() => remove(a.id)} title="Delete">🗑️</button>
+              <button className={btnGhost + btnSm} onClick={() => void togglePublish(a)} disabled={busy}>{a.published ? "👁️" : "🚫"}</button>
+              <button className={btnGhost + btnSm} onClick={() => { setEditing({ ...a }); setIsAdding(false); }} disabled={busy}>✏️</button>
+              <button className={btnDanger + btnSm} onClick={() => void remove(a.id)} disabled={busy}>🗑️</button>
             </div>
           </div>
         </div>
@@ -334,30 +281,29 @@ function AdsTab() {
       {editing && (
         <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New ad" : "✏️ Edit ad"}>
           <div className="w-full max-w-[520px] p-6">
-            <h3 className="text-[16px] font-extrabold">{isAdding ? "➕ New ad" : "✏️ Edit ad"}</h3>
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Title</span>
-                <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="Educative — System Design" />
+                <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} />
               </label>
               <label className="block">
-                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Sponsor name</span>
-                <input className="inp" value={editing.sponsor} onChange={e => setEditing({ ...editing, sponsor: e.target.value })} placeholder="Educative" />
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Sponsor</span>
+                <input className="inp" value={editing.sponsor} onChange={e => setEditing({ ...editing, sponsor: e.target.value })} />
               </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Link URL</span>
-                <input className="inp" value={editing.linkUrl} onChange={e => setEditing({ ...editing, linkUrl: e.target.value })} placeholder="https://..." />
+                <input className="inp" value={editing.link_url} onChange={e => setEditing({ ...editing, link_url: e.target.value })} placeholder="https://..." />
               </label>
               <label className="block">
-                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Image URL (optional)</span>
-                <input className="inp" value={editing.imageUrl} onChange={e => setEditing({ ...editing, imageUrl: e.target.value })} placeholder="https://..." />
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Image URL</span>
+                <input className="inp" value={editing.image_url} onChange={e => setEditing({ ...editing, image_url: e.target.value })} placeholder="https://..." />
               </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Position</span>
                 <select className="inp" value={editing.position} onChange={e => setEditing({ ...editing, position: e.target.value as Ad["position"] })}>
-                  <option value="landing-hero">🎯 Hero section</option>
-                  <option value="landing-pricing">💰 Pricing section</option>
-                  <option value="landing-footer">📄 Footer section</option>
+                  <option value="landing-hero">🎯 Hero</option>
+                  <option value="landing-pricing">💰 Pricing</option>
+                  <option value="landing-footer">📄 Footer</option>
                   <option value="sidebar">📌 Sidebar</option>
                   <option value="interstitial">🔀 Interstitial</option>
                 </select>
@@ -365,26 +311,26 @@ function AdsTab() {
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Start date</span>
-                  <input type="date" className="inp" value={editing.startDate} onChange={e => setEditing({ ...editing, startDate: e.target.value })} />
+                  <input type="date" className="inp" value={editing.start_date ?? ""} onChange={e => setEditing({ ...editing, start_date: e.target.value || null })} />
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">End date</span>
-                  <input type="date" className="inp" value={editing.endDate} onChange={e => setEditing({ ...editing, endDate: e.target.value })} />
+                  <input type="date" className="inp" value={editing.end_date ?? ""} onChange={e => setEditing({ ...editing, end_date: e.target.value || null })} />
                 </label>
               </div>
             </div>
             <label className="mt-3 block">
               <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Description</span>
-              <textarea className="inp h-20 w-full resize-y" value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} placeholder="Ad description..." />
+              <textarea className="inp h-20 w-full resize-y" value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
             </label>
             <div className="mt-4 flex items-center justify-between">
               <label className="flex items-center gap-2 text-[12px] font-bold text-mut">
                 <input type="checkbox" checked={editing.published} onChange={e => setEditing({ ...editing, published: e.target.checked })} />
-                Published (visible on site)
+                Published
               </label>
               <div className="flex gap-2">
                 <button className={btnGhost + btnSm} onClick={() => { setEditing(null); setIsAdding(false); }}>Cancel</button>
-                <button className={btnPrimary + btnSm} onClick={saveItem}>💾 Save</button>
+                <button className={btnPrimary + btnSm} onClick={() => void saveItem()} disabled={busy}>💾 Save</button>
               </div>
             </div>
           </div>
@@ -399,43 +345,61 @@ function AdsTab() {
 /* ------------------------------------------------------------------ */
 
 function ResourcesTab() {
-  const [items, setItems] = useState<Resource[]>(() => load(STORAGE_KEYS.adminResources, DEFAULT_RESOURCES));
+  const [items, setItems] = useState<Resource[]>([]);
+  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Resource | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  const persist = (next: Resource[]) => { setItems(next); save(STORAGE_KEYS.adminResources, next); };
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setItems(await fetchResources()); } catch { /* cache fallback */ }
+    setLoading(false);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const add = () => {
-    const r: Resource = { id: "r" + Date.now(), title: "", author: "", type: "book", description: "", affiliateUrl: "", icon: "📖", price: "", published: true, order: items.length, clicks: 0 };
-    setEditing(r);
+    setEditing({ id: "", title: "", author: "", type: "book", description: "", affiliate_url: "", icon: "📖", price: "", published: true, sort_order: items.length, clicks: 0 });
     setIsAdding(true);
   };
 
-  const saveItem = () => {
+  const saveItem = async () => {
     if (!editing) return;
     if (!editing.title.trim()) { toast("Title is required"); return; }
-    const next = isAdding ? [...items, editing] : items.map(x => x.id === editing.id ? editing : x);
-    persist(next);
-    setEditing(null);
-    setIsAdding(false);
-    toast("💾 Resource saved");
+    setBusy(true);
+    try {
+      const saved = await saveResource(editing);
+      const next = isAdding ? [...items, saved] : items.map(x => x.id === saved.id ? saved : x);
+      setItems(next);
+      setEditing(null); setIsAdding(false);
+      toast("💾 Resource saved to database");
+    } catch (e) { toast("✗ " + ((e as Error).message || "Save failed")); }
+    setBusy(false);
   };
 
-  const remove = (id: string) => {
+  const remove = async (id: string) => {
     if (!confirm("Delete this resource?")) return;
-    persist(items.filter(x => x.id !== id));
-    toast("🗑️ Resource deleted");
+    setBusy(true);
+    try { await deleteResource(id); setItems(items.filter(x => x.id !== id)); toast("🗑️ Resource deleted"); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Delete failed")); }
+    setBusy(false);
   };
 
-  const move = (id: string, dir: -1 | 1) => {
-    const idx = items.findIndex(x => x.id === id);
+  const move = async (r: Resource, dir: -1 | 1) => {
+    const idx = items.findIndex(x => x.id === r.id);
     if (idx < 0) return;
-    const next = [...items];
     const swap = idx + dir;
-    if (swap < 0 || swap >= next.length) return;
-    [next[idx], next[swap]] = [next[swap], next[idx]];
-    next.forEach((x, i) => x.order = i);
-    persist(next);
+    if (swap < 0 || swap >= items.length) return;
+    const a = { ...items[idx], sort_order: items[swap].sort_order };
+    const b = { ...items[swap], sort_order: items[idx].sort_order };
+    setBusy(true);
+    try {
+      await Promise.all([saveResource(a), saveResource(b)]);
+      const next = [...items];
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      setItems(next);
+    } catch (e) { toast("✗ " + ((e as Error).message || "Reorder failed")); }
+    setBusy(false);
   };
 
   return (
@@ -444,36 +408,40 @@ function ResourcesTab() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-[15px] font-extrabold">📖 Recommended Resources</h3>
-            <p className="mt-0.5 text-[12px] text-mut">Manage affiliate links shown on the landing page. Track clicks and earnings.</p>
+            <p className="mt-0.5 text-[12px] text-mut">Affiliate links shown on the landing page. Data stored in Supabase.</p>
           </div>
-          <button className={btnPrimary + btnSm} onClick={add}>+ Add resource</button>
+          <button className={btnPrimary + btnSm} onClick={add} disabled={busy}>+ Add resource</button>
         </div>
       </div>
 
-      {items.map((r, i) => (
+      {loading ? (
+        <div className="text-center text-mut py-8"><span className="spinner inline-block" /> Loading…</div>
+      ) : items.length === 0 ? (
+        <div className={`${cardCls} p-8 text-center text-mut`}>No resources yet.</div>
+      ) : items.map((r, i) => (
         <div key={r.id} className={`${cardCls} p-4 transition-all ${!r.published ? "opacity-50" : ""}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
               <span className="grid h-10 w-10 place-items-center rounded-xl bg-acc1/10 text-[18px]">{r.icon}</span>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-extrabold">{r.title || "(no title)"}</span>
+                  <span className="text-[13px] font-extrabold">{r.title}</span>
                   {r.badge && <Chip tone="lvl">{r.badge}</Chip>}
                   {!r.published && <Chip>hidden</Chip>}
                 </div>
                 <div className="text-[11px] text-mut">{r.author} · {r.type} · {r.price}</div>
                 <p className="mt-1 max-w-[500px] text-[12px] leading-relaxed text-mut line-clamp-2">{r.description}</p>
                 <div className="mt-1 flex gap-3 text-[11px] text-fnt">
-                  <a href={r.affiliateUrl} target="_blank" rel="noopener noreferrer" className="text-acctxt hover:underline">🔗 {r.affiliateUrl.slice(0, 40)}…</a>
+                  <span className="text-acctxt">🔗 {r.affiliate_url.slice(0, 40)}…</span>
                   <span>🖱️ {r.clicks} clicks</span>
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button className={btnGhost + btnSm} onClick={() => move(r.id, -1)} disabled={i === 0}>↑</button>
-              <button className={btnGhost + btnSm} onClick={() => move(r.id, 1)} disabled={i === items.length - 1}>↓</button>
-              <button className={btnGhost + btnSm} onClick={() => { setEditing({ ...r }); setIsAdding(false); }}>✏️</button>
-              <button className={btnDanger + btnSm} onClick={() => remove(r.id)}>🗑️</button>
+              <button className={btnGhost + btnSm} onClick={() => void move(r, -1)} disabled={i === 0 || busy}>↑</button>
+              <button className={btnGhost + btnSm} onClick={() => void move(r, 1)} disabled={i === items.length - 1 || busy}>↓</button>
+              <button className={btnGhost + btnSm} onClick={() => { setEditing({ ...r }); setIsAdding(false); }} disabled={busy}>✏️</button>
+              <button className={btnDanger + btnSm} onClick={() => void remove(r.id)} disabled={busy}>🗑️</button>
             </div>
           </div>
         </div>
@@ -482,15 +450,14 @@ function ResourcesTab() {
       {editing && (
         <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New resource" : "✏️ Edit resource"}>
           <div className="w-full max-w-[520px] p-6">
-            <h3 className="text-[16px] font-extrabold">{isAdding ? "➕ New resource" : "✏️ Edit resource"}</h3>
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Title</span>
-                <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="System Design Interview" />
+                <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} />
               </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Author</span>
-                <input className="inp" value={editing.author} onChange={e => setEditing({ ...editing, author: e.target.value })} placeholder="Alex Xu" />
+                <input className="inp" value={editing.author} onChange={e => setEditing({ ...editing, author: e.target.value })} />
               </label>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Type</span>
@@ -505,30 +472,30 @@ function ResourcesTab() {
                 <input className="inp" value={editing.price} onChange={e => setEditing({ ...editing, price: e.target.value })} placeholder="$25" />
               </label>
               <label className="block">
-                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Badge (optional)</span>
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Badge</span>
                 <input className="inp" value={editing.badge ?? ""} onChange={e => setEditing({ ...editing, badge: e.target.value || undefined })} placeholder="Best Seller" />
               </label>
               <label className="block">
-                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Icon (emoji)</span>
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Icon</span>
                 <input className="inp" value={editing.icon} onChange={e => setEditing({ ...editing, icon: e.target.value })} placeholder="📖" />
               </label>
             </div>
             <label className="mt-3 block">
               <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Affiliate URL</span>
-              <input className="inp" value={editing.affiliateUrl} onChange={e => setEditing({ ...editing, affiliateUrl: e.target.value })} placeholder="https://www.amazon.com/dp/..." />
+              <input className="inp" value={editing.affiliate_url} onChange={e => setEditing({ ...editing, affiliate_url: e.target.value })} placeholder="https://www.amazon.com/dp/..." />
             </label>
             <label className="mt-3 block">
               <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Description</span>
-              <textarea className="inp h-20 w-full resize-y" value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} placeholder="Why should users check this out?" />
+              <textarea className="inp h-20 w-full resize-y" value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
             </label>
             <div className="mt-4 flex items-center justify-between">
               <label className="flex items-center gap-2 text-[12px] font-bold text-mut">
                 <input type="checkbox" checked={editing.published} onChange={e => setEditing({ ...editing, published: e.target.checked })} />
-                Published (visible on landing page)
+                Published
               </label>
               <div className="flex gap-2">
                 <button className={btnGhost + btnSm} onClick={() => { setEditing(null); setIsAdding(false); }}>Cancel</button>
-                <button className={btnPrimary + btnSm} onClick={saveItem}>💾 Save</button>
+                <button className={btnPrimary + btnSm} onClick={() => void saveItem()} disabled={busy}>💾 Save</button>
               </div>
             </div>
           </div>
@@ -543,43 +510,43 @@ function ResourcesTab() {
 /* ------------------------------------------------------------------ */
 
 function TipsTab() {
-  const [config, setConfig] = useState<TipConfig>(() => load(STORAGE_KEYS.adminTips, DEFAULT_TIPS));
+  const [config, setConfig] = useState<TipConfig>({ id: "default", amounts: [5, 15, 30], labels: ["☕ Coffee", "🍕 Lunch", "🎉 Celebration"], descriptions: ["Buy me a coffee", "Buy me lunch", "Celebrating a new offer?"], stripe_link: "", buymeacoffee_link: "", enabled: true });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
 
-  const persist = (next: TipConfig) => { setConfig(next); save(STORAGE_KEYS.adminTips, next); };
+  useEffect(() => {
+    void fetchTips().then(t => { setConfig(t); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
 
   const updateAmount = (idx: number, val: number) => {
     const next = { ...config, amounts: [...config.amounts] };
     next.amounts[idx] = Math.max(1, val);
-    persist(next);
+    setConfig(next);
   };
-
   const updateLabel = (idx: number, val: string) => {
     const next = { ...config, labels: [...config.labels] };
     next.labels[idx] = val;
-    persist(next);
+    setConfig(next);
   };
-
   const updateDesc = (idx: number, val: string) => {
     const next = { ...config, descriptions: [...config.descriptions] };
     next.descriptions[idx] = val;
-    persist(next);
+    setConfig(next);
   };
-
-  const addTier = () => {
-    const next = { ...config, amounts: [...config.amounts, 50], labels: [...config.labels, "🎁 Gift"], descriptions: [...config.descriptions, "Buy me a gift"] };
-    persist(next);
-  };
-
+  const addTier = () => setConfig({ ...config, amounts: [...config.amounts, 50], labels: [...config.labels, "🎁 Gift"], descriptions: [...config.descriptions, "Buy me a gift"] });
   const removeTier = (idx: number) => {
     if (config.amounts.length <= 1) { toast("Need at least one tier"); return; }
-    const next = { ...config, amounts: config.amounts.filter((_, i) => i !== idx), labels: config.labels.filter((_, i) => i !== idx), descriptions: config.descriptions.filter((_, i) => i !== idx) };
-    persist(next);
+    setConfig({ ...config, amounts: config.amounts.filter((_, i) => i !== idx), labels: config.labels.filter((_, i) => i !== idx), descriptions: config.descriptions.filter((_, i) => i !== idx) });
   };
 
-  const saveConfig = () => {
-    save(STORAGE_KEYS.adminTips, config);
-    toast("💾 Tip jar config saved");
+  const saveConfig = async () => {
+    setBusy(true);
+    try { await saveTips(config); toast("💾 Tip jar config saved to database"); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Save failed")); }
+    setBusy(false);
   };
+
+  if (loading) return <div className="text-center text-mut py-8"><span className="spinner inline-block" /> Loading…</div>;
 
   return (
     <div className="space-y-4">
@@ -587,9 +554,9 @@ function TipsTab() {
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-[15px] font-extrabold">❤️ Tip Jar Settings</h3>
-            <p className="mt-0.5 text-[12px] text-mut">Configure the support/tip jar section on the landing page.</p>
+            <p className="mt-0.5 text-[12px] text-mut">Configure the support section. Data stored in Supabase.</p>
           </div>
-          <button className={btnPrimary + btnSm} onClick={saveConfig}>💾 Save config</button>
+          <button className={btnPrimary + btnSm} onClick={() => void saveConfig()} disabled={busy}>💾 Save config</button>
         </div>
       </div>
 
@@ -606,7 +573,7 @@ function TipsTab() {
               <input type="number" min={1} className="inp w-20 py-1.5 text-center" value={amt} onChange={e => updateAmount(i, Number(e.target.value) || 5)} />
               <input className="inp flex-1 py-1.5" value={config.labels[i] ?? ""} onChange={e => updateLabel(i, e.target.value)} placeholder="☕ Coffee" />
               <input className="inp flex-1 py-1.5" value={config.descriptions[i] ?? ""} onChange={e => updateDesc(i, e.target.value)} placeholder="Buy me a coffee" />
-              <button className={btnDanger + btnSm} onClick={() => removeTier(i)} title="Remove tier">✕</button>
+              <button className={btnDanger + btnSm} onClick={() => removeTier(i)}>✕</button>
             </div>
           ))}
         </div>
@@ -617,11 +584,11 @@ function TipsTab() {
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Stripe payment link</span>
-            <input className="inp" value={config.stripeLink} onChange={e => setConfig({ ...config, stripeLink: e.target.value })} placeholder="https://buy.stripe.com/..." />
+            <input className="inp" value={config.stripe_link} onChange={e => setConfig({ ...config, stripe_link: e.target.value })} placeholder="https://buy.stripe.com/..." />
           </label>
           <label className="block">
             <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Buy Me a Coffee link</span>
-            <input className="inp" value={config.buymeacoffeeLink} onChange={e => setConfig({ ...config, buymeacoffeeLink: e.target.value })} placeholder="https://buymeacoffee.com/..." />
+            <input className="inp" value={config.buymeacoffee_link} onChange={e => setConfig({ ...config, buymeacoffee_link: e.target.value })} placeholder="https://buymeacoffee.com/..." />
           </label>
         </div>
         <div className="mt-4">
@@ -632,7 +599,6 @@ function TipsTab() {
         </div>
       </div>
 
-      {/* Preview */}
       <div className={`${cardCls} p-5`}>
         <h4 className="text-[13px] font-extrabold mb-3">👀 Preview</h4>
         <div className="flex flex-wrap items-center justify-center gap-3">

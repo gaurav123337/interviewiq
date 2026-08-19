@@ -3,29 +3,33 @@
    1. Affiliate links to courses/books (Amazon, Udemy, etc.)
    2. Premium upsell prompts
    3. Tip jar (Buy Me a Coffee / Stripe)
-   4. Sponsored case study placements (marked clearly) */
+   4. Sponsored case study placements (marked clearly)
+   
+   Data is fetched from Supabase (database) with localStorage cache fallback.
+   Admins manage this content via the Content CMS in the Admin dashboard. */
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { cardCls } from "./ui";
 import { toast } from "../toast";
-import { storageGet, STORAGE_KEYS } from "../services/storage";
+import { fetchTestimonials, fetchResources, trackClick } from "../services/contentService";
 
 /* ------------------------------------------------------------------ */
 /* Testimonials                                                        */
 /* ------------------------------------------------------------------ */
 
+/* Local display interface (maps from DB types) */
 interface Testimonial {
   name: string;
   role: string;
   company: string;
-  avatar: string; // emoji fallback
+  avatar: string;
   rating: number;
   text: string;
-  highlight?: string; // short result metric
+  highlight?: string;
 }
 
-/* Default testimonials — used when admin hasn't configured any */
-const DEFAULT_TESTIMONIALS: Testimonial[] = [
+/* Default testimonials — used when Supabase is unreachable */
+const FALLBACK_TESTIMONIALS: Testimonial[] = [
   {
     name: "Priya M.",
     role: "Frontend Engineer",
@@ -94,10 +98,19 @@ function StarRating({ count }: { count: number }) {
 
 export function TestimonialsSection() {
   const [showAll, setShowAll] = useState(false);
-  const [adminTestimonials] = useState<Testimonial[]>(
-    () => storageGet<Testimonial[]>(STORAGE_KEYS.adminTestimonials, DEFAULT_TESTIMONIALS)
-  );
-  const visible = showAll ? adminTestimonials : adminTestimonials.slice(0, 3);
+  const [testimonials, setTestimonials] = useState<Testimonial[]>(FALLBACK_TESTIMONIALS);
+
+  const load = useCallback(async () => {
+    try {
+      const dbItems = await fetchTestimonials();
+      setTestimonials(dbItems.map(t => ({ name: t.name, role: t.role, company: t.company, avatar: t.avatar, rating: t.rating, text: t.text, highlight: t.highlight ?? undefined })));
+    } catch {
+      // Keep fallback
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const visible = showAll ? testimonials : testimonials.slice(0, 3);
 
   return (
     <section id="testimonials" className="pb-14">
@@ -129,10 +142,10 @@ export function TestimonialsSection() {
         ))}
       </div>
 
-      {adminTestimonials.length > 3 && (
+      {testimonials.length > 3 && (
         <div className="mt-6 text-center">
           <button onClick={() => setShowAll(!showAll)} className="rounded-xl border border-line/15 bg-wht/5 px-5 py-2 text-[13px] font-bold text-acctxt transition-all hover:bg-wht/10">
-            {showAll ? "Show fewer" : `Show all ${adminTestimonials.length} reviews`}
+            {showAll ? "Show fewer" : `Show all ${testimonials.length} reviews`}
           </button>
         </div>
       )}
@@ -229,9 +242,18 @@ const RESOURCES: Resource[] = [
 ];
 
 export function RecommendedResources() {
-  const [adminResources] = useState<Resource[]>(
-    () => storageGet<Resource[]>(STORAGE_KEYS.adminResources, RESOURCES)
-  );
+  const [resources, setResources] = useState<Resource[]>(RESOURCES);
+
+  const load = useCallback(async () => {
+    try {
+      const dbItems = await fetchResources();
+      setResources(dbItems.map(r => ({ title: r.title, author: r.author, type: r.type, description: r.description, affiliateUrl: r.affiliate_url, icon: r.icon, price: r.price, badge: r.badge ?? undefined })));
+    } catch {
+      // Keep fallback
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
   return (
     <section id="resources" className="pb-14">
       <h2 className="text-center text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
@@ -245,12 +267,13 @@ export function RecommendedResources() {
       </p>
 
       <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {adminResources.map(r => (
+        {resources.map((r, i) => (
           <a
-            key={r.title}
+            key={r.title + i}
             href={r.affiliateUrl}
             target="_blank"
             rel="noopener noreferrer nofollow"
+            onClick={() => { void trackClick("resource", String(i)); }}
             className={`${cardCls} group block p-5 transition-all hover:-translate-y-0.5 hover:border-acc1/40 hover:shadow-[0_8px_24px_rgba(99,102,241,.15)]`}
           >
             <div className="flex items-start justify-between">

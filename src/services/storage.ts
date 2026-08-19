@@ -71,11 +71,7 @@ export const STORAGE_KEYS = {
   sysDesignHistory: "iq.sysDesignHistory",
   sysDesignBookmarks: "iq.sysDesignBookmarks",
   sysDesignFlashcards: "iq.sysDesignFlashcards",
-  sysDesignTimer: "iq.sysDesignTimer",
-  adminTestimonials: "iq.adminTestimonials",
-  adminAds: "iq.adminAds",
-  adminResources: "iq.adminResources",
-  adminTips: "iq.adminTips"
+  sysDesignTimer: "iq.sysDesignTimer"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {
