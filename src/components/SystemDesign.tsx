@@ -199,6 +199,18 @@ export function SystemDesign() {
   const [searchQuery, setSearchQuery] = useState("");
   const goal = getGoal();
 
+  /* Notify the floating AI coach when a case study is selected/closed */
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const setter = (window as any).__setCoachTopic;
+    if (!setter) return;
+    if (selected) {
+      setter({ caseId: selected.id, title: selected.title, icon: selected.icon, blurb: selected.blurb });
+    } else {
+      setter({ caseId: null, title: null, icon: null, blurb: null });
+    }
+  }, [selected]);
+
   const categories = getCategories();
   const streak = useMemo(() => calculateStreak(completed), [completed]);
   const cases = useMemo(() => {

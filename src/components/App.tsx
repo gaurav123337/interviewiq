@@ -23,6 +23,7 @@ import { Resources } from "./Resources";
 import { Counselor } from "./Counselor";
 import { SystemDesign } from "./SystemDesign";
 import { FloatingCoach } from "./FloatingCoach";
+import { CoachTopicProvider } from "../contexts/CoachContext";
 import { Legal } from "./Legal";
 import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
@@ -371,8 +372,10 @@ export function App() {
 
       <ToastHost />
 
-      {/* global floating AI coach */}
-      <FloatingCoach />
+      {/* global floating AI coach (context-aware) */}
+      <CoachTopicProvider>
+        <FloatingCoach />
+      </CoachTopicProvider>
     </div>
   );
 }
