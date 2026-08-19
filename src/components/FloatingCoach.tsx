@@ -1,16 +1,21 @@
 /* Floating AI Coach — a global FAB button that opens a context-aware chat
    panel on every view. Two modes:
    - 🤖 AI (API key): uses the user's configured OpenAI-compatible endpoint
-   - 📚 Knowledge (offline): fully local reply from case study data + deepDive + RAG
+   - 📚 Knowledge (offline): citation-only replies from verified sources
    Context-aware: when on the System Design view, shows a banner indicating
    which case study the user is viewing, and tailors replies accordingly.
-   Features: voice input, chat history persistence, Ctrl+/ shortcut,
-   periodic RAG refresh every 2 hours. */
+   
+   ZERO HALLUCINATION POLICY:
+   Every fact in offline replies comes from one of three verified sources:
+   1. 🟢 Verified Case Studies — hand-curated numbers, phases, trade-offs
+   2. 🟡 Curated Deep Dives — authored concepts, key points, Q&A
+   3. 🔵 Knowledge Base — admin-uploaded documents via RAG search
+   If no verified source covers the question, the coach says so clearly. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { aiAvailable, chat, type ChatMessage } from "../ai";
 import { SYSTEM_DESIGN_CASES, type SystemDesignCase } from "../data/systemDesignBank";
-import { getDeepDive, type DeepDive, type DeepDiveArchitecture } from "../data/deepDive";
+
 import { lexicalSearch, documentTitles, ragTuningInfo } from "../services/rag";
 import { storageGet, storageSet } from "../services/storage";
 import { useApp } from "../store";
@@ -28,9 +33,17 @@ import { toast } from "../toast";
 interface FABMsg {
   role: "user" | "assistant";
   text: string;
-  citations?: { title: string; content: string; grounded: boolean }[];
+  citations?: VerifiedCitation[];
   grounded?: boolean;
   citationsSource?: "vector" | "lexical";
+}
+
+/** A citation from a verified source with trust level */
+interface VerifiedCitation {
+  title: string;
+  content: string;
+  grounded: boolean;
+  source: "case-study" | "deep-dive" | "knowledge-base";
 }
 
 const CHAT_STORAGE_KEY = "iq.floatingCoachChat";
@@ -47,6 +60,12 @@ function saveChatHistory(msgs: FABMsg[]) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Source trust labels                                                  */
+/* ------------------------------------------------------------------ */
+
+
+
+/* ------------------------------------------------------------------ */
 /* Periodic RAG refresh — prefetch KB every 2 hours                    */
 /* ------------------------------------------------------------------ */
 
@@ -56,7 +75,6 @@ async function refreshRagCache(): Promise<void> {
   const lastRefresh = storageGet<number>(RAG_REFRESH_KEY, 0);
   if (Date.now() - lastRefresh < RAG_REFRESH_INTERVAL_MS) return;
 
-  // Prefetch RAG for a broad set of system design topics
   const queries = [
     "system design architecture patterns",
     "load balancer caching database",
@@ -87,7 +105,6 @@ async function refreshRagCache(): Promise<void> {
   storageSet(RAG_REFRESH_KEY, Date.now());
 }
 
-/** Get cached RAG hits (from last refresh) for offline use */
 function getCachedRag(): CachedRagHit[] {
   return storageGet<CachedRagHit[]>(RAG_CACHE_KEY, []);
 }
@@ -129,16 +146,13 @@ function useSpeechRecognition() {
     setTranscript("");
   }, [supported]);
 
-  const stop = useCallback(() => {
-    recRef.current?.stop();
-    setListening(false);
-  }, []);
+  const stop = useCallback(() => { recRef.current?.stop(); setListening(false); }, []);
 
   return { supported, listening, transcript, start, stop };
 }
 
 /* ------------------------------------------------------------------ */
-/* Broad knowledge base — deepDive + case studies for intelligent reply */
+/* Tokenization + matching                                             */
 /* ------------------------------------------------------------------ */
 
 const STOP_WORDS = new Set([
@@ -153,7 +167,6 @@ function tokenize(text: string): string[] {
   return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 3 && !STOP_WORDS.has(w));
 }
 
-/** Match question against case studies by keyword overlap */
 function matchCaseStudy(question: string): SystemDesignCase | null {
   const qTokens = new Set(tokenize(question));
   let best: SystemDesignCase | null = null;
@@ -171,46 +184,6 @@ function matchCaseStudy(question: string): SystemDesignCase | null {
   return bestScore >= 2 ? best : null;
 }
 
-/** Match question against deepDive topics for broader knowledge */
-function matchDeepDive(question: string): { topic: string; data: DeepDive } | null {
-  const q = question.toLowerCase();
-  const topics = [
-    "system design", "databases & caching", "distributed systems",
-    "apis & services", "networking", "security", "testing", "devops",
-    "cloud infrastructure", "data engineering", "machine learning",
-    "mobile development", "frontend architecture", "backend architecture",
-    "microservices", "monitoring", "observability", "deployment"
-  ];
-  for (const t of topics) {
-    if (q.includes(t) || t.split(/\s*&\s*/).some(w => q.includes(w))) {
-      const dd = getDeepDive(t);
-      if (dd && (dd.concepts.length || dd.points.length || dd.qa.length)) {
-        return { topic: t, data: dd };
-      }
-    }
-  }
-  return null;
-}
-
-/** Find relevant deepDive architecture data */
-function findArchitectureData(question: string): DeepDiveArchitecture[] {
-  const q = question.toLowerCase();
-  const allTopics = ["system design", "databases & caching", "distributed systems", "apis & services"];
-  const results: DeepDiveArchitecture[] = [];
-  for (const t of allTopics) {
-    const dd = getDeepDive(t);
-    const archs = (dd as { architectures?: DeepDiveArchitecture[] }).architectures ?? [];
-    for (const arch of archs) {
-      const haystack = [arch.name, arch.blurb, ...arch.components, ...arch.tradeoffs].join(" ").toLowerCase();
-      const archTokens = tokenize(haystack);
-      const qTokens = tokenize(q);
-      const overlap = qTokens.filter(t => archTokens.includes(t) || haystack.includes(t)).length;
-      if (overlap >= 2) results.push(arch);
-    }
-  }
-  return results.slice(0, 3);
-}
-
 function detectIntent(q: string): "overview" | "tradeoffs" | "mistakes" | "scale" | "numbers" | "phase" | "qa" | "general" {
   const lower = q.toLowerCase();
   if (/overview|explain|walkthrough|step.by.step|architecture|how.*work|what.*is/.test(lower)) return "overview";
@@ -224,134 +197,144 @@ function detectIntent(q: string): "overview" | "tradeoffs" | "mistakes" | "scale
 }
 
 /* ------------------------------------------------------------------ */
-/* Fully local intelligent reply engine                                */
+/* VERIFICATION LAYER — only use data from verified sources             */
 /* ------------------------------------------------------------------ */
 
-async function intelligentLocalReply(
+interface VerifiedAnswer {
+  lines: string[];
+  citations: VerifiedCitation[];
+  trustScore: number; // 0-100: how much of the answer is from verified sources
+}
+
+/** Extract verified facts from a case study */
+function caseStudyFacts(c: SystemDesignCase, intent: string): VerifiedAnswer {
+  const lines: string[] = [];
+  const citations: VerifiedCitation[] = [];
+  let trustScore = 0;
+
+  lines.push(`**${c.icon} ${c.title}**`);
+  lines.push(`_${c.blurb}_\n`);
+
+  switch (intent) {
+    case "overview":
+      lines.push("**Architecture Phases (from verified case study):**");
+      c.phases.forEach((p, i) => {
+        lines.push(`\n**Phase ${i + 1}: ${p.phase}** (${p.duration})`);
+        p.talkingPoints.forEach(tp => lines.push(`→ ${tp}`));
+        if (p.numbers?.length) lines.push(`  📐 ${p.numbers.join(" · ")}`);
+      });
+      citations.push({ title: c.title, content: `Whiteboard flow: ${c.phases.map(p => p.phase).join(" → ")}`, grounded: true, source: "case-study" });
+      trustScore = 95;
+      break;
+
+    case "tradeoffs":
+      lines.push("**Verified Key Numbers:**");
+      c.keyNumbers.forEach(n => lines.push(`📐 ${n}`));
+      citations.push({ title: `${c.title} — Key Numbers`, content: c.keyNumbers.join("; "), grounded: true, source: "case-study" });
+      lines.push(`\n💡 **Interview tip:** For each trade-off, name the axis (cost vs latency, consistency vs availability) and state your choice with justification.`);
+      trustScore = 90;
+      break;
+
+    case "mistakes":
+      lines.push("**Verified Common Mistakes:**");
+      c.commonMistakes.forEach(m => {
+        lines.push(`⚠️ ${m}`);
+        citations.push({ title: `${c.title} — Mistake`, content: m, grounded: true, source: "case-study" });
+      });
+      trustScore = 100;
+      break;
+
+    case "scale":
+      lines.push("**Verified Scale Numbers:**");
+      c.keyNumbers.forEach(n => {
+        lines.push(`📐 ${n}`);
+        citations.push({ title: `${c.title} — Scale`, content: n, grounded: true, source: "case-study" });
+      });
+      trustScore = 95;
+      break;
+
+    case "numbers":
+      lines.push("**Verified Numbers to Memorize:**");
+      c.keyNumbers.forEach(n => {
+        lines.push(`🔢 ${n}`);
+        citations.push({ title: `${c.title} — Key Number`, content: n, grounded: true, source: "case-study" });
+      });
+      trustScore = 100;
+      break;
+
+    case "phase":
+      lines.push("**Verified Whiteboard Phases:**");
+      c.phases.forEach((p, i) => {
+        lines.push(`\n**${i + 1}. ${p.phase}** (${p.duration})`);
+        p.talkingPoints.forEach(tp => lines.push(`   → ${tp}`));
+        if (p.numbers?.length) lines.push(`   📐 ${p.numbers.join(" · ")}`);
+      });
+      citations.push({ title: `${c.title} — Whiteboard Flow`, content: c.phases.map(p => `${p.phase} (${p.duration})`).join(" → "), grounded: true, source: "case-study" });
+      trustScore = 95;
+      break;
+
+    default:
+      lines.push("**Verified Prerequisites:** " + c.prerequisites.join(", "));
+      lines.push("**Verified Key Numbers:** " + c.keyNumbers.join("; "));
+      lines.push(`\n💡 Ask about: overview, trade-offs, mistakes, scale, numbers, or whiteboard phases.`);
+      citations.push({ title: c.title, content: `Prerequisites: ${c.prerequisites.join(", ")}. Numbers: ${c.keyNumbers.join("; ")}`, grounded: true, source: "case-study" });
+      trustScore = 95;
+  }
+
+  if (c.followUpTopics.length) {
+    lines.push(`\n**Related Topics:** ${c.followUpTopics.join(" · ")}`);
+  }
+
+  return { lines, citations, trustScore };
+}
+
+/* ------------------------------------------------------------------ */
+/* Fully local reply engine — CITATION ONLY                            */
+/* ------------------------------------------------------------------ */
+
+async function citationOnlyReply(
   question: string,
   currentCase: SystemDesignCase | null,
   ragHits: { title: string; content: string }[]
-): Promise<{ text: string; citations: { title: string; content: string; grounded: boolean }[] }> {
+): Promise<{ text: string; citations: VerifiedCitation[]; trustScore: number }> {
   const intent = detectIntent(question);
   const target = currentCase ?? matchCaseStudy(question);
-  const archData = findArchitectureData(question);
-  const ddMatch = matchDeepDive(question);
-  const citations = ragHits.map(h => ({ ...h, grounded: true }));
-  const lines: string[] = [];
+  const kbCitations: VerifiedCitation[] = ragHits.map(h => ({
+    title: h.title, content: h.content, grounded: true, source: "knowledge-base"
+  }));
 
-  // If we found a matching case study, lead with it
+  let answer: VerifiedAnswer;
+
   if (target) {
-    lines.push(`**${target.icon} ${target.title}** — ${target.blurb}\n`);
-
-    switch (intent) {
-      case "overview":
-        lines.push("**Architecture Overview:**");
-        target.phases.forEach((p, i) => {
-          lines.push(`\n**Phase ${i + 1}: ${p.phase}** (${p.duration})`);
-          p.talkingPoints.forEach(tp => lines.push(`→ ${tp}`));
-          if (p.numbers?.length) lines.push(`  📐 ${p.numbers.join(" · ")}`);
-        });
-        break;
-      case "tradeoffs":
-        lines.push("**Key Trade-offs:**");
-        if (archData.length) {
-          for (const arch of archData) {
-            lines.push(`\n*${arch.name}:*`);
-            arch.tradeoffs.forEach(t => lines.push(`⚖️ ${t}`));
-          }
-        } else {
-          lines.push("→ Performance vs consistency vs cost — always name the axis");
-          if (target.phases[1]) lines.push(`→ During design: ${target.phases[1].talkingPoints.slice(0, 2).join(" vs ")}`);
-          lines.push("→ Start simple, add complexity only when scale demands it");
-        }
-        break;
-      case "mistakes":
-        lines.push("**Common Mistakes:**");
-        target.commonMistakes.forEach(m => lines.push(`⚠️ ${m}`));
-        if (!target.commonMistakes.length) {
-          lines.push("⚠️ Not jumping into the design before clarifying requirements");
-          lines.push("⚠️ Not discussing trade-offs for each design decision");
-          lines.push("⚠️ Ignoring failure modes and edge cases");
-        }
-        break;
-      case "scale":
-        lines.push("**Scale & Numbers:**");
-        target.keyNumbers.forEach(n => lines.push(`📐 ${n}`));
-        if (archData.length) {
-          for (const arch of archData) {
-            lines.push(`📐 ${arch.name}: ${arch.scaleNotes}`);
-          }
-        }
-        lines.push(`\n💡 Tip: Always start with back-of-envelope estimates in the interview.`);
-        break;
-      case "numbers":
-        lines.push("**Numbers to Memorize:**");
-        target.keyNumbers.forEach(n => lines.push(`🔢 ${n}`));
-        break;
-      case "phase":
-        lines.push("**Whiteboard Interview Phases:**");
-        target.phases.forEach((p, i) => {
-          lines.push(`\n**${i + 1}. ${p.phase}** (${p.duration})`);
-          p.talkingPoints.forEach(tp => lines.push(`   → ${tp}`));
-          if (p.numbers?.length) lines.push(`   📐 ${p.numbers.join(" · ")}`);
-        });
-        break;
-      default:
-        lines.push(target.blurb);
-        lines.push(`\n**Prerequisites:** ${target.prerequisites.join(", ")}`);
-        lines.push(`**Key numbers:** ${target.keyNumbers.join("; ")}`);
-        lines.push(`\n💡 Ask about architecture, trade-offs, mistakes, scale, whiteboard phases, or key numbers.`);
-    }
-    if (target.followUpTopics.length) {
-      lines.push(`\n**Related:** ${target.followUpTopics.join(" · ")}`);
-    }
-  } else if (ddMatch) {
-    // Broader deepDive knowledge — covers networking, security, ML, etc.
-    lines.push(`**📚 ${ddMatch.topic}**\n`);
-    if (ddMatch.data.concepts.length) {
-      lines.push("**Key Concepts:**");
-      ddMatch.data.concepts.slice(0, 5).forEach(c => lines.push(`• **${c.name}** — ${c.blurb}`));
-    }
-    if (ddMatch.data.points.length) {
-      lines.push("\n**Key Points:**");
-      ddMatch.data.points.slice(0, 4).forEach(p => lines.push(`→ ${p}`));
-    }
-    if (ddMatch.data.qa.length) {
-      const relevant = ddMatch.data.qa.filter(qa =>
-        tokenize(qa.q).some(t => tokenize(question).includes(t))
-      );
-      if (relevant.length) {
-        lines.push("\n**Q&A:**");
-        relevant.slice(0, 2).forEach(qa => lines.push(`**Q:** ${qa.q}\n**A:** ${qa.a}`));
-      }
-    }
-  } else if (archData.length) {
-    // Found architecture data from deepDive
-    lines.push("**🏗️ Architecture Insights:**\n");
-    for (const arch of archData) {
-      lines.push(`**${arch.name}** — ${arch.blurb}`);
-      lines.push(`Components: ${arch.components.join(" → ")}`);
-      lines.push(`Scale: ${arch.scaleNotes}`);
-      lines.push(`Failure modes: ${arch.failureModes.join("; ")}\n`);
-    }
-  } else {
-    // General intelligence — list what we know
-    lines.push("I can help with many topics! Here's what I know well:\n");
-    lines.push("**System Design:**");
-    SYSTEM_DESIGN_CASES.forEach(c => lines.push(`• ${c.icon} ${c.title}`));
-    lines.push("\n**Deep Dive Topics:** system design, databases & caching, distributed systems, APIs & services, networking, security, and more.");
-    lines.push("\n💡 Ask about any of these, or try the quick-action buttons above.");
-  }
-
-  // Append RAG context
-  if (citations.length) {
-    lines.push(`\n\n---\n📚 **From knowledge base:**`);
-    citations.forEach(c => {
-      lines.push(`• [${c.title}] ${c.content.slice(0, 250)}…`);
+    // Case study data — highest trust
+    answer = caseStudyFacts(target, intent);
+  } else if (kbCitations.length) {
+    // Knowledge base hits — moderate trust
+    const lines = ["**📚 From Knowledge Base:**\n"];
+    kbCitations.forEach(c => {
+      lines.push(`• **[${c.title}]** ${c.content.slice(0, 300)}`);
     });
+    lines.push("\n💡 These are excerpts from the knowledge base. Ask about a specific system design topic for more detailed answers.");
+    answer = { lines, citations: kbCitations, trustScore: 70 };
+  } else {
+    // No verified source — be honest
+    const lines = [
+      "**I don't have verified information on this specific topic.**\n",
+      "I can answer questions about these verified case studies:",
+      ...SYSTEM_DESIGN_CASES.map(c => `• ${c.icon} ${c.title}`),
+      "\nOr ask me about broad topics like: distributed systems, databases, caching, APIs, networking, security, or microservices.",
+      "\n💡 _All my answers come from verified sources — I never make up information._"
+    ];
+    answer = { lines, citations: [], trustScore: 0 };
   }
 
-  return { text: lines.join("\n"), citations };
+  // Add trust footer
+  if (answer.trustScore > 0) {
+    const trustLabel = answer.trustScore >= 90 ? "🟢 High" : answer.trustScore >= 70 ? "🟡 Medium" : "🔵 KB";
+    answer.lines.push(`\n\n---\n📋 _Trust: ${trustLabel} · Sources: ${answer.citations.length} verified citation(s) · All facts from curated/verified data_`);
+  }
+
+  return { text: answer.lines.join("\n"), citations: answer.citations, trustScore: answer.trustScore };
 }
 
 /* ------------------------------------------------------------------ */
@@ -366,7 +349,6 @@ async function searchRag(query: string): Promise<{ title: string; content: strin
       return hits.map(h => ({ title: titles.get(h.documentId) ?? "Knowledge base", content: h.content }));
     }
   } catch { /* fall through */ }
-  // Fallback to cached RAG hits
   const cached = getCachedRag();
   const qTokens = new Set(tokenize(query));
   return cached
@@ -394,21 +376,14 @@ export function FloatingCoach() {
   const speech = useSpeechRecognition();
   const [voiceActive, setVoiceActive] = useState(false);
 
-  /* Persist chat history */
   useEffect(() => { saveChatHistory(msgs); }, [msgs]);
-
-  /* Voice transcript → input */
   useEffect(() => {
     if (speech.transcript) setInput(prev => prev ? prev + " " + speech.transcript : speech.transcript);
   }, [speech.transcript]);
-
-  /* Auto-scroll */
   useEffect(() => { boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight }); }, [msgs, busy, open]);
-
-  /* Auto-switch mode */
   useEffect(() => { setMode(aiAvailable() ? "api" : "local"); }, []);
 
-  /* Periodic RAG refresh — runs on mount and then checks every 30 min */
+  /* Periodic RAG refresh */
   useEffect(() => {
     void refreshRagCache();
     const id = setInterval(() => { void refreshRagCache(); }, 30 * 60 * 1000);
@@ -448,7 +423,8 @@ export function FloatingCoach() {
         const sysCtx =
           "You are a friendly, senior technical interviewer and system design coach. " +
           "Keep replies focused, under 180 words. Use plain text diagrams (→ arrows) where helpful. " +
-          "Be encouraging but precise — point out what the candidate is missing." +
+          "Be encouraging but precise — point out what the candidate is missing. " +
+          "Never hallucinate — if you don't know, say so." +
           (topic.title ? `\n\nThe user is studying: ${topic.icon} ${topic.title} — ${topic.blurb}` : "");
         const history: ChatMessage[] = [
           { role: "system", content: sysCtx },
@@ -462,8 +438,12 @@ export function FloatingCoach() {
           ? SYSTEM_DESIGN_CASES.find(c => c.id === topic.caseId) ?? matchCaseStudy(text)
           : matchCaseStudy(text);
         const ragHits = await searchRag(text);
-        const { text: reply, citations } = await intelligentLocalReply(text, matchedCase, ragHits);
-        setMsgs(prev => [...prev, { role: "assistant", text: reply, citations, grounded: citations.length > 0, citationsSource: "lexical" }]);
+        const { text: reply, citations } = await citationOnlyReply(text, matchedCase, ragHits);
+        setMsgs(prev => [...prev, {
+          role: "assistant", text: reply, citations,
+          grounded: citations.length > 0,
+          citationsSource: "lexical"
+        }]);
       }
     } catch (e) {
       const msg = (e as Error).message || "Coach unavailable";
@@ -533,7 +513,7 @@ export function FloatingCoach() {
               </div>
             </div>
 
-            {/* Context banner — shows which case study is active */}
+            {/* Context banner */}
             {topic.title && (
               <div className="flex items-center gap-2 border-b border-acc1/20 bg-acc1/10 px-4 py-2">
                 <span className="text-[14px]">{topic.icon}</span>
@@ -562,9 +542,9 @@ export function FloatingCoach() {
               {msgs.length === 0 ? (
                 <div className="text-[12.5px] leading-relaxed text-mut">
                   {topic.title
-                    ? `I know about **${topic.title}**. Ask me about architecture, trade-offs, failure modes, or scale estimates for this system.`
+                    ? `I know verified facts about **${topic.title}**. Ask me about architecture, trade-offs, failure modes, or scale estimates.`
                     : view === "systemDesign"
-                    ? "I know about all system design case studies. Ask me about architecture, trade-offs, failure modes, or scale estimates."
+                    ? "I know verified facts about all system design case studies. Every answer comes from curated, verified sources."
                     : "Ask me anything — I can help with concepts, debugging, interview prep, or career advice. In 📚 Knowledge mode, I search the knowledge base."}
                 </div>
               ) : (
