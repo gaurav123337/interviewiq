@@ -50,12 +50,13 @@ import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
 import { pendingCommunityResources, reviewResource, type ResourceRow } from "../services/resources";
 import { adminDecisionProposal, adminPendingProposals, type UpdateProposalRow } from "../services/trendSignals";
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../services/secrets";
-import { AI_MODULES, getAiProviderConfig, getModuleModels, resolveModulePreview, saveAiProviderConfig, saveModuleModel, testAiProvider, type AiProviderStatus, type ModuleModelRow } from "../services/aiProvider";
+import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, type AiProviderStatus } from "../services/aiProvider";
 import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretStatus } from "../services/edgeSecrets";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
+import { ContentSection } from "./AdminContent";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -73,7 +74,8 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "security", label: "Security", icon: "🔐" },
   { id: "secrets", label: "Secrets", icon: "🔑" },
   { id: "resources", label: "Resources", icon: "🔗" },
-  { id: "trends", label: "Trends", icon: "📈" }
+  { id: "trends", label: "Trends", icon: "📈" },
+  { id: "content", label: "Content CMS", icon: "✍️" }
 ];
 
 const FEATURE_LABELS: Record<string, string> = {
@@ -855,6 +857,7 @@ export function Admin() {
         {section === "secrets" && <SecretsSection />}
         {section === "resources" && <ResourcesSection />}
         {section === "trends" && <TrendsSection />}
+        {section === "content" && <ContentSection />}
       </div>
     </div>
   );
@@ -4317,12 +4320,6 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
-  /* per-module overrides — loaded separately from the provider row */
-  const [modules, setModules] = useState<Record<string, ModuleModelRow>>({});
-  const [modulesTick, setModulesTick] = useState(0);
-  useEffect(() => {
-    void getModuleModels().then(setModules).catch(() => {});
-  }, [modulesTick]);
 
   useEffect(() => {
     if (status) {
@@ -4432,93 +4429,6 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
         </button>
         <button className={btnGhost + btnSm} onClick={() => void test()} disabled={saving || testing} title="One live call to the provider's /models endpoint with the entered key">
           {testing ? "Testing…" : "🧪 Test key"}
-        </button>
-      </div>
-
-      {/* per-module model wiring — each module falls back to the provider above */}
-      <div className="mt-5 border-t border-line/15 pt-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-[13px] font-extrabold">🧩 Per-module models</h3>
-          <button className={btnGhost + btnSm} onClick={() => setModulesTick(t => t + 1)} title="Re-read module overrides">↻</button>
-        </div>
-        <p className="mt-1 text-[11.5px] text-mut">
-          Each module can use its own model — some models explain better, some are better at RAG. Leave a module blank to use the default provider above.
-        </p>
-        <div className="mt-3 space-y-3">
-          {Object.entries(AI_MODULES).map(([id, meta]) => (
-            <ModuleModelRow
-              key={id}
-              id={id}
-              meta={meta}
-              current={modules[id]}
-              provider={{ keyHint: status?.keyHint ?? "", model: status?.model ?? "" }}
-              onSaved={() => setModulesTick(t => t + 1)}
-              onToast={onToast}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* One module override row in the AI pipeline card. Blank model + key = use
-   the default provider; a key alone inherits the provider's base. */
-function ModuleModelRow({ id, meta, current, provider, onSaved, onToast }: {
-  id: string;
-  meta: { label: string; hint: string };
-  current: ModuleModelRow | undefined;
-  provider: { keyHint: string; model: string };
-  onSaved: () => void;
-  onToast: (m: string) => void;
-}) {
-  const [model, setModel] = useState("");
-  const [key, setKey] = useState("");
-  const [saving, setSaving] = useState(false);
-  const preview = resolveModulePreview(current, provider);
-  const save = async () => {
-    setSaving(true);
-    try {
-      await saveModuleModel(id, model.trim() || key.trim() ? { model, key } : null);
-      onToast(`🧩 ${meta.label}: ${model.trim() || key.trim() ? "custom model saved" : "back to default provider"}`);
-      setModel("");
-      setKey("");
-      onSaved();
-    } catch (e) {
-      onToast("✗ " + ((e as Error).message || "Save failed"));
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <div className="rounded-xl border border-line/15 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[12px] font-extrabold">
-          {meta.label} <span className="font-normal text-mut">({id})</span>
-        </p>
-        <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${preview.source === "module" ? "bg-acc1/15 text-acc1" : preview.source === "provider" ? "bg-ok/10 text-ok" : "bg-warn/15 text-warn"}`}>
-          {preview.source === "module" ? `🔄 ${preview.model}` : preview.source === "provider" ? `⬇ default · ${preview.model}` : "⚠ no provider"}
-        </span>
-      </div>
-      <p className="mt-0.5 text-[11px] text-mut">{meta.hint}</p>
-      <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1.1fr_auto]">
-        <input
-          type="text"
-          value={model}
-          onChange={e => setModel(e.target.value)}
-          placeholder={preview.model ? `default: ${preview.model}` : "no provider configured"}
-          className="inp w-full text-[12px]"
-        />
-        <input
-          type="password"
-          value={key}
-          onChange={e => setKey(e.target.value)}
-          placeholder={current?.key ? `key ${preview.keyHint} (blank = keep)` : "key (blank = inherit provider)"}
-          autoComplete="off"
-          className="inp w-full text-[12px]"
-        />
-        <button className={btnPrimary + btnSm} onClick={() => void save()} disabled={saving}>
-          {saving ? "Saving…" : "💾 Save"}
         </button>
       </div>
     </div>

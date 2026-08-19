@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { cardCls } from "./ui";
 import { toast } from "../toast";
+import { storageGet, STORAGE_KEYS } from "../services/storage";
 
 /* ------------------------------------------------------------------ */
 /* Testimonials                                                        */
@@ -23,7 +24,8 @@ interface Testimonial {
   highlight?: string; // short result metric
 }
 
-const TESTIMONIALS: Testimonial[] = [
+/* Default testimonials — used when admin hasn't configured any */
+const DEFAULT_TESTIMONIALS: Testimonial[] = [
   {
     name: "Priya M.",
     role: "Frontend Engineer",
@@ -92,7 +94,10 @@ function StarRating({ count }: { count: number }) {
 
 export function TestimonialsSection() {
   const [showAll, setShowAll] = useState(false);
-  const visible = showAll ? TESTIMONIALS : TESTIMONIALS.slice(0, 3);
+  const [adminTestimonials] = useState<Testimonial[]>(
+    () => storageGet<Testimonial[]>(STORAGE_KEYS.adminTestimonials, DEFAULT_TESTIMONIALS)
+  );
+  const visible = showAll ? adminTestimonials : adminTestimonials.slice(0, 3);
 
   return (
     <section id="testimonials" className="pb-14">
@@ -124,10 +129,10 @@ export function TestimonialsSection() {
         ))}
       </div>
 
-      {TESTIMONIALS.length > 3 && (
+      {adminTestimonials.length > 3 && (
         <div className="mt-6 text-center">
           <button onClick={() => setShowAll(!showAll)} className="rounded-xl border border-line/15 bg-wht/5 px-5 py-2 text-[13px] font-bold text-acctxt transition-all hover:bg-wht/10">
-            {showAll ? "Show fewer" : `Show all ${TESTIMONIALS.length} reviews`}
+            {showAll ? "Show fewer" : `Show all ${adminTestimonials.length} reviews`}
           </button>
         </div>
       )}
@@ -224,6 +229,9 @@ const RESOURCES: Resource[] = [
 ];
 
 export function RecommendedResources() {
+  const [adminResources] = useState<Resource[]>(
+    () => storageGet<Resource[]>(STORAGE_KEYS.adminResources, RESOURCES)
+  );
   return (
     <section id="resources" className="pb-14">
       <h2 className="text-center text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
@@ -237,7 +245,7 @@ export function RecommendedResources() {
       </p>
 
       <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {RESOURCES.map(r => (
+        {adminResources.map(r => (
           <a
             key={r.title}
             href={r.affiliateUrl}
