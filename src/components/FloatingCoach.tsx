@@ -3,20 +3,23 @@
    - 🤖 AI (API key): uses the user's configured OpenAI-compatible endpoint
    - 📚 Knowledge (offline): lexical RAG retrieval over the knowledge base
    Context-aware: when on the System Design view, the coach knows about the
-   current topic and can discuss architecture patterns. */
+   current topic and can discuss architecture patterns.
+   Features: voice input (Web Speech API), chat history persistence,
+   Ctrl+/ keyboard shortcut to toggle. */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { aiAvailable, chat, type ChatMessage } from "../ai";
-import { SYSTEM_DESIGN_CASES } from "../data/systemDesignBank";
 import { lexicalSearch, documentTitles, ragTuningInfo } from "../services/rag";
+import { storageGet, storageSet } from "../services/storage";
 import { useApp } from "../store";
 import { citationSourceLabel } from "./CoachChat";
 import { CitationChip } from "./CitationChip";
 import { GroundingNote } from "./GroundingNote";
 import { cardCls } from "./ui";
+import { toast } from "../toast";
 
 /* ------------------------------------------------------------------ */
-/* Chat message type                                                   */
+/* Chat message type + persistence                                      */
 /* ------------------------------------------------------------------ */
 
 interface FABMsg {
@@ -27,33 +30,98 @@ interface FABMsg {
   citationsSource?: "vector" | "lexical";
 }
 
+const CHAT_STORAGE_KEY = "iq.floatingCoachChat";
+const MAX_PERSISTED_MSGS = 100;
+
+function loadChatHistory(): FABMsg[] {
+  return storageGet<FABMsg[]>(CHAT_STORAGE_KEY, []);
+}
+function saveChatHistory(msgs: FABMsg[]) {
+  storageSet(CHAT_STORAGE_KEY, msgs.slice(-MAX_PERSISTED_MSGS));
+}
+
+/* ------------------------------------------------------------------ */
+/* Voice input (Web Speech API)                                        */
+/* ------------------------------------------------------------------ */
+
+interface SpeechState {
+  supported: boolean;
+  listening: boolean;
+  transcript: string;
+}
+
+function useSpeechRecognition(): SpeechState & {
+  start: () => void;
+  stop: () => void;
+  reset: () => void;
+} {
+  const [listening, setListening] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recRef = useRef<any>(null);
+
+  const supported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+
+  const start = useCallback(() => {
+    if (!supported) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Ctor = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
+    if (!Ctor) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new Ctor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: any) => {
+      let final = "";
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          final += event.results[i][0].transcript;
+        } else {
+          interim += event.results[i][0].transcript;
+        }
+      }
+      if (final) setTranscript(prev => (prev + " " + final).trim());
+    };
+
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => setListening(false);
+
+    recRef.current = recognition;
+    recognition.start();
+    setListening(true);
+    setTranscript("");
+  }, [supported]);
+
+  const stop = useCallback(() => {
+    recRef.current?.stop();
+    setListening(false);
+  }, []);
+
+  const reset = useCallback(() => {
+    setTranscript("");
+    setListening(false);
+    recRef.current?.stop();
+    recRef.current = null;
+  }, []);
+
+  return { supported, listening, transcript, start, stop, reset };
+}
+
 /* ------------------------------------------------------------------ */
 /* Offline RAG reply                                                   */
 /* ------------------------------------------------------------------ */
 
-function buildSystemContext(view: string, selectedTopic?: string): string {
+function buildSystemContext(view: string): string {
   const base =
     "You are a friendly, senior technical interviewer and system design coach. " +
     "Keep replies focused, under 180 words. Use plain text diagrams (→ arrows) where helpful. " +
     "Be encouraging but precise — point out what the candidate is missing.";
 
-  if (view === "systemDesign" && selectedTopic) {
-    const sysCase = SYSTEM_DESIGN_CASES.find(
-      c => c.title.toLowerCase() === selectedTopic.toLowerCase() ||
-           c.id === selectedTopic
-    );
-    if (sysCase) {
-      return (
-        base +
-        `\n\nThe user is studying the system design case study: "${sysCase.title}".\n` +
-        `${sysCase.blurb}\n` +
-        `Prerequisites: ${sysCase.prerequisites.join(", ")}\n` +
-        `Key numbers: ${sysCase.keyNumbers.join("; ")}\n` +
-        `Whiteboard phases: ${sysCase.phases.map(p => p.phase).join(" → ")}\n` +
-        `Common mistakes: ${sysCase.commonMistakes.join("; ")}\n` +
-        `\nTailor your answers to this specific case study.`
-      );
-    }
+  if (view === "systemDesign") {
     return base + "\n\nThe user is on the System Design view. Discuss architecture, trade-offs, and scale.";
   }
   return base;
@@ -93,10 +161,30 @@ export function FloatingCoach() {
   const view = state.view;
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"api" | "local">(aiAvailable() ? "api" : "local");
-  const [msgs, setMsgs] = useState<FABMsg[]>([]);
+  const [msgs, setMsgs] = useState<FABMsg[]>(() => loadChatHistory());
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  /* Voice input */
+  const speech = useSpeechRecognition();
+  const [voiceActive, setVoiceActive] = useState(false);
+
+  /* Persist chat history on every update */
+  useEffect(() => {
+    saveChatHistory(msgs);
+  }, [msgs]);
+
+  /* Populate input from voice transcript */
+  useEffect(() => {
+    if (speech.transcript) {
+      setInput(prev => {
+        const combined = prev ? prev + " " + speech.transcript : speech.transcript;
+        return combined;
+      });
+    }
+  }, [speech.transcript]);
 
   useEffect(() => {
     boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight });
@@ -106,6 +194,34 @@ export function FloatingCoach() {
   useEffect(() => {
     setMode(aiAvailable() ? "api" : "local");
   }, []);
+
+  /* Ctrl+/ keyboard shortcut */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "/") {
+        e.preventDefault();
+        setOpen(prev => {
+          const next = !prev;
+          if (next) {
+            // Focus input when opening
+            setTimeout(() => inputRef.current?.focus(), 100);
+          }
+          return next;
+        });
+      }
+      // Escape to close
+      if (e.key === "Escape" && open) {
+        e.preventDefault();
+        setOpen(false);
+        if (voiceActive) {
+          speech.stop();
+          setVoiceActive(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, voiceActive, speech]);
 
   const autoGrow = (el: HTMLTextAreaElement) => {
     el.style.height = "auto";
@@ -149,7 +265,31 @@ export function FloatingCoach() {
     }
   };
 
-  const send = () => submit(input);
+  const send = () => {
+    // If voice is active, finalize transcript first
+    if (voiceActive) {
+      speech.stop();
+      setVoiceActive(false);
+    }
+    submit(input);
+  };
+
+  const toggleVoice = () => {
+    if (voiceActive) {
+      speech.stop();
+      setVoiceActive(false);
+    } else {
+      speech.start();
+      setVoiceActive(true);
+      toast("🎤 Listening — speak your question");
+    }
+  };
+
+  const clearChat = () => {
+    setMsgs([]);
+    storageSet(CHAT_STORAGE_KEY, []);
+    toast("🗑️ Chat cleared");
+  };
 
   /* Quick-action chips */
   const quickActions = view === "systemDesign"
@@ -175,7 +315,7 @@ export function FloatingCoach() {
       <button
         onClick={() => setOpen(o => !o)}
         className={`no-print fixed bottom-20 right-4 z-[60] grid h-14 w-14 place-items-center rounded-full shadow-[0_8px_30px_rgba(99,102,241,.45)] transition-all hover:scale-110 md:bottom-8 ${open ? "bg-deep border-2 border-acc1/50" : "grad-bg"}`}
-        title="AI Coach — ask me anything"
+        title="AI Coach — ask me anything (Ctrl+/)"
         aria-label="Open AI Coach"
       >
         <span className="text-[22px]">{open ? "✕" : "🤖"}</span>
@@ -189,6 +329,13 @@ export function FloatingCoach() {
             <div className="flex items-center gap-2 border-b border-line/10 px-4 py-3">
               <span className="text-[16px]">🤖</span>
               <span className="flex-1 text-[13px] font-extrabold">AI Coach</span>
+              {msgs.length > 0 && (
+                <button
+                  onClick={clearChat}
+                  title="Clear chat history"
+                  className="rounded-lg border border-line/15 px-2 py-0.5 text-[10px] font-bold text-mut transition-all hover:border-warn/40 hover:text-warn"
+                >🗑️</button>
+              )}
               <div className="flex gap-1">
                 <button type="button" className={seg(mode === "api")} onClick={() => setMode("api")}>🤖 AI</button>
                 <button type="button" className={seg(mode === "local")} onClick={() => setMode("local")}>📚 Offline</button>
@@ -198,6 +345,13 @@ export function FloatingCoach() {
             {mode === "local" && (
               <div className="border-b border-line/10 px-4 py-2">
                 <GroundingNote minSim={ragTuningInfo().minSim} pool={ragTuningInfo().pool} />
+              </div>
+            )}
+
+            {/* Keyboard shortcut hint */}
+            {msgs.length === 0 && (
+              <div className="px-4 pt-2 text-center">
+                <span className="rounded-full border border-line/15 bg-wht/5 px-2.5 py-0.5 text-[10px] font-bold text-mut">Ctrl + / to toggle</span>
               </div>
             )}
 
@@ -233,6 +387,13 @@ export function FloatingCoach() {
                 ))
               )}
               {busy && <div className="text-[12px] text-mut">…thinking</div>}
+              {voiceActive && (
+                <div className="flex items-center gap-2 text-[12px] text-acc1">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-acc1" />
+                  <span className="font-bold">Listening…</span>
+                  <span className="text-mut">speak now</span>
+                </div>
+              )}
             </div>
 
             {/* Quick actions */}
@@ -252,7 +413,21 @@ export function FloatingCoach() {
 
             {/* Composer */}
             <div className="flex gap-2 border-t border-line/10 px-4 py-3">
+              {speech.supported && (
+                <button
+                  onClick={toggleVoice}
+                  title={voiceActive ? "Stop recording" : "Voice input — speak your question"}
+                  className={`flex-none self-end rounded-xl border px-2.5 py-2 text-[14px] transition-all ${
+                    voiceActive
+                      ? "border-acc1/50 bg-acc1/15 text-acc1 animate-pulse"
+                      : "border-line/25 bg-deep/60 text-mut hover:border-acc1/40 hover:text-acc1"
+                  }`}
+                >
+                  🎤
+                </button>
+              )}
               <textarea
+                ref={inputRef}
                 value={input}
                 rows={1}
                 onChange={e => { setInput(e.target.value); autoGrow(e.target); }}
