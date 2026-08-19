@@ -513,14 +513,15 @@ export function FloatingCoach() {
 
       {/* Chat panel — repositions to left when CaseDrawer is open */}
       {open && (
-        <div className={`no-print fixed bottom-[90px] z-[109] w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 md:bottom-[80px] ${
+        <div className={`no-print fixed bottom-[90px] z-[109] w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 ease-[cubic-bezier(.4,0,.2,1)] md:bottom-[80px] ${
           drawerOpen ? "left-4" : "right-4"
-        }`}>
+        }`} style={{ transitionProperty: "left, right, transform, opacity" }}>
           <div className={`${cardCls} overflow-hidden shadow-[0_18px_50px_rgba(0,0,0,.55)]`}>
             {/* Header */}
             <div className="flex items-center gap-2 border-b border-line/10 px-4 py-3">
               <span className="text-[16px]">🤖</span>
               <span className="flex-1 text-[13px] font-extrabold">AI Coach</span>
+              {drawerOpen && <span className="text-[9px] font-bold text-acctxt animate-pulse">← moved</span>}
               {msgs.length > 0 && (
                 <button onClick={clearChat} title="Clear chat history"
                   className="rounded-lg border border-line/15 px-2 py-0.5 text-[10px] font-bold text-mut transition-all hover:border-warn/40 hover:text-warn"
@@ -544,23 +545,44 @@ export function FloatingCoach() {
               </div>
             )}
 
-            {/* Topic history chips — show recently studied topics */}
+            {/* Topic history chips — show recently studied topics, keyboard navigable */}
             {!topic.title && topicHistory.length > 0 && (
               <div className="border-b border-line/10 px-4 py-2">
                 <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-mut">Recently studied</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {topicHistory.slice(0, 5).map(id => {
+                <div className="flex flex-wrap gap-1.5" role="listbox" aria-label="Recently studied topics">
+                  {topicHistory.slice(0, 5).map((id, idx) => {
                     const c = getCaseById(id);
                     if (!c) return null;
                     return (
                       <button
                         key={id}
+                        role="option"
+                        tabIndex={0}
+                        onKeyDown={e => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                            const setter = (window as any).__setCoachTopic;
+                            if (setter) setter({ caseId: c.id, title: c.title, icon: c.icon, blurb: c.blurb, drawerOpen: false });
+                          }
+                          /* Arrow right/down moves focus to next chip, left/up to previous */
+                          if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                            e.preventDefault();
+                            const next = e.currentTarget.parentElement?.children[idx + 1] as HTMLElement | undefined;
+                            next?.focus();
+                          }
+                          if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                            e.preventDefault();
+                            const prev = e.currentTarget.parentElement?.children[idx - 1] as HTMLElement | undefined;
+                            prev?.focus();
+                          }
+                        }}
                         onClick={() => {
                           // eslint-disable-next-line @typescript-eslint/no-explicit-any
                           const setter = (window as any).__setCoachTopic;
                           if (setter) setter({ caseId: c.id, title: c.title, icon: c.icon, blurb: c.blurb, drawerOpen: false });
                         }}
-                        className="flex items-center gap-1 rounded-full border border-line/15 bg-wht/5 px-2 py-0.5 text-[10.5px] font-bold text-mut transition-all hover:border-acc1/40 hover:text-ink"
+                        className="flex items-center gap-1 rounded-full border border-line/15 bg-wht/5 px-2 py-0.5 text-[10.5px] font-bold text-mut transition-all hover:border-acc1/40 hover:text-ink focus:border-acc1/50 focus:outline-none focus:ring-2 focus:ring-acc1/30"
                       >
                         <span>{c.icon}</span>
                         <span className="truncate max-w-[120px]">{c.title}</span>
@@ -605,7 +627,7 @@ export function FloatingCoach() {
                         <div className="text-[10px] font-bold uppercase tracking-wider text-ok">
                           {citationSourceLabel(m.citations.length, m.citationsSource)}
                         </div>
-                        {m.citations.map((ct, ci) => <CitationChip key={ci} title={ct.title} content={ct.content} />)}
+                        {m.citations.map((ct, ci) => <CitationChip key={ci} title={ct.title} content={ct.content} source={ct.source} />)}
                       </div>
                     ) : null}
                   </div>
