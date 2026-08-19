@@ -41,7 +41,7 @@ const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
   { id: "playground", label: "Code", icon: "💻" }
 ];
 
-/* secondary destinations live behind the ☰ menu so the nav stays to 5 core tabs */
+/* secondary destinations live behind the ☰ menu so the nav stays to 5 core tabs (Practice, Planner, Roadmap, System Design, Code) */
 const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
