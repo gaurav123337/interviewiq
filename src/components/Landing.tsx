@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../store";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
+import { TestimonialsSection, RecommendedResources, SupportSection } from "./Testimonials";
 
 const FEATURES = [
   { icon: "🎯", title: "Tailored sessions", body: "Pick your level (junior → CEO), field and target company — or paste a job description — and get questions written for that exact role, with model answers and scoring key points." },
@@ -112,6 +113,9 @@ export function Landing() {
         </div>
       </section>
 
+      {/* testimonials */}
+      <TestimonialsSection />
+
       {/* pricing */}
       <section id="pricing" className="pb-14">
         <h2 className="text-center text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
@@ -152,6 +156,9 @@ export function Landing() {
         </div>
       </section>
 
+      {/* recommended resources */}
+      <RecommendedResources />
+
       {/* FAQ */}
       <section id="faq" className="pb-14">
         <h2 className="text-center text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
@@ -169,6 +176,9 @@ export function Landing() {
           ))}
         </div>
       </section>
+
+      {/* support / tip jar */}
+      <SupportSection />
 
       {/* final CTA */}
       <section className="pb-10 text-center">
