@@ -1042,6 +1042,7 @@ function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onM
       lines.push(`\n**Prerequisites:** ${c.prerequisites.join(", ")}`);
       lines.push(`**Key numbers:** ${c.keyNumbers.join("; ")}`);
       lines.push("\n💡 Ask about architecture, trade-offs, mistakes, scale, or whiteboard phases.");
+      lines.push("\n🌐 **Need more details?** For topics I don't cover yet, try searching online or switch to 🤖 AI mode (requires API key).",);
     }
     if (c.followUpTopics.length) lines.push(`\n**Related:** ${c.followUpTopics.join(" · ")}`);
     if (citations.length) {

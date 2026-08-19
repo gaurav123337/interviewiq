@@ -382,10 +382,14 @@ async function citationOnlyReply(
 function noVerifiedSource(): VerifiedAnswer {
   return {
     lines: [
-      "**I don't have verified information on this specific topic.**\n",
+      "**I don't have verified information on this specific topic yet.**\n",
       "I can answer questions about these verified case studies:",
       ...SYSTEM_DESIGN_CASES.map(c => `• ${c.icon} ${c.title}`),
       "\nOr ask about: distributed systems, databases, caching, APIs, networking, security, or microservices.",
+      "\n---\n🌐 **Need more details?** My offline knowledge is curated but limited. For topics I don't cover yet:",
+      "• **Google it** — search for the concept + 'system design interview'",
+      "• **Check official docs** — e.g. Redis docs for caching, Apache Kafka docs for message queues",
+      "• **Try me in AI mode** — switch to 🤖 AI to get a generative answer (requires API key)",
       "\n💡 _All my answers come from verified sources — I never make up information._"
     ],
     citations: [],
