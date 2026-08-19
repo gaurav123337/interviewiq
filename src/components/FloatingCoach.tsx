@@ -60,10 +60,16 @@ function saveChatHistory(msgs: FABMsg[]) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Source trust labels                                                  */
+/* Topic history                                                        */
 /* ------------------------------------------------------------------ */
 
+function loadTopicHistory(): string[] {
+  return storageGet<string[]>("iq.coachTopicHistory", []);
+}
 
+function getCaseById(id: string): SystemDesignCase | undefined {
+  return SYSTEM_DESIGN_CASES.find(c => c.id === id);
+}
 
 /* ------------------------------------------------------------------ */
 /* Periodic RAG refresh — prefetch KB every 2 hours                    */
@@ -372,6 +378,7 @@ export function FloatingCoach() {
   const [busy, setBusy] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [topicHistory, setTopicHistory] = useState<string[]>(() => loadTopicHistory());
 
   const speech = useSpeechRecognition();
   const [voiceActive, setVoiceActive] = useState(false);
@@ -382,6 +389,12 @@ export function FloatingCoach() {
   }, [speech.transcript]);
   useEffect(() => { boxRef.current?.scrollTo({ top: boxRef.current.scrollHeight }); }, [msgs, busy, open]);
   useEffect(() => { setMode(aiAvailable() ? "api" : "local"); }, []);
+
+  /* Refresh topic history when it changes in localStorage */
+  useEffect(() => {
+    const id = setInterval(() => { setTopicHistory(loadTopicHistory()); }, 2000);
+    return () => clearInterval(id);
+  }, []);
 
   /* Periodic RAG refresh */
   useEffect(() => {
@@ -482,9 +495,13 @@ export function FloatingCoach() {
   const seg = (active: boolean) =>
     `rounded-full px-2.5 py-0.5 text-[10px] font-bold transition-all ${active ? "grad-bg text-white" : "border border-line/15 text-mut hover:border-acc1/40"}`;
 
+  /* When the CaseDrawer is open, reposition the coach panel to the left
+     so it doesn't overlap the drawer content. */
+  const drawerOpen = topic.drawerOpen;
+
   return (
     <>
-      {/* FAB button */}
+      {/* FAB button — always bottom-right, above everything */}
       <button
         onClick={() => setOpen(o => !o)}
         className={`no-print fixed bottom-20 right-4 z-[110] grid h-14 w-14 place-items-center rounded-full shadow-[0_8px_30px_rgba(99,102,241,.45)] transition-all hover:scale-110 md:bottom-8 ${open ? "bg-deep border-2 border-acc1/50" : "grad-bg"}`}
@@ -494,9 +511,11 @@ export function FloatingCoach() {
         <span className="text-[22px]">{open ? "✕" : "🤖"}</span>
       </button>
 
-      {/* Chat panel */}
+      {/* Chat panel — repositions to left when CaseDrawer is open */}
       {open && (
-        <div className="no-print fixed bottom-[90px] right-4 z-[109] w-[380px] max-w-[calc(100vw-2rem)] md:bottom-[80px]">
+        <div className={`no-print fixed bottom-[90px] z-[109] w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 md:bottom-[80px] ${
+          drawerOpen ? "left-4" : "right-4"
+        }`}>
           <div className={`${cardCls} overflow-hidden shadow-[0_18px_50px_rgba(0,0,0,.55)]`}>
             {/* Header */}
             <div className="flex items-center gap-2 border-b border-line/10 px-4 py-3">
@@ -525,13 +544,40 @@ export function FloatingCoach() {
               </div>
             )}
 
+            {/* Topic history chips — show recently studied topics */}
+            {!topic.title && topicHistory.length > 0 && (
+              <div className="border-b border-line/10 px-4 py-2">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-mut">Recently studied</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {topicHistory.slice(0, 5).map(id => {
+                    const c = getCaseById(id);
+                    if (!c) return null;
+                    return (
+                      <button
+                        key={id}
+                        onClick={() => {
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          const setter = (window as any).__setCoachTopic;
+                          if (setter) setter({ caseId: c.id, title: c.title, icon: c.icon, blurb: c.blurb, drawerOpen: false });
+                        }}
+                        className="flex items-center gap-1 rounded-full border border-line/15 bg-wht/5 px-2 py-0.5 text-[10.5px] font-bold text-mut transition-all hover:border-acc1/40 hover:text-ink"
+                      >
+                        <span>{c.icon}</span>
+                        <span className="truncate max-w-[120px]">{c.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {mode === "local" && (
               <div className="border-b border-line/10 px-4 py-2">
                 <GroundingNote minSim={ragTuningInfo().minSim} pool={ragTuningInfo().pool} />
               </div>
             )}
 
-            {msgs.length === 0 && !topic.title && (
+            {msgs.length === 0 && !topic.title && topicHistory.length === 0 && (
               <div className="px-4 pt-2 text-center">
                 <span className="rounded-full border border-line/15 bg-wht/5 px-2.5 py-0.5 text-[10px] font-bold text-mut">Ctrl + / to toggle</span>
               </div>

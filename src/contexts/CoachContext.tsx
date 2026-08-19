@@ -1,7 +1,8 @@
 /* Coach context — shares the currently selected system design case study
    between the SystemDesign hub and the FloatingCoach. When a case study
    drawer is open, the floating coach shows a context banner and tailors
-   its offline replies to that topic. */
+   its offline replies to that topic.
+   Also tracks whether the CaseDrawer is open so the coach can reposition. */
 
 import { createContext, useContext, useState, type ReactNode } from "react";
 
@@ -10,15 +11,16 @@ export interface CoachTopicContext {
   title: string | null;
   icon: string | null;
   blurb: string | null;
+  drawerOpen: boolean;
 }
 
 const Ctx = createContext<CoachTopicContext>({
-  caseId: null, title: null, icon: null, blurb: null
+  caseId: null, title: null, icon: null, blurb: null, drawerOpen: false
 });
 
 export function CoachTopicProvider({ children }: { children: ReactNode }) {
   const [topic, setTopic] = useState<CoachTopicContext>({
-    caseId: null, title: null, icon: null, blurb: null
+    caseId: null, title: null, icon: null, blurb: null, drawerOpen: false
   });
   return (
     <Ctx.Provider value={topic}>

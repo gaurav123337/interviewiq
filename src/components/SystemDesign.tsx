@@ -18,6 +18,7 @@ import { CitationChip } from "./CitationChip";
 import { GroundingNote } from "./GroundingNote";
 import { getGoal } from "../services/goal";
 import { storageGet, storageSet } from "../services/storage";
+import type { CoachTopicContext } from "../contexts/CoachContext";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer } from "./ui";
 
@@ -202,14 +203,23 @@ export function SystemDesign() {
 
   /* Notify the floating AI coach when a case study is selected.
      Keep the context sticky — don't clear when the drawer closes,
-     so the coach always knows what the user was last studying. */
+     so the coach always knows what the user was last studying.
+     Also track drawer open state and topic history. */
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setter = (window as any).__setCoachTopic;
     if (!setter) return;
     if (selected && selected.id !== lastCaseRef.current?.id) {
       lastCaseRef.current = selected;
-      setter({ caseId: selected.id, title: selected.title, icon: selected.icon, blurb: selected.blurb });
+      setter({ caseId: selected.id, title: selected.title, icon: selected.icon, blurb: selected.blurb, drawerOpen: true });
+      // Track topic history
+      const hist = storageGet<string[]>("iq.coachTopicHistory", []);
+      const updated = [selected.id, ...hist.filter(id => id !== selected.id)].slice(0, 8);
+      storageSet("iq.coachTopicHistory", updated);
+    } else if (selected) {
+      setter((prev: CoachTopicContext) => ({ ...prev, drawerOpen: true }));
+    } else {
+      setter((prev: CoachTopicContext) => ({ ...prev, drawerOpen: false }));
     }
   }, [selected]);
 
@@ -1144,13 +1154,18 @@ function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onM
           {aiResult && (
             <div className="mb-3 whitespace-pre-wrap rounded-lg border border-line/10 bg-wht/5 p-3 text-[13px] leading-relaxed text-ink">{aiResult}</div>
           )}
-          {chatMessages.map((m, i) => (
-            <div key={i} className={`mb-2 flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
-              <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-line/10 bg-wht/10 text-ink"}`}>
-                {m.content}
-              </div>
+          {chatMessages.length > 0 && (
+            <div className="mb-3 space-y-2">
+              {chatMessages.map((m, i) => (
+                <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
+                  {m.role === "user" && <div className="mb-0.5 text-right text-[10px] font-bold text-mut">You asked:</div>}
+                  <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-line/10 bg-wht/10 text-ink"}`}>
+                    {m.content}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
           {chatCitations.length > 0 && (
             <div className="mb-2 space-y-1">
               <div className="text-[10px] font-bold uppercase tracking-wider text-ok">📚 Grounded · {chatCitations.length} source(s) · term match</div>
