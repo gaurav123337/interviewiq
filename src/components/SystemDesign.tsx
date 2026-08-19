@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { aiAvailable } from "../ai";
+import { aiAvailable, chat } from "../ai";
 import { getDeepDive } from "../data/deepDive";
 import { LEVELS, LEVEL_INDEX } from "../data";
 import {
@@ -13,6 +13,9 @@ import {
   type SystemDesignCase, type WhiteboardFlow
 } from "../data/systemDesignBank";
 import { explainSystemDesign, systemDesignChat } from "../services/systemDesignTutor";
+import { lexicalSearch, documentTitles, ragTuningInfo } from "../services/rag";
+import { CitationChip } from "./CitationChip";
+import { GroundingNote } from "./GroundingNote";
 import { getGoal } from "../services/goal";
 import { storageGet, storageSet } from "../services/storage";
 import { toast } from "../toast";
@@ -945,29 +948,71 @@ function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onM
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
+  const [chatCitations, setChatCitations] = useState<{ title: string; content: string }[]>([]);
+
+  /* offline RAG helper — searches the knowledge base lexically for a reply */
+  const offlineReply = async (query: string): Promise<{ text: string; citations: { title: string; content: string }[] }> => {
+    const caseContext = [
+      `Case study: ${c.title} — ${c.blurb}`,
+      `Prerequisites: ${c.prerequisites.join(", ")}`,
+      `Key numbers: ${c.keyNumbers.join("; ")}`,
+      `Common mistakes: ${c.commonMistakes.join("; ")}`,
+      `Follow-up topics: ${c.followUpTopics.join(", ")}`,
+      `Whiteboard phases: ${c.phases.map(p => p.phase).join(" → ")}`
+    ].join("\n");
+    const hits = await lexicalSearch(`${c.title} ${query}`, 5).catch(() => []);
+    let citations: { title: string; content: string }[] = [];
+    if (hits.length) {
+      const titles = await documentTitles().catch(() => new Map<number, string>());
+      citations = hits.map(h => ({ title: titles.get(h.documentId) ?? "Knowledge base", content: h.content }));
+    }
+    const kbContext = citations.length ? "\n\nKnowledge base excerpts:\n" + citations.map(c => `[${c.title}] ${c.content}`).join("\n\n") : "";
+    const systemMsg = `You are a senior systems architect tutoring a candidate on the case study "${c.title}".\n${caseContext}\n\nProvide a focused, practical answer. Use plain text diagrams (→ arrows) where helpful. Keep it under 200 words.${kbContext}`;
+    const messages = [
+      { role: "system" as const, content: systemMsg },
+      { role: "user" as const, content: query }
+    ];
+    const reply = await chat(messages, { maxTokens: 400 });
+    return { text: reply, citations };
+  };
 
   const handleExplain = async () => {
-    if (!goal) { toast("Set a career goal in Roadmap first"); return; }
+    if (!goal && !aiAvailable()) {
+      /* offline mode — no goal needed */
+    } else if (!goal) { toast("Set a career goal in Roadmap first"); return; }
     setAiLoading(true);
     try {
-      const reply = await explainSystemDesign(c.title, goal);
-      setAiResult(reply);
+      if (aiAvailable() && goal) {
+        const reply = await explainSystemDesign(c.title, goal);
+        setAiResult(reply);
+      } else {
+        const { text } = await offlineReply(`Explain the system design for "${c.title}" — architecture overview, key trade-offs, failure modes, and a 2-minute whiteboard summary.`);
+        setAiResult(text);
+      }
     } catch (e) {
       toast("✗ " + ((e as Error).message || "AI unavailable"));
     } finally { setAiLoading(false); }
   };
 
   const handleChat = async () => {
-    if (!goal || !chatInput.trim() || chatBusy) return;
     const msg = chatInput.trim();
+    if (!msg || chatBusy) return;
     setChatInput("");
     const userMsg = { role: "user" as const, content: msg };
     setChatMessages(prev => [...prev, userMsg]);
     setChatBusy(true);
+    setChatCitations([]);
     try {
-      const history = [...chatMessages, userMsg];
-      const reply = await systemDesignChat(c.title, goal, history);
-      setChatMessages(prev => [...prev, { role: "assistant", content: reply.text }]);
+      if (aiAvailable() && goal) {
+        const history = [...chatMessages, userMsg];
+        const reply = await systemDesignChat(c.title, goal, history);
+        setChatMessages(prev => [...prev, { role: "assistant", content: reply.text }]);
+        if (reply.citations?.length) setChatCitations(reply.citations.map(c => ({ title: c.title, content: c.content })));
+      } else {
+        const { text, citations } = await offlineReply(msg);
+        setChatMessages(prev => [...prev, { role: "assistant", content: text }]);
+        setChatCitations(citations);
+      }
     } catch (e) {
       toast("✗ " + ((e as Error).message || "AI unavailable"));
     } finally { setChatBusy(false); }
@@ -1045,36 +1090,42 @@ function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onM
         </div>
       )}
 
-      {aiAvailable() && (
-        <div className="rounded-xl border border-line/10 bg-deep/50 p-4">
+      <div className="rounded-xl border border-line/10 bg-deep/50 p-4">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-[12.5px] font-bold uppercase tracking-wider text-mut">✨ AI System Design Tutor</span>
-            <button className={btnGhost + btnSm} onClick={handleExplain} disabled={aiLoading}>
-              {aiLoading ? "Explaining…" : "Explain this design"}
-            </button>
+            <div className="flex items-center gap-2">
+              {!aiAvailable() && <span className="text-[10.5px] font-bold text-mut">📚 Offline RAG</span>}
+              <button className={btnGhost + btnSm} onClick={handleExplain} disabled={aiLoading}>
+                {aiLoading ? "Explaining…" : "Explain this design"}
+              </button>
+            </div>
           </div>
+          {!aiAvailable() && <div className="mb-2"><GroundingNote minSim={ragTuningInfo().minSim} pool={ragTuningInfo().pool} /></div>}
           {aiResult && (
             <div className="mb-3 whitespace-pre-wrap rounded-lg border border-line/10 bg-wht/5 p-3 text-[13px] leading-relaxed text-ink">{aiResult}</div>
           )}
-          {chatMessages.length > 0 && (
-            <div className="mb-3 max-h-[240px] space-y-2 overflow-y-auto pr-1">
-              {chatMessages.map((m, i) => (
-                <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
-                  <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-line/10 bg-wht/10 text-ink"}`}>
-                    {m.content}
-                  </div>
-                </div>
+          {chatMessages.map((m, i) => (
+            <div key={i} className={`mb-2 flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
+              <div className={`max-w-[85%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[13px] leading-relaxed ${m.role === "user" ? "grad-bg text-white" : "border border-line/10 bg-wht/10 text-ink"}`}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {chatCitations.length > 0 && (
+            <div className="mb-2 space-y-1">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-ok">📚 Grounded · {chatCitations.length} source(s) · term match</div>
+              {chatCitations.map((ct, ci) => (
+                <CitationChip key={ci} title={ct.title} content={ct.content} />
               ))}
-              {chatBusy && <p className="text-[12.5px] text-fnt"><span className="spinner" />Thinking…</p>}
             </div>
           )}
+          {chatBusy && <p className="mb-2 text-[12.5px] text-fnt">…thinking</p>}
           <form className="flex gap-2" onSubmit={e => { e.preventDefault(); handleChat(); }}>
             <input value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="Ask about this design…"
               className="min-w-0 flex-1 rounded-xl border border-line/25 bg-deep/60 px-3 py-2 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20" />
             <button type="submit" className={btnPrimary + btnSm} disabled={chatBusy || !chatInput.trim()}>Send</button>
           </form>
         </div>
-      )}
 
       <DeepDiveBlock title={c.title} />
     </Drawer>

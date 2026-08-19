@@ -22,6 +22,7 @@ import { Jobs } from "./Jobs";
 import { Resources } from "./Resources";
 import { Counselor } from "./Counselor";
 import { SystemDesign } from "./SystemDesign";
+import { FloatingCoach } from "./FloatingCoach";
 import { Legal } from "./Legal";
 import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
@@ -369,6 +370,9 @@ export function App() {
       </nav>
 
       <ToastHost />
+
+      {/* global floating AI coach */}
+      <FloatingCoach />
     </div>
   );
 }
