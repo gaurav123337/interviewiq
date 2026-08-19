@@ -1,7 +1,7 @@
 /* Floating AI Coach — a global FAB button that opens a context-aware chat
    panel on every view. Two modes:
    - 🤖 AI (API key): uses the user's configured OpenAI-compatible endpoint
-   - 📚 Knowledge (offline): lexical RAG retrieval over the knowledge base
+   - 📚 Knowledge (offline): fully local reply from case study data + RAG hits
    Context-aware: when on the System Design view, the coach knows about the
    current topic and can discuss architecture patterns.
    Features: voice input (Web Speech API), chat history persistence,
@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { aiAvailable, chat, type ChatMessage } from "../ai";
+import { SYSTEM_DESIGN_CASES, type SystemDesignCase } from "../data/systemDesignBank";
 import { lexicalSearch, documentTitles, ragTuningInfo } from "../services/rag";
 import { storageGet, storageSet } from "../services/storage";
 import { useApp } from "../store";
@@ -53,7 +54,6 @@ interface SpeechState {
 function useSpeechRecognition(): SpeechState & {
   start: () => void;
   stop: () => void;
-  reset: () => void;
 } {
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState("");
@@ -76,12 +76,9 @@ function useSpeechRecognition(): SpeechState & {
 
     recognition.onresult = (event: any) => {
       let final = "";
-      let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           final += event.results[i][0].transcript;
-        } else {
-          interim += event.results[i][0].transcript;
         }
       }
       if (final) setTranscript(prev => (prev + " " + final).trim());
@@ -101,55 +98,167 @@ function useSpeechRecognition(): SpeechState & {
     setListening(false);
   }, []);
 
-  const reset = useCallback(() => {
-    setTranscript("");
-    setListening(false);
-    recRef.current?.stop();
-    recRef.current = null;
-  }, []);
-
-  return { supported, listening, transcript, start, stop, reset };
+  return { supported, listening, transcript, start, stop };
 }
 
 /* ------------------------------------------------------------------ */
-/* Offline RAG reply                                                   */
+/* Fully local offline reply — NO API calls                            */
 /* ------------------------------------------------------------------ */
 
-function buildSystemContext(view: string): string {
-  const base =
-    "You are a friendly, senior technical interviewer and system design coach. " +
-    "Keep replies focused, under 180 words. Use plain text diagrams (→ arrows) where helpful. " +
-    "Be encouraging but precise — point out what the candidate is missing.";
+/** Tokenize and extract meaningful keywords */
+function tokenize(text: string): string[] {
+  return text.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !STOP_WORDS.has(w));
+}
 
-  if (view === "systemDesign") {
-    return base + "\n\nThe user is on the System Design view. Discuss architecture, trade-offs, and scale.";
+const STOP_WORDS = new Set([
+  "this", "that", "with", "from", "have", "will", "about", "would", "could",
+  "should", "what", "when", "where", "which", "there", "their", "them",
+  "then", "than", "some", "more", "most", "very", "also", "just", "only",
+  "other", "into", "over", "such", "your", "does", "tell", "explain",
+  "design", "system", "make", "give", "want", "need", "like", "help"
+]);
+
+/** Match a question against a case study by keyword overlap */
+function matchCaseStudy(question: string): SystemDesignCase | null {
+  const qTokens = new Set(tokenize(question));
+  let best: SystemDesignCase | null = null;
+  let bestScore = 0;
+  for (const c of SYSTEM_DESIGN_CASES) {
+    const haystack = [c.title, c.blurb, ...c.prerequisites, ...c.followUpTopics].join(" ").toLowerCase();
+    const cTokens = new Set(tokenize(haystack));
+    let score = 0;
+    for (const t of qTokens) {
+      if (c.title.toLowerCase().includes(t)) score += 3;
+      if (cTokens.has(t)) score += 1;
+    }
+    if (score > bestScore) { bestScore = score; best = c; }
   }
-  return base;
+  return bestScore >= 2 ? best : null;
 }
 
-async function offlineRagReply(
-  query: string,
-  systemContext: string
+/** Detect the user's intent from their question */
+function detectIntent(q: string): "overview" | "tradeoffs" | "mistakes" | "scale" | "numbers" | "phase" | "general" {
+  const lower = q.toLowerCase();
+  if (/overview|explain|walkthrough|step.by.step|architecture|how.*work|what.*is/.test(lower)) return "overview";
+  if (/trade.?off|vs|versus|compare|pros.*cons|better|worse/.test(lower)) return "tradeoffs";
+  if (/mistake|error|wrong|common.*fail|pitfall|avoid/.test(lower)) return "mistakes";
+  if (/scale|million|billion|throughput|latency|capacity|qps|rps|traffic/.test(lower)) return "scale";
+  if (/number|memorize|remember|stat|metric|figure/.test(lower)) return "numbers";
+  if (/phase|step|stage|whiteboard|interview|minute/.test(lower)) return "phase";
+  return "general";
+}
+
+/** Build a fully local reply from case study data + RAG hits — no API needed */
+async function localReply(
+  question: string,
+  currentCase: SystemDesignCase | null,
+  ragHits: { title: string; content: string }[]
 ): Promise<{ text: string; citations: { title: string; content: string; grounded: boolean }[] }> {
-  const hits = await lexicalSearch(query, 5).catch(() => []);
-  let citations: { title: string; content: string; grounded: boolean }[] = [];
-  if (hits.length) {
-    const titles = await documentTitles().catch(() => new Map<number, string>());
-    citations = hits.map(h => ({
-      title: titles.get(h.documentId) ?? "Knowledge base",
-      content: h.content,
-      grounded: h.score >= 0.4
-    }));
+  const intent = detectIntent(question);
+  const target = currentCase ?? matchCaseStudy(question);
+  const citations = ragHits.map(h => ({ ...h, grounded: true }));
+  const lines: string[] = [];
+
+  if (target) {
+    lines.push(`**${target.icon} ${target.title}** — ${target.blurb}\n`);
+
+    switch (intent) {
+      case "overview":
+        lines.push("**Architecture Overview:**");
+        target.phases.forEach((p, i) => {
+          lines.push(`\n**Phase ${i + 1}: ${p.phase}** (${p.duration})`);
+          p.talkingPoints.forEach(tp => lines.push(`→ ${tp}`));
+          if (p.numbers?.length) lines.push(`  📐 ${p.numbers.join(" · ")}`);
+        });
+        break;
+
+      case "tradeoffs":
+        lines.push("**Key Trade-offs:**");
+        if (target.phases.length >= 3) {
+          lines.push(`→ During the design phase, consider: ${target.phases[1]?.talkingPoints.slice(0, 2).join(" vs ")}`);
+        }
+        lines.push(`→ Common tension: performance vs consistency vs cost`);
+        lines.push(`→ Start with the simplest design that works, add complexity only when scale demands it`);
+        break;
+
+      case "mistakes":
+        lines.push("**Common Mistakes:**");
+        target.commonMistakes.forEach(m => lines.push(`⚠️ ${m}`));
+        if (!target.commonMistakes.length) {
+          lines.push("⚠️ Not jumping into the design before clarifying requirements");
+          lines.push("⚠️ Not discussing trade-offs for each design decision");
+          lines.push("⚠️ Ignoring failure modes and edge cases");
+        }
+        break;
+
+      case "scale":
+        lines.push("**Scale & Numbers:**");
+        target.keyNumbers.forEach(n => lines.push(`📐 ${n}`));
+        lines.push(`\n💡 Tip: Always start with back-of-envelope estimates in the interview.`);
+        break;
+
+      case "numbers":
+        lines.push("**Numbers to Memorize:**");
+        target.keyNumbers.forEach(n => lines.push(`🔢 ${n}`));
+        break;
+
+      case "phase":
+        lines.push("**Whiteboard Interview Phases:**");
+        target.phases.forEach((p, i) => {
+          lines.push(`\n**${i + 1}. ${p.phase}** (${p.duration})`);
+          p.talkingPoints.forEach(tp => lines.push(`   → ${tp}`));
+        });
+        break;
+
+      default:
+        lines.push(`**About ${target.title}:**`);
+        lines.push(target.blurb);
+        lines.push(`\n**Prerequisites:** ${target.prerequisites.join(", ")}`);
+        lines.push(`**Key numbers:** ${target.keyNumbers.join("; ")}`);
+        lines.push(`\n💡 Click the case study card to see the full whiteboard flow.`);
+    }
+
+    if (target.followUpTopics.length) {
+      lines.push(`\n**Related:** ${target.followUpTopics.join(" · ")}`);
+    }
+  } else {
+    // No case study match — give a general answer
+    lines.push("I can help with system design topics! Here's what I know:\n");
+    lines.push("**Available case studies:**");
+    for (const c of SYSTEM_DESIGN_CASES.slice(0, 8)) {
+      lines.push(`• ${c.icon} ${c.title} — ${c.blurb}`);
+    }
+    lines.push(`\nAsk about any of these, or try the quick-action buttons above.`);
   }
-  const kbBlock = citations.length
-    ? "\n\nKnowledge base excerpts:\n" + citations.map(c => `[${c.title}] ${c.content}`).join("\n\n")
-    : "";
-  const messages: ChatMessage[] = [
-    { role: "system", content: systemContext + kbBlock },
-    { role: "user", content: query }
-  ];
-  const text = await chat(messages, { maxTokens: 450 });
-  return { text, citations };
+
+  // Append RAG context if available
+  if (citations.length) {
+    lines.push(`\n\n---\n📚 **From knowledge base:**`);
+    citations.forEach(c => {
+      lines.push(`• [${c.title}] ${c.content.slice(0, 200)}…`);
+    });
+  }
+
+  return { text: lines.join("\n"), citations };
+}
+
+/* ------------------------------------------------------------------ */
+/* Offline search (RAG) — best-effort, never throws                    */
+/* ------------------------------------------------------------------ */
+
+async function searchRag(query: string): Promise<{ title: string; content: string }[]> {
+  try {
+    const hits = await lexicalSearch(query, 5);
+    if (!hits.length) return [];
+    const titles = await documentTitles().catch(() => new Map<number, string>());
+    return hits.map(h => ({
+      title: titles.get(h.documentId) ?? "Knowledge base",
+      content: h.content
+    }));
+  } catch { return []; }
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,10 +288,7 @@ export function FloatingCoach() {
   /* Populate input from voice transcript */
   useEffect(() => {
     if (speech.transcript) {
-      setInput(prev => {
-        const combined = prev ? prev + " " + speech.transcript : speech.transcript;
-        return combined;
-      });
+      setInput(prev => prev ? prev + " " + speech.transcript : speech.transcript);
     }
   }, [speech.transcript]);
 
@@ -201,22 +307,14 @@ export function FloatingCoach() {
       if ((e.ctrlKey || e.metaKey) && e.key === "/") {
         e.preventDefault();
         setOpen(prev => {
-          const next = !prev;
-          if (next) {
-            // Focus input when opening
-            setTimeout(() => inputRef.current?.focus(), 100);
-          }
-          return next;
+          if (!prev) setTimeout(() => inputRef.current?.focus(), 100);
+          return !prev;
         });
       }
-      // Escape to close
       if (e.key === "Escape" && open) {
         e.preventDefault();
         setOpen(false);
-        if (voiceActive) {
-          speech.stop();
-          setVoiceActive(false);
-        }
+        if (voiceActive) { speech.stop(); setVoiceActive(false); }
       }
     };
     window.addEventListener("keydown", handler);
@@ -235,8 +333,12 @@ export function FloatingCoach() {
     setMsgs(prev => [...prev, { role: "user", text }]);
     setBusy(true);
     try {
-      const sysCtx = buildSystemContext(view);
       if (mode === "api") {
+        // API mode — use the configured OpenAI endpoint
+        const sysCtx =
+          "You are a friendly, senior technical interviewer and system design coach. " +
+          "Keep replies focused, under 180 words. Use plain text diagrams (→ arrows) where helpful. " +
+          "Be encouraging but precise — point out what the candidate is missing.";
         const history: ChatMessage[] = [
           { role: "system", content: sysCtx },
           ...msgs.map(m => ({ role: m.role, content: m.text })),
@@ -245,7 +347,10 @@ export function FloatingCoach() {
         const reply = await chat(history, { maxTokens: 450 });
         setMsgs(prev => [...prev, { role: "assistant", text: reply }]);
       } else {
-        const { text: reply, citations } = await offlineRagReply(text, sysCtx);
+        // Offline mode — fully local, NO API calls
+        const matchedCase = view === "systemDesign" ? matchCaseStudy(text) : null;
+        const ragHits = await searchRag(text);
+        const { text: reply, citations } = await localReply(text, matchedCase, ragHits);
         setMsgs(prev => [...prev, {
           role: "assistant",
           text: reply,
@@ -266,11 +371,7 @@ export function FloatingCoach() {
   };
 
   const send = () => {
-    // If voice is active, finalize transcript first
-    if (voiceActive) {
-      speech.stop();
-      setVoiceActive(false);
-    }
+    if (voiceActive) { speech.stop(); setVoiceActive(false); }
     submit(input);
   };
 
@@ -366,6 +467,9 @@ export function FloatingCoach() {
               ) : (
                 msgs.map((m, i) => (
                   <div key={i} className="flex flex-col">
+                    {m.role === "user" && (
+                      <div className="mb-0.5 text-right text-[10px] font-bold text-mut">You asked:</div>
+                    )}
                     <div
                       className={`max-w-[90%] whitespace-pre-wrap rounded-xl px-3 py-2 text-[12.5px] leading-relaxed ${
                         m.role === "user" ? "ml-auto grad-bg text-white" : "bg-deep/60 text-ink"

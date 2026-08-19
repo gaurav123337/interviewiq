@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { aiAvailable, chat } from "../ai";
+import { aiAvailable } from "../ai";
 import { getDeepDive } from "../data/deepDive";
 import { LEVELS, LEVEL_INDEX } from "../data";
 import {
@@ -950,30 +950,56 @@ function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onM
   const [chatBusy, setChatBusy] = useState(false);
   const [chatCitations, setChatCitations] = useState<{ title: string; content: string }[]>([]);
 
-  /* offline RAG helper — searches the knowledge base lexically for a reply */
+  /* offline reply — fully local, NO API calls. Synthesizes from case study data + RAG hits */
   const offlineReply = async (query: string): Promise<{ text: string; citations: { title: string; content: string }[] }> => {
-    const caseContext = [
-      `Case study: ${c.title} — ${c.blurb}`,
-      `Prerequisites: ${c.prerequisites.join(", ")}`,
-      `Key numbers: ${c.keyNumbers.join("; ")}`,
-      `Common mistakes: ${c.commonMistakes.join("; ")}`,
-      `Follow-up topics: ${c.followUpTopics.join(", ")}`,
-      `Whiteboard phases: ${c.phases.map(p => p.phase).join(" → ")}`
-    ].join("\n");
     const hits = await lexicalSearch(`${c.title} ${query}`, 5).catch(() => []);
     let citations: { title: string; content: string }[] = [];
     if (hits.length) {
       const titles = await documentTitles().catch(() => new Map<number, string>());
       citations = hits.map(h => ({ title: titles.get(h.documentId) ?? "Knowledge base", content: h.content }));
     }
-    const kbContext = citations.length ? "\n\nKnowledge base excerpts:\n" + citations.map(c => `[${c.title}] ${c.content}`).join("\n\n") : "";
-    const systemMsg = `You are a senior systems architect tutoring a candidate on the case study "${c.title}".\n${caseContext}\n\nProvide a focused, practical answer. Use plain text diagrams (→ arrows) where helpful. Keep it under 200 words.${kbContext}`;
-    const messages = [
-      { role: "system" as const, content: systemMsg },
-      { role: "user" as const, content: query }
-    ];
-    const reply = await chat(messages, { maxTokens: 400 });
-    return { text: reply, citations };
+    const q = query.toLowerCase();
+    const lines: string[] = [];
+    lines.push(`**${c.icon} ${c.title}** — ${c.blurb}\n`);
+    if (/overview|explain|architecture|how|walkthrough/.test(q)) {
+      lines.push("**Architecture Overview:**");
+      c.phases.forEach((p, i) => {
+        lines.push(`\n**Phase ${i + 1}: ${p.phase}** (${p.duration})`);
+        p.talkingPoints.forEach(tp => lines.push(`→ ${tp}`));
+        if (p.numbers?.length) lines.push(`  📐 ${p.numbers.join(" · ")}`);
+      });
+    } else if (/trade.?off|vs|compare/.test(q)) {
+      lines.push("**Key Trade-offs:**");
+      lines.push("→ Performance vs consistency vs cost — always name the axis");
+      lines.push(`→ During high-level design, discuss: ${c.phases[1]?.talkingPoints.slice(0, 2).join(" vs ")}`);
+      lines.push("→ Start simple, add complexity only when scale demands it");
+    } else if (/mistake|error|wrong|pitfall/.test(q)) {
+      lines.push("**Common Mistakes:**");
+      c.commonMistakes.forEach(m => lines.push(`⚠️ ${m}`));
+    } else if (/scale|million|throughput|latency/.test(q)) {
+      lines.push("**Scale & Numbers:**");
+      c.keyNumbers.forEach(n => lines.push(`📐 ${n}`));
+    } else if (/number|memorize|remember/.test(q)) {
+      lines.push("**Numbers to Memorize:**");
+      c.keyNumbers.forEach(n => lines.push(`🔢 ${n}`));
+    } else if (/phase|step|whiteboard|interview/.test(q)) {
+      lines.push("**Whiteboard Phases:**");
+      c.phases.forEach((p, i) => {
+        lines.push(`\n**${i + 1}. ${p.phase}** (${p.duration})`);
+        p.talkingPoints.forEach(tp => lines.push(`   → ${tp}`));
+      });
+    } else {
+      lines.push(c.blurb);
+      lines.push(`\n**Prerequisites:** ${c.prerequisites.join(", ")}`);
+      lines.push(`**Key numbers:** ${c.keyNumbers.join("; ")}`);
+      lines.push("\n💡 Ask about architecture, trade-offs, mistakes, scale, or whiteboard phases.");
+    }
+    if (c.followUpTopics.length) lines.push(`\n**Related:** ${c.followUpTopics.join(" · ")}`);
+    if (citations.length) {
+      lines.push(`\n\n---\n📚 **From knowledge base:**`);
+      citations.forEach(ct => lines.push(`• [${ct.title}] ${ct.content.slice(0, 200)}…`));
+    }
+    return { text: lines.join("\n"), citations };
   };
 
   const handleExplain = async () => {
