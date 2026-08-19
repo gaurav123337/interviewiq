@@ -66,6 +66,23 @@ export function App() {
   const [banner, setBanner] = useState<Announcement | null>(() => nextUnseenAnnouncement());
   const [cloud, setCloud] = useState(getCloudState());
   const [sharePayload] = useState<string | null>(() => new URLSearchParams(window.location.search).get("share"));
+  const [swUpdateReady, setSwUpdateReady] = useState(false);
+
+  /* listen for service worker updates */
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type === "SW_UPDATE_READY") setSwUpdateReady(true);
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, []);
+
+  const applySwUpdate = () => {
+    navigator.serviceWorker?.controller?.postMessage({ type: "SKIP_WAITING" });
+    setSwUpdateReady(false);
+    window.location.reload();
+  };
 
   /* keep the header avatar in sync with sign-in state */
   useEffect(() => subscribeCloud(setCloud), []);
@@ -268,6 +285,30 @@ export function App() {
             </span>
           </div>
         </footer>
+      )}
+
+      {/* service worker update banner */}
+      {swUpdateReady && (
+        <div className="no-print fixed inset-x-0 top-[60px] z-40 px-3">
+          <div className="mx-auto flex max-w-[1200px] items-center gap-3 rounded-xl border border-ok/40 bg-ok/15 px-4 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,.35)] backdrop-blur-xl">
+            <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-ok/30 text-[15px]">🔄</span>
+            <div className="min-w-0 flex-1">
+              <span className="text-[13.5px] font-extrabold">New version available!</span>
+              <p className="text-[12.5px] text-mut">Click refresh to get the latest features and improvements.</p>
+            </div>
+            <button
+              onClick={applySwUpdate}
+              className="rounded-xl border border-ok/50 bg-ok/20 px-3.5 py-1.5 text-[13px] font-bold text-ok transition-all hover:bg-ok/30"
+            >
+              🔄 Refresh
+            </button>
+            <button
+              className="grid h-8 w-8 flex-none place-items-center rounded-lg border border-line/15 bg-wht/10 text-[13px] font-bold text-mut transition-all hover:bg-wht/20 hover:text-ink"
+              onClick={() => setSwUpdateReady(false)}
+              aria-label="Dismiss"
+            >✕</button>
+          </div>
+        </div>
       )}
 
       {/* product announcement banner */}

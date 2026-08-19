@@ -5,7 +5,7 @@
    so the entire app — including the legal pages (Terms / Privacy / Refunds /
    Shipping) reachable from the footer on every view — works with no network. */
 
-const CACHE = "interviewiq-v4";
+const CACHE = "interviewiq-v5";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
@@ -32,6 +32,26 @@ self.addEventListener("activate", e => {
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+/* Notify all clients when a new version is waiting */
+self.addEventListener("message", e => {
+  if (e.data && e.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+self.addEventListener("updatefound", () => {
+  const reg = self.registration;
+  if (!reg.installing) return;
+  reg.installing.addEventListener("statechange", () => {
+    if (reg.installing.state === "installed" && navigator.serviceWorker.controller) {
+      /* New SW installed but not yet active — notify clients */
+      self.clients.matchAll().then(clients => {
+        clients.forEach(c => c.postMessage({ type: "SW_UPDATE_READY" }));
+      });
+    }
+  });
 });
 
 /* notification click: focus the app (or open it) on the practice screen */

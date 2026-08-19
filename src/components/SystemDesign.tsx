@@ -100,6 +100,72 @@ function loadFlashcards(): FlashcardMap {
   return storageGet<FlashcardMap>("iq.sysDesignFlashcards", {});
 }
 
+/* ---- Practice streaks ---- */
+function calculateStreak(completed: CompletedMap): { current: number; best: number } {
+  const timestamps = Object.values(completed).sort((a, b) => b - a);
+  if (timestamps.length === 0) return { current: 0, best: 0 };
+  const dayMs = 86400000;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  let current = 0;
+  let best = 0;
+  let streak = 0;
+  let expected = todayMs;
+  const allDays = [...new Set(timestamps.map(t => {
+    const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime();
+  }))].sort((a, b) => b - a);
+  for (const day of allDays) {
+    if (day === expected) {
+      streak++;
+      expected -= dayMs;
+    } else if (day === expected - dayMs) {
+      expected = day - dayMs;
+      streak++;
+    } else {
+      best = Math.max(best, streak);
+      streak = 1;
+      expected = day - dayMs;
+    }
+  }
+  best = Math.max(best, streak);
+  current = (todayMs - expected <= dayMs) ? streak : 0;
+  return { current, best };
+}
+
+/* ---- Export progress ---- */
+function exportProgress(): string {
+  const completed = loadCompleted();
+  const history = loadHistory();
+  const bookmarks = loadBookmarks();
+  const flashcards = loadFlashcards();
+  const total = SYSTEM_DESIGN_CASES.length;
+  const done = Object.keys(completed).length;
+  const streak = calculateStreak(completed);
+  const lines = [
+    "# System Design Hub — Progress Report",
+    `Generated: ${new Date().toLocaleDateString()}`,
+    "",
+    `## Progress: ${done}/${total} case studies completed (${total > 0 ? Math.round(done / total * 100) : 0}%)`,
+    `## Streak: ${streak.current} days current, ${streak.best} days best`,
+    `## Bookmarks: ${Object.keys(bookmarks).length}`,
+    `## Flashcards: ${Object.keys(flashcards).length} cards, ${Object.values(flashcards).filter(f => f.streak > 0).length} reviewed`,
+    "",
+    "## Completed Case Studies",
+  ];
+  for (const c of SYSTEM_DESIGN_CASES) {
+    if (completed[c.id]) {
+      lines.push(`- ✅ ${c.title} (${c.category}, difficulty ${c.difficulty}/5)`);
+    }
+  }
+  if (history.length > 0) {
+    lines.push("", "## Practice Sessions");
+    for (const h of history.slice(0, 10)) {
+      lines.push(`- ${new Date(h.date).toLocaleDateString()}: ${h.completed}/${h.totalCases} completed, ${Math.round(h.durationMs / 60000)}min`);
+    }
+  }
+  return lines.join("\n");
+}
+
 /* ------------------------------------------------------------------ */
 /* Category metadata                                                    */
 /* ------------------------------------------------------------------ */
@@ -126,10 +192,21 @@ export function SystemDesign() {
   const [bookmarks, setBookmarks] = useState<BookmarkMap>(() => loadBookmarks());
   const [timerPreset, setTimerPreset] = useState(loadTimerPreset);
   const [showBookmarks, setShowBookmarks] = useState(false);
+  const [difficultyFilter, setDifficultyFilter] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const goal = getGoal();
 
   const categories = getCategories();
-  const cases = casesByCategory(category);
+  const streak = useMemo(() => calculateStreak(completed), [completed]);
+  const cases = useMemo(() => {
+    let list = casesByCategory(category);
+    if (difficultyFilter !== null) list = list.filter(c => c.difficulty === difficultyFilter);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(c => c.title.toLowerCase().includes(q) || c.blurb.toLowerCase().includes(q) || c.prerequisites.some(p => p.toLowerCase().includes(q)));
+    }
+    return list;
+  }, [category, difficultyFilter, searchQuery]);
   const totalArchCases = SYSTEM_DESIGN_CASES.length;
   const completedCount = Object.keys(completed).length;
   const progressPct = totalArchCases > 0 ? Math.round((completedCount / totalArchCases) * 100) : 0;
@@ -179,6 +256,15 @@ export function SystemDesign() {
           </div>
         </div>
 
+        {/* Streaks */}
+        {streak.current > 0 && (
+          <div className="flex items-center gap-3 border-t border-line/10 px-6 py-2.5">
+            <span className="text-[14px]">🔥</span>
+            <span className="text-[13px] font-extrabold text-amber-400">{streak.current} day streak</span>
+            <span className="text-[11px] text-mut">• Best: {streak.best} days</span>
+          </div>
+        )}
+
         {/* Progress bar */}
         <div className="border-t border-line/10 px-6 py-4">
           <div className="flex items-center justify-between mb-2">
@@ -207,8 +293,25 @@ export function SystemDesign() {
         </button>
       </div>
 
-      {/* Timer preset */}
-      <div className="mt-4 flex items-center gap-3">
+      {/* Search bar */}
+      <div className="mt-4">
+        <input
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="🔍 Search case studies by title, description, or prerequisites…"
+          className="w-full rounded-xl border border-line/25 bg-deep/60 px-4 py-2.5 text-[13px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none focus:ring-[3px] focus:ring-acc1/20"
+        />
+      </div>
+
+      {/* Difficulty filter + Timer preset */}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <span className="text-[12.5px] font-bold text-mut">🎯 Difficulty:</span>
+        <button onClick={() => setDifficultyFilter(null)} className={`rounded-lg border px-3 py-1 text-[12px] font-bold transition-all ${difficultyFilter === null ? "border-acc1/50 bg-acc1/15 text-acctxt" : "border-line/15 bg-wht/5 text-fnt hover:bg-wht/10"}`}>All</button>
+        {[1, 2, 3, 4, 5].map(d => (
+          <button key={d} onClick={() => setDifficultyFilter(d)} className={`rounded-lg border px-3 py-1 text-[12px] font-bold transition-all ${difficultyFilter === d ? "border-acc1/50 bg-acc1/15 text-acctxt" : "border-line/15 bg-wht/5 text-fnt hover:bg-wht/10"}`}>{'⭐'.repeat(d)}</button>
+        ))}
+        <span className="flex-1" />
+        <span className="text-[12.5px] font-bold text-mut">⏱️ Timer:</span>
         <span className="text-[12.5px] font-bold text-mut">⏱️ Timer:</span>
         {[25, 35, 45].map(m => (
           <button
@@ -223,6 +326,10 @@ export function SystemDesign() {
             {m} min
           </button>
         ))}
+        <span className="flex-1" />
+        <button onClick={() => { const txt = exportProgress(); navigator.clipboard.writeText(txt).then(() => toast("📋 Progress copied to clipboard!")).catch(() => toast("Copy failed")); }} className="flex items-center gap-1.5 rounded-lg border border-line/15 bg-wht/5 px-3 py-1 text-[12px] font-bold text-fnt transition-all hover:bg-wht/10">
+          📋 Export
+        </button>
       </div>
 
       {/* Bookmarked section */}
