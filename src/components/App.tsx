@@ -21,6 +21,7 @@ import { Team } from "./Team";
 import { Jobs } from "./Jobs";
 import { Resources } from "./Resources";
 import { Counselor } from "./Counselor";
+import { SystemDesign } from "./SystemDesign";
 import { Legal } from "./Legal";
 import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
@@ -36,10 +37,11 @@ const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
   { id: "planner", label: "Planner", icon: "🗓️" },
   { id: "roadmap", label: "Roadmap", icon: "🧭" },
+  { id: "systemDesign", label: "System Design", icon: "🏗️" },
   { id: "playground", label: "Code", icon: "💻" }
 ];
 
-/* secondary destinations live behind the ☰ menu so the nav stays to 4 core tabs */
+/* secondary destinations live behind the ☰ menu so the nav stays to 5 core tabs */
 const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
@@ -163,7 +165,8 @@ export function App() {
   const mobileTabs = [
     { id: "onboard" as View, label: "Practice", icon: "🎯" },
     ...(featureOn("jobs") ? [{ id: "jobs" as View, label: "Jobs", icon: "💼" }] : []),
-    { id: "counselor" as View, label: "Counselor", icon: "🧑‍🏫" }
+    { id: "counselor" as View, label: "Counselor", icon: "🧑‍🏫" },
+    { id: "systemDesign" as View, label: "Sys Design", icon: "🏗️" }
   ];
 
   useEffect(() => subscribeAdmin(s => { setAdmin(s); setBanner(nextUnseenAnnouncement()); setAdminUnlocked(s.isAdmin); }), []);
@@ -247,6 +250,7 @@ export function App() {
         {view === "jobs" && <Jobs />}
         {view === "resources" && <Resources />}
         {view === "counselor" && <Counselor />}
+        {view === "systemDesign" && <SystemDesign />}
       </main>
 
       {/* app-wide footer — branding + the four legal pages on every view

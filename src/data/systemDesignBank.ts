@@ -1,0 +1,1080 @@
+/* System Design Bank — curated case studies with 45-minute whiteboard flows.
+   Each entry maps to a deep-dive topic and feeds the System Design Hub UI.
+   Numbers to memorize, phase-by-phase talking points, and difficulty levels. */
+
+export interface WhiteboardFlow {
+  phase: string;
+  duration: string;
+  talkingPoints: string[];
+  numbers?: string[];
+}
+
+export interface SystemDesignCase {
+  id: string;
+  title: string;
+  icon: string;
+  difficulty: 1 | 2 | 3 | 4 | 5;
+  category: "core" | "data" | "distributed" | "api" | "real-world";
+  blurb: string;
+  prerequisites: string[];
+  keyNumbers: string[];
+  phases: WhiteboardFlow[];
+  commonMistakes: string[];
+  followUpTopics: string[];
+  deepDiveKey: string; // maps to getDeepDive() key
+}
+
+export const SYSTEM_DESIGN_CASES: SystemDesignCase[] = [
+  /* ── CORE ─────────────────────────────────────────────── */
+  {
+    id: "url-shortener",
+    title: "URL Shortener (TinyURL)",
+    icon: "🔗",
+    difficulty: 2,
+    category: "core",
+    blurb: "The classic starter: hash encoding, read-heavy workload, and CDN caching.",
+    prerequisites: ["hashing", "HTTP basics", "caching", "load balancing"],
+    keyNumbers: [
+      "100M URLs/day → ~1,200 writes/s",
+      "10:1 read:write ratio → ~12K reads/s",
+      "Short code: 7 chars base62 = 3.5 trillion combos",
+      "URL TTL: 5 years → 180B rows in DB"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Functional: create short URL from long URL, redirect, optional expiry",
+          "Non-functional: low latency (<100ms redirect), high availability, short URLs unique",
+          "Estimate: 100M URLs/day, 10:1 read:write → 1.2K writes/s, 12K reads/s"
+        ],
+        numbers: ["100M/day writes", "12K/s reads"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Client → Load Balancer → API Server → Database",
+          "Generate unique short code (base62 hash of auto-increment ID or MD5)",
+          "301 vs 302 redirect (301 = cached by browser, 302 = track analytics)",
+          "Cache layer (Redis) for hot URLs — 80% hit rate"
+        ],
+        numbers: ["base62(7 chars) = 3.5T unique", "Redis cache: 80% hit rate"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "ID generation: counter vs hash vs Snowflake — trade-offs",
+          "Read path optimization: cache-aside, CDN edge caching",
+          "Database: relational (Postgres) vs NoSQL (DynamoDB) — when each wins",
+          "Analytics: async write to Kafka → analytics service",
+          "Rate limiting: sliding window for abuse prevention"
+        ],
+        numbers: ["Postgres: 10K writes/s single node", "Redis: 100K+ reads/s"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "301 (permanent) vs 302 (temporary) — browser caching vs analytics",
+          "SQL vs NoSQL — ACID guarantees vs horizontal scaling",
+          "Key length vs readability — 7 chars is the sweet spot",
+          "Scaling: add read replicas before sharding"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Using MD5 directly — too long, use base62 encoding",
+      "Forgetting to mention 301 vs 302 redirect difference",
+      "Not discussing database schema (what columns, what indexes)",
+      "Ignoring cache invalidation for expired URLs"
+    ],
+    followUpTopics: ["caching", "load balancing", "hashing", "databases"],
+    deepDiveKey: "system design"
+  },
+  {
+    id: "chat-system",
+    title: "Chat System (WhatsApp/Slack)",
+    icon: "💬",
+    difficulty: 3,
+    category: "core",
+    blurb: "WebSocket connections, message ordering, presence, and group scalability.",
+    prerequisites: ["WebSockets", "message queues", "caching", "database design"],
+    keyNumbers: [
+      "500M messages/day → ~6K messages/s",
+      "100 concurrent connections per server (WebSocket)",
+      "Message storage: ~1KB/message → 500GB/day",
+      "Presence heartbeat: every 5s → 100M heartbeats/day for 20M users"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "1:1 messaging, group chat, message history, read receipts",
+          "Online presence, typing indicators, push notifications",
+          "Scale: 50M DAU, 500M messages/day, 100M online at peak"
+        ],
+        numbers: ["50M DAU", "500M messages/day", "6K messages/s"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "WebSocket connection from client to Chat Server (stateful!)",
+          "Message flow: sender → Chat Server → Message Queue → recipient's Chat Server",
+          "Message storage: append-only log per conversation, Cassandra for write throughput",
+          "Presence service: Redis with TTL for online status"
+        ],
+        numbers: ["100 WebSocket connections/server", "Cassandra: 100K writes/s cluster"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Group chat: fan-out on write (pre-compute member list) vs fan-out on read",
+          "Message ordering: sequence numbers per conversation, not global",
+          "Message queue: Kafka for durable message bus between chat servers",
+          "Push notifications: APNs/FCM via notification service, not inline",
+          "File/image handling: upload to S3, share URL in message"
+        ],
+        numbers: ["Kafka: 100K+ msgs/s per partition", "S3: 5TB/day upload"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Fan-out on write vs read — write amplification vs read latency",
+          "Cassandra vs Postgres — write-heavy chat vs query-rich analytics",
+          "WebSocket vs SSE vs polling — real-time guarantees vs simplicity",
+          "End-to-end encryption: keys management complexity"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Using HTTP polling instead of WebSockets",
+      "Trying to use a global message ordering (use per-conversation sequences)",
+      "Not handling message delivery guarantees (at-least-once)",
+      "Forgetting push notifications for offline users"
+    ],
+    followUpTopics: ["WebSockets", "message queues", "Cassandra", "push notifications"],
+    deepDiveKey: "system design"
+  },
+  {
+    id: "news-feed",
+    title: "News Feed (Twitter/Facebook)",
+    icon: "📰",
+    difficulty: 3,
+    category: "core",
+    blurb: "Fan-out strategies, ranking, and the write-heavy vs read-heavy design tension.",
+    prerequisites: ["caching", "social graphs", "ranking algorithms", "database sharding"],
+    keyNumbers: [
+      "300M DAU, 500 tweets/s average, 12K tweets/s peak",
+      "Average user follows 200 accounts",
+      "Feed cache: 500 tweets per user × 300M users = 150B cached entries",
+      "Timeline: 99% of reads served from cache (<10ms)"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Post content, follow users, see personalized feed",
+          "Feed ranked by relevance (not just chronological)",
+          "Scale: 300M DAU, 500 tweets/s avg, 12K/s peak"
+        ],
+        numbers: ["300M DAU", "500 tweets/s avg", "12K/s peak"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Post service → Fan-out service → Feed cache per user",
+          "Fan-out on write: when A posts, push to all followers' feed caches",
+          "Fan-out on read: when user loads feed, pull from all followees' recent posts",
+          "Hybrid: fan-out on write for <10K followers, on read for celebrities"
+        ],
+        numbers: ["200 avg follows/user", "500 tweets cached/user"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Ranking service: ML model scores each candidate tweet",
+          "Celebrity problem: Kim Kardashian posting → can't fan-out to 300M followers",
+          "Feed generation: fetch from cache, re-rank with ML, limit to top 800",
+          "Storage: tweets in Cassandra (write-heavy), social graph in Redis (fast lookups)",
+          "Search: Elasticsearch for full-text tweet search"
+        ],
+        numbers: ["Celebrity fan-out: 300M followers × 1 tweet", "Feed cache: 800 tweets/user"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Fan-out on write vs read — storage cost vs latency",
+          "Chronological vs ranked feeds — freshness vs engagement",
+          "Cache size: 300M users × 800 tweets = 240B entries (too big for Redis)",
+          "Solution: tiered cache — hot users in Redis, cold users computed on read"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not addressing the celebrity problem (high-follower accounts)",
+      "Assuming chronological feed — ranking is essential at scale",
+      "Forgetting cache invalidation when posts are deleted",
+      "Not estimating storage for the feed cache"
+    ],
+    followUpTopics: ["caching", "ranking", "database sharding", "CDN"],
+    deepDiveKey: "system design"
+  },
+  /* ── DATA ─────────────────────────────────────────────── */
+  {
+    id: "rate-limiter",
+    title: "Rate Limiter Service",
+    icon: "🚦",
+    difficulty: 2,
+    category: "api",
+    blurb: "Token bucket, sliding window, and distributed rate limiting across services.",
+    prerequisites: ["Redis", "HTTP basics", "algorithms"],
+    keyNumbers: [
+      "Token bucket: 100 tokens, refill 10/s → 100 burst, 10/s sustained",
+      "Sliding window: 1000 requests/hour per user",
+      "Redis counter: INCR + EXPIRE atomic → distributed rate limit",
+      "Latency: <1ms Redis check vs 100ms DB check"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Limit requests per user/IP/API key per time window",
+          "Return 429 with Retry-After header when exceeded",
+          "Distributed: works across multiple API server instances"
+        ],
+        numbers: ["1000 req/hour per user", "<1ms rate limit check"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Middleware interceptor on every API request",
+          "Redis-backed counter: INCR key, check count vs limit",
+          "Key design: rate_limit:{user_id}:{window}",
+          "Local (per-server) + global (Redis) two-tier for performance"
+        ],
+        numbers: ["Redis INCR: O(1), <1ms", "Local cache: skip Redis 90% of time"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Algorithms: fixed window (simple), sliding window log (memory-heavy), sliding window counter (hybrid), token bucket (burst-friendly)",
+          "Distributed coordination: Redis Cluster with Lua scripts for atomicity",
+          "Graceful degradation: if Redis is down, fall back to local rate limiting",
+          "Different limits per endpoint, user tier, time of day",
+          "Client communication: 429 + Retry-After + X-RateLimit-Remaining headers"
+        ],
+        numbers: ["Sliding window: 2× memory of fixed window", "Token bucket: O(1) per request"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Fixed window vs sliding window — simplicity vs accuracy",
+          "Token bucket vs leaky bucket — burst tolerance vs constant rate",
+          "Where to rate limit: API gateway vs service-level middleware",
+          "Race conditions: atomic Redis operations or Lua scripts"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Using fixed window without mentioning boundary burst problem",
+      "Not handling Redis failure gracefully",
+      "Forgetting about race conditions in distributed counters",
+      "Not returning Retry-After header"
+    ],
+    followUpTopics: ["Redis", "API design", "distributed systems", "algorithms"],
+    deepDiveKey: "apis & services"
+  },
+  {
+    id: "distributed-cache",
+    title: "Distributed Cache System",
+    icon: "⚡",
+    difficulty: 3,
+    category: "data",
+    blurb: "Consistent hashing, cache invalidation, and the thundering herd problem.",
+    prerequisites: ["hashing", "caching", "consistency", "distributed systems"],
+    keyNumbers: [
+      "Cache hit ratio target: >95% for hot data",
+      "Consistent hashing: O(K·log N) lookup, K=150 virtual nodes per physical",
+      "Eviction: LRU ~90% hit rate vs LFU for skewed access patterns",
+      "Memory: Redis uses ~1.5x key+value size in practice"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Store key-value pairs across distributed nodes",
+          "Sub-millisecond reads, high throughput (100K+ ops/s)",
+          "Consistent hashing for even distribution and minimal reshuffling",
+          "Eviction policy, TTL, cache invalidation"
+        ],
+        numbers: ["100K+ ops/s", "<1ms read latency", ">95% hit ratio"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Client → consistent hash ring → cache node",
+          "Each node owns a portion of the hash ring",
+          "Replication: N=3 replicas for fault tolerance",
+          "Cache-aside pattern: app checks cache first, then DB on miss"
+        ],
+        numbers: ["N=3 replicas", "150 virtual nodes/physical"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Consistent hashing: virtual nodes for even distribution",
+          "Thundering herd: many clients miss at once → singleflight or lock",
+          "Cache invalidation strategies: TTL, event-driven, versioned keys",
+          "Hot keys: replicate hot keys across all nodes",
+          "Memory management: slab allocation (Redis) vs jemalloc"
+        ],
+        numbers: ["Thundering herd: 1000× normal traffic on miss", "Virtual nodes: 100-200 per physical"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Strong vs eventual consistency for cached data",
+          "Cache-aside vs write-through vs write-behind",
+          "Redis vs Memcached — feature set vs simplicity",
+          "Cache size: cost vs hit ratio optimization"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not explaining consistent hashing vs simple modulo hashing",
+      "Ignoring the thundering herd problem",
+      "Forgetting cache invalidation entirely",
+      "Not estimating cache memory requirements"
+    ],
+    followUpTopics: ["consistent hashing", "Redis", "caching", "distributed systems"],
+    deepDiveKey: "databases & caching"
+  },
+  {
+    id: "task-queue",
+    title: "Distributed Task Queue",
+    icon: "📋",
+    difficulty: 3,
+    category: "distributed",
+    blurb: "Reliable job processing, retries, priority queues, and exactly-once semantics.",
+    prerequisites: ["message queues", "Kafka", "Redis", "idempotency"],
+    keyNumbers: [
+      "100K jobs/day, 99.9% SLA on completion",
+      "P99 latency target: <5s for priority, <30s for standard",
+      "Retry policy: exponential backoff, max 3 retries",
+      "Dead letter queue: <0.1% of total jobs"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Reliable async job processing (emails, reports, image processing)",
+          "Priority levels: critical, high, standard, low",
+          "At-least-once delivery with idempotent consumers",
+          "Retry with backoff, dead letter queue for poison messages"
+        ],
+        numbers: ["100K jobs/day", "99.9% completion SLA", "<5s P99 for priority"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Producer → Priority Queue (Kafka/RabbitMQ) → Consumer Pool",
+          "Multiple consumer types for different job types",
+          "Worker pool: auto-scaling based on queue depth",
+          "Monitoring: queue depth, processing rate, error rate"
+        ],
+        numbers: ["10 consumers for standard, 3 for priority", "Scale at 80% queue capacity"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Exactly-once semantics: idempotent consumers + dedup keys",
+          "Retry strategies: immediate, exponential backoff, circuit breaker",
+          "Dead letter queue: jobs that fail after max retries",
+          "Partitioning: partition by job type for ordering guarantees",
+          "Monitoring: Prometheus metrics, alerting on queue depth"
+        ],
+        numbers: ["Exponential backoff: 1s, 2s, 4s, 8s", "DLQ threshold: 3 retries"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Kafka vs RabbitMQ — throughput vs routing flexibility",
+          "At-least-once vs exactly-once — complexity vs correctness",
+          "Pull vs push consumers — backpressure vs latency",
+          "Priority queue implementation: separate topics vs single partition"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not handling job failures and retries",
+      "Ignoring idempotency for consumers",
+      "Forgetting dead letter queues",
+      "Not monitoring queue depth and processing rates"
+    ],
+    followUpTopics: ["Kafka", "message queues", "idempotency", "monitoring"],
+    deepDiveKey: "distributed systems"
+  },
+  /* ── DISTRIBUTED ─────────────────────────────────────── */
+  {
+    id: "pub-sub",
+    title: "Publish-Subscribe System",
+    icon: "📡",
+    difficulty: 3,
+    category: "distributed",
+    blurb: "Topic-based message routing, fan-out, backpressure, and Exactly-once delivery.",
+    prerequisites: ["message queues", "Kafka", "distributed systems", "networking"],
+    keyNumbers: [
+      "10M msgs/day per topic, 100 topics → 1B msgs/day total",
+      "Kafka partition: ~100K msgs/s per partition",
+      "Consumer group: parallel consumption across partitions",
+      "Retention: 7 days default, up to 30 days for replay"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Publishers send messages to topics, subscribers receive from topics",
+          "Support fan-out: one message → many subscribers",
+          "At-least-once delivery with deduplication",
+          "Message ordering per partition, not globally"
+        ],
+        numbers: ["10M msgs/day/topic", "100K msgs/s/partition"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Publisher → Topic → Consumer Group → Subscribers",
+          "Kafka as the backbone: topics = partitions, consumers = offset tracking",
+          "Schema registry for message format evolution",
+          "Dead letter queue for failed messages"
+        ],
+        numbers: ["3 replicas per partition", "Consumer lag monitored per group"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Partitioning strategy: hash key vs round-robin vs key-coalescing",
+          "Exactly-once: idempotent producers + transactional consumers",
+          "Backpressure: consumer lag → auto-scale or reject publishers",
+          "Topic compaction for latest-value-per-key patterns",
+          "Cross-datacenter replication: MirrorMaker 2 for DR"
+        ],
+        numbers: ["Exactly-once: producer幂等 + consumer offset commit", "MirrorMaker: 1MB/s replication"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Kafka vs RabbitMQ vs Pulsar — throughput vs latency vs features",
+          "Push vs pull consumers — real-time vs backpressure",
+          "Partition count: too few = bottleneck, too many = overhead",
+          "Retention vs compaction: replay vs space"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Assuming global message ordering (only per-partition)",
+      "Not handling consumer rebalancing during scaling",
+      "Ignoring schema evolution and backward compatibility",
+      "Not monitoring consumer lag"
+    ],
+    followUpTopics: ["Kafka", "message queues", "distributed systems", "event sourcing"],
+    deepDiveKey: "distributed systems"
+  },
+  {
+    id: "leader-election",
+    title: "Distributed Leader Election",
+    icon: "👑",
+    difficulty: 4,
+    category: "distributed",
+    blurb: "Consensus protocols, failover, split-brain prevention, and exactly-once coordination.",
+    prerequisites: ["consensus", "distributed systems", "Raft/Paxos", "failure detection"],
+    keyNumbers: [
+      "Heartbeat interval: 150ms, timeout: 300ms",
+      "Election timeout: 150-300ms randomized",
+      "Leader lease: TTL-based, renewed every heartbeat",
+      "Split-brain prevention: majority quorum (2f+1 for f failures)"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "One node is elected leader, others are followers",
+          "Automatic failover when leader dies",
+          "No split-brain: at most one leader at any time",
+          "Linearizable reads: clients always see the latest write"
+        ],
+        numbers: ["Heartbeat: 150ms", "Failover: <1s", "Quorum: 2f+1"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Raft consensus: leader election → log replication → safety",
+          "Term-based voting: each term has at most one leader",
+          "Log replication: leader appends, followers replicate, commit on majority",
+          "Client requests go to leader only for writes"
+        ],
+        numbers: ["Raft: O(N) message complexity per election", "Log entry: ~100 bytes"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Split-brain: network partition → two leaders → data corruption",
+          "Prevention: lease-based leader + quorum writes",
+          "Follower reads: stale reads vs read-index for linearizable reads",
+          "Pre-vote optimization: prevent disruptive elections",
+          "Joint consensus for membership changes"
+        ],
+        numbers: ["Lease TTL: 2× heartbeat", "Pre-vote: +1 round trip"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Raft vs Paxos vs ZAB — understandability vs flexibility",
+          "Strong leader vs multi-leader — simplicity vs throughput",
+          "Leader leases vs Raft commits — latency vs correctness",
+          "etcd vs ZooKeeper vs Consul — feature set vs operational complexity"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not addressing split-brain prevention",
+          "Ignoring stale reads from followers",
+      "Forgetting about leader leases and their failure modes",
+      "Not discussing what happens during network partitions"
+    ],
+    followUpTopics: ["Raft", "consensus", "distributed systems", "etcd"],
+    deepDiveKey: "distributed systems"
+  },
+  /* ── DATA ─────────────────────────────────────────────── */
+  {
+    id: "key-value-store",
+    title: "Distributed Key-Value Store",
+    icon: "🗄️",
+    difficulty: 4,
+    category: "data",
+    blurb: "Consistent hashing, replication, conflict resolution, and multi-datacenter sync.",
+    prerequisites: ["consistent hashing", "CAP theorem", "replication", "conflict resolution"],
+    keyNumbers: [
+      "GET/PUT latency: <10ms P99",
+      "Throughput: 100K+ ops/s per node",
+      "Replication factor: 3 (survive 2 failures in quorum)",
+      "Storage: LSM-tree, compaction every 10s"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "GET(key) → value, PUT(key, value), DELETE(key)",
+          "High availability: no single point of failure",
+          "Tunable consistency: strong or eventual per request",
+          "Scale to millions of keys across hundreds of nodes"
+        ],
+        numbers: ["100K ops/s/node", "<10ms P99", "RF=3"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Client → Coordinator → Consistent Hash Ring → Node",
+          "Replication: write to N nodes, read from R nodes (N=W+R-1)",
+          "Hinted handoff: temporary failures route around dead nodes",
+          "Anti-entropy: Merkle tree comparison for repair"
+        ],
+        numbers: ["W=2, R=2, N=3 → quorum read/write"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Conflict resolution: vector clocks vs last-write-wins vs CRDTs",
+          "Compaction: LSM-tree merge, write amplification",
+          "Multi-datacenter: async replication, conflict resolution at DC level",
+          "Tunable consistency: per-request quorum tuning",
+          "Membership: gossip protocol for cluster state"
+        ],
+        numbers: ["Write amplification: 10-30x in LSM", "Merkle tree: O(log N) comparison"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Strong vs eventual consistency — latency vs correctness",
+          "Replication factor: 3 vs 5 — durability vs cost",
+          "Hash ring vs range partitioning — load balance vs range queries",
+          "Dynamo vs Cassandra vs Riak — design philosophy differences"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not explaining the CAP trade-off clearly",
+      "Ignoring conflict resolution for concurrent writes",
+      "Forgetting about hinted handoff for temporary failures",
+      "Not estimating storage per node"
+    ],
+    followUpTopics: ["consistent hashing", "CAP theorem", "LSM-trees", "Dynamo"],
+    deepDiveKey: "databases & caching"
+  },
+  {
+    id: "search-engine",
+    title: "Full-Text Search Engine",
+    icon: "🔎",
+    difficulty: 4,
+    category: "data",
+    blurb: "Inverted index, ranking algorithms, relevance tuning, and distributed search.",
+    prerequisites: ["inverted index", "TF-IDF/BM25", "distributed systems", "caching"],
+    keyNumbers: [
+      "1B documents, 100TB index size",
+      "Query latency: <200ms P99",
+      "Indexing: 10K docs/s batch, 100 docs/s real-time",
+      "Shard: ~50M docs, 50GB per shard"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Index documents, support full-text search queries",
+          "Rank results by relevance (TF-IDF, BM25)",
+          "Support filters, facets, and autocomplete",
+          "Near-real-time indexing (<1s from write to searchable)"
+        ],
+        numbers: ["1B documents", "<200ms P99 query", "10K docs/s indexing"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Inverted index: term → list of (doc_id, positions, frequency)",
+          "Sharding: distribute documents across shards, scatter-gather queries",
+          "Replication: N=3 replicas per shard for read scaling",
+          "Coordinator node: scatter query, merge results, return top-K"
+        ],
+        numbers: ["~50GB per shard", "Scatter-gather: +50ms per hop"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Indexing pipeline: analyze → tokenize → stem → build inverted index",
+          "BM25 scoring: term frequency × inverse document frequency × field length",
+          "Near-real-time: segment-based indexing with periodic refresh",
+          "Distributed scoring: global vs local TF-IDF (divergence at scale)",
+          "Cache: query result cache, filter cache, field data cache"
+        ],
+        numbers: ["Segment refresh: every 1s", "BM25 k1=1.2, b=0.75"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Elasticsearch vs Solr vs Meilisearch — feature set vs simplicity",
+          "Inverted index vs vector search — keyword vs semantic",
+          "Shard count: too many = overhead, too few = hot spots",
+          "Index-time vs query-time ranking — freshness vs latency"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not explaining the inverted index data structure",
+      "Ignoring distributed scoring divergence",
+      "Forgetting about near-real-time indexing",
+      "Not discussing cache strategy for repeated queries"
+    ],
+    followUpTopics: ["inverted index", "BM25", "Elasticsearch", "distributed systems"],
+    deepDiveKey: "databases & caching"
+  },
+  /* ── API ──────────────────────────────────────────────── */
+  {
+    id: "api-gateway",
+    title: "API Gateway",
+    icon: "🚪",
+    difficulty: 3,
+    category: "api",
+    blurb: "Request routing, authentication, rate limiting, and protocol translation.",
+    prerequisites: ["HTTP", "load balancing", "authentication", "microservices"],
+    keyNumbers: [
+      "10K requests/s per gateway node",
+      "P99 latency overhead: <5ms for routing",
+      "Rate limiting: 1000 req/user/hour",
+      "Connection pooling: 10K keep-alive connections per node"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Single entry point for all client requests",
+          "Route to appropriate microservice based on path/host",
+          "Cross-cutting concerns: auth, rate limiting, logging, CORS",
+          "Protocol translation: REST → gRPC, WebSocket upgrade"
+        ],
+        numbers: ["10K req/s/node", "<5ms routing overhead"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Client → Load Balancer → API Gateway → Backend Services",
+          "Route table: path-based routing with regex support",
+          "Middleware pipeline: auth → rate limit → transform → forward",
+          "Response caching for read-heavy endpoints"
+        ],
+        numbers: ["Route lookup: O(1) hash map", "Middleware: <1ms per layer"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Authentication: JWT validation, OAuth2 token introspection",
+          "Rate limiting: per-client, per-endpoint, global",
+          "Circuit breaker: detect unhealthy backends, fail fast",
+          "Request/response transformation: header injection, body mapping",
+          "Observability: distributed tracing (OpenTelemetry), access logs"
+        ],
+        numbers: ["JWT validation: <1ms", "Circuit breaker: 5 failures → open"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Kong vs Envoy vs Traefik — plugin ecosystem vs performance",
+          "Centralized vs decentralized gateway — control vs flexibility",
+          "Monolithic gateway vs per-service gateway — simplicity vs isolation",
+          "API versioning: URL path vs header vs content negotiation"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Making the gateway a monolith (too many responsibilities)",
+      "Not handling backend failures gracefully",
+      "Forgetting about WebSocket and gRPC support",
+      "Ignoring observability and distributed tracing"
+    ],
+    followUpTopics: ["load balancing", "authentication", "microservices", "rate limiting"],
+    deepDiveKey: "apis & services"
+  },
+  /* ── REAL-WORLD ──────────────────────────────────────── */
+  {
+    id: "notification-system",
+    title: "Notification System",
+    icon: "🔔",
+    difficulty: 2,
+    category: "real-world",
+    blurb: "Multi-channel delivery (push, SMS, email) with preference management and rate limiting.",
+    prerequisites: ["message queues", "API design", "user preferences"],
+    keyNumbers: [
+      "10M notifications/day → 115/s average",
+      "Push: 50ms latency target, Email: 30s acceptable, SMS: 5s",
+      "Preference storage: ~1KB per user (channel + frequency settings)",
+      "Delivery rate: 99.5% push, 98% email, 95% SMS"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Send push, email, SMS based on user preferences",
+          "Priority: transactional (2FA, alerts) > promotional",
+          "User can set channel preferences and quiet hours",
+          "Delivery tracking: sent, delivered, opened, clicked"
+        ],
+        numbers: ["10M notifications/day", "115/s average"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "API Gateway → Notification Service → Channel Router",
+          "Channel-specific workers: Push (APNs/FCM), Email (SES/SendGrid), SMS (Twilio)",
+          "Priority queue: transactional first, promotional batched",
+          "Template engine for notification content"
+        ],
+        numbers: ["Push: <50ms, Email: <30s, SMS: <5s"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Preference service: channel + frequency + quiet hours",
+          "Rate limiting: per-user and per-channel limits",
+          "Delivery tracking: webhook callbacks from providers",
+          "Batching: promotional emails batched every 5 minutes",
+          "Fallback: push fails → SMS fails → email"
+        ],
+        numbers: ["99.5% push delivery rate", "Batch window: 5 min"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Real-time vs batched delivery — cost vs latency",
+          "Provider abstraction: switching Twilio → Vonage without code changes",
+          "Template management: version control + A/B testing",
+          "GDPR: opt-out tracking, data retention policies"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not handling provider failures gracefully",
+      "Ignoring user preferences and quiet hours",
+      "Forgetting delivery tracking and analytics",
+      "Not batching promotional notifications"
+    ],
+    followUpTopics: ["message queues", "API design", "user preferences", "monitoring"],
+    deepDiveKey: "apis & services"
+  },
+  {
+    id: "video-streaming",
+    title: "Video Streaming Platform",
+    icon: "📺",
+    difficulty: 4,
+    category: "real-world",
+    blurb: "Adaptive bitrate streaming, CDN edge caching, and live stream processing.",
+    prerequisites: ["CDN", "video codecs", "chunked transfer", "caching"],
+    keyNumbers: [
+      "1B daily views, 500 hours of video uploaded per minute",
+      "Video chunk: 2-10 seconds, multiple bitrates (240p→4K)",
+      "CDN edge: 95% of views served from edge (<50ms TTFB)",
+      "Encoding: 1 hour video → 30 min on 16-core server"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Upload, transcode, store, and stream video",
+          "Adaptive bitrate: adjust quality based on bandwidth",
+          "Live streaming with <5s latency",
+          "Recommendations, search, and watch history"
+        ],
+        numbers: ["1B daily views", "500 hours/min uploaded", "<5s live latency"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Upload → Transcoding Pipeline → CDN → Player",
+          "HLS/DASH: video split into chunks, manifest file lists chunks",
+          "Adaptive bitrate: player picks quality based on bandwidth probe",
+          "CDN: edge cache serves chunks, origin only on miss"
+        ],
+        numbers: ["Chunk: 2-10s", "Bitrate ladder: 6 levels (240p→4K)"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Transcoding: FFmpeg pipeline, GPU acceleration, ABR encoding",
+          "Live: ingest (RTMP/WebRTC) → transcode → segment → CDN",
+          "CDN strategy: pull vs push, cache invalidation for live",
+          "Storage: hot (SSD, 7d) → warm (HDD, 90d) → cold (S3 Glacier)",
+          "DRM: Widevine (Android), FairPlay (Apple), PlayReady (Windows)"
+        ],
+        numbers: ["Storage: 1PB/month for 1B views", "Encoding: 1hr → 30min on 16 cores"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "HLS vs DASH vs CMAF — browser support vs latency",
+          "Pull CDN vs push CDN — origin load vs cache hit ratio",
+          "Live vs VOD pipeline — latency vs cost",
+          "Self-hosted vs cloud CDN — control vs operational cost"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not explaining adaptive bitrate streaming",
+      "Ignoring CDN caching strategy",
+      "Forgetting about storage tiering",
+      "Not discussing live vs VOD pipeline differences"
+    ],
+    followUpTopics: ["CDN", "video encoding", "HLS/DASH", "DRM"],
+    deepDiveKey: "system design"
+  },
+  {
+    id: "ride-sharing",
+    title: "Ride-Sharing Service (Uber/Lyft)",
+    icon: "🚗",
+    difficulty: 4,
+    category: "real-world",
+    blurb: "Geo-spatial indexing, real-time matching, ETA calculation, and surge pricing.",
+    prerequisites: ["geo-spatial indexes", "WebSockets", "matching algorithms", "real-time systems"],
+    keyNumbers: [
+      "19M rides/day, 5M concurrent drivers",
+      "Geo hash: precision 6 → 1.2km × 0.6km cells",
+      "Matching latency: <5s rider-to-driver",
+      "ETA: 15-30s computation for complex routes"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Rider requests ride, nearby driver matched, real-time tracking",
+          "ETA estimation, dynamic pricing (surge)",
+          "Payment processing, rating system",
+          "Scale: 19M rides/day, 5M concurrent drivers"
+        ],
+        numbers: ["19M rides/day", "5M drivers", "<5s matching"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Rider app → Matching Service → Driver app (WebSocket)",
+          "Geo-spatial index: GeoHash or Quadtree for driver locations",
+          "Location service: drivers publish GPS every 4s via WebSocket",
+          "Matching: nearest available driver within radius"
+        ],
+        numbers: ["GeoHash precision 6: 1.2km cells", "GPS update: every 4s"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Matching algorithm: bipartite matching, accept/reject flow",
+          "ETA: Dijkstra on road graph + real-time traffic",
+          "Surge pricing: supply/demand ratio → multiplier",
+          "Trip state machine: requested → matched → en-route → in-progress → completed",
+          "Payment: hold authorization → compute fare → capture"
+        ],
+        numbers: ["Dijkstra: O(V log V + E)", "Surge: 1.0x → 2.0x max"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "GeoHash vs Quadtree vs R-tree — update cost vs query speed",
+          "Bipartite matching vs greedy nearest — optimal vs fast",
+          "Real-time ETA accuracy vs computation cost",
+          "Surge pricing fairness vs market efficiency"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not explaining the geo-spatial index clearly",
+      "Ignoring real-time location updates",
+      "Forgetting about the payment flow",
+      "Not discussing surge pricing algorithm"
+    ],
+    followUpTopics: ["geo-spatial indexes", "WebSockets", "matching algorithms", "surge pricing"],
+    deepDiveKey: "system design"
+  },
+  {
+    id: "search-autocomplete",
+    title: "Search Autocomplete",
+    icon: "🔍",
+    difficulty: 3,
+    category: "real-world",
+    blurb: "Trie-based prefix matching, real-time ranking, and debounced client requests.",
+    prerequisites: ["tries", "caching", "analytics", "client-server"],
+    keyNumbers: [
+      "100M queries/day → ~1,200 queries/s",
+      "Trie depth: 5-10 characters (avg query length)",
+      "Cache: top 1000 queries per prefix → 26K cached prefixes",
+      "P99 latency target: <100ms for autocomplete results"
+    ],
+    phases: [
+      {
+        phase: "Requirements",
+        duration: "5 min",
+        talkingPoints: [
+          "Real-time suggestions as user types (debounced 100ms)",
+          "Suggestions ranked by popularity/frequency",
+          "Handle typos and fuzzy matching",
+          "Respect safe search and personalization"
+        ],
+        numbers: ["100M queries/day", "<100ms P99 latency"]
+      },
+      {
+        phase: "High-Level Design",
+        duration: "10 min",
+        talkingPoints: [
+          "Client debounces keystrokes, sends prefix to API",
+          "Trie data structure for prefix matching",
+          "Cache: Redis with prefix → top suggestions",
+          "Analytics: track query frequency for ranking"
+        ],
+        numbers: ["Debounce: 100ms", "Cache: 26K prefixes × 5 suggestions"]
+      },
+      {
+        phase: "Deep Dive",
+        duration: "15 min",
+        talkingPoints: [
+          "Trie implementation: compressed trie for space efficiency",
+          "Ranking: ML model + popularity + recency",
+          "Fuzzy matching: edit distance + phonetic matching",
+          "Real-time updates: streaming analytics (Kafka) update trie periodically",
+          "Edge cases: empty prefix, very long prefix, special characters"
+        ],
+        numbers: ["Trie: O(L) lookup, L=avg query length", "Update frequency: every 5 min"]
+      },
+      {
+        phase: "Trade-offs & Wrap",
+        duration: "5 min",
+        talkingPoints: [
+          "Trie vs inverted index — prefix matching vs full-text search",
+          "Cache freshness vs cache hit ratio",
+          "Personalization vs global popularity",
+          "Client-side vs server-side debouncing"
+        ]
+      }
+    ],
+    commonMistakes: [
+      "Not explaining the trie data structure clearly",
+      "Ignoring debouncing on the client side",
+      "Forgetting about typo/fuzzy matching",
+      "Not handling trending/popular queries specially"
+    ],
+    followUpTopics: ["tries", "caching", "analytics", "client-server"],
+    deepDiveKey: "system design"
+  }
+];
+
+/** Get all unique categories */
+export function getCategories(): string[] {
+  return [...new Set(SYSTEM_DESIGN_CASES.map(c => c.category))];
+}
+
+/** Filter cases by category */
+export function casesByCategory(cat: string): SystemDesignCase[] {
+  return SYSTEM_DESIGN_CASES.filter(c => c.category === cat);
+}
+
+/** Get a case by ID */
+export function getCase(id: string): SystemDesignCase | undefined {
+  return SYSTEM_DESIGN_CASES.find(c => c.id === id);
+}
