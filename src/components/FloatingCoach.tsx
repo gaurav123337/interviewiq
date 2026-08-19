@@ -487,7 +487,7 @@ export function FloatingCoach() {
       {/* FAB button */}
       <button
         onClick={() => setOpen(o => !o)}
-        className={`no-print fixed bottom-20 right-4 z-[60] grid h-14 w-14 place-items-center rounded-full shadow-[0_8px_30px_rgba(99,102,241,.45)] transition-all hover:scale-110 md:bottom-8 ${open ? "bg-deep border-2 border-acc1/50" : "grad-bg"}`}
+        className={`no-print fixed bottom-20 right-4 z-[110] grid h-14 w-14 place-items-center rounded-full shadow-[0_8px_30px_rgba(99,102,241,.45)] transition-all hover:scale-110 md:bottom-8 ${open ? "bg-deep border-2 border-acc1/50" : "grad-bg"}`}
         title="AI Coach — ask me anything (Ctrl+/)"
         aria-label="Open AI Coach"
       >
@@ -496,7 +496,7 @@ export function FloatingCoach() {
 
       {/* Chat panel */}
       {open && (
-        <div className="no-print fixed bottom-[90px] right-4 z-[59] w-[380px] max-w-[calc(100vw-2rem)] md:bottom-[80px]">
+        <div className="no-print fixed bottom-[90px] right-4 z-[109] w-[380px] max-w-[calc(100vw-2rem)] md:bottom-[80px]">
           <div className={`${cardCls} overflow-hidden shadow-[0_18px_50px_rgba(0,0,0,.55)]`}>
             {/* Header */}
             <div className="flex items-center gap-2 border-b border-line/10 px-4 py-3">

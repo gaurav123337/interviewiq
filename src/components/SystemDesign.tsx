@@ -198,16 +198,18 @@ export function SystemDesign() {
   const [difficultyFilter, setDifficultyFilter] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const goal = getGoal();
+  const lastCaseRef = useRef<SystemDesignCase | null>(null);
 
-  /* Notify the floating AI coach when a case study is selected/closed */
+  /* Notify the floating AI coach when a case study is selected.
+     Keep the context sticky — don't clear when the drawer closes,
+     so the coach always knows what the user was last studying. */
   useEffect(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const setter = (window as any).__setCoachTopic;
     if (!setter) return;
-    if (selected) {
+    if (selected && selected.id !== lastCaseRef.current?.id) {
+      lastCaseRef.current = selected;
       setter({ caseId: selected.id, title: selected.title, icon: selected.icon, blurb: selected.blurb });
-    } else {
-      setter({ caseId: null, title: null, icon: null, blurb: null });
     }
   }, [selected]);
 
