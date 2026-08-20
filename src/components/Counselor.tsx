@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { BAND_LABEL, BAND_ORDER, FIELDS, SKILLS, type Band } from "../data/skillCatalog";
-import { applyManifestDiff, markManifestSeen, qualityBand, resourceFreshness, resourceQuality } from "../services/catalogMeta";
+import { applyManifestDiff, markManifestSeen, resourceQuality } from "../services/catalogMeta";
 import { getCareerProfile } from "../services/jobs";
 import { myResources, submitResource, type ResourceRow } from "../services/resources";
 import { build90DayPlan, buildPlan, gapAnalysis, levelUpDelta, suggestTrack } from "../services/skillCounselor";
@@ -351,29 +351,27 @@ export function Counselor() {
                         {s.prerequisites && s.prerequisites.length > 0 && (
                           <p className="mt-1 text-[11px] text-fnt">needs: {s.prerequisites.join(", ")}</p>
                         )}
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <span className="text-[10.5px] font-bold uppercase tracking-wider text-fnt">🔍 App suggested:</span>
+                        <div className="mt-2.5 space-y-1.5">
+                          <span className="text-[10.5px] font-bold uppercase tracking-wider text-fnt">🔍 App suggested</span>
                           {s.resources.map(r => {
-                            const fres = resourceFreshness(r);
                             const q = resourceQuality(r);
                             return (
-                              <span key={r.url} className="inline-flex items-center gap-1 rounded-full border border-line/15 px-2.5 py-1 text-[11.5px]">
-                                <a href={r.url} target="_blank" rel="noopener noreferrer" className="font-semibold text-acctxt hover:underline">{r.title}</a>
-                                <span className="text-fnt">{r.kind}</span>
-                                {r.free ? <span className="text-ok">free</span> : <span className="text-warn">paid</span>}
-                                <span className={fres.status === "current" ? "text-fnt" : "text-warn"} title={fres.label}>{fres.status === "current" ? `'${String(r.publishedYear).slice(2)}` : "⚠️"}</span>
-                                <span title={`quality score ${q}/100`} className={q >= 85 ? "text-ok" : q >= 55 ? "text-fnt" : "text-warn"}>{q} {qualityBand(q)}</span>
+                              <a key={r.url} href={r.url} target="_blank" rel="noopener noreferrer" className="group flex items-center gap-2 rounded-lg border border-line/10 bg-wht/[.03] px-3 py-2 text-[12px] transition-colors hover:border-line/25 hover:bg-wht/[.06]">
+                                <span className="min-w-0 flex-1 truncate font-semibold text-acctxt group-hover:underline">{r.title}</span>
+                                <span className="flex-none text-[11px] text-fnt">{r.kind}</span>
+                                {r.free ? <Chip tone="ok">free</Chip> : <Chip tone="warn">paid</Chip>}
+                                <span title={`quality ${q}/100`} className={`flex-none text-[11px] font-bold ${q >= 85 ? "text-ok" : q >= 55 ? "text-fnt" : "text-warn"}`}>{q}</span>
                                 {isSaved(r.url) ? (
-                                  <span title="Already in your saved resources" className="text-ok">✓</span>
+                                  <span title="Saved" className="flex-none text-[11px] text-ok">✓</span>
                                 ) : (
                                   <button
-                                    className="text-acctxt hover:opacity-70 disabled:opacity-40"
-                                    title="Save to my resources (guard-checked)"
+                                    className="flex-none text-acctxt opacity-0 transition-opacity group-hover:opacity-100"
+                                    title="Save to my resources"
                                     disabled={saving === r.url}
-                                    onClick={e => { e.preventDefault(); void saveResource(r, s.why); }}
+                                    onClick={e => { e.preventDefault(); e.stopPropagation(); void saveResource(r, s.why); }}
                                   >⭐</button>
                                 )}
-                              </span>
+                              </a>
                             );
                           })}
                         </div>

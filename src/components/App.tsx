@@ -276,14 +276,14 @@ export function App() {
           (the landing page has its own richer footer) */}
       {view !== "landing" && (
         <footer className="no-print border-t border-line/10 px-4 pb-24 pt-6 md:pb-8">
-          <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-3 text-[12px] text-mut">
+          <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-3 text-[12px] text-mut sm:flex-row sm:justify-between">
             <span className="font-extrabold">Interview<span className="grad-text">IQ</span> — AI Interview Coach</span>
-            <span className="flex flex-wrap gap-4">
-              <button className="hover:text-ink" onClick={() => openPolicy("terms")}>Terms</button>
-              <button className="hover:text-ink" onClick={() => openPolicy("privacy")}>Privacy</button>
-              <button className="hover:text-ink" onClick={() => openPolicy("refunds")}>Refunds</button>
-              <button className="hover:text-ink" onClick={() => openPolicy("shipping")}>Shipping</button>
-              <a href="https://github.com/gaurav123337/interviewiq" target="_blank" rel="noreferrer" className="hover:text-ink">GitHub</a>
+            <span className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("terms")}>Terms</button>
+              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("privacy")}>Privacy</button>
+              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("refunds")}>Refunds</button>
+              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("shipping")}>Shipping</button>
+              <a href="https://github.com/gaurav123337/interviewiq" target="blank" rel="noreferrer" className="inline-flex items-center gap-1 transition-colors hover:text-ink"><span aria-hidden>🐙</span> GitHub</a>
             </span>
           </div>
         </footer>

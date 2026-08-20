@@ -606,16 +606,12 @@ export function Jobs() {
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">💡 Suggestions</span>
                 {skillSuggestions.slice(0, 8).map(s => (
-                  <span key={s} className="inline-flex items-center gap-0.5">
-                    <Chip tone="co" title={`“${s}” isn't in your resume — add it if you have this skill`}>{s}</Chip>
-                    <button
-                      className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
-                      onClick={() => addSuggestedSkill(s)}
-                      title={`Add “${s}” to my skills — it will appear in generated resumes`}
-                    >
-                      ＋
-                    </button>
-                  </span>
+                  <button
+                    className="inline-flex items-center gap-1 rounded-full border border-acc1/30 bg-acc1/10 px-2 py-0.5 text-[11.5px] font-semibold text-acctxt transition-all hover:bg-acc1/20"
+                    onClick={() => addSuggestedSkill(s)}
+                  >
+                    {s} <span className="text-[10px] opacity-60">+</span>
+                  </button>
                 ))}
               </div>
             )}
@@ -847,16 +843,14 @@ export function Jobs() {
                       <span className="flex flex-wrap items-center gap-1">
                         <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Gap:</span>
                         {r.missing.slice(0, 4).map(s => (
-                          <span key={s} className="inline-flex items-center gap-0.5">
-                            <Chip tone="bad" title="In the posting but not in your profile — click ＋ to add it">✗ {s}</Chip>
-                            <button
-                              className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
-                              onClick={() => addSkillToProfile(s)}
-                              title={`Add “${s}” to my profile skills`}
-                            >
-                              ＋
-                            </button>
-                          </span>
+                          <button
+                            key={s}
+                            className="inline-flex items-center gap-1 rounded-full border border-bad/30 bg-bad/10 px-2 py-0.5 text-[11.5px] font-semibold text-bad transition-all hover:bg-bad/20"
+                            onClick={() => addSkillToProfile(s)}
+                            title={`Add \"${s}\" to my profile skills`}
+                          >
+                            {s} <span className="text-[10px] opacity-60">+add</span>
+                          </button>
                         ))}
                         {r.missing.length > 4 && <span className="text-[11.5px] text-mut">+{r.missing.length - 4} more</span>}
                       </span>
@@ -1282,16 +1276,14 @@ export function Jobs() {
                         <span className="flex flex-wrap items-center gap-1">
                           <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Missing:</span>
                           {m.missing.map(s => (
-                            <span key={s} className="inline-flex items-center gap-0.5">
-                              <Chip tone="bad" title="In the posting but not in your profile — click ＋ to add it">✗ {s}</Chip>
-                              <button
-                                className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
-                                onClick={() => addSkillToProfile(s)}
-                                title={`Add “${s}” to my profile skills`}
-                              >
-                                ＋
-                              </button>
-                            </span>
+                            <button
+                              key={s}
+                              className="inline-flex items-center gap-1 rounded-full border border-bad/30 bg-bad/10 px-2 py-0.5 text-[11.5px] font-semibold text-bad transition-all hover:bg-bad/20"
+                              onClick={() => addSkillToProfile(s)}
+                              title={`Add \"${s}\" to my profile skills`}
+                            >
+                              {s} <span className="text-[10px] opacity-60">+add</span>
+                            </button>
                           ))}
                         </span>
                       )}
@@ -1332,16 +1324,12 @@ export function Jobs() {
                       <div className="mt-1.5 flex flex-wrap items-center gap-1">
                         <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">💡 Leans on</span>
                         {jd.slice(0, 4).map(k => (
-                          <span key={k} className="inline-flex items-center gap-0.5">
-                            <Chip tone="co" title={`The posting leans on “${k}” — add it to your profile if you have this skill`}>{k}</Chip>
-                            <button
-                              className="grid h-[18px] w-[18px] place-items-center rounded-full border border-acc1/40 bg-acc1/10 text-[12px] font-bold leading-none text-acctxt transition-all hover:bg-acc1/25"
-                              onClick={() => addSkillToProfile(k)}
-                              title={`Add “${k}” to my skills`}
-                            >
-                              ＋
-                            </button>
-                          </span>
+                          <button
+                            className="inline-flex items-center gap-1 rounded-full border border-acc1/30 bg-acc1/10 px-2 py-0.5 text-[11.5px] font-semibold text-acctxt transition-all hover:bg-acc1/20"
+                            onClick={() => addSkillToProfile(k)}
+                          >
+                            {k} <span className="text-[10px] opacity-60">+</span>
+                          </button>
                         ))}
                       </div>
                     );
