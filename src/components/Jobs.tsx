@@ -725,7 +725,7 @@ export function Jobs() {
                     <span className="text-[12px] font-bold text-mut">🔒 {r.openings} open role{r.openings === 1 ? "" : "s"}</span>
                   ) : (
                     <>
-                      <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wide ${verdictToneCls(r.verdict)}`}>{r.score}% · {VERDICT_META[r.verdict].label}</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wide ${verdictToneCls(r.verdict)} border-current/25 bg-current/10`}>{r.score}% · {VERDICT_META[r.verdict].label}</span>
                       <span className="text-[12px] text-mut">{r.openings} role{r.openings === 1 ? "" : "s"} · {r.best.title}</span>
                     </>
                   )}
@@ -1238,7 +1238,7 @@ export function Jobs() {
                 <li key={j.id} className="p-4">
                   <div className="flex flex-wrap items-center gap-2">
                     <button
-                      className={`rounded-full px-2.5 py-1 text-[12px] font-extrabold transition-all ${locked ? "border border-line/15 bg-wht/10 text-mut hover:text-ink" : ""}`}
+                      className={`rounded-full border px-2.5 py-1 text-[11.5px] font-extrabold transition-all ${locked ? "border-line/20 bg-wht/10 text-mut hover:text-ink" : `${verdictToneCls(m!.verdict)} border-current/25 bg-current/10`}`}
                       onClick={() => locked && setUpgrade("Match verdicts, reasons and the skill-gap roadmap are Pro features.")}
                       title={locked ? "Pro feature" : VERDICT_META[m!.verdict].label}
                     >
@@ -1257,10 +1257,10 @@ export function Jobs() {
                       </Chip>
                     )}
                     {(() => { const s = salaryLabel(j, displayCurrency); return s ? <span className="font-bold text-ok">💰 {s}</span> : null; })()}
-                    <span className="inline-flex items-center gap-1 text-[11px] text-mut" title={trustOf(j.source).title}>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-line/15 bg-wht/[.04] px-2 py-0.5 text-[10.5px] font-semibold text-fnt" title={trustOf(j.source).title}>
                       <span aria-hidden>{trustOf(j.source).icon}</span> {trustOf(j.source).label}
                     </span>
-                    {j.url && <a href={j.url} target="_blank" rel="noreferrer" className="font-bold text-acctxt hover:underline">View →</a>}
+                    {j.url && <a href={j.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-acc1/30 bg-acc1/5 px-2 py-0.5 text-[11px] font-bold text-acctxt transition-all hover:bg-acc1/15">View →</a>}
                   </div>
                   {!locked && m && (m.matched.length || m.missing.length || m.blockers.length) && (
                     <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px]">
