@@ -149,7 +149,7 @@ export function Account() {
           <Stat label="Questions answered" value={String(questions)} />
         </div>
         {proGated ? (
-          <button className={`${btnPrimary} mt-4 w-full py-2.5`} onClick={() => nav("settings")}>
+          <button className={`${btnPrimary} mt-5 w-full py-3 text-[15px]`} onClick={() => nav("settings")}>
             ✨ Upgrade to Pro — unlock hints, solutions, UI challenges & more
           </button>
         ) : (
