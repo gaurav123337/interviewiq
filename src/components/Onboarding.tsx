@@ -116,8 +116,8 @@ export function Onboarding() {
 
       {step === 4 && (
         <section className="mt-8">
-          <h2 className="mb-1 text-2xl font-extrabold tracking-tight">Ready to be interviewed?</h2>
-          <p className="mb-5 text-[14.5px] text-mut">Here's your session profile — you can change anything by going back.</p>
+          <h2 className="mb-1 text-center text-2xl font-extrabold tracking-tight">Ready to be interviewed?</h2>
+          <p className="mb-5 text-center text-[14.5px] text-mut">Here's your session profile — you can change anything by going back.</p>
           <div className={`${cardCls} mx-auto max-w-[640px] p-6`}>
             {ob.jd && <SumRow ico="📋" label="Tailored from" value="Job description" />}
             <SumRow ico="🎯" label="Level" value={ob.level ? `${levelById(ob.level).icon} ${levelById(ob.level).name}` : "—"} />

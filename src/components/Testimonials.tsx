@@ -431,7 +431,7 @@ export function AutoRotatingBanners({ position }: { position: "hero" | "midpage"
           {banner.subtitle && <p className="mt-2 text-[13px] opacity-80">{banner.subtitle}</p>}
           {banner.cta_text && banner.cta_url && (
             <a href={banner.cta_url} target="_blank" rel="noopener noreferrer" onClick={() => void trackClick("banner", banner.id)} className="mt-3 inline-block rounded-xl bg-white/20 px-5 py-2 text-[13px] font-bold backdrop-blur-sm transition-all hover:bg-white/30">
-              {banner.cta_text} →
+              {banner.cta_text}
             </a>
           )}
         </div>
@@ -525,7 +525,7 @@ export function PopupBanners() {
               onClick={() => void trackClick("banner", banner.id)}
               className="mt-4 inline-block rounded-xl bg-white/20 px-6 py-2.5 text-[14px] font-bold backdrop-blur-sm transition-all hover:bg-white/30"
             >
-              {banner.cta_text} →
+              {banner.cta_text}
             </a>
           )}
         </div>

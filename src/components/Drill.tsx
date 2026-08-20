@@ -89,7 +89,7 @@ export function Drill() {
           <option value="all">All levels</option>
           {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
         </select>
-        <button className={btnPrimary + btnSm} onClick={build}>Build deck</button>
+        <button className="rounded-xl grad-bg px-3.5 py-2 text-[13.5px] font-bold text-white shadow-[0_4px_12px_rgba(99,102,241,.35)]" onClick={build}>Build deck</button>
         {learned > 0 && (
           <button className={btnGhost + btnSm} onClick={() => { resetSrs(); setLearned(0); toast("Spaced-repetition schedule reset"); }}>
             Reset ({learned} learned)
