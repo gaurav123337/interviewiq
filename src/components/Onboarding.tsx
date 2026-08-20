@@ -42,14 +42,14 @@ export function Onboarding() {
                 type="button"
                 disabled={!clickable}
                 onClick={() => setStep(n)}
-                className={`flex items-center gap-2 rounded-full px-2.5 py-1.5 text-[12.5px] font-bold ${cls} ${clickable ? "cursor-pointer" : "cursor-default"}`}
+                className={`flex items-center gap-2 rounded-full px-3 py-2 min-h-[44px] text-[13px] font-bold ${cls} ${clickable ? "cursor-pointer active:scale-95" : "cursor-default"}`}
               >
-                <span className={`grid h-[22px] w-[22px] place-items-center rounded-full text-[11px] ${n === step ? "grad-bg text-white shadow-[0_4px_14px_rgba(99,102,241,.5)]" : n < step ? "border border-ok/40 bg-ok/20 text-ok" : "border border-line/30 bg-wht/10"}`}>
+                <span className={`grid h-7 w-7 place-items-center rounded-full text-[12px] ${n === step ? "grad-bg text-white shadow-[0_4px_14px_rgba(99,102,241,.5)]" : n < step ? "border border-ok/40 bg-ok/20 text-ok" : "border border-line/30 bg-wht/10"}`}>
                   {n < step ? "✓" : n}
                 </span>
                 {s}
               </button>
-              {n < 4 && <span className="h-px w-9 bg-wht/20 max-sm:w-4" />}
+              {n < 4 && <span className="h-px w-6 bg-wht/20 sm:w-9" />}
             </span>
           );
         })}

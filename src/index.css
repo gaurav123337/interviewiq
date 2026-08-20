@@ -60,6 +60,27 @@ html.light {
 html {
   -webkit-text-size-adjust: 100%;
   scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  scroll-padding-top: 70px; /* sticky header height */
+}
+
+/* mobile: larger touch targets and smoother scrolling */
+@media (max-width: 640px) {
+  button, [role="button"], a, select, summary {
+    min-height: 44px;
+  }
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="search"],
+  input[type="url"],
+  input[type="number"],
+  textarea,
+  select {
+    font-size: 16px !important; /* prevents iOS zoom on focus */
+    min-height: 44px;
+  }
 }
 
 body {

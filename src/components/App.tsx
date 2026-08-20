@@ -225,7 +225,7 @@ export function App() {
             onClick={() => go("account")}
             title={cloud.user ? `Account — ${cloud.user.email}` : "Account"}
             aria-label="Account"
-            className="relative grid h-9 w-9 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[13px] font-extrabold transition-all hover:bg-wht/20"
+            className="relative grid h-10 w-10 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[13px] font-extrabold transition-all hover:bg-wht/20 active:scale-95"
           >
             {cloud.user ? (cloud.user.email ?? "?").charAt(0).toUpperCase() : "👤"}
             {cloud.user && <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border border-deep bg-ok" />}
@@ -233,7 +233,7 @@ export function App() {
           <button
             onClick={toggleTheme}
             title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
-            className="grid h-9 w-9 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[16px] transition-all hover:bg-wht/20"
+            className="grid h-10 w-10 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[16px] transition-all hover:bg-wht/20 active:scale-95"
           >
             {theme === "light" ? "🌙" : "☀️"}
           </button>
@@ -347,25 +347,25 @@ export function App() {
             <MoreMenu current={view} tabs={moreTabs} onPick={go} />
           </div>
         </div>
-        <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-2" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-1 pb-[env(safe-area-inset-bottom)]">
           {mobileTabs.map(t => (
             <button
               key={t.id}
               onClick={() => go(t.id)}
-              className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-bold ${view === t.id ? "text-acc3" : "text-fnt"}`}
+              className={`flex min-h-[52px] flex-1 flex-col items-center justify-center gap-1 py-2 text-[11px] font-bold ${view === t.id ? "text-acc3" : "text-fnt"}`}
             >
-              <span className={`grid h-7 w-7 place-items-center rounded-lg text-[16px] ${view === t.id ? "bg-acc1/20" : ""}`}>{t.icon}</span>
-              {t.label}
+              <span className={`grid h-9 w-9 place-items-center rounded-xl text-[20px] ${view === t.id ? "bg-acc1/20" : ""}`}>{t.icon}</span>
+              <span className="leading-none">{t.label}</span>
             </button>
           ))}
           <button
             onClick={() => setMenuOpen(o => !o)}
             aria-label="More"
             aria-expanded={menuOpen}
-            className={`flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-bold ${menuOpen || moreActive ? "text-acc3" : "text-fnt"}`}
+            className={`flex min-h-[52px] flex-1 flex-col items-center justify-center gap-1 py-2 text-[11px] font-bold ${menuOpen || moreActive ? "text-acc3" : "text-fnt"}`}
           >
-            <span className={`grid h-7 w-7 place-items-center rounded-lg text-[16px] ${menuOpen || moreActive ? "bg-acc1/20" : ""}`}>{menuOpen ? "✕" : "☰"}</span>
-            More
+            <span className={`grid h-9 w-9 place-items-center rounded-xl text-[20px] ${menuOpen || moreActive ? "bg-acc1/20" : ""}`}>{menuOpen ? "✕" : "☰"}</span>
+            <span className="leading-none">More</span>
           </button>
         </div>
       </nav>
