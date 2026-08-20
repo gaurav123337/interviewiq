@@ -135,7 +135,7 @@ function TestimonialsTab() {
       {editing && (
         <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New testimonial" : "✏️ Edit testimonial"}>
           <div className="w-full max-w-[520px] p-6">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Name</span>
                 <input className="inp" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="Priya M." />
@@ -292,7 +292,7 @@ function AdsTab() {
       {editing && (
         <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New ad" : "✏️ Edit ad"}>
           <div className="w-full max-w-[520px] p-6">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Title</span>
                 <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} />
@@ -320,7 +320,7 @@ function AdsTab() {
                   <option value="banner">🖼️ Banner</option>
                 </select>
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Start date</span>
                   <input type="date" className="inp" value={editing.start_date ?? ""} onChange={e => setEditing({ ...editing, start_date: e.target.value || null })} />
@@ -335,7 +335,7 @@ function AdsTab() {
               <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Description</span>
               <textarea className="inp h-20 w-full resize-y" value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
             </label>
-            <div className="mt-3 grid grid-cols-2 gap-3">
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Background color</span>
                 <input className="inp" value={editing.bg_color} onChange={e => setEditing({ ...editing, bg_color: e.target.value })} placeholder="#667eea" />
@@ -484,7 +484,7 @@ function ResourcesTab() {
       {editing && (
         <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New resource" : "✏️ Edit resource"}>
           <div className="w-full max-w-[520px] p-6">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Title</span>
                 <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} />
@@ -601,13 +601,15 @@ function TipsTab() {
         </div>
         <div className="space-y-3">
           {config.amounts.map((amt, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-xl border border-line/10 bg-deep/40 p-3">
-              <span className="grid h-9 w-9 place-items-center rounded-lg bg-acc1/10 text-[16px]">{config.labels[i]?.split(" ")[0] ?? "💰"}</span>
-              <label className="text-[12px] font-bold text-mut">$</label>
-              <input type="number" min={1} className="inp w-20 py-1.5 text-center" value={amt} onChange={e => updateAmount(i, Number(e.target.value) || 5)} />
-              <input className="inp flex-1 py-1.5" value={config.labels[i] ?? ""} onChange={e => updateLabel(i, e.target.value)} placeholder="☕ Coffee" />
-              <input className="inp flex-1 py-1.5" value={config.descriptions[i] ?? ""} onChange={e => updateDesc(i, e.target.value)} placeholder="Buy me a coffee" />
-              <button className={btnDanger + btnSm} onClick={() => removeTier(i)}>✕</button>
+            <div key={i} className="rounded-xl border border-line/10 bg-deep/40 p-3">
+              <div className="flex items-center gap-2">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-acc1/10 text-[16px]">{config.labels[i]?.split(" ")[0] ?? "💰"}</span>
+                <label className="text-[12px] font-bold text-mut">$</label>
+                <input type="number" min={1} className="inp w-16 sm:w-20 py-1.5 text-center" value={amt} onChange={e => updateAmount(i, Number(e.target.value) || 5)} />
+                <input className="inp min-w-0 flex-1 py-1.5" value={config.labels[i] ?? ""} onChange={e => updateLabel(i, e.target.value)} placeholder="☕ Coffee" />
+                <button className={btnDanger + btnSm} onClick={() => removeTier(i)}>✕</button>
+              </div>
+              <input className="inp mt-2 w-full py-1.5" value={config.descriptions[i] ?? ""} onChange={e => updateDesc(i, e.target.value)} placeholder="Buy me a coffee" />
             </div>
           ))}
         </div>
@@ -615,7 +617,7 @@ function TipsTab() {
 
       <div className={`${cardCls} p-5`}>
         <h4 className="text-[13px] font-extrabold mb-3">🔗 Payment links</h4>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="block">
             <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Stripe payment link</span>
             <input className="inp" value={config.stripe_link} onChange={e => setConfig({ ...config, stripe_link: e.target.value })} placeholder="https://buy.stripe.com/..." />
@@ -774,7 +776,7 @@ function BannersTab() {
       {editing && (
         <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New banner" : "✏️ Edit banner"}>
           <div className="w-full max-w-[520px] p-6">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block">
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Title</span>
                 <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} />
@@ -869,7 +871,7 @@ function AnalyticsTab() {
   return (
     <div className="space-y-4">
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className={`${cardCls} p-4 text-center`}>
           <div className="text-[24px] font-extrabold text-acctxt">{totalImpressions.toLocaleString()}</div>
           <div className="text-[11px] font-bold text-mut">Total Impressions (30d)</div>
