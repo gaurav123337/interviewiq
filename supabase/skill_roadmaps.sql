@@ -88,9 +88,8 @@ CREATE POLICY "Public can read published roadmaps"
 -- Admins can do everything with roadmaps
 CREATE POLICY "Admins can manage roadmaps"
   ON skill_roadmaps FOR ALL
-  USING (
-    EXISTS (SELECT 1 FROM user_roles WHERE user_id = auth.uid() AND role = 'admin')
-  );
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 -- Public can read resource quality
 CREATE POLICY "Public can read resource quality"
@@ -100,9 +99,8 @@ CREATE POLICY "Public can read resource quality"
 -- Admins can manage resource quality
 CREATE POLICY "Admins can manage resource quality"
   ON resource_quality FOR ALL
-  USING (
-    EXISTS (SELECT 1 FROM user_roles WHERE user_id = auth.uid() AND role = 'admin')
-  );
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 
 -- Users can read their own progress
 CREATE POLICY "Users can read own progress"
