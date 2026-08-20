@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useApp } from "../store";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
+import { computeStats, xpLevel, generateLeaderboard, ACHIEVEMENTS } from "../services/xp";
 import { cardCls, Chip } from "./ui";
 import { toast } from "../toast";
 
@@ -29,7 +30,8 @@ export function Progress() {
     const weak = [...misses.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
     /* days with a session for the calendar */
     const activeDays = new Set(sessions.map(s => dayOf(s.date)));
-    return { st, cats, trend, weak, activeDays, due: cardsDueToday() };
+    const xpStats = computeStats(sessions);
+    return { st, cats, trend, weak, activeDays, due: cardsDueToday(), xpStats };
   }, [sessions]);
 
   if (!sessions.length) {
@@ -47,8 +49,9 @@ export function Progress() {
     );
   }
 
-  const { st, cats, trend, weak, activeDays, due } = stats;
+  const { st, cats, trend, weak, activeDays, due, xpStats } = stats;
   const best = cats[0];
+  const lv = xpLevel(xpStats.totalXP);
 
   /* build streak badge SVG */
   const badgeSvg = makeStreakBadge(st.current, st.longest, sessions.length, avgScore(sessions), best?.label ?? "");
@@ -80,6 +83,7 @@ export function Progress() {
               <div className="rounded-xl border border-line/10 bg-wht/5 px-3 py-2.5"><div className="text-[20px] font-extrabold">{st.current} 🔥</div><div className="text-[11.5px] text-mut">Streak (longest {st.longest})</div></div>
               <div className="rounded-xl border border-line/10 bg-wht/5 px-3 py-2.5"><div className="text-[20px] font-extrabold">{due}</div><div className="text-[11.5px] text-mut">Drill due</div></div>
               <div className="rounded-xl border border-line/10 bg-wht/5 px-3 py-2.5"><div className="text-[20px] font-extrabold">{best?.label ?? "—"}</div><div className="text-[11.5px] text-mut">Top category</div></div>
+              <div className="rounded-xl border border-line/10 bg-wht/5 px-3 py-2.5"><div className="text-[20px] font-extrabold">Lv.{xpLevel(computeStats(sessions).totalXP).level}</div><div className="text-[11.5px] text-mut">{computeStats(sessions).totalXP} XP</div></div>
             </div>
           </div>
           {cats.length >= 3 && <div className="rounded-2xl border border-line/10 p-5"><h2 className="mb-2 text-[15px] font-extrabold">🧭 Skill radar</h2><Radar data={cats} /></div>}
@@ -101,12 +105,62 @@ export function Progress() {
       </div>
 
       {/* stat cards */}
-      <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
         <Stat label="Sessions" value={sessions.length} icon="🎯" />
         <Stat label="Avg score" value={avgScore(sessions).toFixed(1) + "/5"} icon="⭐" />
         <Stat label="Current streak" value={st.current + " 🔥"} icon="🔥" sub={`longest ${st.longest}`} />
         <Stat label="Drill due" value={due} icon="🎴" sub={due ? "cards to review" : "all caught up"} />
         <Stat label="Top category" value={best?.label ?? "—"} icon="🏆" sub={best ? `${Math.round(best.pct * 100)}% mastered` : ""} />
+        <div className="${cardCls} p-4">
+          <div className="flex items-center justify-between text-[11.5px] font-extrabold uppercase tracking-wider text-mut">
+            <span>Level</span><span>⚡</span>
+          </div>
+          <div className="mt-1 text-[22px] font-extrabold tabular-nums leading-tight">{lv.level}</div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-deep/60">
+            <div className="h-full rounded-full grad-bg" style={{ width: `${Math.round(lv.progress * 100)}%` }} />
+          </div>
+          <div className="mt-0.5 text-[10.5px] text-fnt">{lv.currentXP}/{lv.nextXP} XP</div>
+        </div>
+      </div>
+
+      {/* XP + Achievements */}
+      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* XP level */}
+        <div className={`${cardCls} p-5`}>
+          <h2 className="mb-1 text-[15px] font-extrabold">⚡ Experience</h2>
+          <p className="mb-3 text-[12.5px] text-mut">{xpStats.totalXP} total XP earned across {xpStats.totalSessions} sessions.</p>
+          <div className="space-y-1.5">
+            {ACHIEVEMENTS.map(a => {
+              const unlocked = xpStats.unlockedAchievements.includes(a.id);
+              return (
+                <div key={a.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${unlocked ? "border-ok/30 bg-ok/10" : "border-line/10 bg-wht/[.03] opacity-50"}`}>
+                  <span className="text-[18px]">{a.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[13px] font-bold">{a.label}</span>
+                    <span className="ml-2 text-[11px] text-fnt">{a.description}</span>
+                  </div>
+                  {unlocked && <span className="text-[11px] font-bold text-ok">✓</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Leaderboard */}
+        <div className={`${cardCls} p-5`}>
+          <h2 className="mb-1 text-[15px] font-extrabold">🏅 Leaderboard</h2>
+          <p className="mb-3 text-[12.5px] text-mut">Top performers by XP (this week).</p>
+          <div className="space-y-1">
+            {generateLeaderboard(sessions, "You").slice(0, 10).map(e => (
+              <div key={e.rank} className={`flex items-center gap-3 rounded-lg px-3 py-2 ${e.isYou ? "border border-acc1/30 bg-acc1/10" : "border border-transparent bg-wht/[.03]"}`}>
+                <span className={`w-6 flex-none text-center text-[13px] font-extrabold ${e.rank <= 3 ? "text-amber-400" : "text-mut"}`}>{e.rank <= 3 ? ["🥇", "🥈", "🥉"][e.rank - 1] : e.rank}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-bold">{e.name}</span>
+                <span className="text-[11px] font-bold text-fnt">Lv.{e.level}</span>
+                <span className="text-[12px] font-extrabold tabular-nums text-acctxt">{e.xp.toLocaleString()} XP</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
