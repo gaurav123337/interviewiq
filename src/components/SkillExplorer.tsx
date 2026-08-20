@@ -2,10 +2,9 @@
    Search bar with instant results, browse by band/tag, and quick access
    to skill detail pages. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store";
-import { getAllRoadmaps, searchRoadmaps, type SkillRoadmap, type SearchResult } from "../services/skillRoadmapService";
-import { useEffect } from "react";
+import { getAllRoadmaps, type SkillRoadmap, type SearchResult } from "../services/skillRoadmapService";
 import { btnGhost, btnSm, cardCls, Chip } from "./ui";
 
 const BANDS: SkillRoadmap["band"][] = ["junior", "mid", "senior", "staff", "principal", "cto"];
@@ -29,24 +28,42 @@ export function SkillExplorer() {
     void getAllRoadmaps().then(r => { setAllRoadmaps(r); setLoading(false); });
   }, []);
 
-  const results = useMemo(() => {
-    if (query.trim().length === 0) {
+  const displayResults = useMemo<SearchResult[]>(() => {
+    if (allRoadmaps.length === 0) return [];
+    const q = query.toLowerCase().trim();
+
+    if (!q) {
       return allRoadmaps
         .filter(r => selectedBand === "all" || r.band === selectedBand)
         .map(roadmap => ({ roadmap, matchScore: 50, matchType: "name" as const }));
     }
-    return searchRoadmaps(query).then(s => Promise.resolve(s));
-  }, [query, allRoadmaps, selectedBand]);
 
-  // Handle the promise from useMemo
-  const [displayResults, setDisplayResults] = useState<SearchResult[]>([]);
-  useEffect(() => {
-    if (results instanceof Promise) {
-      void results.then(setDisplayResults);
-    } else {
-      setDisplayResults(results);
-    }
-  }, [results]);
+    // Synchronous search — searchRoadmaps just filters an array
+    const filtered = allRoadmaps.filter(r => selectedBand === "all" || r.band === selectedBand);
+    return filtered
+      .map(roadmap => {
+        let matchScore = 0;
+        let matchType: SearchResult["matchType"] = "name";
+
+        if (roadmap.slug === q) {
+          matchScore = 100; matchType = "exact";
+        } else if (roadmap.name.toLowerCase() === q) {
+          matchScore = 95; matchType = "name";
+        } else if (roadmap.name.toLowerCase().includes(q)) {
+          matchScore = 80; matchType = "name";
+        } else if (roadmap.aliases.some(a => a.toLowerCase() === q || a.toLowerCase().includes(q))) {
+          matchScore = 60; matchType = "alias";
+        } else if (roadmap.tags.some(t => t.toLowerCase().includes(q))) {
+          matchScore = 40; matchType = "tag";
+        } else if (roadmap.description.toLowerCase().includes(q)) {
+          matchScore = 20; matchType = "description";
+        }
+
+        return { roadmap, matchScore, matchType };
+      })
+      .filter(r => r.matchScore > 0)
+      .sort((a, b) => b.matchScore - a.matchScore);
+  }, [query, allRoadmaps, selectedBand]);
 
   const popular = allRoadmaps.filter(r => POPULAR_SLUGS.includes(r.slug));
 
@@ -129,7 +146,7 @@ export function SkillExplorer() {
         ) : displayResults.length === 0 ? (
           <div className="col-span-full py-12 text-center">
             <div className="mb-3 text-[42px]">🔍</div>
-            <p className="text-[14px] text-mut">No roadmaps found for "{query}"</p>
+            <p className="text-[14px] text-mut">No roadmaps found{query ? ` for "${query}"` : ""}</p>
             <p className="mt-1 text-[12px] text-fnt">Try a different search or browse all skills</p>
           </div>
         ) : (

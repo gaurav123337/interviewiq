@@ -34,7 +34,15 @@ export function SkillDetail() {
   const [knownSkills] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem("iq.skills");
-      return raw ? JSON.parse(raw) : [];
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      // iq.skills stores SkillRating[] = {skill: string, self: number}[]
+      if (Array.isArray(parsed)) {
+        return parsed.map((s: { skill?: string; self?: number } | string) =>
+          typeof s === "string" ? s : (s.skill ?? "")
+        ).filter(Boolean);
+      }
+      return [];
     } catch { return []; }
   });
   const [showAllResources, setShowAllResources] = useState(false);
