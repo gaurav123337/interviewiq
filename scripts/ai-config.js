@@ -61,48 +61,6 @@ export async function loadAiProviderConfig({ token, projectRef } = {}) {
   };
 }
 
-/** Loads a MODULE's model (docs/deep-dive-system-design-plan.md §2): prefers
-    the module:<id> row, falls back to the provider row, then legacy env.
-    A module row with only { model } inherits key/base from the provider. */
-export async function loadModuleModel(moduleId, { token, projectRef } = {}) {
-  const t = token ?? process.env.SUPABASE_ACCESS_TOKEN;
-  const ref = projectRef ?? process.env.SUPABASE_PROJECT_REF;
-  if (t && ref) {
-    try {
-      const [modRows, defRows] = await Promise.all([
-        runSql(t, ref, `select value from public.ai_provider_config where key = 'module:${moduleId}' limit 1`),
-        runSql(t, ref, "select value from public.ai_provider_config where key = 'provider' limit 1")
-      ]);
-      const mod = Array.isArray(modRows) && modRows[0]?.value;
-      const def = Array.isArray(defRows) && defRows[0]?.value;
-      if (mod && typeof mod === "object" && (mod.model || mod.key)) {
-        return {
-          key: String(mod.key || def?.key || ""),
-          base: String(mod.base || def?.base || "").replace(/\/+$/, "") || "https://api.openai.com/v1",
-          model: String(mod.model || def?.model || "") || "gpt-4o-mini",
-          source: "module"
-        };
-      }
-      if (def && typeof def === "object" && def.key) {
-        return {
-          key: String(def.key),
-          base: String(def.base || "").replace(/\/+$/, "") || "https://api.openai.com/v1",
-          model: String(def.model || "") || "gpt-4o-mini",
-          source: "provider"
-        };
-      }
-    } catch (e) {
-      console.warn(`(ai-config: module ${moduleId} read failed — falling back to env: ${e.message})`);
-    }
-  }
-  return {
-    key: process.env.AI_CLEAN_KEY ?? null,
-    base: (process.env.AI_CLEAN_BASE || "https://api.openai.com/v1").replace(/\/+$/, ""),
-    model: process.env.AI_CLEAN_MODEL || "gpt-4o-mini",
-    source: "env"
-  };
-}
-
 /** Self-heal for a misconfigured app-saved key: when the ACTIVE config came
     from Supabase but its key is rejected by the provider (401/403 — e.g. the
     model name was pasted into the key field), callers swap to the legacy env

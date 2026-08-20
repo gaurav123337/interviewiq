@@ -6,11 +6,13 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
 import {
-  type Testimonial, type Ad, type Resource, type TipConfig,
+  type Testimonial, type Ad, type Resource, type TipConfig, type Banner, type AnalyticsSummary, type ABTestResult, type DailyAnalytics,
   fetchTestimonials, saveTestimonial, deleteTestimonial,
   fetchAds, saveAd, deleteAd,
   fetchResources, saveResource, deleteResource,
   fetchTips, saveTips,
+  fetchBanners, saveBanner, deleteBanner,
+  fetchAnalyticsSummary, fetchABTestResults, fetchDailyAnalytics,
 } from "../services/contentService";
 
 /* ------------------------------------------------------------------ */
@@ -32,7 +34,7 @@ function TestimonialsTab() {
   useEffect(() => { void load(); }, [load]);
 
   const add = () => {
-    setEditing({ id: "", name: "", role: "", company: "", avatar: "👤", rating: 5, text: "", published: true, sort_order: items.length });
+    setEditing({ id: "", name: "", role: "", company: "", avatar: "👤", rating: 5, text: "", variant: "all", published: true, sort_order: items.length });
     setIsAdding(true);
   };
 
@@ -112,6 +114,7 @@ function TestimonialsTab() {
                 <div className="flex items-center gap-2">
                   <span className="text-[13px] font-extrabold">{t.name || "(no name)"}</span>
                   {t.highlight && <Chip tone="ok">{t.highlight}</Chip>}
+                  {t.variant && t.variant !== 'all' && <Chip tone="co">A/B: {t.variant}</Chip>}
                   {!t.published && <Chip>hidden</Chip>}
                 </div>
                 <div className="text-[11px] text-mut">{t.role} · {t.company} · {t.rating}★</div>
@@ -157,6 +160,14 @@ function TestimonialsTab() {
                 <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Highlight (optional)</span>
                 <input className="inp" value={editing.highlight ?? ""} onChange={e => setEditing({ ...editing, highlight: e.target.value || undefined })} placeholder="Landed Google L4" />
               </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">A/B Test Variant</span>
+                <select className="inp" value={editing.variant} onChange={e => setEditing({ ...editing, variant: e.target.value as Testimonial['variant'] })}>
+                  <option value="all">All users</option>
+                  <option value="A">Variant A only</option>
+                  <option value="B">Variant B only</option>
+                </select>
+              </label>
             </div>
             <label className="mt-3 block">
               <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Testimonial text</span>
@@ -198,7 +209,7 @@ function AdsTab() {
   useEffect(() => { void load(); }, [load]);
 
   const add = () => {
-    setEditing({ id: "", title: "", description: "", sponsor: "", image_url: "", link_url: "", position: "landing-pricing", start_date: null, end_date: null, published: true, impressions: 0, clicks: 0 });
+    setEditing({ id: "", title: "", description: "", sponsor: "", image_url: "", link_url: "", bg_color: "", text_color: "", position: "landing-pricing", start_date: null, end_date: null, published: true, auto_rotate: false, rotate_interval: 5, impressions: 0, clicks: 0 });
     setIsAdding(true);
   };
 
@@ -306,6 +317,7 @@ function AdsTab() {
                   <option value="landing-footer">📄 Footer</option>
                   <option value="sidebar">📌 Sidebar</option>
                   <option value="interstitial">🔀 Interstitial</option>
+                  <option value="banner">🖼️ Banner</option>
                 </select>
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -323,6 +335,28 @@ function AdsTab() {
               <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Description</span>
               <textarea className="inp h-20 w-full resize-y" value={editing.description} onChange={e => setEditing({ ...editing, description: e.target.value })} />
             </label>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Background color</span>
+                <input className="inp" value={editing.bg_color} onChange={e => setEditing({ ...editing, bg_color: e.target.value })} placeholder="#667eea" />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Text color</span>
+                <input className="inp" value={editing.text_color} onChange={e => setEditing({ ...editing, text_color: e.target.value })} placeholder="#ffffff" />
+              </label>
+            </div>
+            <div className="mt-3 flex items-center gap-4">
+              <label className="flex items-center gap-2 text-[12px] font-bold text-mut">
+                <input type="checkbox" checked={editing.auto_rotate} onChange={e => setEditing({ ...editing, auto_rotate: e.target.checked })} />
+                Auto-rotate
+              </label>
+              {editing.auto_rotate && (
+                <label className="flex items-center gap-2 text-[12px] font-bold text-mut">
+                  Interval (sec)
+                  <input type="number" min={2} max={30} className="inp w-16 py-1" value={editing.rotate_interval} onChange={e => setEditing({ ...editing, rotate_interval: Math.max(2, Number(e.target.value) || 5) })} />
+                </label>
+              )}
+            </div>
             <div className="mt-4 flex items-center justify-between">
               <label className="flex items-center gap-2 text-[12px] font-bold text-mut">
                 <input type="checkbox" checked={editing.published} onChange={e => setEditing({ ...editing, published: e.target.checked })} />
@@ -616,16 +650,327 @@ function TipsTab() {
 }
 
 /* ------------------------------------------------------------------ */
+/* BannersTab — visual banner editor with image upload                  */
+/* ------------------------------------------------------------------ */
+
+function BannersTab() {
+  const [items, setItems] = useState<Banner[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<Banner | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setItems(await fetchBanners()); } catch { /* cache */ }
+    setLoading(false);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const add = () => {
+    setEditing({ id: "", title: "", subtitle: "", cta_text: "Learn more", cta_url: "", image_url: "", bg_gradient: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", text_color: "#ffffff", position: "hero", published: true, impressions: 0, clicks: 0 });
+    setIsAdding(true);
+  };
+
+  const saveItem = async () => {
+    if (!editing) return;
+    if (!editing.title.trim()) { toast("Title is required"); return; }
+    setBusy(true);
+    try {
+      const saved = await saveBanner(editing);
+      const next = isAdding ? [...items, saved] : items.map(x => x.id === saved.id ? saved : x);
+      setItems(next);
+      setEditing(null); setIsAdding(false);
+      toast("💾 Banner saved");
+    } catch (e) { toast("✗ " + ((e as Error).message || "Save failed")); }
+    setBusy(false);
+  };
+
+  const remove = async (id: string) => {
+    if (!confirm("Delete this banner?")) return;
+    setBusy(true);
+    try { await deleteBanner(id); setItems(items.filter(x => x.id !== id)); toast("🗑️ Banner deleted"); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Delete failed")); }
+    setBusy(false);
+  };
+
+  const togglePublish = async (b: Banner) => {
+    setBusy(true);
+    try {
+      const saved = await saveBanner({ ...b, published: !b.published });
+      setItems(items.map(x => x.id === saved.id ? saved : x));
+    } catch (e) { toast("✗ " + ((e as Error).message || "Update failed")); }
+    setBusy(false);
+  };
+
+  const handleImageUpload = (e: { target: { files: FileList | null } }) => {
+    const file = e.target.files?.[0];
+    if (!file || !editing) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEditing({ ...editing, image_url: reader.result as string });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const POS: Record<string, string> = { "hero": "🎯 Hero", "midpage": "📄 Mid-page", "footer": "📄 Footer", "popup": "🔀 Popup" };
+
+  return (
+    <div className="space-y-4">
+      <div className={`${cardCls} p-5`}>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-[15px] font-extrabold">🖼️ Banners</h3>
+            <p className="mt-0.5 text-[12px] text-mut">Visual promotional banners with image upload. Supports gradients, images, and CTA buttons.</p>
+          </div>
+          <button className={btnPrimary + btnSm} onClick={add} disabled={busy}>+ Add banner</button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="text-center text-mut py-8"><span className="spinner inline-block" /> Loading…</div>
+      ) : items.length === 0 ? (
+        <div className={`${cardCls} p-8 text-center text-mut`}>No banners yet.</div>
+      ) : items.map(b => (
+        <div key={b.id} className={`${cardCls} p-4 transition-all ${!b.published ? "opacity-50" : ""}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-extrabold">{b.title}</span>
+                <Chip>{POS[b.position] ?? b.position}</Chip>
+                {!b.published && <Chip>hidden</Chip>}
+              </div>
+              {b.subtitle && <p className="mt-1 text-[12px] text-mut">{b.subtitle}</p>}
+              {b.image_url && (
+                <div className="mt-2 h-20 w-40 overflow-hidden rounded-lg border border-line/20">
+                  <img src={b.image_url} alt="" className="h-full w-full object-cover" />
+                </div>
+              )}
+              <div className="mt-1.5 flex gap-3 text-[11px] text-fnt">
+                {b.cta_text && <span>🔘 {b.cta_text}</span>}
+                <span>👁️ {b.impressions}</span>
+                <span>🖱️ {b.clicks}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <button className={btnGhost + btnSm} onClick={() => void togglePublish(b)} disabled={busy}>{b.published ? "👁️" : "🚫"}</button>
+              <button className={btnGhost + btnSm} onClick={() => { setEditing({ ...b }); setIsAdding(false); }} disabled={busy}>✏️</button>
+              <button className={btnDanger + btnSm} onClick={() => void remove(b.id)} disabled={busy}>🗑️</button>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {editing && (
+        <Modal onClose={() => { setEditing(null); setIsAdding(false); }} title={isAdding ? "➕ New banner" : "✏️ Edit banner"}>
+          <div className="w-full max-w-[520px] p-6">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Title</span>
+                <input className="inp" value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Subtitle</span>
+                <input className="inp" value={editing.subtitle} onChange={e => setEditing({ ...editing, subtitle: e.target.value })} />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">CTA text</span>
+                <input className="inp" value={editing.cta_text} onChange={e => setEditing({ ...editing, cta_text: e.target.value })} placeholder="Learn more" />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">CTA URL</span>
+                <input className="inp" value={editing.cta_url} onChange={e => setEditing({ ...editing, cta_url: e.target.value })} placeholder="https://..." />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Position</span>
+                <select className="inp" value={editing.position} onChange={e => setEditing({ ...editing, position: e.target.value as Banner["position"] })}>
+                  <option value="hero">🎯 Hero</option>
+                  <option value="midpage">📄 Mid-page</option>
+                  <option value="footer">📄 Footer</option>
+                  <option value="popup">🔀 Popup</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Text color</span>
+                <input className="inp" value={editing.text_color} onChange={e => setEditing({ ...editing, text_color: e.target.value })} placeholder="#ffffff" />
+              </label>
+            </div>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Background gradient</span>
+              <input className="inp" value={editing.bg_gradient} onChange={e => setEditing({ ...editing, bg_gradient: e.target.value })} placeholder="linear-gradient(135deg, #667eea 0%, #764ba2 100%)" />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Image URL (or upload below)</span>
+              <input className="inp" value={editing.image_url} onChange={e => setEditing({ ...editing, image_url: e.target.value })} placeholder="https://... or data:image/..." />
+            </label>
+            <label className="mt-3 block">
+              <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Upload image</span>
+              <input type="file" accept="image/*" className="inp" onChange={handleImageUpload} />
+            </label>
+            {editing.image_url && (
+              <div className="mt-3 h-24 w-full overflow-hidden rounded-lg border border-line/20">
+                <img src={editing.image_url} alt="Preview" className="h-full w-full object-cover" />
+              </div>
+            )}
+            <div className="mt-4 flex items-center justify-between">
+              <label className="flex items-center gap-2 text-[12px] font-bold text-mut">
+                <input type="checkbox" checked={editing.published} onChange={e => setEditing({ ...editing, published: e.target.checked })} />
+                Published
+              </label>
+              <div className="flex gap-2">
+                <button className={btnGhost + btnSm} onClick={() => { setEditing(null); setIsAdding(false); }}>Cancel</button>
+                <button className={btnPrimary + btnSm} onClick={() => void saveItem()} disabled={busy}>💾 Save</button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* AnalyticsTab — analytics dashboard with charts                       */
+/* ------------------------------------------------------------------ */
+
+function AnalyticsTab() {
+  const [summary, setSummary] = useState<AnalyticsSummary[]>([]);
+  const [abTest, setABTest] = useState<ABTestResult[]>([]);
+  const [daily, setDaily] = useState<DailyAnalytics[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    void (async () => {
+      setLoading(true);
+      const [s, ab, d] = await Promise.all([fetchAnalyticsSummary(), fetchABTestResults(), fetchDailyAnalytics()]);
+      setSummary(s); setABTest(ab); setDaily(d);
+      setLoading(false);
+    })();
+  }, []);
+
+  const totalImpressions = summary.reduce((s, r) => s + r.impressions, 0);
+  const totalClicks = summary.reduce((s, r) => s + r.clicks, 0);
+  const overallCTR = totalImpressions > 0 ? ((totalClicks / totalImpressions) * 100).toFixed(1) : "0";
+
+  const maxImpressions = Math.max(1, ...daily.map(d => d.impressions));
+
+  if (loading) return <div className="text-center text-mut py-8"><span className="spinner inline-block" /> Loading analytics…</div>;
+
+  return (
+    <div className="space-y-4">
+      {/* Summary cards */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className={`${cardCls} p-4 text-center`}>
+          <div className="text-[24px] font-extrabold text-acctxt">{totalImpressions.toLocaleString()}</div>
+          <div className="text-[11px] font-bold text-mut">Total Impressions (30d)</div>
+        </div>
+        <div className={`${cardCls} p-4 text-center`}>
+          <div className="text-[24px] font-extrabold text-ok">{totalClicks.toLocaleString()}</div>
+          <div className="text-[11px] font-bold text-mut">Total Clicks (30d)</div>
+        </div>
+        <div className={`${cardCls} p-4 text-center`}>
+          <div className="text-[24px] font-extrabold text-amber-400">{overallCTR}%</div>
+          <div className="text-[11px] font-bold text-mut">Overall CTR</div>
+        </div>
+      </div>
+
+      {/* Daily chart */}
+      {daily.length > 0 && (
+        <div className={`${cardCls} p-5`}>
+          <h3 className="text-[13px] font-extrabold mb-3">📈 Daily Activity (last 30 days)</h3>
+          <div className="flex items-end gap-1 h-32">
+            {daily.map(d => (
+              <div key={d.day} className="flex-1 flex flex-col items-center gap-0.5">
+                <div className="w-full flex flex-col items-stretch">
+                  <div className="bg-acc1/40 rounded-t" style={{ height: `${(d.clicks / maxImpressions) * 100}%`, minHeight: d.clicks > 0 ? 2 : 0 }} />
+                  <div className="bg-acc1/15 rounded-b" style={{ height: `${(d.impressions / maxImpressions) * 100}%`, minHeight: d.impressions > 0 ? 2 : 0 }} />
+                </div>
+                <span className="text-[8px] text-mut truncate w-full text-center" title={d.day}>{d.day.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex gap-4 text-[10px] text-mut">
+            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded bg-acc1/40" /> Clicks</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded bg-acc1/15" /> Impressions</span>
+          </div>
+        </div>
+      )}
+
+      {/* A/B test results */}
+      {abTest.length > 0 && (
+        <div className={`${cardCls} p-5`}>
+          <h3 className="text-[13px] font-extrabold mb-3">🧪 A/B Test Results (Testimonials)</h3>
+          <div className="space-y-2">
+            {abTest.map(r => (
+              <div key={r.variant} className="flex items-center gap-3 rounded-lg border border-line/15 bg-deep/40 p-3">
+                <span className={`rounded-full px-3 py-1 text-[12px] font-extrabold ${r.variant === "A" ? "bg-acc1/20 text-acctxt" : r.variant === "B" ? "bg-purple-500/20 text-purple-400" : "bg-wht/10 text-mut"}`}>
+                  {r.variant === "all" ? "All" : `Variant ${r.variant}`}
+                </span>
+                <div className="flex-1">
+                  <div className="flex gap-4 text-[12px]">
+                    <span>👁️ {r.impressions.toLocaleString()} views</span>
+                    <span>🖱️ {r.clicks.toLocaleString()} clicks</span>
+                    <span className="font-extrabold text-acctxt">{r.ctr}% CTR</span>
+                  </div>
+                  <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-wht/10">
+                    <div className="h-full rounded-full bg-acctxt transition-all" style={{ width: `${Math.min(100, r.ctr * 5)}%` }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Entity breakdown */}
+      {summary.length > 0 && (
+        <div className={`${cardCls} p-5`}>
+          <h3 className="text-[13px] font-extrabold mb-3">📊 Content Performance</h3>
+          <div className="space-y-2">
+            {summary.map(r => (
+              <div key={r.entity_id} className="flex items-center gap-3 rounded-lg border border-line/15 bg-deep/40 p-3">
+                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-wht/10 text-mut">
+                  {r.entity_type}
+                </span>
+                <div className="flex-1">
+                  <div className="flex gap-4 text-[12px]">
+                    <span>👁️ {r.impressions.toLocaleString()}</span>
+                    <span>🖱️ {r.clicks.toLocaleString()}</span>
+                    <span className="font-extrabold">{r.ctr}% CTR</span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-wht/10">
+                    <div className="h-full rounded-full bg-acc1" style={{ width: `${Math.min(100, r.ctr * 5)}%` }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {summary.length === 0 && abTest.length === 0 && daily.length === 0 && (
+        <div className={`${cardCls} p-8 text-center text-mut`}>
+          <p className="text-[14px] font-extrabold">No analytics data yet</p>
+          <p className="mt-1 text-[12px]">Analytics will appear here once users start interacting with ads, resources, and banners on the landing page.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Main export — Content section for the Admin dashboard                */
 /* ------------------------------------------------------------------ */
 
-type ContentTab = "testimonials" | "ads" | "resources" | "tips";
+type ContentTab = "testimonials" | "ads" | "resources" | "tips" | "banners" | "analytics";
 
 const TABS: { id: ContentTab; label: string; icon: string }[] = [
   { id: "testimonials", label: "Testimonials", icon: "⭐" },
   { id: "ads", label: "Ads", icon: "📢" },
+  { id: "banners", label: "Banners", icon: "🖼️" },
   { id: "resources", label: "Resources", icon: "📖" },
   { id: "tips", label: "Tip Jar", icon: "❤️" },
+  { id: "analytics", label: "Analytics", icon: "📊" },
 ];
 
 export function ContentSection() {
@@ -634,7 +979,7 @@ export function ContentSection() {
   return (
     <div className="space-y-4">
       <div className="flex justify-center">
-        <div className="inline-flex gap-1 rounded-xl border border-line/15 bg-deep/60 p-1">
+        <div className="inline-flex flex-wrap justify-center gap-1 rounded-xl border border-line/15 bg-deep/60 p-1">
           {TABS.map(t => (
             <button
               key={t.id}
@@ -649,8 +994,10 @@ export function ContentSection() {
 
       {tab === "testimonials" && <TestimonialsTab />}
       {tab === "ads" && <AdsTab />}
+      {tab === "banners" && <BannersTab />}
       {tab === "resources" && <ResourcesTab />}
       {tab === "tips" && <TipsTab />}
+      {tab === "analytics" && <AnalyticsTab />}
     </div>
   );
 }

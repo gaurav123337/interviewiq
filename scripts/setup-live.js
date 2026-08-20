@@ -132,21 +132,17 @@ async function main() {
   if (!process.env.RESEND_API_KEY)
     console.log(dim("  (RESEND_API_KEY not set — digests will answer sent:false until you add it)"));
 
-  /* 2.5 — deploy the admin status/email-check + ai-chat functions so the
-     Admin → Secrets tab, one-click test email, and per-module AI routing
-     work. The Management API deploy accepts ONE bundled file, so shared
-     imports are inlined here, mirroring scripts/deploy-functions.mjs. */
+  /* 2.5 — deploy the admin status/email-check functions so the Admin →
+     Secrets tab and its one-click test email work. The Management API
+     deploy accepts ONE bundled file, so shared imports (auth.ts, cors.ts)
+     are inlined here, mirroring scripts/deploy-functions.mjs. */
   const SHARED_AUTH = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/auth.ts", import.meta.url)), "utf8");
   const SHARED_CORS = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/cors.ts", import.meta.url)), "utf8");
   const SHARED_EMAIL = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/email.ts", import.meta.url)), "utf8");
   const SHARED_SECRETS = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/secrets.ts", import.meta.url)), "utf8");
-  const SHARED_RATELIMIT = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/ratelimit.ts", import.meta.url)), "utf8");
-  const SHARED_MODULE_MODEL = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/module-model.ts", import.meta.url)), "utf8");
-  const SHARED_SERVICE_CLIENT = readFileSync(fileURLToPath(new URL("../supabase/functions/_shared/serviceClient.ts", import.meta.url)), "utf8");
   const DEPLOY = [
     { slug: "secret-status", entry: "secret-status/index.ts" },
-    { slug: "test-email", entry: "test-email/index.ts" },
-    { slug: "ai-chat", entry: "ai-chat/index.ts" }
+    { slug: "test-email", entry: "test-email/index.ts" }
   ];
   const inlineShared = (src) => {
     const re = (path) => new RegExp(`import\\s*\\{[^}]*\\}\\s*from\\s*"${path}";\\s*`);
@@ -155,9 +151,6 @@ async function main() {
     if (re("\\.\\./_shared/cors\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/cors\\.ts"), SHARED_CORS + "\n");
     if (re("\\.\\./_shared/email\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/email\\.ts"), SHARED_EMAIL + "\n");
     if (re("\\.\\./_shared/secrets\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/secrets\\.ts"), SHARED_SECRETS + "\n");
-    if (re("\\.\\./_shared/ratelimit\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/ratelimit\\.ts"), SHARED_RATELIMIT + "\n");
-    if (re("\\.\\./_shared/module-model\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/module-model\\.ts"), SHARED_MODULE_MODEL + "\n");
-    if (re("\\.\\./_shared/serviceClient\\.ts").test(out)) out = out.replace(re("\\.\\./_shared/serviceClient\\.ts"), SHARED_SERVICE_CLIENT + "\n");
     return out;
   };
   for (const fn of DEPLOY) {

@@ -22,6 +22,7 @@ export interface Testimonial {
   rating: number;
   text: string;
   highlight?: string;
+  variant: "all" | "A" | "B";
   published: boolean;
   sort_order: number;
 }
@@ -33,10 +34,14 @@ export interface Ad {
   sponsor: string;
   image_url: string;
   link_url: string;
-  position: "landing-hero" | "landing-pricing" | "landing-footer" | "sidebar" | "interstitial";
+  bg_color: string;
+  text_color: string;
+  position: "landing-hero" | "landing-pricing" | "landing-footer" | "sidebar" | "interstitial" | "banner";
   start_date: string | null;
   end_date: string | null;
   published: boolean;
+  auto_rotate: boolean;
+  rotate_interval: number;
   impressions: number;
   clicks: number;
 }
@@ -66,6 +71,57 @@ export interface TipConfig {
   enabled: boolean;
 }
 
+export interface Banner {
+  id: string;
+  title: string;
+  subtitle: string;
+  cta_text: string;
+  cta_url: string;
+  image_url: string;
+  bg_gradient: string;
+  text_color: string;
+  position: "hero" | "midpage" | "footer" | "popup";
+  published: boolean;
+  impressions: number;
+  clicks: number;
+}
+
+export interface AnalyticsSummary {
+  entity_type: string;
+  entity_id: string;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+}
+
+export interface ABTestResult {
+  variant: string;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+}
+
+export interface DailyAnalytics {
+  day: string;
+  impressions: number;
+  clicks: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* A/B Test variant assignment (deterministic by visitor ID)           */
+/* ------------------------------------------------------------------ */
+
+export function getVisitorVariant(): "A" | "B" {
+  let visitorId = storageGet<string>("iq.visitor_id", "");
+  if (!visitorId) {
+    visitorId = Math.random().toString(36).slice(2, 10);
+    storageSet("iq.visitor_id", visitorId);
+  }
+  // Simple hash: if sum of char codes is even → A, else → B
+  const sum = Array.from(visitorId).reduce((s, c) => s + c.charCodeAt(0), 0);
+  return sum % 2 === 0 ? "A" : "B";
+}
+
 /* ------------------------------------------------------------------ */
 /* LocalStorage cache keys                                             */
 /* ------------------------------------------------------------------ */
@@ -75,6 +131,7 @@ const CACHE = {
   ads: "iq.cms.ads",
   resources: "iq.cms.resources",
   tips: "iq.cms.tips",
+  banners: "iq.cms.banners",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -82,12 +139,12 @@ const CACHE = {
 /* ------------------------------------------------------------------ */
 
 const DEFAULT_TESTIMONIALS: Testimonial[] = [
-  { id: "t1", name: "Priya M.", role: "Frontend Engineer", company: "Google", avatar: "👩‍💻", rating: 5, text: "InterviewIQ was my daily practice tool for 3 months. The system design flashcards helped me nail the architecture round. Got my dream offer!", highlight: "Landed Google L4", published: true, sort_order: 0 },
-  { id: "t2", name: "James K.", role: "Senior Backend Dev", company: "Amazon", avatar: "👨‍💼", rating: 5, text: "The AI coach explained distributed systems better than any course I've taken. The offline mode meant I could practice on my commute.", highlight: "Amazon SDE2 offer", published: true, sort_order: 1 },
-  { id: "t3", name: "Ananya R.", role: "Full Stack Developer", company: "Microsoft", avatar: "👩‍🔬", rating: 5, text: "What sets this apart is the career roadmap. It identified my weak spots and built a plan. My interviewer even commented on how well-prepared I was.", highlight: "Microsoft L62", published: true, sort_order: 2 },
-  { id: "t4", name: "Marcus L.", role: "ML Engineer", company: "Meta", avatar: "🧑‍💻", rating: 4, text: "The system design hub with 15 case studies is gold. I used it daily for a month. The spaced repetition flashcards made numbers stick.", highlight: "Meta E5 offer", published: true, sort_order: 3 },
-  { id: "t5", name: "Sarah T.", role: "DevOps Engineer", company: "Netflix", avatar: "👩‍🏫", rating: 5, text: "I was skeptical about AI interview prep, but the grounded citations won me over. Every answer has a source. No hallucinated nonsense.", highlight: "Netflix Senior", published: true, sort_order: 4 },
-  { id: "t6", name: "Rohit P.", role: "Backend Developer", company: "Stripe", avatar: "🧑‍🎓", rating: 5, text: "The mock interview mode with timed questions was a game-changer. I practiced 50+ sessions. The analytics showed exactly where I improved.", highlight: "Stripe L3 → L4", published: true, sort_order: 5 },
+  { id: "t1", name: "Priya M.", role: "Frontend Engineer", company: "Google", avatar: "👩‍💻", rating: 5, text: "InterviewIQ was my daily practice tool for 3 months. The system design flashcards helped me nail the architecture round. Got my dream offer!", highlight: "Landed Google L4", variant: "all" as const, published: true, sort_order: 0 },
+  { id: "t2", name: "James K.", role: "Senior Backend Dev", company: "Amazon", avatar: "👨‍💼", rating: 5, text: "The AI coach explained distributed systems better than any course I've taken. The offline mode meant I could practice on my commute.", highlight: "Amazon SDE2 offer", variant: "all" as const, published: true, sort_order: 1 },
+  { id: "t3", name: "Ananya R.", role: "Full Stack Developer", company: "Microsoft", avatar: "👩‍🔬", rating: 5, text: "What sets this apart is the career roadmap. It identified my weak spots and built a plan. My interviewer even commented on how well-prepared I was.", highlight: "Microsoft L62", variant: "all" as const, published: true, sort_order: 2 },
+  { id: "t4", name: "Marcus L.", role: "ML Engineer", company: "Meta", avatar: "🧑‍💻", rating: 4, text: "The system design hub with 15 case studies is gold. I used it daily for a month. The spaced repetition flashcards made numbers stick.", highlight: "Meta E5 offer", variant: "all" as const, published: true, sort_order: 3 },
+  { id: "t5", name: "Sarah T.", role: "DevOps Engineer", company: "Netflix", avatar: "👩‍🏫", rating: 5, text: "I was skeptical about AI interview prep, but the grounded citations won me over. Every answer has a source. No hallucinated nonsense.", highlight: "Netflix Senior", variant: "all" as const, published: true, sort_order: 4 },
+  { id: "t6", name: "Rohit P.", role: "Backend Developer", company: "Stripe", avatar: "🧑‍🎓", rating: 5, text: "The mock interview mode with timed questions was a game-changer. I practiced 50+ sessions. The analytics showed exactly where I improved.", highlight: "Stripe L3 → L4", variant: "all" as const, published: true, sort_order: 5 },
 ];
 
 const DEFAULT_ADS: Ad[] = [];
@@ -192,6 +249,7 @@ export async function saveTestimonial(t: Testimonial): Promise<Testimonial> {
     rating: t.rating,
     text: t.text,
     highlight: t.highlight || null,
+    variant: t.variant || "all",
     published: t.published,
     sort_order: t.sort_order,
   };
@@ -240,10 +298,14 @@ export async function saveAd(a: Ad): Promise<Ad> {
     sponsor: a.sponsor,
     image_url: a.image_url,
     link_url: a.link_url,
+    bg_color: a.bg_color || "",
+    text_color: a.text_color || "",
     position: a.position,
     start_date: a.start_date || null,
     end_date: a.end_date || null,
     published: a.published,
+    auto_rotate: a.auto_rotate || false,
+    rotate_interval: a.rotate_interval || 5,
   };
 
   if (a.id && !a.id.startsWith("ad")) {
@@ -357,7 +419,7 @@ export async function saveTips(t: TipConfig): Promise<TipConfig> {
 /* Analytics — track clicks and impressions                            */
 /* ------------------------------------------------------------------ */
 
-export async function trackClick(entityType: "ad" | "resource" | "testimonial", entityId: string): Promise<void> {
+export async function trackClick(entityType: "ad" | "resource" | "testimonial" | "banner", entityId: string, variant?: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) return; // silently fail if offline
 
@@ -365,13 +427,14 @@ export async function trackClick(entityType: "ad" | "resource" | "testimonial", 
     await client.rpc("track_content_click", {
       p_entity_type: entityType,
       p_entity_id: entityId,
+      p_variant: variant || null,
     });
   } catch {
     // Silent fail — analytics shouldn't block UX
   }
 }
 
-export async function trackImpression(entityType: "ad" | "resource" | "testimonial", entityId: string): Promise<void> {
+export async function trackImpression(entityType: "ad" | "resource" | "testimonial" | "banner", entityId: string, variant?: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) return;
 
@@ -379,6 +442,7 @@ export async function trackImpression(entityType: "ad" | "resource" | "testimoni
     await client.rpc("track_content_impression", {
       p_entity_type: entityType,
       p_entity_id: entityId,
+      p_variant: variant || null,
     });
   } catch {
     // Silent fail
@@ -395,4 +459,84 @@ export async function fetchAdsForPosition(position: Ad["position"]): Promise<Ad[
     if (a.end_date && a.end_date < now) return false;
     return true;
   });
+}
+
+// ---- Banners ----
+
+export async function fetchBanners(): Promise<Banner[]> {
+  return fetchFromDB<Banner>("admin_banners", CACHE.banners, [], "created_at");
+}
+
+export async function saveBanner(b: Banner): Promise<Banner> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud sync not configured");
+
+  const row = {
+    title: b.title,
+    subtitle: b.subtitle,
+    cta_text: b.cta_text,
+    cta_url: b.cta_url,
+    image_url: b.image_url,
+    bg_gradient: b.bg_gradient,
+    text_color: b.text_color,
+    position: b.position,
+    published: b.published,
+  };
+
+  if (b.id && !b.id.startsWith("bn")) {
+    const { data, error } = await client.from("admin_banners").update({ ...row, updated_at: new Date().toISOString() }).eq("id", b.id).select().single();
+    if (error) throw new Error(error.message);
+    await refreshBannerCache();
+    return data as Banner;
+  } else {
+    const { data, error } = await client.from("admin_banners").insert(row).select().single();
+    if (error) throw new Error(error.message);
+    await refreshBannerCache();
+    return data as Banner;
+  }
+}
+
+export async function deleteBanner(id: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud sync not configured");
+  const { error } = await client.from("admin_banners").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  await refreshBannerCache();
+}
+
+async function refreshBannerCache(): Promise<void> {
+  const items = await fetchFromDB<Banner>("admin_banners", CACHE.banners, [], "created_at");
+  storageSet(CACHE.banners, items);
+}
+
+/** Fetch active banners for a specific position. */
+export async function fetchBannersForPosition(position: Banner["position"]): Promise<Banner[]> {
+  const allBanners = await fetchBanners();
+  return allBanners.filter(b => b.position === position);
+}
+
+// ---- Analytics Dashboard ----
+
+export async function fetchAnalyticsSummary(): Promise<AnalyticsSummary[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.rpc("admin_content_analytics_summary");
+  if (error || !data) return [];
+  return data as AnalyticsSummary[];
+}
+
+export async function fetchABTestResults(): Promise<ABTestResult[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.rpc("admin_ab_test_results");
+  if (error || !data) return [];
+  return data as ABTestResult[];
+}
+
+export async function fetchDailyAnalytics(): Promise<DailyAnalytics[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.rpc("admin_daily_analytics");
+  if (error || !data) return [];
+  return data as DailyAnalytics[];
 }

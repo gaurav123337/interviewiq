@@ -72,9 +72,6 @@ jobs:
           npx supabase functions deploy import-job \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy ai-chat \
-            --project-ref ndrusywvceojsoirhkhl \
-            --no-verify-jwt
           npx supabase functions deploy jobs-fetch \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt

@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { cardCls } from "./ui";
 import { toast } from "../toast";
-import { fetchTestimonials, fetchResources, trackClick } from "../services/contentService";
+import { fetchTestimonials, fetchResources, fetchBannersForPosition, trackClick, trackImpression, getVisitorVariant } from "../services/contentService";
 
 /* ------------------------------------------------------------------ */
 /* Testimonials                                                        */
@@ -19,6 +19,7 @@ import { fetchTestimonials, fetchResources, trackClick } from "../services/conte
 
 /* Local display interface (maps from DB types) */
 interface Testimonial {
+  id?: string;
   name: string;
   role: string;
   company: string;
@@ -103,7 +104,10 @@ export function TestimonialsSection() {
   const load = useCallback(async () => {
     try {
       const dbItems = await fetchTestimonials();
-      setTestimonials(dbItems.map(t => ({ name: t.name, role: t.role, company: t.company, avatar: t.avatar, rating: t.rating, text: t.text, highlight: t.highlight ?? undefined })));
+      const variant = getVisitorVariant();
+      // A/B filter: show 'all' + user's variant, hide the other variant
+      const filtered = dbItems.filter(t => t.variant === "all" || t.variant === variant);
+      setTestimonials(filtered.map(t => ({ name: t.name, role: t.role, company: t.company, avatar: t.avatar, rating: t.rating, text: t.text, highlight: t.highlight ?? undefined, id: t.id })));
     } catch {
       // Keep fallback
     }
@@ -353,6 +357,93 @@ export function SupportSection() {
         </div>
       </div>
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Auto-Rotating Banners                                               */
+/* ------------------------------------------------------------------ */
+
+interface BannerData {
+  id: string;
+  title: string;
+  subtitle: string;
+  cta_text: string;
+  cta_url: string;
+  image_url: string;
+  bg_gradient: string;
+  text_color: string;
+}
+
+export function AutoRotatingBanners({ position }: { position: "hero" | "midpage" | "footer" }) {
+  const [banners, setBanners] = useState<BannerData[]>([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [transitioning, setTransitioning] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const items = await fetchBannersForPosition(position);
+        if (items.length > 0) {
+          setBanners(items.map(b => ({ id: b.id, title: b.title, subtitle: b.subtitle, cta_text: b.cta_text, cta_url: b.cta_url, image_url: b.image_url, bg_gradient: b.bg_gradient, text_color: b.text_color })));
+        }
+      } catch { /* silent */ }
+    })();
+  }, [position]);
+
+  // Track impressions when banners change
+  useEffect(() => {
+    if (banners.length > 0 && banners[currentIdx]) {
+      void trackImpression("banner", banners[currentIdx].id);
+    }
+  }, [currentIdx, banners]);
+
+  // Auto-rotate every 5 seconds if multiple banners
+  useEffect(() => {
+    if (banners.length <= 1) return;
+    const timer = setInterval(() => {
+      setTransitioning(true);
+      setTimeout(() => {
+        setCurrentIdx(prev => (prev + 1) % banners.length);
+        setTransitioning(false);
+      }, 300);
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [banners.length]);
+
+  if (banners.length === 0) return null;
+
+  const banner = banners[currentIdx];
+
+  return (
+    <div className="mb-6">
+      <div
+        className={`relative overflow-hidden rounded-2xl p-6 text-center transition-all duration-300 ${transitioning ? "opacity-0 scale-95" : "opacity-100 scale-100"}`}
+        style={{ background: banner.bg_gradient, color: banner.text_color }}
+      >
+        {banner.image_url && (
+          <div className="absolute inset-0 z-0">
+            <img src={banner.image_url} alt="" className="h-full w-full object-cover opacity-20" />
+          </div>
+        )}
+        <div className="relative z-10">
+          <h3 className="text-[clamp(18px,3vw,24px)] font-extrabold">{banner.title}</h3>
+          {banner.subtitle && <p className="mt-2 text-[13px] opacity-80">{banner.subtitle}</p>}
+          {banner.cta_text && banner.cta_url && (
+            <a href={banner.cta_url} target="_blank" rel="noopener noreferrer" onClick={() => void trackClick("banner", banner.id)} className="mt-3 inline-block rounded-xl bg-white/20 px-5 py-2 text-[13px] font-bold backdrop-blur-sm transition-all hover:bg-white/30">
+              {banner.cta_text} →
+            </a>
+          )}
+        </div>
+        {banners.length > 1 && (
+          <div className="absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
+            {banners.map((_, i) => (
+              <button key={i} onClick={() => setCurrentIdx(i)} className={`h-1.5 rounded-full transition-all ${i === currentIdx ? "w-4 bg-white" : "w-1.5 bg-white/40"}`} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

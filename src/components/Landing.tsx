@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../store";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
-import { TestimonialsSection, RecommendedResources, SupportSection } from "./Testimonials";
+import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners } from "./Testimonials";
 
 const FEATURES = [
   { icon: "🎯", title: "Tailored sessions", body: "Pick your level (junior → CEO), field and target company — or paste a job description — and get questions written for that exact role, with model answers and scoring key points." },
@@ -52,6 +52,9 @@ export function Landing() {
 
   return (
     <div className="anim-view mx-auto w-full max-w-[1100px]">
+      {/* hero banner */}
+      <AutoRotatingBanners position="hero" />
+
       {/* hero */}
       <section className="pt-10 pb-14 text-center sm:pt-16">
         <span className="mx-auto inline-flex items-center gap-2 rounded-full border border-acc1/40 bg-acc1/10 px-4 py-1.5 text-[12.5px] font-bold text-acctxt">
@@ -113,6 +116,9 @@ export function Landing() {
         </div>
       </section>
 
+      {/* midpage banner */}
+      <AutoRotatingBanners position="midpage" />
+
       {/* testimonials */}
       <TestimonialsSection />
 
@@ -158,6 +164,9 @@ export function Landing() {
 
       {/* recommended resources */}
       <RecommendedResources />
+
+      {/* footer banner */}
+      <AutoRotatingBanners position="footer" />
 
       {/* FAQ */}
       <section id="faq" className="pb-14">
