@@ -340,7 +340,6 @@ export function SystemDesign() {
         ))}
         <span className="flex-1" />
         <span className="text-[12.5px] font-bold text-mut">⏱️ Timer:</span>
-        <span className="text-[12.5px] font-bold text-mut">⏱️ Timer:</span>
         {[25, 35, 45].map(m => (
           <button
             key={m}

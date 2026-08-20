@@ -131,6 +131,7 @@ export function Drill() {
               </>
             ) : (
               <>
+                <p className="mb-3 text-[12px] font-semibold text-fnt">{card.q}</p>
                 <div className="mb-3 flex flex-wrap gap-2">
                   <Chip tone="cat">Model answer</Chip>
                   <Chip tone="ok">Key points</Chip>
@@ -151,15 +152,15 @@ export function Drill() {
             />
           </div>
 
-          <div className="mt-4 flex flex-wrap justify-center gap-2.5">
+          <div className="mt-4 flex flex-wrap justify-center gap-3">
             {!flipped ? (
-              <button className={btnGhost} onClick={() => setFlipped(true)}>👁 Reveal answer</button>
+              <button className={btnGhost + " px-5 py-2.5 text-[14px]"} onClick={() => setFlipped(true)}>👁 Reveal answer</button>
             ) : (
               <>
-                <button className={btnGhost + btnSm} onClick={() => rateCard("again")} title="Review again soon">🔄 Again</button>
-                <button className={btnGhost + btnSm} onClick={() => rateCard("hard")} title="Review again tomorrow">😓 Hard</button>
-                <button className={btnSoft + btnSm} onClick={() => rateCard("good")} title="Review again in 3 days">🙂 Good</button>
-                <button className={btnPrimary + btnSm} onClick={() => rateCard("easy")} autoFocus title="Review again in a week">✅ Easy</button>
+                <button className={btnGhost + " px-4 py-2 text-[13px]"} onClick={() => rateCard("again")} title="Review again soon">🔄 Again</button>
+                <button className={btnGhost + " px-4 py-2 text-[13px]"} onClick={() => rateCard("hard")} title="Review again tomorrow">😓 Hard</button>
+                <button className={btnSoft + " px-4 py-2 text-[13px]"} onClick={() => rateCard("good")} title="Review again in 3 days">🙂 Good</button>
+                <button className={btnPrimary + " px-4 py-2 text-[13px]"} onClick={() => rateCard("easy")} autoFocus title="Review again in a week">✅ Easy</button>
               </>
             )}
           </div>
