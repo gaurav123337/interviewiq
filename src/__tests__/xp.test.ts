@@ -2,17 +2,21 @@ import { describe, it, expect } from "vitest";
 import { xpLevel, xpFromSession, totalXPFromSessions, computeStats, ACHIEVEMENTS, generateLeaderboard } from "../services/xp";
 import type { SavedSession } from "../types";
 
+const mkQ = (overrides: Record<string, unknown> = {}) => ({
+  q: "q", a: "a", kp: ["k1", "k2"], cat: "field" as const, catLabel: "Technical", catColor: "#22d3ee", level: "mid" as const, src: "test", ...overrides,
+});
+
 function mkSession(overrides: Partial<SavedSession> = {}): SavedSession {
   return {
     id: "test",
     date: Date.now(),
-    meta: { level: "mid", field: "frontend", company: "general", mode: "standard" },
+    meta: { level: "mid", field: "frontend", fieldId: "fe", company: "general", companyId: "general", levelId: "mid", mode: "standard" },
     config: { count: 3, mode: "standard", timing: "none", voice: false },
     agg: { score: 4, pct: 80, grade: "B+" },
     answers: [
-      { q: { q: "q1", a: "a1", cat: "field", catLabel: "Technical", catColor: "#22d3ee", level: "mid", src: "test" }, user: "ans", score: 4, pct: 80 },
-      { q: { q: "q2", a: "a2", cat: "behavioral", catLabel: "Behavioral", catColor: "#34d399", level: "mid", src: "test" }, user: "ans", score: 3, pct: 60 },
-      { q: { q: "q3", a: "a3", cat: "field", catLabel: "Technical", catColor: "#22d3ee", level: "mid", src: "test" }, user: "ans", score: 5, pct: 100 },
+      { q: mkQ({ q: "q1", a: "a1" }), user: "ans", score: 4, pct: 80 },
+      { q: mkQ({ q: "q2", a: "a2", cat: "behavioral", catLabel: "Behavioral", catColor: "#34d399" }), user: "ans", score: 3, pct: 60 },
+      { q: mkQ({ q: "q3", a: "a3" }), user: "ans", score: 5, pct: 100 },
     ],
     ...overrides,
   };
@@ -48,8 +52,8 @@ describe("xpFromSession", () => {
   });
 
   it("awards more XP for higher scores", () => {
-    const high = mkSession({ answers: [{ q: { q: "q", a: "a", cat: "field", catLabel: "Tech", catColor: "#000", level: "mid", src: "t" }, user: "a", score: 5, pct: 100 }] });
-    const low = mkSession({ answers: [{ q: { q: "q", a: "a", cat: "field", catLabel: "Tech", catColor: "#000", level: "mid", src: "t" }, user: "a", score: 1, pct: 20 }] });
+    const high = mkSession({ answers: [{ q: mkQ(), user: "a", score: 5, pct: 100 }] });
+    const low = mkSession({ answers: [{ q: mkQ(), user: "a", score: 1, pct: 20 }] });
     expect(xpFromSession(high)).toBeGreaterThan(xpFromSession(low));
   });
 
