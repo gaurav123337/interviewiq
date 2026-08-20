@@ -331,9 +331,12 @@ SELECT * FROM (VALUES
   ('Priya Sharma', 'Senior Engineer', 'Google', '👩‍💻', 5, 'InterviewIQ helped me land my dream role at Google. The company-specific questions were spot-on.', 'company-specific questions were spot-on', 'all', 1),
   ('Marcus Chen', 'Frontend Lead', 'Stripe', '👨‍💻', 5, 'The AI coaching feedback after each answer was a game-changer for my preparation.', 'AI coaching feedback', 'A', 2),
   ('Sarah Williams', 'Product Manager', 'Meta', '👩‍💼', 4, 'Great tool for practicing system design interviews. The step-by-step breakdowns are excellent.', 'system design interviews', 'B', 3),
-  ('David Park', 'Junior Developer', 'Startup', '🧑‍💻', 5, 'As a fresher, this tool gave me the confidence to ace my first technical interview.', 'gave me the confidence', 'all', 4)
+  ('David Park', 'Junior Developer', 'Startup', '👨‍💻', 5, 'As a fresher, this tool gave me the confidence to ace my first technical interview.', 'gave me the confidence', 'all', 4)
 ) AS v(name, role, company, avatar, rating, text, highlight, variant, sort_order)
 WHERE NOT EXISTS (SELECT 1 FROM admin_testimonials LIMIT 1);
+
+-- Fix old emoji in existing rows
+UPDATE admin_testimonials SET avatar = '👨‍💻' WHERE avatar = '🧑‍💻';
 
 -- Banners
 INSERT INTO admin_banners (title, subtitle, cta_text, cta_url, bg_gradient, position, published)
