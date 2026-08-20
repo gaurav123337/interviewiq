@@ -55,8 +55,9 @@ import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretSta
 import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 import { ContentSection } from "./AdminContent";
+import { AdminSkillRoadmaps } from "./AdminSkillRoadmaps";
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -75,7 +76,8 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "secrets", label: "Secrets", icon: "🔑" },
   { id: "resources", label: "Resources", icon: "🔗" },
   { id: "trends", label: "Trends", icon: "📈" },
-  { id: "content", label: "Content CMS", icon: "✍️" }
+  { id: "content", label: "Content CMS", icon: "✍️" },
+  { id: "skillRoadmaps", label: "Skill Roadmaps", icon: "🛤️" }
 ];
 
 const FEATURE_LABELS: Record<string, string> = {
@@ -858,6 +860,7 @@ export function Admin() {
         {section === "resources" && <ResourcesSection />}
         {section === "trends" && <TrendsSection />}
         {section === "content" && <ContentSection />}
+        {section === "skillRoadmaps" && <AdminSkillRoadmaps />}
       </div>
     </div>
   );

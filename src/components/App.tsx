@@ -21,6 +21,8 @@ import { Team } from "./Team";
 import { Jobs } from "./Jobs";
 import { Resources } from "./Resources";
 import { Counselor } from "./Counselor";
+import { SkillExplorer } from "./SkillExplorer";
+import { SkillDetail } from "./SkillDetail";
 import { SystemDesign } from "./SystemDesign";
 import { FloatingCoach } from "./FloatingCoach";
 import { CoachTopicProvider } from "../contexts/CoachContext";
@@ -48,6 +50,7 @@ const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "drill", label: "Drill", icon: "🎴" },
   { id: "bank", label: "Bank", icon: "📚" },
   { id: "jobs", label: "Jobs", icon: "💼" },
+  { id: "learn", label: "Learn a Skill", icon: "🔍" },
   { id: "counselor", label: "Skill Counselor", icon: "🧑‍🏫" },
   { id: "resources", label: "Resources", icon: "🔗" },
   { id: "progress", label: "Progress", icon: "📈" },
@@ -269,6 +272,8 @@ export function App() {
         {view === "jobs" && <Jobs />}
         {view === "resources" && <Resources />}
         {view === "counselor" && <Counselor />}
+        {view === "learn" && <SkillExplorer />}
+        {view === "learn-detail" && <SkillDetail />}
         {view === "systemDesign" && <SystemDesign />}
       </main>
 
