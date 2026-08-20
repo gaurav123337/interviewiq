@@ -131,7 +131,7 @@ export function Landing() {
           Simple, honest <span className="grad-text">pricing</span>
         </h2>
         <p className="mx-auto mt-2 max-w-[480px] text-center text-[14px] text-mut">Start free. Upgrade only when you want unlimited everything.</p>
-        <div className="mx-auto mt-8 grid max-w-[760px] grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="mx-auto mt-8 grid max-w-[860px] grid-cols-1 gap-4 sm:grid-cols-2">
           <div className={`${cardCls} p-6`}>
             <div className="flex items-center justify-between">
               <h3 className="text-[16px] font-extrabold">Free</h3>
@@ -146,7 +146,7 @@ export function Landing() {
               <li className="before:content-['✓'] before:mr-2 before:text-ok">Career roadmap & drill</li>
               <li className="before:content-['✓'] before:mr-2 before:text-ok">Offline-first PWA</li>
             </ul>
-            <button className={btnGhost + " mt-6 w-full"} onClick={() => nav("onboard")}>Start free</button>
+            <button className={btnGhost + " mt-6 w-full py-3"} onClick={() => nav("onboard")}>Start free</button>
           </div>
           <div className="grad-bg-soft relative overflow-hidden rounded-2xl border border-acc1/40 p-6 shadow-[0_18px_50px_rgba(99,102,241,.25)]">
             <span className="absolute right-4 top-4"><Chip tone="co">POPULAR</Chip></span>
@@ -160,7 +160,7 @@ export function Landing() {
               <li className="before:content-['✓'] before:mr-2 before:text-ok">Journey & full mock modes</li>
               <li className="before:content-['✓'] before:mr-2 before:text-ok">Progress analytics & full history</li>
             </ul>
-            <button className={btnPrimary + " mt-6 w-full"} onClick={() => setUpgrade(true)}>Go Pro</button>
+            <button className={btnPrimary + " mt-6 w-full py-3"} onClick={() => setUpgrade(true)}>Go Pro</button>
           </div>
         </div>
       </section>
