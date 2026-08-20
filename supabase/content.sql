@@ -35,7 +35,7 @@ CREATE POLICY "testimonials_public_read" ON admin_testimonials
 
 CREATE POLICY "testimonials_admin_all" ON admin_testimonials
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND is_admin = true)
+    public.is_admin()
   );
 
 -- ============================================================
@@ -70,7 +70,7 @@ CREATE POLICY "ads_public_read" ON admin_ads
 
 CREATE POLICY "ads_admin_all" ON admin_ads
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND is_admin = true)
+    public.is_admin()
   );
 
 -- ============================================================
@@ -100,7 +100,7 @@ CREATE POLICY "resources_public_read" ON admin_resources
 
 CREATE POLICY "resources_admin_all" ON admin_resources
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND is_admin = true)
+    public.is_admin()
   );
 
 -- ============================================================
@@ -125,7 +125,7 @@ CREATE POLICY "tips_public_read" ON admin_tips
 
 CREATE POLICY "tips_admin_all" ON admin_tips
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND is_admin = true)
+    public.is_admin()
   );
 
 -- ============================================================
@@ -156,7 +156,7 @@ CREATE POLICY "banners_public_read" ON admin_banners
 
 CREATE POLICY "banners_admin_all" ON admin_banners
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND is_admin = true)
+    public.is_admin()
   );
 
 -- ============================================================
@@ -179,7 +179,7 @@ CREATE POLICY "analytics_public_insert" ON admin_content_analytics
 
 CREATE POLICY "analytics_admin_read" ON admin_content_analytics
   FOR SELECT USING (
-    EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND is_admin = true)
+    public.is_admin()
   );
 
 -- ============================================================
@@ -321,3 +321,44 @@ AS $$
   GROUP BY day
   ORDER BY day;
 $$;
+
+-- ============================================================
+-- 13. Seed data (safe to re-run — skips if data exists)
+-- ============================================================
+-- Testimonials
+INSERT INTO admin_testimonials (name, role, company, avatar, rating, text, highlight, variant, sort_order)
+SELECT * FROM (VALUES
+  ('Priya Sharma', 'Senior Engineer', 'Google', '👩‍💻', 5, 'InterviewIQ helped me land my dream role at Google. The company-specific questions were spot-on.', 'company-specific questions were spot-on', 'all', 1),
+  ('Marcus Chen', 'Frontend Lead', 'Stripe', '👨‍💻', 5, 'The AI coaching feedback after each answer was a game-changer for my preparation.', 'AI coaching feedback', 'A', 2),
+  ('Sarah Williams', 'Product Manager', 'Meta', '👩‍💼', 4, 'Great tool for practicing system design interviews. The step-by-step breakdowns are excellent.', 'system design interviews', 'B', 3),
+  ('David Park', 'Junior Developer', 'Startup', '🧑‍💻', 5, 'As a fresher, this tool gave me the confidence to ace my first technical interview.', 'gave me the confidence', 'all', 4)
+) AS v(name, role, company, avatar, rating, text, highlight, variant, sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM admin_testimonials LIMIT 1);
+
+-- Banners
+INSERT INTO admin_banners (title, subtitle, cta_text, cta_url, bg_gradient, position, published)
+SELECT * FROM (VALUES
+  ('Ace Your Next Interview', 'AI-powered practice tailored to your target company', 'Start Free →', '#', 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', 'hero', true),
+  ('Go Pro Today', 'Unlock unlimited AI coaching, hints, and solution walkthroughs', 'Upgrade to Pro', '#', 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)', 'midpage', true)
+) AS v(title, subtitle, cta_text, cta_url, bg_gradient, position, published)
+WHERE NOT EXISTS (SELECT 1 FROM admin_banners LIMIT 1);
+
+-- Ads (placeholder)
+INSERT INTO admin_ads (title, description, sponsor, link_url, position, published)
+SELECT * FROM (VALUES
+  ('Interview Preparations Kit', 'Comprehensive study materials for tech interviews', 'InterviewIQ Pro', '#', 'landing-pricing', true)
+) AS v(title, description, sponsor, link_url, position, published)
+WHERE NOT EXISTS (SELECT 1 FROM admin_ads LIMIT 1);
+
+-- Resources
+INSERT INTO admin_resources (title, author, type, description, affiliate_url, icon, price, badge, sort_order)
+SELECT * FROM (VALUES
+  ('Cracking the Coding Interview', 'Gayle Laakmann McDowell', 'book', 'The bible of technical interview preparation with 189 programming questions and solutions', '#', '📘', '$35', 'Bestseller', 1),
+  ('System Design Interview', 'Alex Xu', 'book', 'A hands-on guide to designing large-scale distributed systems', '#', '🏗️', '$30', 'Popular', 2)
+) AS v(title, author, type, description, affiliate_url, icon, price, badge, sort_order)
+WHERE NOT EXISTS (SELECT 1 FROM admin_resources LIMIT 1);
+
+-- Tip Jar config
+INSERT INTO admin_tips (amounts, labels, descriptions, enabled)
+SELECT '{5,15,30}', '{"☕ Coffee","🍕 Lunch","🎉 Celebration"}', '{"Buy me a coffee","Buy me lunch","Celebrating a new offer?"}', true
+WHERE NOT EXISTS (SELECT 1 FROM admin_tips LIMIT 1);
