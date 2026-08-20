@@ -62,7 +62,7 @@ export function Seg<T extends string>({ options, value, onChange }: {
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex gap-0.5 rounded-xl bg-wht/10 p-1">
+    <div className="flex gap-0.5 overflow-x-auto rounded-xl bg-wht/10 p-1">
       {options.map(o => (
         <button
           key={o.value}

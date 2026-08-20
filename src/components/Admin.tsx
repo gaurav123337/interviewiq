@@ -807,7 +807,7 @@ export function Admin() {
   }
 
   return (
-    <div className="anim-view mx-auto max-w-[1100px]">
+    <div className="anim-view mx-auto max-w-[1100px] overflow-x-hidden">
       <div className="pt-4 text-center">
         <span className="eyebrow text-[12.5px] font-bold uppercase tracking-[.14em] text-acc3">🛡️ Admin</span>
         <h1 className="mt-1 text-[clamp(26px,4vw,38px)] font-extrabold tracking-tight">Product <span className="grad-text">command center</span>.</h1>
@@ -886,9 +886,9 @@ function Overview({ metrics, loading, onOpenSecrets }: { metrics: AdminMetrics |
   return (
     <div className="space-y-4">
       <SecretGapsBanner onOpen={onOpenSecrets} />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
         {cards.map(c => (
-          <div key={c.label} className={`${cardCls} p-5`}>
+          <div key={c.label} className={`${cardCls} p-4 sm:p-5`}>
             <div className="flex items-center justify-between">
               <span className="text-[12px] font-extrabold uppercase tracking-wider text-mut">{c.label}</span>
               <span className="text-[18px]">{c.icon}</span>
