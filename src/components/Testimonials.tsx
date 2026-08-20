@@ -448,6 +448,93 @@ export function AutoRotatingBanners({ position }: { position: "hero" | "midpage"
 }
 
 /* ------------------------------------------------------------------ */
+/* Popup Banner — modal overlay with auto-dismiss                      */
+/* ------------------------------------------------------------------ */
+
+export function PopupBanners() {
+  const [banner, setBanner] = useState<BannerData | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [transitioning, setTransitioning] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const items = await fetchBannersForPosition("popup");
+        if (items.length > 0) {
+          setBanner(items[0]);
+          // Show after a short delay so it doesn't clash with page load
+          setTimeout(() => setVisible(true), 2000);
+        }
+      } catch { /* silent */ }
+    })();
+  }, []);
+
+  // Track impression when shown
+  useEffect(() => {
+    if (visible && banner) {
+      void trackImpression("banner", banner.id);
+    }
+  }, [visible, banner]);
+
+  // Auto-dismiss after 12 seconds
+  useEffect(() => {
+    if (!visible) return;
+    const timer = setTimeout(() => handleClose(), 12000);
+    return () => clearTimeout(timer);
+  }, [visible]);
+
+  const handleClose = () => {
+    setTransitioning(true);
+    setTimeout(() => { setVisible(false); setTransitioning(false); }, 300);
+  };
+
+  if (!banner || !visible) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div
+        className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-300 ${transitioning ? "opacity-0" : "opacity-100"}`}
+        onClick={handleClose}
+      />
+      {/* Banner card */}
+      <div
+        className={`relative z-10 w-full max-w-[480px] overflow-hidden rounded-2xl p-8 text-center shadow-2xl transition-all duration-300 ${transitioning ? "opacity-0 scale-95" : "opacity-100 scale-100"}`}
+        style={{ background: banner.bg_gradient, color: banner.text_color }}
+      >
+        {/* Close button */}
+        <button
+          onClick={handleClose}
+          className="absolute right-3 top-3 z-20 grid h-7 w-7 place-items-center rounded-full bg-black/20 text-[14px] backdrop-blur-sm transition-all hover:bg-black/40"
+        >
+          ✕
+        </button>
+        {banner.image_url && (
+          <div className="absolute inset-0 z-0">
+            <img src={banner.image_url} alt="" className="h-full w-full object-cover opacity-20" />
+          </div>
+        )}
+        <div className="relative z-10">
+          <h3 className="text-[clamp(20px,4vw,28px)] font-extrabold">{banner.title}</h3>
+          {banner.subtitle && <p className="mt-3 text-[14px] opacity-80">{banner.subtitle}</p>}
+          {banner.cta_text && banner.cta_url && (
+            <a
+              href={banner.cta_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => void trackClick("banner", banner.id)}
+              className="mt-4 inline-block rounded-xl bg-white/20 px-6 py-2.5 text-[14px] font-bold backdrop-blur-sm transition-all hover:bg-white/30"
+            >
+              {banner.cta_text} →
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Sponsored content indicator                                         */
 /* ------------------------------------------------------------------ */
 

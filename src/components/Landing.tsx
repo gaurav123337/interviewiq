@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../store";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
-import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners } from "./Testimonials";
+import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners, PopupBanners } from "./Testimonials";
 
 const FEATURES = [
   { icon: "🎯", title: "Tailored sessions", body: "Pick your level (junior → CEO), field and target company — or paste a job description — and get questions written for that exact role, with model answers and scoring key points." },
@@ -52,6 +52,9 @@ export function Landing() {
 
   return (
     <div className="anim-view mx-auto w-full max-w-[1100px]">
+      {/* popup banner */}
+      <PopupBanners />
+
       {/* hero banner */}
       <AutoRotatingBanners position="hero" />
 

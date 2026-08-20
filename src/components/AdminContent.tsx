@@ -741,11 +741,21 @@ function BannersTab() {
                 {!b.published && <Chip>hidden</Chip>}
               </div>
               {b.subtitle && <p className="mt-1 text-[12px] text-mut">{b.subtitle}</p>}
-              {b.image_url && (
-                <div className="mt-2 h-20 w-40 overflow-hidden rounded-lg border border-line/20">
-                  <img src={b.image_url} alt="" className="h-full w-full object-cover" />
+              {/* Banner preview: gradient + image thumbnail */}
+              <div
+                className="mt-2 h-16 w-full max-w-[280px] overflow-hidden rounded-lg border border-line/20 relative"
+                style={{ background: b.bg_gradient, color: b.text_color }}
+              >
+                {b.image_url && (
+                  <div className="absolute inset-0 z-0">
+                    <img src={b.image_url} alt="" className="h-full w-full object-cover opacity-30" />
+                  </div>
+                )}
+                <div className="relative z-10 flex h-full flex-col items-center justify-center px-3">
+                  <span className="text-[11px] font-extrabold leading-tight truncate w-full text-center">{b.title}</span>
+                  {b.cta_text && <span className="mt-0.5 rounded bg-white/20 px-1.5 py-0.5 text-[8px] font-bold">{b.cta_text}</span>}
                 </div>
-              )}
+              </div>
               <div className="mt-1.5 flex gap-3 text-[11px] text-fnt">
                 {b.cta_text && <span>🔘 {b.cta_text}</span>}
                 <span>👁️ {b.impressions}</span>
