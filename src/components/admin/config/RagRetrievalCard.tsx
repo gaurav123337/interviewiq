@@ -13,7 +13,7 @@ export function RagRetrievalCard({ config, setConfig }: RagRetrievalCardProps) {
     setConfig({ ...config, rag: { ...config.rag, digest: { ...config.rag?.digest, [k]: v } } });
 
   return (
-    <>
+    <div>
       {/* RAG retrieval */}
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">🗄️ RAG retrieval</h2>
@@ -141,6 +141,6 @@ export function RagRetrievalCard({ config, setConfig }: RagRetrievalCardProps) {
           )}
         </div>
       </div>
-    </>
+    </div>
   );
 }
