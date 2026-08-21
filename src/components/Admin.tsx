@@ -20,12 +20,12 @@ import { cleanTextToQuestions } from "../services/cleaner";
 import { parseQuestionBatch } from "../services/import";
 import { extractFileText } from "../services/pdf";
 import {
-  adminAuditLog, adminListUsers, adminMetrics, adminMissCandidates, adminSecurityStatus, adminSetMfaEnforced,
+  adminListUsers, adminMetrics, adminMissCandidates,
   batchDeleteQuestions, batchSetQuestionsPublished, createPdfDocument, createQuestion,
   deletePdfDocument, deleteQuestion, grantAdmin, listAdmins, listPdfChunks,
   getLastJobsFetchReport, listPdfDocuments, listQuestionAudit, revokeAdmin, saveJobSalaryEnrichment, saveRemoteConfig,
   setQuestionPublished, updatePdfDocument, updateQuestion,
-  type AdminAuditRow, type AdminMetrics, type AdminSecurityStatus, type AdminUserRow, type AuditEntry,
+  type AdminMetrics, type AdminUserRow, type AuditEntry,
   type JobsFetchReport, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
 import { prepareChunks, reindexDocument } from "../services/indexer";
@@ -47,8 +47,7 @@ import { getPublishedPolicies, publishPolicies } from "../services/policies";
 import { POLICY_DEFAULTS, POLICY_META, type PolicyId } from "../data/policies";
 import { weekKey } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
-import { pendingCommunityResources, reviewResource, type ResourceRow } from "../services/resources";
-import { adminDecisionProposal, adminPendingProposals, type UpdateProposalRow } from "../services/trendSignals";
+
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../services/secrets";
 import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, type AiProviderStatus } from "../services/aiProvider";
 import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretStatus } from "../services/edgeSecrets";
@@ -59,6 +58,9 @@ import { AdminSkillRoadmaps } from "./AdminSkillRoadmaps";
 import { OverviewSection } from "./admin/OverviewSection";
 import { AnnouncementsSection } from "./admin/AnnouncementsSection";
 import { TeamsSection } from "./admin/TeamsSection";
+import { SecuritySection } from "./admin/SecuritySection";
+import { ResourcesSection } from "./admin/ResourcesSection";
+import { TrendsSection } from "./admin/TrendsSection";
 
 type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps";
 
@@ -3968,144 +3970,6 @@ Practice questions:
 }
 
 /* ------------------------------------------------------------------ */
-/* Security — MFA enforcement (owner-only) + admin audit log           */
-/* (docs/app-security.md G8/G9 — supabase/security.sql)                */
-/* ------------------------------------------------------------------ */
-
-function SecuritySection() {
-  const [status, setStatus] = useState<AdminSecurityStatus | null>(null);
-  const [audit, setAudit] = useState<AdminAuditRow[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [toggleBusy, setToggleBusy] = useState(false);
-  const [showMeta, setShowMeta] = useState<number | null>(null);
-  const owner = amOwner();
-
-  const load = async () => {
-    setBusy(true);
-    try {
-      const [s, a] = await Promise.all([adminSecurityStatus(), adminAuditLog(50)]);
-      setStatus(s);
-      setAudit(a);
-    } catch (e) {
-      toast("✗ " + ((e as Error).message || "Failed to load security status"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  useEffect(() => { void load(); }, []);
-
-  const toggle = async (v: boolean) => {
-    if (!owner) { toast("Only the owner can change MFA enforcement"); return; }
-    setToggleBusy(true);
-    try {
-      await adminSetMfaEnforced(v);
-      toast(v ? "🔐 MFA now required for admin actions" : "🔓 MFA enforcement turned off");
-      await load();
-    } catch (e) {
-      toast("✗ " + ((e as Error).message || "Couldn't update"));
-    } finally {
-      setToggleBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* MFA enforcement */}
-      <div className={`${cardCls} p-5`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-[16px] font-extrabold">🔐 Admin MFA enforcement</h2>
-            <p className="mt-1 max-w-[640px] text-[12.5px] text-mut">
-              When on, sensitive admin actions (granting/revoking admins, config changes) require a session
-              authenticated with the account's authenticator app. <span className="font-bold">Owner-only control.</span>
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch checked={status?.enforced ?? false} onChange={toggle} />
-            {toggleBusy && <span className="spinner" />}
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Chip tone={status?.enforced ? "warn" : "ok"}>
-            {status?.enforced ? "MFA REQUIRED" : "NOT enforced — password-only sessions OK"}
-          </Chip>
-          <Chip tone={status?.mfaVerified ? "ok" : "default"}>
-            {status?.mfaVerified
-              ? "✅ This session is MFA-verified"
-              : "⚠️ This session has no TOTP — flip enforcement before signing out"}
-          </Chip>
-          {(status?.factors?.length ?? 0) > 0 && (
-            <Chip>{status!.factors.length} authenticator factor{(status!.factors.length === 1 ? "" : "s")} enrolled</Chip>
-          )}
-        </div>
-        {!status && busy && <p className="mt-3 text-[12px] text-mut"><span className="spinner inline-block" /> Loading…</p>}
-        {!status && !busy && (
-          <p className="mt-3 text-[12px] text-mut">
-            Status unavailable — apply <code className="font-mono">supabase/security.sql</code> (via scripts/setup-security.js) to enable this card.
-          </p>
-        )}
-      </div>
-
-      {/* audit log */}
-      <div className={`${cardCls} overflow-hidden`}>
-        <div className="flex items-center justify-between gap-3 px-5 py-4">
-          <div>
-            <h2 className="text-[16px] font-extrabold">🧾 Admin audit log</h2>
-            <p className="mt-0.5 text-[12.5px] text-mut">
-              Append-only trail of config, announcement and admin changes, kept by DB triggers.
-            </p>
-          </div>
-          <button className={btnGhost + btnSm} onClick={() => void load()} disabled={busy}>Refresh</button>
-        </div>
-        {audit.length === 0 ? (
-          <p className="px-5 pb-5 text-[12.5px] text-mut">
-            No entries yet — they appear after you publish config, post announcements or change admins
-            (requires supabase/security.sql).
-          </p>
-        ) : (
-          <div className="max-h-[420px] overflow-y-auto">
-            <table className="w-full text-left text-[12.5px]">
-              <thead className="sticky top-0 bg-panel text-[11px] uppercase tracking-wider text-fnt">
-                <tr>
-                  <th className="px-5 py-2">When</th>
-                  <th className="px-3 py-2">Actor</th>
-                  <th className="px-3 py-2">Action</th>
-                  <th className="px-3 py-2">Target</th>
-                  <th className="px-5 py-2">Meta</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((r, i) => (
-                  <tr key={i} className="border-t border-line/10">
-                    <td className="whitespace-nowrap px-5 py-2 text-fnt">{new Date(r.created_at).toLocaleString()}</td>
-                    <td className="px-3 py-2">{r.actor}</td>
-                    <td className="px-3 py-2">
-                      <Chip tone={r.action === "delete" ? "warn" : r.action === "create" ? "ok" : "default"}>{r.action}</Chip>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-[11.5px]">{r.target}</td>
-                    <td className="px-5 py-2">
-                      <button className="font-bold text-acctxt underline" onClick={() => setShowMeta(showMeta === i ? null : i)}>
-                        {showMeta === i ? "hide" : "view"}
-                      </button>
-                      {showMeta === i && (
-                        <pre className="mt-1 max-w-[520px] overflow-auto rounded-lg bg-deep/60 p-2 font-mono text-[10.5px] text-fnt">
-                          {JSON.stringify(r.meta, null, 2).slice(0, 2000)}
-                        </pre>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* AI pipeline provider — the live key/base/model the AI cleaner and the
    AI problem bank use. Stored in the private ai_provider_config table
    (admin-only RLS), editable HERE — no GitHub Actions secret edits. */
@@ -4498,198 +4362,4 @@ function SecretsSection() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Resources — the L4 human gate for community submissions             */
-/* (docs/resource-safety-guard.md). Pending suggestions show every      */
-/* guard layer's verdict; the admin's approve/reject/quarantine is the */
-/* recorded decision that lets (or refuses) a link to go app-wide.     */
-/* ------------------------------------------------------------------ */
 
-function ResourcesSection() {
-  const [rows, setRows] = useState<ResourceRow[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<string | null>(null);
-  const [note, setNote] = useState<Record<string, string>>({});
-
-  const load = async () => {
-    setBusy(true);
-    try {
-      setRows(await pendingCommunityResources());
-    } catch (e) {
-      toast("✗ " + ((e as Error).message || "Failed to load submissions"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  useEffect(() => { void load(); }, []);
-
-  const decide = async (r: ResourceRow, decision: "approved" | "rejected" | "quarantined") => {
-    setBusy(true);
-    try {
-      const res = await reviewResource(r.id, decision, note[r.id] ?? "");
-      if (!res.ok) { toast("✗ " + (res.error ?? "Couldn't update")); return; }
-      toast(decision === "approved" ? "✅ Approved — now in the community library" : decision === "rejected" ? "🚫 Rejected" : "⛔ Quarantined");
-      await load();
-    } catch (e) {
-      toast("✗ " + ((e as Error).message || "Couldn't update"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const guardChips = (r: ResourceRow) => {
-    const g = r.guard;
-    if (!g) return null;
-    return (
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        <Chip tone={g.status === "ok" ? "ok" : g.status === "pending" ? "warn" : "bad"}>guard: {g.status}</Chip>
-        {g.finalUrl && <Chip>final: {g.finalUrl.slice(0, 60)}</Chip>}
-        {g.checkedAt && <Chip>checked {new Date(g.checkedAt).toLocaleString()}</Chip>}
-      </div>
-    );
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className={`${cardCls} p-5`}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-[16px] font-extrabold">🔗 Community submissions — human gate</h2>
-            <p className="mt-0.5 max-w-[680px] text-[12.5px] text-mut">
-              Every link already passed the safety guard (SSRF-safe fetch, Safe Browsing + URLhaus). Your decision is the
-              recorded L4 gate: <span className="font-bold">nothing becomes app-wide without it</span>. Requires MFA when admin enforcement is on.
-            </p>
-          </div>
-          <button className={btnGhost + btnSm} onClick={() => void load()} disabled={busy}>Refresh</button>
-        </div>
-      </div>
-
-      {rows.length === 0 ? (
-        <div className={`${cardCls} p-5`}>
-          <p className="text-[13px] text-mut">No pending or quarantined submissions right now. (Requires supabase/resources.sql — run scripts/setup-security.js.)</p>
-        </div>
-      ) : (
-        rows.map(r => (
-          <div key={r.id} className={`${cardCls} p-5`}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <a href={r.url} target="_blank" rel="noopener noreferrer" className="font-bold text-acctxt hover:underline">{r.title}</a>
-                  <Chip tone={r.status === "quarantined" ? "bad" : "warn"}>{r.status}</Chip>
-                  <Chip>{r.category}</Chip>
-                  {r.flags > 0 && <Chip tone="bad">🚩 {r.flags} report{r.flags === 1 ? "" : "s"}</Chip>}
-                </div>
-                {r.description && <p className="mt-1 text-[12.5px] text-mut">{r.description}</p>}
-                <p className="mt-1 truncate text-[11.5px] text-fnt">{r.url}</p>
-                <p className="mt-0.5 text-[11.5px] text-fnt">suggested by {r.suggested_by ?? "unknown"} · {new Date(r.created_at).toLocaleString()}</p>
-                {guardChips(r)}
-              </div>
-              <div className="flex flex-none flex-col items-end gap-2">
-                <button className={btnGhost + btnSm} onClick={() => setOpen(open === r.id ? null : r.id)}>Guard evidence</button>
-                <div className="flex gap-2">
-                  <button className={btnOk + btnSm} disabled={busy} onClick={() => void decide(r, "approved")}>✓ Approve</button>
-                  <button className={btnDanger + btnSm} disabled={busy} onClick={() => void decide(r, "rejected")}>✕ Reject</button>
-                  {r.status === "approved" && (
-                    <button className={btnDanger + btnSm} disabled={busy} onClick={() => void decide(r, "quarantined")}>⛔ Quarantine</button>
-                  )}
-                </div>
-              </div>
-            </div>
-            {open === r.id && (
-              <div className="mt-3 rounded-xl border border-line/10 bg-deep/50 p-3">
-                <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap font-mono text-[11px] text-fnt">
-                  {JSON.stringify(r.guard ?? {}, null, 2)}
-                </pre>
-                <input
-                  value={note[r.id] ?? ""}
-                  onChange={e => setNote(n => ({ ...n, [r.id]: e.target.value }))}
-                  maxLength={300}
-                  placeholder="Note for the audit log (optional)"
-                  className="mt-2 w-full rounded-lg border border-line/15 bg-deep/80 px-3 py-1.5 text-[12.5px] text-ink placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
-                />
-              </div>
-            )}
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Trends — the admin gate for structural catalog proposals            */
-/* (docs/skill-counselor.md §4.4). Badges apply automatically;          */
-/* structural changes (promote/demote/review) land here for the        */
-/* recorded decision.                                                 */
-/* ------------------------------------------------------------------ */
-
-function TrendsSection() {
-  const [rows, setRows] = useState<UpdateProposalRow[]>([]);
-  const [busy, setBusy] = useState(false);
-
-  const load = async () => {
-    setBusy(true);
-    try {
-      setRows(await adminPendingProposals());
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  useEffect(() => { void load(); }, []);
-
-  const decide = async (p: UpdateProposalRow, decision: "accepted" | "ignored") => {
-    setBusy(true);
-    try {
-      const r = await adminDecisionProposal(p.id, decision);
-      if (!r.ok) { toast("✗ " + (r.error ?? "Couldn't update")); return; }
-      toast(decision === "accepted" ? "✅ Accepted — catalog change recorded" : "🙈 Ignored");
-      await load();
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className={`${cardCls} p-5`}>
-        <h2 className="text-[16px] font-extrabold">📈 Market-trend proposals</h2>
-        <p className="mt-0.5 max-w-[680px] text-[12.5px] text-mut">
-          Each week the trends-refresh sweep measures skill demand in our job corpus (+ npm/GitHub signals).
-          Badges in the Skill Counselor update automatically; structural changes (promote/demote/review) are
-          proposed here and need your recorded decision. Requires supabase/trends.sql (scripts/setup-security.js).
-        </p>
-      </div>
-
-      {rows.length === 0 ? (
-        <div className={`${cardCls} p-5`}>
-          <p className="text-[13px] text-mut">No pending proposals right now — the last sweep found no stage crossings, or the trends tables aren't applied yet.</p>
-        </div>
-      ) : (
-        rows.map(p => (
-          <div key={p.id} className={`${cardCls} p-5`}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[13px] font-extrabold">{p.skill_id}</span>
-                  <Chip tone={p.kind === "demote" ? "bad" : p.kind === "promote" ? "ok" : "warn"}>{p.kind}</Chip>
-                  <Chip>pending</Chip>
-                  <span className="text-[11.5px] text-fnt">{new Date(p.created_at).toLocaleString()}</span>
-                </div>
-                <p className="mt-1 text-[13px] text-ink">{p.reason}</p>
-                <pre className="mt-2 max-h-[160px] overflow-auto whitespace-pre-wrap rounded-lg bg-deep/50 p-2 font-mono text-[10.5px] text-fnt">
-                  {JSON.stringify(p.signals, null, 2)}
-                </pre>
-              </div>
-              <div className="flex flex-none gap-2">
-                <button className={btnOk + btnSm} disabled={busy} onClick={() => void decide(p, "accepted")}>✓ Accept</button>
-                <button className={btnGhost + btnSm} disabled={busy} onClick={() => void decide(p, "ignored")}>Ignore</button>
-              </div>
-            </div>
-          </div>
-        ))
-      )}
-    </div>
-  );
-}
