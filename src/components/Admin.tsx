@@ -5,7 +5,7 @@ import { COMPANIES, FIELDS, LEVELS, companyById } from "../data";
 import { codingProblemById } from "../data/coding";
 import { COMPANY_FREQ, problemsForCompany } from "../data/codingCompanies";
 import { cloudFnHeaders, getCloudState, subscribeCloud } from "../services/cloud";
-import { getTeamsState, selectTeam, subscribeTeams, type TeamsState } from "../services/teams";
+import { getTeamsState, subscribeTeams, type TeamsState } from "../services/teams";
 import { chat, aiAvailable } from "../ai";
 import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../services/duplicates";
 import {
@@ -21,10 +21,10 @@ import { parseQuestionBatch } from "../services/import";
 import { extractFileText } from "../services/pdf";
 import {
   adminAuditLog, adminListUsers, adminMetrics, adminMissCandidates, adminSecurityStatus, adminSetMfaEnforced,
-  batchDeleteQuestions, batchSetQuestionsPublished, createAnnouncement, createPdfDocument, createQuestion,
-  deleteAnnouncement, deletePdfDocument, deleteQuestion, grantAdmin, listAdmins, listPdfChunks,
+  batchDeleteQuestions, batchSetQuestionsPublished, createPdfDocument, createQuestion,
+  deletePdfDocument, deleteQuestion, grantAdmin, listAdmins, listPdfChunks,
   getLastJobsFetchReport, listPdfDocuments, listQuestionAudit, revokeAdmin, saveJobSalaryEnrichment, saveRemoteConfig,
-  setAnnouncementPublished, setQuestionPublished, updatePdfDocument, updateQuestion,
+  setQuestionPublished, updatePdfDocument, updateQuestion,
   type AdminAuditRow, type AdminMetrics, type AdminSecurityStatus, type AdminUserRow, type AuditEntry,
   type JobsFetchReport, type MissCandidate, type PdfDocumentRow
 } from "../services/admin";
@@ -56,6 +56,9 @@ import { toast } from "../toast";
 import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, btnSoft, cardCls, Chip, Modal, Seg, Switch } from "./ui";
 import { ContentSection } from "./AdminContent";
 import { AdminSkillRoadmaps } from "./AdminSkillRoadmaps";
+import { OverviewSection } from "./admin/OverviewSection";
+import { AnnouncementsSection } from "./admin/AnnouncementsSection";
+import { TeamsSection } from "./admin/TeamsSection";
 
 type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps";
 
@@ -821,10 +824,10 @@ export function Admin() {
       </div>
 
       <div className="mt-6">
-        {section === "overview" && <Overview metrics={metrics} loading={loading} onOpenSecrets={() => setSection("secrets")} />}
+        {section === "overview" && <OverviewSection metrics={metrics} loading={loading} onOpenSecrets={() => setSection("secrets")} />}
         {section === "users" && <Users users={users} admins={admins} busy={busy} setBusy={setBusy} onChanged={load} />}
         {section === "announcements" && (
-          <Announcements list={announcements} busy={busy} setBusy={setBusy} onChanged={async () => { setAnnouncements(getAnnouncements()); }} />
+          <AnnouncementsSection list={announcements} busy={busy} setBusy={setBusy} onChanged={async () => { setAnnouncements(getAnnouncements()); }} />
         )}
         {section === "questions" && (
           <Questions list={questions} busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
@@ -854,7 +857,7 @@ export function Admin() {
             }}
           />
         )}
-        {section === "teams" && <AdminTeams teamState={teamState} />}
+        {section === "teams" && <TeamsSection teamState={teamState} />}
         {section === "security" && <SecuritySection />}
         {section === "secrets" && <SecretsSection />}
         {section === "resources" && <ResourcesSection />}
@@ -862,77 +865,6 @@ export function Admin() {
         {section === "content" && <ContentSection />}
         {section === "skillRoadmaps" && <AdminSkillRoadmaps />}
       </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Overview — business KPIs                                            */
-/* ------------------------------------------------------------------ */
-
-function Overview({ metrics, loading, onOpenSecrets }: { metrics: AdminMetrics | null; loading: boolean; onOpenSecrets: () => void }) {
-  if (loading && !metrics) {
-    return <div className="text-center text-mut"><span className="spinner inline-block" /> Loading metrics…</div>;
-  }
-  const m = metrics ?? {
-    totalUsers: 0, newThisWeek: 0, activeToday: 0, active7d: 0, proUsers: 0,
-    totalSessions: 0, sessions7d: 0, aiCalls7d: 0, events7d: 0
-  };
-  const cards = [
-    { label: "Total users", value: m.totalUsers, icon: "👥", sub: `${m.newThisWeek} new this week` },
-    { label: "Active today", value: m.activeToday, icon: "⚡", sub: `${m.active7d} active in 7 days` },
-    { label: "Pro users", value: m.proUsers, icon: "💎", sub: m.totalUsers ? `${Math.round((m.proUsers / m.totalUsers) * 100)}% conversion` : "no users yet" },
-    { label: "Sessions (7d)", value: m.sessions7d, icon: "🎯", sub: `${m.totalSessions} all time` },
-    { label: "AI calls (7d)", value: m.aiCalls7d, icon: "✨", sub: `${m.events7d} events tracked` },
-    { label: "Engagement", value: m.totalUsers ? Math.round((m.active7d / m.totalUsers) * 100) + "%" : "—", icon: "📈", sub: "active 7d / total" }
-  ];
-  return (
-    <div className="space-y-4">
-      <SecretGapsBanner onOpen={onOpenSecrets} />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-        {cards.map(c => (
-          <div key={c.label} className={`${cardCls} p-4 sm:p-5`}>
-            <div className="flex items-center justify-between">
-              <span className="text-[12px] font-extrabold uppercase tracking-wider text-mut">{c.label}</span>
-              <span className="text-[18px]">{c.icon}</span>
-            </div>
-            <div className="mt-1.5 text-[26px] font-extrabold tabular-nums">{c.value}</div>
-            <div className="mt-0.5 text-[12px] text-fnt">{c.sub}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* SecretGapsBanner — missing required function secrets surfaced on the */
-/* Overview so setup gaps are visible without opening the Secrets tab. */
-/* ------------------------------------------------------------------ */
-
-function SecretGapsBanner({ onOpen }: { onOpen: () => void }) {
-  const [report, setReport] = useState<SecretStatusReport | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    fetchSecretStatus()
-      .then(r => { if (alive) setReport(r); })
-      .catch(() => { if (alive) setFailed(true); });
-    return () => { alive = false; };
-  }, []);
-
-  /* function not deployed yet — the Secrets tab explains how to deploy it */
-  if (failed || !report || report.summary.missingRequired === 0) return null;
-
-  return (
-    <div className="rounded-xl border border-warn/30 bg-warn/10 px-4 py-3 text-[12.5px]">
-      <span className="font-bold text-warn">
-        ⚠️ {report.summary.missingRequired} required function secret{report.summary.missingRequired === 1 ? "" : "s"} missing:{" "}
-      </span>
-      <span className="font-mono font-bold text-ink">{report.summary.missingRequiredNames.join(", ")}</span>
-      <span className="text-mut"> — emails answer sent:false, crons 401, verdicts stay pending.</span>{" "}
-      <button className="font-bold text-acctxt underline" onClick={onOpen}>Review in Secrets →</button>
     </div>
   );
 }
@@ -1162,74 +1094,6 @@ function UserBillingDrawer({ userId, email, onClose }: { userId: string; email: 
         </div>
       )}
     </Modal>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Announcements — release notes CRUD                                  */
-/* ------------------------------------------------------------------ */
-
-function Announcements({ list, busy, setBusy, onChanged }: {
-  list: ReturnType<typeof getAnnouncements>; busy: boolean;
-  setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
-}) {
-  const [title, setTitle] = useState("");
-  const [badge, setBadge] = useState("NEW");
-  const [body, setBody] = useState("");
-
-  const publish = async () => {
-    if (!title.trim() || !body.trim()) { toast("Title and body are required"); return; }
-    setBusy(true);
-    try {
-      await createAnnouncement({ title: title.trim(), body: body.trim(), badge: badge.trim() || undefined });
-      toast("📣 Announcement published — clients see it on next load");
-      setTitle(""); setBody("");
-      await onChanged();
-    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className={`${cardCls} p-5`}>
-        <h2 className="text-[16px] font-extrabold">✍️ New announcement</h2>
-        <p className="mb-4 text-[12.5px] text-mut">Shows as a dismissible banner under the header for every user.</p>
-        <div className="space-y-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]">
-            <input value={title} onChange={e => setTitle(e.target.value)} placeholder={'Title — e.g. "New: Interview Roadmap"'} className="inp" />
-            <input value={badge} onChange={e => setBadge(e.target.value)} placeholder="Badge (NEW)" className="inp" />
-          </div>
-          <textarea value={body} onChange={e => setBody(e.target.value)} rows={3} placeholder="What's new? Keep it to one or two sentences." className="inp w-full resize-y" />
-          <button className={btnPrimary + btnSm} onClick={publish} disabled={busy}>Publish</button>
-        </div>
-      </div>
-
-      <div className={`${cardCls} p-5`}>
-        <h2 className="mb-1 text-[16px] font-extrabold">📣 Live announcements ({list.length})</h2>
-        <div className="mt-3 space-y-2.5">
-          {list.length === 0 && <p className="text-[13px] text-mut">Nothing published yet.</p>}
-          {list.map(a => (
-            <div key={a.id} className="flex items-start gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  {a.badge && <Chip tone="co">{a.badge}</Chip>}
-                  <span className="text-[14px] font-bold">{a.title}</span>
-                  <Chip tone={a.published ? "ok" : "default"}>{a.published ? "LIVE" : "DRAFT"}</Chip>
-                </div>
-                <p className="mt-1 text-[13px] text-mut">{a.body}</p>
-                <div className="mt-1 text-[11.5px] text-fnt">{new Date(a.createdAt).toLocaleString()}</div>
-              </div>
-              <div className="flex flex-none gap-2">
-                <button className={btnGhost + btnSm} onClick={async () => { setBusy(true); try { await setAnnouncementPublished(a.id, !a.published); await onChanged(); } catch (e) { toast("✗ " + (e as Error).message); } finally { setBusy(false); } }} disabled={busy}>
-                  {a.published ? "Unpublish" : "Publish"}
-                </button>
-                <button className={btnDanger + btnSm} onClick={async () => { setBusy(true); try { await deleteAnnouncement(a.id); await onChanged(); } catch (e) { toast("✗ " + (e as Error).message); } finally { setBusy(false); } }} disabled={busy}>Delete</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -3063,75 +2927,6 @@ function NumField({ label, value, step = 1, onChange }: { label: string; value: 
       <span className="mb-1 block text-[12px] font-bold text-mut">{label}</span>
       <input type="number" step={step} value={value} onChange={e => onChange(Number(e.target.value))} className="inp w-full" />
     </label>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Admin teams — team analytics section                                */
-/* ------------------------------------------------------------------ */
-
-function AdminTeams({ teamState }: { teamState: TeamsState }) {
-  const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
-
-  if (!teamState.teams.length) {
-    return (
-      <div className={`${cardCls} flex flex-col items-center px-6 py-10 text-center`}>
-        <div className="text-[36px]">🏢</div>
-        <h2 className="mt-2 text-base font-extrabold">No teams yet</h2>
-        <p className="mx-auto mt-1 max-w-[400px] text-[13px] text-mut">
-          Teams are created from the 🏢 Team view (More menu) by signed-in users — once any exists, their analytics show up here.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      {teamState.teams.map(t => (
-        <div key={t.teamId} className={`${cardCls} overflow-hidden`}>
-          <div className="flex flex-wrap items-center gap-3 p-5">
-            <div className="flex-1">
-              <div className="flex items-center gap-2 text-[15.5px] font-extrabold">
-                {t.name}
-                {t.role === "owner" ? <span className="rounded-full border border-co/40 bg-co/15 px-2 py-0.5 text-[10px] font-bold text-co">OWNER</span> : <span className="text-[12px] text-mut">· {t.role}</span>}
-              </div>
-              <div className="mt-1 text-[12.5px] text-mut">{t.members}/{t.seats} seats used</div>
-            </div>
-            <button
-              onClick={() => { selectTeam(t.teamId); setExpandedTeam(expandedTeam === t.teamId ? null : t.teamId); }}
-              className="rounded-lg border border-line/20 px-3 py-1.5 text-[12.5px] font-bold text-mut hover:bg-wht/10"
-            >
-              {expandedTeam === t.teamId ? "△ Collapse" : "▽ View members"}
-            </button>
-          </div>
-          {/* seat utilization bar */}
-          <div className="border-t border-line/10 bg-wht/[.03] px-5 py-3">
-            <div className="flex items-center justify-between text-[12px] text-mut">
-              <span>Seat utilization</span>
-              <span>{Math.round((t.members / Math.max(1, t.seats)) * 100)}%</span>
-            </div>
-            <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-wht/10">
-              <div className={`h-full rounded-full ${t.members === t.seats ? "grad-bg" : "grad-bg-soft"}`}
-                style={{ width: `${Math.min(100, (t.members / Math.max(1, t.seats)) * 100)}%` }} />
-            </div>
-          </div>
-          {expandedTeam === t.teamId && (
-            <div className="border-t border-line/10 px-5 py-3">
-              <h4 className="mb-2 text-[12.5px] font-bold uppercase tracking-wider text-mut">Members</h4>
-              {teamState.roster.length === 0 && <p className="text-[12px] text-mut">Loading…</p>}
-              {teamState.roster.map(m => (
-                <div key={m.userId ?? m.invitedEmail ?? m.email} className="flex items-center gap-2 py-1.5 text-[13px]">
-                  <span className="h-2 w-2 rounded-full bg-ok" />
-                  <span className="flex-1 font-bold">{m.email ?? m.invitedEmail ?? "—"}</span>
-                  <span className="text-mut">{m.status}</span>
-                  {m.status === "active" && <span className="text-[11px] text-ok">active</span>}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
   );
 }
 
