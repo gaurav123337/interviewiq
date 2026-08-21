@@ -1,16 +1,10 @@
 import { RagHealthTab } from "./quality";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { FIELDS, LEVELS } from "../../data";
 import { codingProblemById } from "../../data/coding";
-import { listPdfDocuments, type PdfDocumentRow } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
-import {
-  adminCoachGaps, adminCodingQuality, adminFeedbackFeed, adminKbSuggestions, adminQuestionQuality,
-  adminRagDocuments, adminRagDomains, adminRagHealth, adminRagWeeklyDigest,
-  mergeQuality, touchQuestion,
-  type CodingQualityRow, type CoachGapRow, type FeedbackFeedRow, type KbSuggestionRow, type QualityRow,
-  type RagDocRow, type RagDomainRow, type RagHealthRow, type RagWeeklyDigest
-} from "../../services/quality";
+import { mergeQuality, touchQuestion } from "../../services/quality";
+import { useAllQualityData } from "../../hooks/useQueryHooks";
 import { toast } from "../../toast";
 import { cardCls, btnGhost, btnSm, Chip, QualityBar, Seg } from "../ui";
 
@@ -38,21 +32,11 @@ export function QualitySection({
   /** Stages a playground pick (cutoff + hard floor) into the config draft. */
   onStageTuning: (minSim: number, hardFloor: number) => void;
 }) {
-  const [rows, setRows] = useState<QualityRow[]>([]);
-  const [feed, setFeed] = useState<FeedbackFeedRow[]>([]);
-  const [coding, setCoding] = useState<CodingQualityRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, isLoading, refetch } = useAllQualityData();
+  const { rows, feed, coding, coachGaps, ragRows, ragDigest, ragDocs, ragDomains, kbSuggestions, kbDocs } = data;
   const [tab, setTab] = useState<(typeof QUALITY_TABS)[number]["value"]>("scoreboard");
   const [cutoff, setCutoff] = useState(90);
   const [refreshed, setRefreshed] = useState<Set<string>>(new Set());
-  const [coachGaps, setCoachGaps] = useState<CoachGapRow[]>([]);
-  const [ragRows, setRagRows] = useState<RagHealthRow[]>([]);
-  const [ragDigest, setRagDigest] = useState<RagWeeklyDigest | null>(null);
-  const [ragDocs, setRagDocs] = useState<RagDocRow[]>([]);
-  const [ragDomains, setRagDomains] = useState<RagDomainRow[]>([]);
-  const [kbSuggestions, setKbSuggestions] = useState<KbSuggestionRow[]>([]);
-  const [kbDocs, setKbDocs] = useState<PdfDocumentRow[]>([]);
-  /* coach-gap alerts — topics debated enough to warrant a deep-dive guide */
   const [gapMin, setGapMin] = useState(5);
   const gapAlerts = coachGaps.filter(g => g.discussions >= gapMin);
   const draftGuide = (topic: string) => {
@@ -85,14 +69,7 @@ Practice questions:
     .filter(m => m.staleDays != null && m.staleDays > cutoff)
     .sort((a, b) => (b.staleDays ?? 0) - (a.staleDays ?? 0));
 
-  const load = () => {
-    setLoading(true);
-    void Promise.all([adminQuestionQuality(), adminFeedbackFeed(50), adminCodingQuality(), adminCoachGaps(), adminRagHealth(), adminRagDocuments(), adminRagWeeklyDigest(), adminRagDomains(), adminKbSuggestions(), listPdfDocuments()])
-      .then(([q, f, c, g, r, d, dig, dom, sug, k]) => { setRows(q); setFeed(f); setCoding(c); setCoachGaps(g); setRagRows(r); setRagDocs(d); setRagDigest(dig); setRagDomains(dom); setKbSuggestions(sug); setKbDocs(k); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  };
-  useEffect(load, []);
+  const load = () => refetch();
 
   const touch = async (question: string) => {
     const q = bank.find(b => b.question === question);
@@ -137,7 +114,7 @@ Practice questions:
         <button className={btnGhost + btnSm} onClick={load} disabled={busy}>↻ Refresh</button>
       </div>
 
-      {loading && rows.length === 0 && <p className="text-center text-mut"><span className="spinner inline-block" /> Crunching session data…</p>}
+      {isLoading && rows.length === 0 && <p className="text-center text-mut"><span className="spinner inline-block" /> Crunching session data…</p>}
 
       {tab === "scoreboard" && (
         <div className={`${cardCls} overflow-hidden`}>
