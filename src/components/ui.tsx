@@ -179,3 +179,72 @@ export function ScoreBadge({ score }: { score: number }) {
   const cls = score >= 4 ? "border-ok/35 bg-ok/10 text-ok" : score >= 3 ? "border-warn/35 bg-warn/10 text-warn" : "border-bad/35 bg-bad/10 text-bad";
   return <span className={`rounded-full border px-3 py-1 text-[12.5px] font-extrabold ${cls}`}>{score}/5</span>;
 }
+
+/* ------------------------------------------------------------------ */
+/* Shared layout atoms — used across admin panels, results, progress   */
+/* ------------------------------------------------------------------ */
+
+/** Horizontal progress bar with optional label. widthPct is 0-100. */
+export function ProgressBar({ widthPct, label, className = "" }: {
+  widthPct: number; label?: string; className?: string;
+}) {
+  return (
+    <div className={`h-2.5 overflow-hidden rounded-full bg-wht/10 ${className}`} title={label}>
+      <div
+        className="h-full rounded-full grad-bg transition-all duration-500"
+        style={{ width: `${Math.min(100, Math.max(3, widthPct))}%` }}
+      />
+    </div>
+  );
+}
+
+/** Stat card with icon, label, value and sub-text. */
+export function StatCard({ icon, label, value, sub }: {
+  icon: string; label: string; value: string | number; sub: string;
+}) {
+  return (
+    <div className={`${cardCls} p-4 sm:p-5`}>
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-extrabold uppercase tracking-wider text-mut">{label}</span>
+        <span className="text-[18px]">{icon}</span>
+      </div>
+      <div className="mt-1.5 text-[26px] font-extrabold tabular-nums">{value}</div>
+      <div className="mt-0.5 text-[12px] text-fnt">{sub}</div>
+    </div>
+  );
+}
+
+/** Color-coded quality bar (green/yellow/red). score is 0-100. */
+export function QualityBar({ score, className = "" }: { score: number; className?: string }) {
+  const color = score >= 80 ? "bg-ok" : score >= 60 ? "bg-warn" : "bg-bad";
+  return (
+    <div className={`h-[7px] w-[92px] overflow-hidden rounded-full bg-wht/15 ${className}`} title={`${score}/100`}>
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max(4, score)}%` }} />
+    </div>
+  );
+}
+
+/** Number input with label. */
+export function NumField({ label, value, step = 1, onChange }: {
+  label: string; value: number; step?: number; onChange: (v: number) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[12px] font-bold text-mut">{label}</span>
+      <input type="number" step={step} value={value} onChange={e => onChange(Number(e.target.value))} className="inp w-full" />
+    </label>
+  );
+}
+
+/** Option row — title + sub text on the left, controls on the right. */
+export function OptRow({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 py-3 last:border-0">
+      <div>
+        <div className="text-[14px] font-bold">{title}</div>
+        <div className="text-[12px] text-fnt">{sub}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
