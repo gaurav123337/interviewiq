@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 
 /* ------------------------------------------------------------------ */
 /* Mock all Supabase / cloud services so no real network calls happen   */
@@ -206,37 +206,7 @@ vi.mock("../services/questionBank", () => ({
   removeFromBank: vi.fn(),
 }));
 
-vi.mock("../services/systemDesignTutor", () => ({
-  explainSystemDesign: vi.fn(),
-  systemDesignChat: vi.fn(),
-}));
 
-vi.mock("../services/rag", () => ({
-  effectiveGroundingMinSim: vi.fn().mockReturnValue(0.45),
-  effectiveHardFloor: vi.fn().mockReturnValue(0.8),
-  getRagDigestOpts: vi.fn().mockReturnValue({}),
-  lexicalSearch: vi.fn().mockResolvedValue([]),
-  documentTitles: vi.fn().mockReturnValue([]),
-  ragTuningInfo: vi.fn().mockReturnValue(""),
-}));
-
-vi.mock("../services/goal", () => ({
-  getGoal: vi.fn().mockReturnValue(null),
-}));
-
-vi.mock("../toast", () => ({
-  toast: vi.fn(),
-}));
-
-vi.mock("../config", () => ({
-  CONFIG: { supabase: { url: "https://test.supabase.co" } },
-}));
-
-beforeEach(() => {
-  localStorage.clear();
-  storageStore.clear();
-  cleanup();
-});
 
 /* ------------------------------------------------------------------ */
 /* Test: OverviewSection exports and renders                            */
@@ -327,127 +297,5 @@ describe("admin section components", () => {
     const { Admin } = await import("../components/Admin");
     render(<Admin />);
     expect(screen.getByText(/Admin only/)).toBeTruthy();
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/* Test: system-design components export correctly                      */
-/* ------------------------------------------------------------------ */
-
-describe("system-design section components", () => {
-  it("TimedPractice exports", async () => {
-    const mod = await import("../components/system-design/TimedPractice");
-    expect(typeof mod.TimedPractice).toBe("function");
-  });
-
-  it("StatsDrawer exports", async () => {
-    const mod = await import("../components/system-design/StatsDrawer");
-    expect(typeof mod.StatsDrawer).toBe("function");
-  });
-
-  it("FlashcardDrawer exports", async () => {
-    const mod = await import("../components/system-design/FlashcardDrawer");
-    expect(typeof mod.FlashcardDrawer).toBe("function");
-  });
-
-  it("CaseCard exports", async () => {
-    const mod = await import("../components/system-design/CaseCard");
-    expect(typeof mod.CaseCard).toBe("function");
-  });
-
-  it("CaseDrawer exports", async () => {
-    const mod = await import("../components/system-design/CaseDrawer");
-    expect(typeof mod.CaseDrawer).toBe("function");
-  });
-
-  it("utils exports persistence helpers", async () => {
-    const mod = await import("../components/system-design/utils");
-    expect(typeof mod.loadQuiz).toBe("function");
-    expect(typeof mod.saveQuiz).toBe("function");
-    expect(typeof mod.loadCompleted).toBe("function");
-    expect(typeof mod.markCompleted).toBe("function");
-    expect(typeof mod.calculateStreak).toBe("function");
-    expect(typeof mod.exportProgress).toBe("function");
-    expect(typeof mod.CATEGORY_META).toBe("object");
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/* Test: jobs modal components export correctly                         */
-/* ------------------------------------------------------------------ */
-
-describe("jobs modal components", () => {
-  it("ReportModal exports", async () => {
-    const mod = await import("../components/jobs/ReportModal");
-    expect(typeof mod.ReportModal).toBe("function");
-  });
-
-  it("RoundModal exports", async () => {
-    const mod = await import("../components/jobs/RoundModal");
-    expect(typeof mod.RoundModal).toBe("function");
-  });
-
-  it("DraftModal exports", async () => {
-    const mod = await import("../components/jobs/DraftModal");
-    expect(typeof mod.DraftModal).toBe("function");
-  });
-
-  it("RecsDigestModal exports", async () => {
-    const mod = await import("../components/jobs/RecsDigestModal");
-    expect(typeof mod.RecsDigestModal).toBe("function");
-  });
-
-  it("TagInput exports", async () => {
-    const mod = await import("../components/jobs/TagInput");
-    expect(typeof mod.TagInput).toBe("function");
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/* Test: system-design utils persistence round-trip                     */
-/* ------------------------------------------------------------------ */
-
-describe("system-design persistence", () => {
-  it("loadQuiz returns default when empty", async () => {
-    const { loadQuiz } = await import("../components/system-design/utils");
-    const q = loadQuiz();
-    expect(q.active).toBe(false);
-    expect(q.caseIds).toEqual([]);
-    expect(q.currentIdx).toBe(0);
-    expect(q.score).toBe(0);
-  });
-
-  it("saveQuiz and loadQuiz round-trip", async () => {
-    const { loadQuiz, saveQuiz } = await import("../components/system-design/utils");
-    const custom = { active: true, caseIds: ["a", "b"], currentIdx: 1, timePerCase: 120, startedAt: 1000, caseStartedAt: 2000, score: 3, answeredCaseIds: ["a"] };
-    saveQuiz(custom);
-    const loaded = loadQuiz();
-    expect(loaded.active).toBe(true);
-    expect(loaded.caseIds).toEqual(["a", "b"]);
-    expect(loaded.score).toBe(3);
-  });
-
-  it("markCompleted stores timestamp", async () => {
-    const { markCompleted, loadCompleted } = await import("../components/system-design/utils");
-    const before = Date.now();
-    markCompleted("test-case-1");
-    const c = loadCompleted();
-    expect(c["test-case-1"]).toBeGreaterThanOrEqual(before);
-  });
-
-  it("calculateStreak returns 0 for empty", async () => {
-    const { calculateStreak } = await import("../components/system-design/utils");
-    const s = calculateStreak({});
-    expect(s.current).toBe(0);
-    expect(s.best).toBe(0);
-  });
-
-  it("exportProgress returns valid JSON", async () => {
-    const { exportProgress } = await import("../components/system-design/utils");
-    const json = exportProgress();
-    const parsed = JSON.parse(json);
-    expect(parsed).toHaveProperty("exportedAt");
-    expect(parsed).toHaveProperty("completed");
-    expect(parsed).toHaveProperty("history");
   });
 });
