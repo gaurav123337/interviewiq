@@ -1,27 +1,27 @@
-import { useMemo, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
-  adminCreateGrant, adminIssueDiscount, adminListEntitlements, adminSetEntitlement, PLANS,
+  adminCreateGrant, adminIssueDiscount, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../../services/entitlement";
 import {
-  REFUND_POLICY_DEFAULTS, adminBillingActions, adminCancelSubscription, adminCreateCoupon,
-  adminListCoupons, adminListPayments, adminListSubscriptions, adminRefundPayment,
-  adminSimulatePurchase, fmtMinor, getRefundPolicy, publishRefundPolicy, revenueSummary,
-  subscriptionSummary, type AdminCoupon, type AdminPaymentRow, type AdminSubscriptionRow,
-  type BillingActionRow, type RefundPolicy
+  REFUND_POLICY_DEFAULTS, adminCancelSubscription, adminCreateCoupon,
+  adminRefundPayment,
+  adminSimulatePurchase, fmtMinor, getRefundPolicy, publishRefundPolicy,
+  revenueSummary, subscriptionSummary,
+  type AdminPaymentRow, type AdminSubscriptionRow,
+  type RefundPolicy
 } from "../../services/billing";
 import { getPublishedPolicies, publishPolicies } from "../../services/policies";
 import { POLICY_DEFAULTS, POLICY_META, type PolicyId } from "../../data/policies";
+import { useAllBillingData } from "../../hooks/useQueryHooks";
 import { toast } from "../../toast";
 import { cardCls, btnPrimary, btnGhost, btnDanger, btnOk, btnSm, Chip } from "../ui";
 
 export function BillingSection() {
-  const [rows, setRows] = useState<AdminEntitlementRow[]>([]);
-  const [payments, setPayments] = useState<AdminPaymentRow[]>([]);
-  const [subs, setSubs] = useState<AdminSubscriptionRow[]>([]);
-  const [audit, setAudit] = useState<BillingActionRow[]>([]);
-  const [coupons, setCoupons] = useState<AdminCoupon[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: billingData, isLoading: loading, refetch: load } = useAllBillingData();
+  const { entitlements: rows, payments, subscriptions: subs, audit, coupons } = billingData;
+  const revenue = revenueSummary(payments);
+  const subsSummary = subscriptionSummary(subs);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Record<string, "grant" | "discount" | undefined>>({});
   /* create-grant form */
@@ -41,19 +41,10 @@ export function BillingSection() {
   const [dPct, setDPct] = useState(30);
   const [dDays, setDDays] = useState(90);
 
-  const load = () => {
-    setLoading(true);
-    void Promise.all([adminListEntitlements(), adminListPayments(), adminListSubscriptions(), adminBillingActions(50), adminListCoupons()])
-      .then(([e, p, s, a, c]) => { setRows(e); setPayments(p); setSubs(s); setAudit(a); setCoupons(c); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+  useEffect(() => {
     void getRefundPolicy().then(p => { setPolicyDraft(p); setPresetsText((p.reason_presets ?? []).join(", ")); }).catch(() => {});
     void getPublishedPolicies().then(p => { if (Object.keys(p).length) setPolicyDocs({ ...POLICY_DEFAULTS, ...p }); }).catch(() => {});
-  };
-  useEffect(load, []);
-
-  const revenue = useMemo(() => revenueSummary(payments), [payments]);
-  const subsSummary = useMemo(() => subscriptionSummary(subs), [subs]);
+  }, []);
   /* cancel-with-reason — row being cancelled + its reason input */
   const [cancelTarget, setCancelTarget] = useState<AdminSubscriptionRow | null>(null);
   const [cancelReason, setCancelReason] = useState("");
