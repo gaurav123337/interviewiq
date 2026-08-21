@@ -6,22 +6,14 @@ import {
   recommendationReason,
   salaryLabel,
   type RankFilters,
+  type CompanyRank,
 } from "../../services/jobs";
 import { currencySymbol } from "../../services/salaryBench";
+
 
 /* verdict tone → text color (matches VERDICT_META tones) */
 const verdictToneCls = (tone: string) =>
   tone === "ok" ? "text-ok" : tone === "co" ? "text-acctxt" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-mut";
-
-export interface CompanyRank {
-  company: string;
-  openings: number;
-  best: JobPosting;
-  score: number;
-  verdict: string;
-  matched: string[];
-  missing: string[];
-}
 
 export interface CompanyRankingProps {
   profile: CareerProfile | null;
@@ -172,7 +164,7 @@ export function CompanyRankingCard({
                   <span className="text-[12px] font-bold text-mut">🔒 {r.openings} open role{r.openings === 1 ? "" : "s"}</span>
                 ) : (
                   <>
-                    <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wide ${verdictToneCls(r.verdict)} border-current/25 bg-current/10`}>{r.score}% · {VERDICT_META[r.verdict].label}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wide ${verdictToneCls(VERDICT_META[r.verdict].tone)} border-current/25 bg-current/10`}>{r.score}% · {VERDICT_META[r.verdict].label}</span>
                     <span className="text-[12px] text-mut">{r.openings} role{r.openings === 1 ? "" : "s"} · {r.best.title}</span>
                   </>
                 )}
