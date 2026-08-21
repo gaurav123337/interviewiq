@@ -8,7 +8,7 @@ import { exportMd } from "../services/report";
 import { earnCertificate } from "../services/certificates";
 import { makeSavedSession } from "../services/session";
 import { encodeSharePayload } from "./ShareView";
-import { btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, KpNeutral, ScoreBadge } from "./ui";
+import { btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, KpNeutral, ProgressBar, ScoreBadge } from "./ui";
 import { DiagnosticResults } from "./DiagnosticResults";
 import { CertificateView } from "./Certificate";
 
@@ -136,9 +136,7 @@ export function Results() {
                   <span className="text-mut">{c.label}</span>
                   <span className="text-ink">{c.score.toFixed(1)}/5</span>
                 </div>
-                <div className="h-[7px] overflow-hidden rounded-full bg-wht/10">
-                  <div className="h-full rounded-full grad-bg transition-all duration-700" style={{ width: `${Math.max(3, c.pct * 100)}%` }} />
-                </div>
+                <ProgressBar widthPct={Math.max(3, c.pct * 100)} height="h-[7px]" />
               </div>
             ))}
             {!agg.cats.length && <p className="text-[13px] text-fnt">No categories yet.</p>}

@@ -21,7 +21,7 @@ import { getGoal } from "../services/goal";
 import { storageGet, storageSet } from "../services/storage";
 import type { CoachTopicContext } from "../contexts/CoachContext";
 import { toast } from "../toast";
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer } from "./ui";
+import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer, ProgressBar } from "./ui";
 
 /* ------------------------------------------------------------------ */
 /* Persistence helpers                                                  */
@@ -299,9 +299,7 @@ export function SystemDesign() {
             <span className="text-[12.5px] font-bold text-mut">📈 Your Progress</span>
             <span className="text-[12.5px] font-extrabold text-acctxt">{completedCount}/{totalArchCases} completed ({progressPct}%)</span>
           </div>
-          <div className="h-2 w-full rounded-full bg-wht/10 overflow-hidden">
-            <div className="h-full rounded-full grad-bg transition-all duration-500" style={{ width: `${progressPct}%` }} />
-          </div>
+          <ProgressBar widthPct={progressPct} height="h-2" className="w-full" />
         </div>
       </div>
 
@@ -714,9 +712,7 @@ function StatsDrawer({ onClose }: { onClose: () => void }) {
                 <span className="text-[15px]">{meta.icon}</span>
                 <span className="flex-1 text-[13px] font-bold text-ink">{meta.label}</span>
                 <span className="text-[12px] text-mut">{c}/{total}</span>
-                <div className="h-2 w-20 rounded-full bg-wht/10 overflow-hidden">
-                  <div className="h-full rounded-full grad-bg transition-all" style={{ width: `${pct}%` }} />
-                </div>
+                <ProgressBar widthPct={pct} height="h-2" className="w-20" />
                 <span className="text-[12px] font-bold text-acctxt w-8 text-right">{pct}%</span>
               </div>
             );

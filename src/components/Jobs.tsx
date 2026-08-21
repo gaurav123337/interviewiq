@@ -4,7 +4,7 @@ import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { cloudFnHeaders, getCloudState, getSupabaseClient, isCloudConfigured } from "../services/cloud";
 import { CONFIG } from "../config";
 import { toast } from "../toast";
-import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from "./ui";
+import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal, ProgressBar } from "./ui";
 import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
@@ -821,9 +821,7 @@ export function Jobs() {
                           <span className="text-[13.5px] font-extrabold text-acctxt">{r.score}%</span>
                           <span className={`text-[10px] font-extrabold uppercase tracking-wide ${VERDICT_META[r.verdict].tone === "ok" ? "text-ok" : VERDICT_META[r.verdict].tone === "co" ? "text-acctxt" : VERDICT_META[r.verdict].tone === "warn" ? "text-warn" : VERDICT_META[r.verdict].tone === "bad" ? "text-bad" : "text-mut"}`}>{VERDICT_META[r.verdict].label}</span>
                         </div>
-                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-deep/60">
-                          <div className="h-full rounded-full grad-bg" style={{ width: `${Math.max(4, r.score)}%` }} />
-                        </div>
+                        <ProgressBar widthPct={Math.max(4, r.score)} height="h-1.5" className="mt-1 bg-deep/60" />
                       </>
                     )}
                   </div>

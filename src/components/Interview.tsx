@@ -14,7 +14,7 @@ import { hasVoted, sendFeedback, type FeedbackKind } from "../services/feedback"
 import { loadVoices, speak, stopSpeaking, ttsSupported } from "../services/voice";
 import { UpgradeModal } from "./Upgrade";
 import { CoachChat } from "./CoachChat";
-import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Kp, Modal, Switch } from "./ui";
+import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Kp, Modal, ProgressBar, Switch } from "./ui";
 
 const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
 
@@ -96,9 +96,7 @@ export function Interview() {
         )}
         {config.mode === "mock" && <MockCountdown total={45 * 60} onExpire={exitToResults} />}
         <div className="min-w-[170px] flex-none">
-          <div className="h-[7px] overflow-hidden rounded-full bg-wht/15">
-            <div className="h-full rounded-full grad-bg transition-all duration-500" style={{ width: prog + "%" }} />
-          </div>
+          <ProgressBar widthPct={prog} height="h-[7px]" className="bg-wht/15" />
           <div className="mt-1 flex justify-between text-xs font-semibold text-mut">
             <span>Question {idx + 1} of {session.questions.length}</span>
             {avg && <span>Avg: {avg}/5</span>}

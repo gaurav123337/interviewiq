@@ -3,7 +3,7 @@ import { useApp } from "../store";
 import { toast } from "../toast";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
 import { getCoachDiscussions } from "./CoachChat";
-import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal } from "./ui";
+import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal, ProgressBar } from "./ui";
 
 export function History() {
   const { state, openHistory, deleteHistory, clearHistory } = useApp();
@@ -165,9 +165,7 @@ function Dashboard({ sessions }: { sessions: ReturnType<typeof useApp>["state"][
                   <span className="text-mut">{m.label}</span>
                   <span>{Math.round(m.pct * 100)}%</span>
                 </div>
-                <div className="h-[6px] overflow-hidden rounded-full bg-wht/10">
-                  <div className="h-full rounded-full grad-bg" style={{ width: `${Math.max(3, m.pct * 100)}%` }} />
-                </div>
+                <ProgressBar widthPct={Math.max(3, m.pct * 100)} height="h-[6px]" />
               </div>
             ))}
           </div>

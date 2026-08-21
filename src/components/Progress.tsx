@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useApp } from "../store";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
 import { computeStats, xpLevel, generateLeaderboard, ACHIEVEMENTS } from "../services/xp";
-import { cardCls, Chip } from "./ui";
+import { cardCls, Chip, ProgressBar } from "./ui";
 import { toast } from "../toast";
 
 const DAY = 86_400_000;
@@ -116,9 +116,7 @@ export function Progress() {
             <span>Level</span><span>⚡</span>
           </div>
           <div className="mt-1 text-[22px] font-extrabold tabular-nums leading-tight">{lv.level}</div>
-          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-deep/60">
-            <div className="h-full rounded-full grad-bg" style={{ width: `${Math.round(lv.progress * 100)}%` }} />
-          </div>
+          <ProgressBar widthPct={Math.round(lv.progress * 100)} height="h-1.5" className="mt-1 bg-deep/60" />
           <div className="mt-0.5 text-[10.5px] text-fnt">{lv.currentXP}/{lv.nextXP} XP</div>
         </div>
       </div>

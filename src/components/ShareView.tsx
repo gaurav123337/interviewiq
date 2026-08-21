@@ -1,7 +1,7 @@
 /* Renders a shareable interview result card from a URL-encoded payload.
    The payload is a compact base64url JSON blob: no backend needed. */
 
-import { btnGhost, btnPrimary, btnSm, cardCls } from "./ui";
+import { btnGhost, btnPrimary, btnSm, cardCls, ProgressBar } from "./ui";
 
 interface ShareCat {
   label: string;
@@ -97,9 +97,7 @@ export function ShareView({ payload }: { payload: string }) {
                   <span className="text-mut">{c.label}</span>
                   <span className="text-ink">{(c.pct * 100).toFixed(0)}%</span>
                 </div>
-                <div className="h-[7px] overflow-hidden rounded-full bg-wht/10">
-                  <div className="h-full rounded-full grad-bg transition-all" style={{ width: `${Math.max(3, c.pct * 100)}%` }} />
-                </div>
+                <ProgressBar widthPct={Math.max(3, c.pct * 100)} height="h-[7px]" />
               </div>
             ))}
           </div>
