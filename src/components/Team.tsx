@@ -7,7 +7,7 @@ import {
   openTeamUpgradeLink, refresh, removeMember, selectTeam, subscribeTeams, type TeamsState
 } from "../services/teams";
 import { toast } from "../toast";
-import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal } from "./ui";
+import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal, ProgressBar } from "./ui";
 
 export function Team() {
   const { nav } = useApp();
@@ -171,12 +171,7 @@ export function Team() {
                       <span className="font-bold text-mut">Seats</span>
                       <span className="font-bold">{active.members}/{active.seats} used{seatsLeft > 0 ? ` · ${seatsLeft} open` : " · full"}</span>
                     </div>
-                    <div className="h-2.5 overflow-hidden rounded-full bg-wht/10">
-                      <div
-                        className={`h-full rounded-full transition-all ${seatsLeft === 0 ? "grad-bg" : "grad-bg-soft"}`}
-                        style={{ width: `${Math.min(100, (active.members / Math.max(1, active.seats)) * 100)}%` }}
-                      />
-                    </div>
+                    <ProgressBar widthPct={Math.min(100, (active.members / Math.max(1, active.seats)) * 100)} height="h-2.5" />
                     {isAdmin && (
                       <div className="mt-3 flex flex-wrap items-end gap-2.5 rounded-xl border border-line/10 bg-wht/5 p-3">
                         <label>

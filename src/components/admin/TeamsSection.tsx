@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { selectTeam, type TeamsState } from "../../services/teams";
-import { cardCls } from "../ui";
+import { cardCls, ProgressBar } from "../ui";
 
 /* ------------------------------------------------------------------ */
 /* Admin teams — team analytics section                                */
@@ -48,10 +48,7 @@ export function TeamsSection({ teamState }: { teamState: TeamsState }) {
               <span>Seat utilization</span>
               <span>{Math.round((t.members / Math.max(1, t.seats)) * 100)}%</span>
             </div>
-            <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-wht/10">
-              <div className={`h-full rounded-full ${t.members === t.seats ? "grad-bg" : "grad-bg-soft"}`}
-                style={{ width: `${Math.min(100, (t.members / Math.max(1, t.seats)) * 100)}%` }} />
-            </div>
+            <ProgressBar widthPct={Math.min(100, (t.members / Math.max(1, t.seats)) * 100)} height="h-2.5" className="mt-1" />
           </div>
           {expandedTeam === t.teamId && (
             <div className="border-t border-line/10 px-5 py-3">
