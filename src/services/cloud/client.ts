@@ -2,7 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CONFIG } from "../../config";
-import { setState } from "./state";
+import { getCloudState, setState } from "./state";
 
 let clientPromise: Promise<SupabaseClient> | null = null;
 
@@ -25,10 +25,12 @@ export function setTestClient(c: SupabaseClient | null): void {
   clientPromise = c ? Promise.resolve(c) : null;
 }
 
-/** Returns the client when cloud sync is available (configured, or a test client is injected). */
+/** Returns the client when cloud sync is available (configured, or a test client is injected).
+    NOTE: `configured` is only emitted when it actually changes to avoid
+    triggering listener loops (refresh → getSupabaseClient → setState → listener → …). */
 export async function resolveClient(): Promise<SupabaseClient | null> {
   if (clientPromise) {
-    setState({ configured: true });
+    if (!getCloudState().configured) setState({ configured: true });
     return clientPromise;
   }
   if (!isCloudConfigured()) return null;
