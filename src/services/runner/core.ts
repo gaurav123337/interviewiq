@@ -1,6 +1,6 @@
 /* Runner core — build programs, run remotely or locally, execute test cases */
 
-import type { FnTest, LangId, RunnerLang } from "../../data/coding";
+import type { LangId, RunnerLang } from "../../data/coding";
 
 const WANDBOX_URL = "https://wandbox.org/api/compile.json";
 

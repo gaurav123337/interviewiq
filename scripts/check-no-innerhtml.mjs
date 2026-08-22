@@ -19,7 +19,7 @@ import { join, relative } from "node:path";
 const ROOT = join(import.meta.dirname, "..");
 const SRC = join(ROOT, "src");
 const ALLOW_FILES = new Set([
-  "src/services/runner.ts",
+  "src/services/runner/uiJudge.ts", /* extracted from runner.ts — the offline code-playground sandbox */
   "src/services/resumeHtml.ts",
   /* skillsReport.ts writes a self-contained print document to a brand-new
      noopener popup (never the app DOM). Every dynamic value is escaped by

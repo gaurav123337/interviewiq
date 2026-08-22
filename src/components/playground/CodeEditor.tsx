@@ -11,7 +11,7 @@ type UiPanel = 'html' | 'css' | 'js';
 import type { Theme } from '../../services/theme';
 
 /* Language → CodeMirror grammar (dynamically imported). */
-const LANG_EXT: Record<LangId, () => Extension> = {
+const LANG_EXT: Record<LangId, () => Promise<Extension>> = {
   python: () => import('@codemirror/lang-python').then(m => m.python()),
   javascript: () => import('@codemirror/lang-javascript').then(m => m.javascript()),
   typescript: () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
@@ -36,23 +36,32 @@ export const CodeEditor = memo(function CodeEditor({ value, onChange, lang, them
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const ext = lang === "html" ? htmlLang() : lang === "css" ? cssLang() : LANG_EXT[lang as LangId]();
-    const view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          basicSetup,
-          ext,
-          theme === "dark" ? oneDark : [],
-          EditorView.updateListener.of(u => {
-            if (u.docChanged) onChangeRef.current(u.state.doc.toString());
-          })
-        ]
-      })
+    let destroyed = false;
+    let view: EditorView | null = null;
+    const loader = lang === "html"
+      ? import('@codemirror/lang-html').then(m => m.html())
+      : lang === "css"
+      ? import('@codemirror/lang-css').then(m => m.css())
+      : LANG_EXT[lang as LangId]();
+    loader.then(ext => {
+      if (destroyed) return;
+      view = new EditorView({
+        parent: host,
+        state: EditorState.create({
+          doc: value,
+          extensions: [
+            basicSetup,
+            ext,
+            theme === "dark" ? oneDark : [],
+            EditorView.updateListener.of(u => {
+              if (u.docChanged) onChangeRef.current(u.state.doc.toString());
+            })
+          ]
+        })
+      });
+      viewRef.current = view;
     });
-    viewRef.current = view;
-    return () => { view.destroy(); viewRef.current = null; };
+    return () => { destroyed = true; view?.destroy(); viewRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang, theme]);
 

@@ -47,7 +47,7 @@ const _fmt = (v: unknown): string => {
 };
 
 /* Language → CodeMirror grammar (dynamically imported to keep the chunk small). */
-const _LANG_EXT: Record<LangId, () => Extension> = {
+const _LANG_EXT: Record<LangId, () => Promise<Extension>> = {
   python: () => import("@codemirror/lang-python").then(m => m.python()),
   javascript: () => import("@codemirror/lang-javascript").then(m => m.javascript()),
   typescript: () => import("@codemirror/lang-javascript").then(m => m.javascript({ typescript: true })),
