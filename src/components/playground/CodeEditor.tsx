@@ -4,26 +4,20 @@ import { basicSetup } from 'codemirror';
 import { EditorView } from '@codemirror/view';
 import { EditorState, type Extension } from '@codemirror/state';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { python } from '@codemirror/lang-python';
-import { javascript } from '@codemirror/lang-javascript';
-import { cpp } from '@codemirror/lang-cpp';
-import { java } from '@codemirror/lang-java';
-import { go } from '@codemirror/lang-go';
-import { html as htmlLang } from '@codemirror/lang-html';
-import { css as cssLang } from '@codemirror/lang-css';
+/* CodeMirror language packs — lazy-loaded to keep the Playground chunk small */
 import type { LangId } from '../../data/coding';
 
 type UiPanel = 'html' | 'css' | 'js';
 import type { Theme } from '../../services/theme';
 
-/* Language → CodeMirror grammar */
+/* Language → CodeMirror grammar (dynamically imported). */
 const LANG_EXT: Record<LangId, () => Extension> = {
-  python: () => python(),
-  javascript: () => javascript(),
-  typescript: () => javascript({ typescript: true }),
-  cpp: () => cpp(),
-  java: () => java(),
-  go: () => go()
+  python: () => import('@codemirror/lang-python').then(m => m.python()),
+  javascript: () => import('@codemirror/lang-javascript').then(m => m.javascript()),
+  typescript: () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })),
+  cpp: () => import('@codemirror/lang-cpp').then(m => m.cpp()),
+  java: () => import('@codemirror/lang-java').then(m => m.java()),
+  go: () => import('@codemirror/lang-go').then(m => m.go())
 };
 
 export const CodeEditor = memo(function CodeEditor({ value, onChange, lang, theme, className }: {

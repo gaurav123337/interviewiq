@@ -2,13 +2,7 @@ import {useEffect, useMemo, useState} from "react";
 
 import {type Extension} from "@codemirror/state";
 
-import { python } from "@codemirror/lang-python";
-import { javascript } from "@codemirror/lang-javascript";
-import { cpp } from "@codemirror/lang-cpp";
-import { java } from "@codemirror/lang-java";
-import { go } from "@codemirror/lang-go";
-import { html as htmlLang } from "@codemirror/lang-html"
-import { css as cssLang } from "@codemirror/lang-css"
+/* CodeMirror language packs — lazy-loaded to keep the Playground chunk small */
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
 import { PATTERN_LABELS } from "../data/patterns";
 import { companyById } from "../data";
@@ -52,14 +46,14 @@ const _fmt = (v: unknown): string => {
   try { return JSON.stringify(v) ?? String(v); } catch { return String(v); }
 };
 
-/* Language → CodeMirror grammar (TS builds on the JS grammar with types). */
+/* Language → CodeMirror grammar (dynamically imported to keep the chunk small). */
 const _LANG_EXT: Record<LangId, () => Extension> = {
-  python: () => python(),
-  javascript: () => javascript(),
-  typescript: () => javascript({ typescript: true }),
-  cpp: () => cpp(),
-  java: () => java(),
-  go: () => go()
+  python: () => import("@codemirror/lang-python").then(m => m.python()),
+  javascript: () => import("@codemirror/lang-javascript").then(m => m.javascript()),
+  typescript: () => import("@codemirror/lang-javascript").then(m => m.javascript({ typescript: true })),
+  cpp: () => import("@codemirror/lang-cpp").then(m => m.cpp()),
+  java: () => import("@codemirror/lang-java").then(m => m.java()),
+  go: () => import("@codemirror/lang-go").then(m => m.go())
 };
 
 const UI_PANELS = [
