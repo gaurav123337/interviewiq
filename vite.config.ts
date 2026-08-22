@@ -42,6 +42,16 @@ const cspPlugin = {
 export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss(), cspPlugin],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom"],
+          "vendor-redux": ["@reduxjs/toolkit", "react-redux"],
+        },
+      },
+    },
+  },
   server: {
     port: 8137,
     host: "127.0.0.1",
