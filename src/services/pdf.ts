@@ -7,7 +7,6 @@
    library is lazy-loaded and its worker/wasm/lang data are fetched from the
    jsdelivr CDN on first use, so OCR needs connectivity while text PDFs stay
    fully offline. */
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { ensureUint8Polyfills } from "./uint8Polyfill";
 import { extractDocxText } from "./docxRead";
@@ -33,10 +32,8 @@ export async function extractPdfText(file: File): Promise<string> {
       const { default: PdfWorker } = await import("./pdf.worker?worker");
       GlobalWorkerOptions.workerPort = new PdfWorker();
     } catch {
-      /* fallback: let pdfjs spin up the raw worker; if it can't, the fake
-         worker runs on the main thread where ensureUint8Polyfills() already
-         applied at module load. */
-      GlobalWorkerOptions.workerSrc = workerUrl;
+      /* fallback: the fake worker runs on the main thread where
+         ensureUint8Polyfills() already applied at module load. */
     }
   }
   const buf = await file.arrayBuffer();

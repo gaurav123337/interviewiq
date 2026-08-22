@@ -1,33 +1,10 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import type { View } from "../types";
 import { useApp } from "../store";
 import { ToastHost } from "../toast";
 import { FeedbackButton } from "./Feedback";
-import { Onboarding } from "./Onboarding";
-import { Interview } from "./Interview";
-import { Results } from "./Results";
-import { Planner } from "./Planner";
-import { Roadmap } from "./Roadmap";
-import { Drill } from "./Drill";
-import { Bank } from "./Bank";
-import { History } from "./History";
-import { Progress } from "./Progress";
-import { Settings } from "./Settings";
-import { Account } from "./Account";
-import { Playground } from "./Playground";
-import { Admin } from "./Admin";
-import { Landing } from "./Landing";
-import { Team } from "./Team";
-import { Jobs } from "./Jobs";
-import { Resources } from "./Resources";
-import { Counselor } from "./Counselor";
-import { SkillExplorer } from "./SkillExplorer";
-import { SkillDetail } from "./SkillDetail";
-import { SystemDesign } from "./SystemDesign";
 import { FloatingCoach } from "./FloatingCoach";
 import { CoachTopicProvider } from "../contexts/CoachContext";
-import { Legal } from "./Legal";
-import { ShareView } from "./ShareView";
 import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { getAdminState, refreshAdminData, subscribeAdmin, type AdminState } from "../services/admin";
@@ -36,6 +13,34 @@ import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcem
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { refreshEntitlement } from "../services/entitlement";
 import { Chip } from "./ui";
+
+/* ------------------------------------------------------------------ */
+/* Lazy-loaded page components — split into separate chunks so the     */
+/* initial bundle only ships the shell (header, nav, coach, toast).   */
+/* ------------------------------------------------------------------ */
+const Landing          = lazy(() => import("./Landing").then(m => ({ default: m.Landing })));          
+const Onboarding       = lazy(() => import("./Onboarding").then(m => ({ default: m.Onboarding })));   
+const Interview        = lazy(() => import("./Interview").then(m => ({ default: m.Interview })));     
+const Results          = lazy(() => import("./Results").then(m => ({ default: m.Results })));         
+const Planner          = lazy(() => import("./Planner").then(m => ({ default: m.Planner })));         
+const Roadmap          = lazy(() => import("./Roadmap").then(m => ({ default: m.Roadmap })));         
+const Drill            = lazy(() => import("./Drill").then(m => ({ default: m.Drill })));             
+const Bank             = lazy(() => import("./Bank").then(m => ({ default: m.Bank })));               
+const History          = lazy(() => import("./History").then(m => ({ default: m.History })));         
+const Progress         = lazy(() => import("./Progress").then(m => ({ default: m.Progress })));       
+const Settings         = lazy(() => import("./Settings").then(m => ({ default: m.Settings })));       
+const Account          = lazy(() => import("./Account").then(m => ({ default: m.Account })));         
+const Playground       = lazy(() => import("./Playground").then(m => ({ default: m.Playground })));   
+const Admin            = lazy(() => import("./Admin").then(m => ({ default: m.Admin })));             
+const Team             = lazy(() => import("./Team").then(m => ({ default: m.Team })));               
+const Jobs             = lazy(() => import("./Jobs").then(m => ({ default: m.Jobs })));               
+const Resources        = lazy(() => import("./Resources").then(m => ({ default: m.Resources })));     
+const Counselor        = lazy(() => import("./Counselor").then(m => ({ default: m.Counselor })));     
+const SkillExplorer    = lazy(() => import("./SkillExplorer").then(m => ({ default: m.SkillExplorer })));
+const SkillDetail      = lazy(() => import("./SkillDetail").then(m => ({ default: m.SkillDetail }))); 
+const SystemDesign     = lazy(() => import("./SystemDesign").then(m => ({ default: m.SystemDesign })));
+const Legal            = lazy(() => import("./Legal").then(m => ({ default: m.Legal })));             
+const ShareView        = lazy(() => import("./ShareView").then(m => ({ default: m.ShareView })));
 
 const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
   { id: "onboard", label: "Practice", icon: "🎯" },
@@ -58,6 +63,18 @@ const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "settings", label: "Settings", icon: "⚙️" },
   { id: "account", label: "Account", icon: "👤" }
 ];
+
+/** Suspense fallback shown while a route chunk loads. */
+function RouteSpinner() {
+  return (
+    <div className="grid min-h-[40vh] place-items-center">
+      <div className="flex flex-col items-center gap-3 text-mut">
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-acc1 border-t-transparent" />
+        <span className="text-[13px] font-bold">Loading…</span>
+      </div>
+    </div>
+  );
+}
 
 interface BIP extends Event { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
 
@@ -165,7 +182,9 @@ export function App() {
     return (
       <div className={theme === "dark" ? "dark" : ""}>
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pb-12 pt-6">
-          <ShareView payload={sharePayload} />
+          <Suspense fallback={<RouteSpinner />}>
+            <ShareView payload={sharePayload} />
+          </Suspense>
         </main>
       </div>
     );
@@ -252,29 +271,32 @@ export function App() {
         </div>
       </header>
 
-      {/* main */}
+      {/* main — each route lazily loaded in its own chunk */}
       <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pb-24 pt-6 md:pb-12">
-        {view === "landing" && <Landing />}
-        {view === "onboard" && <Onboarding />}
-        {view === "interview" && <Interview />}
-        {view === "results" && <Results />}
-        {view === "planner" && <Planner />}
-        {view === "roadmap" && <Roadmap />}
-        {view === "drill" && <Drill />}
-        {view === "bank" && <Bank />}
-        {view === "history" && <History />}
-        {view === "progress" && <Progress />}        { view === "settings" && <Settings /> }
-        { view === "account" && <Account /> }
-        { view === "playground" && <Playground /> }
-        {view === "admin" && <Admin />}
-        {view === "team" && <Team />}
-        {view === "legal" && <Legal />}
-        {view === "jobs" && <Jobs />}
-        {view === "resources" && <Resources />}
-        {view === "counselor" && <Counselor />}
-        {view === "learn" && <SkillExplorer />}
-        {view === "learn-detail" && <SkillDetail />}
-        {view === "systemDesign" && <SystemDesign />}
+        <Suspense fallback={<RouteSpinner />}>
+          {view === "landing" && <Landing />}
+          {view === "onboard" && <Onboarding />}
+          {view === "interview" && <Interview />}
+          {view === "results" && <Results />}
+          {view === "planner" && <Planner />}
+          {view === "roadmap" && <Roadmap />}
+          {view === "drill" && <Drill />}
+          {view === "bank" && <Bank />}
+          {view === "history" && <History />}
+          {view === "progress" && <Progress />}
+          {view === "settings" && <Settings />}
+          {view === "account" && <Account />}
+          {view === "playground" && <Playground />}
+          {view === "admin" && <Admin />}
+          {view === "team" && <Team />}
+          {view === "legal" && <Legal />}
+          {view === "jobs" && <Jobs />}
+          {view === "resources" && <Resources />}
+          {view === "counselor" && <Counselor />}
+          {view === "learn" && <SkillExplorer />}
+          {view === "learn-detail" && <SkillDetail />}
+          {view === "systemDesign" && <SystemDesign />}
+        </Suspense>
       </main>
 
       {/* app-wide footer — branding + the four legal pages on every view
