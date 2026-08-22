@@ -246,12 +246,19 @@ export function App() {
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
           <button
             onClick={() => go("account")}
-            title={cloud.user ? `Account — ${cloud.user.email}` : "Account"}
+            title={cloud.user ? `Account — ${cloud.user.email}` : "Sign in / Sign up"}
             aria-label="Account"
-            className="relative grid h-10 w-10 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[13px] font-extrabold transition-all hover:bg-wht/20 active:scale-95"
+            className={`relative flex items-center gap-2 rounded-xl border px-3 py-1.5 text-[13px] font-bold transition-all active:scale-95 ${
+              cloud.user
+                ? "border-line/15 bg-wht/10 hover:bg-wht/20"
+                : "border-acctxt/40 bg-acctxt/10 text-acctxt hover:bg-acctxt/20"
+            }`}
           >
-            {cloud.user ? (cloud.user.email ?? "?").charAt(0).toUpperCase() : "👤"}
-            {cloud.user && <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full border border-deep bg-ok" />}
+            <span className="grid h-7 w-7 place-items-center rounded-lg bg-deep/30 text-[12px] font-extrabold">
+              {cloud.user ? (cloud.user.email ?? "?").charAt(0).toUpperCase() : "👤"}
+            </span>
+            <span className="hidden sm:inline">{cloud.user ? (cloud.user.email ?? "Account").split("@")[0] : "Sign in"}</span>
+            {cloud.user && <span className="absolute right-1 top-1 h-2 w-2 rounded-full border border-deep bg-ok" />}
           </button>
           <button
             onClick={toggleTheme}
