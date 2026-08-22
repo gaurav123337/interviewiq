@@ -12,6 +12,7 @@ import { setAdminUnlocked } from "../services/entitlements";
 import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { refreshEntitlement } from "../services/entitlement";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { Chip } from "./ui";
 
 /* ------------------------------------------------------------------ */
@@ -273,7 +274,8 @@ export function App() {
 
       {/* main — each route lazily loaded in its own chunk */}
       <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 pb-24 pt-6 md:pb-12">
-        <Suspense fallback={<RouteSpinner />}>
+        <ErrorBoundary section="page">
+          <Suspense fallback={<RouteSpinner />}>
           {view === "landing" && <Landing />}
           {view === "onboard" && <Onboarding />}
           {view === "interview" && <Interview />}
@@ -297,6 +299,7 @@ export function App() {
           {view === "learn-detail" && <SkillDetail />}
           {view === "systemDesign" && <SystemDesign />}
         </Suspense>
+        </ErrorBoundary>
       </main>
 
       {/* app-wide footer — branding + the four legal pages on every view
@@ -401,7 +404,9 @@ export function App() {
 
       {/* global floating AI coach (context-aware) */}
       <CoachTopicProvider>
-        <FloatingCoach />
+        <ErrorBoundary section="AI coach">
+          <FloatingCoach />
+        </ErrorBoundary>
       </CoachTopicProvider>
     </div>
   );

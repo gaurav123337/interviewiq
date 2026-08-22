@@ -8,11 +8,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { aiAvailable, chat, type ChatMessage } from "../ai";
-import { SYSTEM_DESIGN_CASES, type SystemDesignCase } from "../data/systemDesignBank";
+import type { SystemDesignCase } from "../data/systemDesignBank";
 import { getPrereqExplanation } from "../data/prerequisiteKnowledge";
 import { lexicalSearch, documentTitles, ragTuningInfo } from "../services/rag";
 import { storageGet, storageSet } from "../services/storage";
 import { useCoachTopic } from "../contexts/CoachContext";
+
+/* Lazy-load the heavy system design bank (~1 KB → 1,080 lines of data) */
+let _casesCache: SystemDesignCase[] | null = null;
+let _casesPromise: Promise<SystemDesignCase[]> | null = null;
+function loadCases(): Promise<SystemDesignCase[]> {
+  if (_casesCache) return Promise.resolve(_casesCache);
+  if (!_casesPromise) _casesPromise = import("../data/systemDesignBank").then(m => { _casesCache = m.SYSTEM_DESIGN_CASES; return _casesCache; });
+  return _casesPromise;
+}
+/** Sync accessor — returns cached data once loaded, empty array before. */
+function getCases(): SystemDesignCase[] { return _casesCache ?? []; }
 import { citationSourceLabel } from "./CoachChat";
 import { CitationChip } from "./CitationChip";
 import { GroundingNote } from "./GroundingNote";
@@ -51,7 +62,7 @@ const RAG_INTERVAL = 2 * 60 * 60 * 1000;
 function loadMsgs(k: string): FABMsg[] { return storageGet<FABMsg[]>(k, []); }
 function saveMsgs(k: string, m: FABMsg[]) { storageSet(k, m.slice(-MAX_MSGS)); }
 function loadTopicHistory(): string[] { return storageGet<string[]>("iq.coachTopicHistory", []); }
-function getCaseById(id: string) { return SYSTEM_DESIGN_CASES.find(c => c.id === id); }
+function getCaseById(id: string) { return getCases().find(c => c.id === id); }
 
 /* ------------------------------------------------------------------ */
 /* RAG refresh                                                         */
@@ -121,7 +132,7 @@ function tokenize(t: string) { return t.toLowerCase().replace(/[^a-z0-9\s]/g, " 
 
 function matchCaseStudy(q: string): SystemDesignCase | null {
   const qt = new Set(tokenize(q)); let best: SystemDesignCase | null = null, bestS = 0;
-  for (const c of SYSTEM_DESIGN_CASES) {
+  for (const c of getCases()) {
     const ht = new Set(tokenize([c.title, c.blurb, ...c.prerequisites, ...c.followUpTopics].join(" ").toLowerCase()));
     let s = 0; for (const t of qt) { if (c.title.toLowerCase().includes(t)) s += 3; if (ht.has(t)) s += 1; }
     if (s > bestS) { bestS = s; best = c; }
@@ -212,7 +223,7 @@ async function sdOfflineReply(q: string, cur: SystemDesignCase | null, rag: { ti
     a = { lines: [
       "**I don't have verified info on this topic yet.**", "",
       "I can answer about these case studies:",
-      ...SYSTEM_DESIGN_CASES.map(c => `• ${c.icon} ${c.title}`), "",
+      ...getCases().map(c => `• ${c.icon} ${c.title}`), "",
       "---", "🌐 **Need more details?** For topics I don't cover:",
       "• Google it — search the concept + 'system design interview'",
       "• Check official docs (Redis, Kafka, etc.)",
@@ -288,6 +299,9 @@ export function FloatingCoach() {
   useEffect(() => { const id = setInterval(() => setTopicHistory(loadTopicHistory()), 2000); return () => clearInterval(id); }, []);
   useEffect(() => { void refreshRagCache(); const id = setInterval(() => void refreshRagCache(), 30 * 60 * 1000); return () => clearInterval(id); }, []);
 
+  /* Pre-load the system design cases so matchCaseStudy is ready on first use */
+  useEffect(() => { void loadCases(); }, []);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "/") { e.preventDefault(); setOpen(p => { if (!p) setTimeout(() => inputRef.current?.focus(), 100); return !p; }); }
@@ -312,7 +326,7 @@ export function FloatingCoach() {
       } else {
         const rag = await searchRag(text);
         if (coachType === "system-design") {
-          const mc = topic.caseId ? SYSTEM_DESIGN_CASES.find(c => c.id === topic.caseId) ?? matchCaseStudy(text) : matchCaseStudy(text);
+          const mc = topic.caseId ? getCases().find(c => c.id === topic.caseId) ?? matchCaseStudy(text) : matchCaseStudy(text);
           const { text: reply, citations } = await sdOfflineReply(text, mc, rag);
           setMsgs(p => [...p, { role: "assistant", text: reply, citations, grounded: citations.length > 0, citationsSource: "lexical" }]);
         } else {
