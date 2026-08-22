@@ -1,9 +1,7 @@
 
-import { LEVELS, LEVEL_INDEX } from '../../data';
-import { SYSTEM_DESIGN_CASES, getCategories, casesByCategory, type SystemDesignCase, type WhiteboardFlow } from '../../data/systemDesignBank';
-import { explainSystemDesign, systemDesignChat } from '../../services/systemDesignTutor';
-import { lexicalSearch, documentTitles, ragTuningInfo } from '../../services/rag';
+import type { SystemDesignCase } from '../../data/systemDesignBank';
 import { btnGhost, btnSm, cardCls, Chip } from '../ui';
+import { DifficultyDots } from './DifficultyDots';
 
 
 export function CaseCard({

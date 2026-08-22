@@ -24,6 +24,7 @@ import { getGoal } from "../services/goal";
 import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Difficulty, Seg } from "./ui";
 import { UpgradeModal } from "./Upgrade";
+import { CodeEditor } from "./playground/CodeEditor";
 import { CoachChat } from "./CoachChat";
 
 type CodeCache = Record<string, Partial<Record<LangId, string>>>;
@@ -795,57 +796,3 @@ export function Playground() {
 }
 
 /* ---------- CodeMirror editor ---------- */
-/* Real IDE experience: syntax highlighting, bracket matching, auto-closing
-   brackets, line numbers and Ctrl/Cmd+Space autocomplete (language-aware for
-   JS/TS/Python, word-based for C++/Java/Go, HTML/CSS aware for UI mode).
-   Recreates when the language or app theme changes; external value updates
-   (reset / language switch) are pushed in without clobbering the cursor. */
-
-function CodeEditor({ value, onChange, lang, theme, className }: {
-  value: string;
-  onChange: (v: string) => void;
-  lang: LangId | UiPanel;
-  theme: Theme;
-  className?: string;
-}) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-
-  /* create (or recreate) the editor when the language or theme changes */
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-    const ext = lang === "html" ? htmlLang() : lang === "css" ? cssLang() : LANG_EXT[lang as LangId]();
-    const view = new EditorView({
-      parent: host,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          basicSetup,
-          ext,
-          theme === "dark" ? oneDark : [],
-          EditorView.updateListener.of(u => {
-            if (u.docChanged) onChangeRef.current(u.state.doc.toString());
-          })
-        ]
-      })
-    });
-    viewRef.current = view;
-    return () => { view.destroy(); viewRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lang, theme]);
-
-  /* push external value changes (reset, language switch) into the editor */
-  useEffect(() => {
-    const view = viewRef.current;
-    if (!view) return;
-    const current = view.state.doc.toString();
-    if (current !== value) {
-      view.dispatch({ changes: { from: 0, to: current.length, insert: value } });
-    }
-  }, [value]);
-
-  return <div ref={hostRef} className={className} />;
-}

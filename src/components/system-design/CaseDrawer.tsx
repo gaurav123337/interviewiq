@@ -1,19 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { aiAvailable } from '../../ai';
-import { getDeepDive } from '../../data/deepDive';
-import { LEVELS, LEVEL_INDEX } from '../../data';
-import { SYSTEM_DESIGN_CASES, getCategories, casesByCategory, type SystemDesignCase, type WhiteboardFlow } from '../../data/systemDesignBank';
-import { explainSystemDesign, systemDesignChat } from '../../services/systemDesignTutor';
+import type { SystemDesignCase } from '../../data/systemDesignBank';
 import { lexicalSearch, documentTitles, ragTuningInfo } from '../../services/rag';
-import { getPrereqExplanation } from '../../data/prerequisiteKnowledge';
-import { CitationChip } from '../CitationChip';
-import { GroundingNote } from '../GroundingNote';
 import { getGoal } from '../../services/goal';
-import { storageGet, storageSet } from '../../services/storage';
-import type { CoachTopicContext } from '../../contexts/CoachContext';
+import { getPrereqExplanation } from '../../data/prerequisiteKnowledge';
+import { explainSystemDesign, systemDesignChat } from '../../services/systemDesignTutor';
+import { CitationChip } from '../CitationChip';
 import { toast } from '../../toast';
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer, ProgressBar } from '../ui';
-import { loadCompleted, markCompleted, loadQuiz, saveQuiz, loadHistory, saveHistoryEntry, loadBookmarks, loadTimerPreset, saveTimerPreset, loadFlashcards, calculateStreak, exportProgress, CATEGORY_META, type CompletedMap, type QuizState, type QuizHistoryEntry, type BookmarkMap, type FlashcardData, type FlashcardMap } from './helpers';
+import { DifficultyDots } from './DifficultyDots';
+import { WhiteboardPhase } from './WhiteboardPhase';
+import { GroundingNote } from '../GroundingNote';
+import { DeepDiveBlock } from './DeepDiveBlock';
 
 
 export function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onMarkComplete, onToggleBookmark }: {

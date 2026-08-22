@@ -1,19 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { aiAvailable } from '../../ai';
+import { useState } from 'react';
 import { getDeepDive } from '../../data/deepDive';
-import { LEVELS, LEVEL_INDEX } from '../../data';
-import { SYSTEM_DESIGN_CASES, getCategories, casesByCategory, type SystemDesignCase, type WhiteboardFlow } from '../../data/systemDesignBank';
-import { explainSystemDesign, systemDesignChat } from '../../services/systemDesignTutor';
-import { lexicalSearch, documentTitles, ragTuningInfo } from '../../services/rag';
-import { getPrereqExplanation } from '../../data/prerequisiteKnowledge';
-import { CitationChip } from '../CitationChip';
-import { GroundingNote } from '../GroundingNote';
+import { cardCls } from '../ui';
 import { getGoal } from '../../services/goal';
-import { storageGet, storageSet } from '../../services/storage';
-import type { CoachTopicContext } from '../../contexts/CoachContext';
-import { toast } from '../../toast';
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer, ProgressBar } from '../ui';
-import { loadCompleted, markCompleted, loadQuiz, saveQuiz, loadHistory, saveHistoryEntry, loadBookmarks, loadTimerPreset, saveTimerPreset, loadFlashcards, calculateStreak, exportProgress, CATEGORY_META, type CompletedMap, type QuizState, type QuizHistoryEntry, type BookmarkMap, type FlashcardData, type FlashcardMap } from './helpers';
 
 
 export function DeepDiveArchitectures(_p: { goal: ReturnType<typeof getGoal> }) {
