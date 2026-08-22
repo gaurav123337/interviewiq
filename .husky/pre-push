@@ -1,0 +1,24 @@
+#!/bin/sh
+# Pre-push hook — runs the same gates as CI before allowing a push.
+
+echo "Running pre-push checks..."
+
+# Type check (uses tsconfig.build.json)
+if ! npx tsc -p tsconfig.build.json --noEmit 2>/dev/null; then
+  echo "Type check failed. Fix errors before pushing."
+  exit 1
+fi
+
+# Security check
+if ! node scripts/check-no-innerhtml.mjs 2>/dev/null; then
+  echo "Security check failed. Fix before pushing."
+  exit 1
+fi
+
+# Production build
+if ! npx vite build 2>/dev/null; then
+  echo "Build failed. Fix before pushing."
+  exit 1
+fi
+
+echo "All pre-push checks passed."

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Pre-commit hook — fast type check only.
+# Full checks (build + tests) run on pre-push.
+
+echo "Type-checking staged files..."
+if ! npx tsc -p tsconfig.build.json --noEmit 2>/dev/null; then
+  echo "Type check failed. Fix errors before committing."
+  exit 1
+fi

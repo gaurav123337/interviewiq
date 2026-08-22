@@ -11,7 +11,8 @@
     "test": "vitest run",
     "eval:rag": "vitest run src/__tests__/rag-eval.test.ts",
     "typecheck": "tsc --noEmit",
-    "icons": "node scripts/gen-icons.js"
+    "icons": "node scripts/gen-icons.js",
+    "prepare": "husky"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",
@@ -40,6 +41,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "husky": "^9.1.7",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2",
