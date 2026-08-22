@@ -1,7 +1,10 @@
+import { memo } from "react";
 import { revenueSummary, fmtMinor } from "../../../services/billing";
 import { Chip, cardCls } from "../../ui";
 
-export function RevenueSnapshotCard({ payments }: { payments: any[] }) {
+import type { AdminPaymentRow } from "../../../services/billing";
+
+export const RevenueSnapshotCard = memo(function RevenueSnapshotCard({ payments }: { payments: AdminPaymentRow[] }) {
   const revenue = revenueSummary(payments);
   return (
     <div className={`${cardCls} p-5`}>
@@ -42,4 +45,4 @@ export function RevenueSnapshotCard({ payments }: { payments: any[] }) {
       </div>
 
   );
-}
+});

@@ -1,6 +1,7 @@
+import { memo } from "react";
 
 
-export function DifficultyDots({ level }: { level: number }) {
+export const DifficultyDots = memo(function DifficultyDots({ level }: { level: number }) {
   return (
     <span className="inline-flex items-center gap-0.5" title={`Difficulty ${level}/5`}>
       {[1, 2, 3, 4, 5].map(i => (
@@ -8,5 +9,5 @@ export function DifficultyDots({ level }: { level: number }) {
       ))}
     </span>
   );
-}
+});
 

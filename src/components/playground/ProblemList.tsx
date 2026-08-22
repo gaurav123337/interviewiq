@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { CODING_PROBLEMS, type CodingProblem } from "../../data/coding";
 import { PATTERN_LABELS } from "../../data/patterns";
 import { companyFrequency, companyInterviewPlan, freqForProblem, hasPersonalSignals, personalPlan, problemIsForCompany } from "../../data/codingCompanies";
@@ -28,7 +29,7 @@ interface ProblemListProps {
   proGated: boolean;
 }
 
-export function ProblemList({
+export const ProblemList = memo(function ProblemList({
   search, setSearch, cat, setCat,
   patternFilter, setPatternFilter, patternCounts,
   companyFilter, setCompanyFilter, goalCompany,
@@ -213,4 +214,4 @@ export function ProblemList({
       </p>
     </div>
   );
-}
+});

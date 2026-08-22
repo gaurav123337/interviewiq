@@ -1,3 +1,4 @@
+import { memo } from "react";
 /* OutputPanel — unified output for CLI, function, and UI modes. */
 
 import type { FnCaseResult, UiCaseResult } from "../../services/runner";
@@ -169,7 +170,7 @@ interface OutputPanelProps {
   hiddenAssertionCount: number;
 }
 
-export function OutputPanel({
+export const OutputPanel = memo(function OutputPanel({
   isFn, isUi, customIn, setCustomIn,
   runOut, cases, fnCases, uiCases,
   testCount, hiddenCount, assertionCount, hiddenAssertionCount,
@@ -182,4 +183,4 @@ export function OutputPanel({
       {isUi && uiCases && <UiOutput uiCases={uiCases} assertionCount={assertionCount} hiddenAssertionCount={hiddenAssertionCount} />}
     </>
   );
-}
+});

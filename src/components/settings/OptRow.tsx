@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
-export function OptRow({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
+export const OptRow = memo(function OptRow({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 py-3.5 last:border-0">
       <div>
@@ -10,7 +10,7 @@ export function OptRow({ title, sub, children }: { title: string; sub: string; c
       {children}
     </div>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* AI Models per Feature section                                       */

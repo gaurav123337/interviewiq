@@ -1,10 +1,11 @@
+import { memo } from "react";
 
 import type { SystemDesignCase } from '../../data/systemDesignBank';
 import { btnGhost, btnSm, cardCls, Chip } from '../ui';
 import { DifficultyDots } from './DifficultyDots';
 
 
-export function CaseCard({
+export const CaseCard = memo(function CaseCard({
   caseData: c,
   isCompleted,
   isBookmarked,
@@ -62,5 +63,5 @@ export function CaseCard({
       </div>
     </button>
   );
-}
+});
 

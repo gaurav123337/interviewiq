@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { CareerProfile, JobPosting } from "../../types";
 import { VERDICT_META, salaryLabel } from "../../services/jobs";
 import type { MatchVerdict } from "../../types";
@@ -28,7 +29,7 @@ interface MatchFeedCardProps {
   isDue: boolean;
 }
 
-export function MatchFeedCard({
+export const MatchFeedCard = memo(function MatchFeedCard({
   job: j, match: m, locked, track,
   displayCurrency, profile,
   onAddSkill, onGapPlan, onKit, onApply,
@@ -183,4 +184,4 @@ export function MatchFeedCard({
       )}
     </li>
   );
-}
+});

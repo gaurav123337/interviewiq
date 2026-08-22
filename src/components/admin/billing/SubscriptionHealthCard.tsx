@@ -1,7 +1,10 @@
+import { memo } from "react";
 import { subscriptionSummary, fmtMinor } from "../../../services/billing";
 import { Chip, cardCls } from "../../ui";
 
-export function SubscriptionHealthCard({ subs }: { subs: any[] }) {
+import type { AdminSubscriptionRow } from "../../../services/billing";
+
+export const SubscriptionHealthCard = memo(function SubscriptionHealthCard({ subs }: { subs: AdminSubscriptionRow[] }) {
   const subsSummary = subscriptionSummary(subs);
   return (
     <div className={`${cardCls} p-5`}>
@@ -32,4 +35,4 @@ export function SubscriptionHealthCard({ subs }: { subs: any[] }) {
       </div>
 
   );
-}
+});

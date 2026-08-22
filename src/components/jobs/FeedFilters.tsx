@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { EMPTY_FILTERS, type JobFilters } from "../../services/jobs";
 import { btnGhost, btnSm, cardCls } from "../ui";
 
@@ -16,7 +17,7 @@ interface FeedFiltersProps {
   jobCount: number;
 }
 
-export function FeedFilters({
+export const FeedFilters = memo(function FeedFilters({
   filters, setFilters,
   displayCurrency, setDisplayCurrency,
   feedSources, jobCount,
@@ -92,4 +93,4 @@ export function FeedFilters({
       </div>
     </div>
   );
-}
+});

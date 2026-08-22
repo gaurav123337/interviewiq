@@ -1,7 +1,8 @@
+import { memo } from "react";
 import { getDeepDive } from '../../data/deepDive';
 
 
-export function DeepDiveBlock({ title }: { title: string }) {
+export const DeepDiveBlock = memo(function DeepDiveBlock({ title }: { title: string }) {
   const dd = getDeepDive(title);
   const archs = (dd as { architectures?: { name: string; blurb: string; components: string[]; tradeoffs: string[]; scaleNotes: string; failureModes: string[]; followUpQa: { q: string; a: string }[] }[] }).architectures;
   if (!archs?.length) return null;
@@ -51,5 +52,5 @@ export function DeepDiveBlock({ title }: { title: string }) {
       </div>
     </div>
   );
-}
+});
 

@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { memo, useState, useEffect } from "react";
 import { getPublishedPolicies, publishPolicies } from "../../../services/policies";
 import { POLICY_DEFAULTS, POLICY_META, type PolicyId } from "../../../data/policies";
 import { toast } from "../../../toast";
 import { cardCls, btnPrimary, btnSm } from "../../ui";
 
-export function LegalPoliciesCard({ busy }: { busy: boolean }) {
+export const LegalPoliciesCard = memo(function LegalPoliciesCard({ busy }: { busy: boolean }) {
   const [policyDocs, setPolicyDocs] = useState<Record<PolicyId, string>>({ ...POLICY_DEFAULTS });
 
   useEffect(() => {
@@ -53,4 +53,4 @@ export function LegalPoliciesCard({ busy }: { busy: boolean }) {
       </div>
 
   );
-}
+});

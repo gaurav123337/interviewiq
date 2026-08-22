@@ -1,6 +1,7 @@
+import { memo } from "react";
 import type { WhiteboardFlow } from '../../data/systemDesignBank';
 
-export function WhiteboardPhase({ phase, index }: { phase: WhiteboardFlow; index: number }) {
+export const WhiteboardPhase = memo(function WhiteboardPhase({ phase, index }: { phase: WhiteboardFlow; index: number }) {
   return (
     <div className="rounded-xl border border-line/10 bg-wht/5 p-4">
       <div className="flex items-center gap-2">
@@ -22,5 +23,5 @@ export function WhiteboardPhase({ phase, index }: { phase: WhiteboardFlow; index
       )}
     </div>
   );
-}
+});
 

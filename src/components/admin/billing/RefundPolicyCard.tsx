@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { memo, useState, useEffect } from "react";
 import { REFUND_POLICY_DEFAULTS, publishRefundPolicy, getRefundPolicy, type RefundPolicy } from "../../../services/billing";
 import { toast } from "../../../toast";
 import { cardCls, btnPrimary, btnSm } from "../../ui";
 
-export function RefundPolicyCard({ busy }: { busy: boolean }) {
+export const RefundPolicyCard = memo(function RefundPolicyCard({ busy }: { busy: boolean }) {
   const [policyDraft, setPolicyDraft] = useState<RefundPolicy>({ ...REFUND_POLICY_DEFAULTS });
   const [presetsText, setPresetsText] = useState((REFUND_POLICY_DEFAULTS.reason_presets ?? []).join(", "));
 
@@ -51,4 +51,4 @@ export function RefundPolicyCard({ busy }: { busy: boolean }) {
       </div>
 
   );
-}
+});

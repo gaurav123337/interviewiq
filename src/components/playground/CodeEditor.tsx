@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useEffect, useRef } from 'react';
 import { basicSetup } from 'codemirror';
 import { EditorView } from '@codemirror/view';
@@ -25,7 +26,7 @@ const LANG_EXT: Record<LangId, () => Extension> = {
   go: () => go()
 };
 
-export function CodeEditor({ value, onChange, lang, theme, className }: {
+export const CodeEditor = memo(function CodeEditor({ value, onChange, lang, theme, className }: {
   value: string;
   onChange: (v: string) => void;
   lang: LangId | UiPanel;
@@ -72,5 +73,5 @@ export function CodeEditor({ value, onChange, lang, theme, className }: {
   }, [value]);
 
   return <div ref={hostRef} className={className} />;
-}
+});
 
