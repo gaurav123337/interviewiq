@@ -39,6 +39,8 @@ import { ApplyTrackerCard } from "./jobs/ApplyTrackerCard";
 import { ResumeCard } from "./jobs/ResumeCard";
 import { CareerProfileCard } from "./jobs/CareerProfileCard";
 import { CompanyRankingCard } from "./jobs/CompanyRankingCard";
+import { FeedFilters } from "./jobs/FeedFilters";
+import { MatchFeedCard } from "./jobs/MatchFeedCard";
 
 /* verdict tone → text color (matches VERDICT_META tones) */
 const verdictToneCls = (tone: string) =>
@@ -518,76 +520,11 @@ export function Jobs() {
       />
 
       {/* feed filters */}
-      <div className={`${cardCls} mt-5`}>
-        <div className="flex flex-wrap items-center gap-2 p-4">
-          <input
-            className="inp min-w-[160px] flex-1"
-            placeholder="🔍 Search title, company, skill…"
-            value={filters.query}
-            onChange={e => setFilters(f => ({ ...f, query: e.target.value }))}
-          />
-          <select className="inp w-auto cursor-pointer" value={filters.remote === null ? "" : String(filters.remote)}
-            onChange={e => setFilters(f => ({ ...f, remote: e.target.value === "" ? null : e.target.value === "true" }))}>
-            <option value="">📍 Any location</option>
-            <option value="true">🏠 Remote only</option>
-            <option value="false">🏢 On-site only</option>
-          </select>
-          <select className="inp w-auto cursor-pointer" value={filters.companySize ?? ""}
-            onChange={e => setFilters(f => ({ ...f, companySize: e.target.value || null }))}>
-            <option value="">🏢 Any size</option>
-            <option value="large">Large (1,000+ employees)</option>
-            <option value="mid">Mid (50–999)</option>
-            <option value="small">Small (&lt;50)</option>
-          </select>
-          <select
-            className="inp w-auto cursor-pointer"
-            value={displayCurrency}
-            onChange={e => {
-              const c = e.target.value;
-              setDisplayCurrency(c);
-              setFilters(f => ({ ...f, currency: c }));
-            }}
-            title="One currency for every salary in the app — postings are converted to it"
-          >
-            <option value="USD">💱 $ USD</option>
-            <option value="INR">💱 ₹ INR</option>
-            <option value="EUR">💱 € EUR</option>
-            <option value="GBP">💱 £ GBP</option>
-          </select>
-          <input
-            type="number" min={0} step={5000}
-            className="inp w-[110px]"
-            placeholder={`Min (${displayCurrency})`}
-            value={filters.salaryMin ?? ""}
-            onChange={e => setFilters(f => ({ ...f, salaryMin: e.target.value ? Number(e.target.value) : null }))}
-            title={`Minimum annual salary (in ${displayCurrency}, converted)`}
-          />
-          {(filters.query || filters.remote !== null || filters.companySize || filters.currency || filters.salaryMin !== null || filters.salaryMax !== null || filters.source) && (
-            <button className={btnGhost + btnSm} onClick={() => setFilters(EMPTY_FILTERS)}>✕ Clear</button>
-          )}
-        </div>
-        {/* source chips — every platform with live postings in the feed */}
-        <div className="flex flex-wrap items-center gap-1.5 border-t border-line/10 px-4 py-2.5">
-          <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">Source:</span>
-          <button
-            className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${!filters.source ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
-            onClick={() => setFilters(f => ({ ...f, source: null }))}
-          >
-            📦 All ({jobs.length})
-          </button>
-          {feedSources.map(({ s, n, label }) => (
-            <button
-              key={s}
-              className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold transition-all ${filters.source === s ? "border-acc1/40 bg-acc1/15 text-acctxt" : "border-line/15 bg-deep/40 text-mut hover:text-ink"}`}
-              onClick={() => setFilters(f => ({ ...f, source: f.source === s ? null : s }))}
-              title={`Only ${label} postings`}
-            >
-              {label} ({n})
-            </button>
-          ))}
-        </div>
-      </div>
-
+      <FeedFilters
+        filters={filters} setFilters={setFilters}
+        displayCurrency={displayCurrency} setDisplayCurrency={setDisplayCurrency}
+        feedSources={feedSources} jobCount={jobs.length}
+      />
       {/* match feed */}
       <div id="match-feed" ref={feedRef} className={`${cardCls} mt-5 scroll-mt-3 overflow-hidden transition-shadow ${feedFlash ? "ring-2 ring-acc1/70" : ""}`}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/10 p-5">
@@ -633,157 +570,25 @@ export function Jobs() {
               const m = matchOf.get(j.id);
               const locked = proGated;
               return (
-                <li key={j.id} className="p-4">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      className={`rounded-full border px-2.5 py-1 text-[11.5px] font-extrabold transition-all ${locked ? "border-line/20 bg-wht/10 text-mut hover:text-ink" : `${verdictToneCls(m!.verdict)} border-current/25 bg-current/10`}`}
-                      onClick={() => locked && setUpgrade("Match verdicts, reasons and the skill-gap roadmap are Pro features.")}
-                      title={locked ? "Pro feature" : VERDICT_META[m!.verdict].label}
-                    >
-                      {locked ? "🔒 Match verdict" : `${m!.score}% · ${VERDICT_META[m!.verdict].label}`}
-                    </button>
-                    <span className="text-[14px] font-extrabold">{j.title}</span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-mut">
-                    <span className="font-bold text-ink">{j.company}</span>
-                    {j.location && <span>📍 {j.location}</span>}
-                    {j.remote && <Chip tone="ok">REMOTE</Chip>}
-                    {j.level && <span>· {j.level}</span>}
-                    {j.alsoSources && j.alsoSources.length > 0 && (
-                      <Chip tone="default" title={`This role is also posted on ${j.alsoSources.join(", ")} — collapsed into one card`}>
-                        ＋{j.alsoSources.length} on {j.alsoSources.join(", ")}
-                      </Chip>
-                    )}
-                    {(() => { const s = salaryLabel(j, displayCurrency); return s ? <span className="font-bold text-ok">💰 {s}</span> : null; })()}
-                    <span className="inline-flex items-center gap-1 rounded-full border border-line/15 bg-wht/[.04] px-2 py-0.5 text-[10.5px] font-semibold text-fnt" title={trustOf(j.source).title}>
-                      <span aria-hidden>{trustOf(j.source).icon}</span> {trustOf(j.source).label}
-                    </span>
-                    {j.url && <a href={j.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-acc1/30 bg-acc1/5 px-2 py-0.5 text-[11px] font-bold text-acctxt transition-all hover:bg-acc1/15">View →</a>}
-                  </div>
-                  {!locked && m && (m.matched.length || m.missing.length || m.blockers.length) && (
-                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px]">
-                      {m.matched.length > 0 && (
-                        <span className="flex flex-wrap items-center gap-1">
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Matched:</span>
-                          {m.matched.map(s => (
-                            <Chip key={s} tone="ok" title="Appears in your resume">✓ {s}</Chip>
-                          ))}
-                        </span>
-                      )}
-                      {m.missing.length > 0 && (
-                        <span className="flex flex-wrap items-center gap-1">
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Missing:</span>
-                          {m.missing.map(s => (
-                            <button
-                              key={s}
-                              className="inline-flex items-center gap-1 rounded-full border border-bad/30 bg-bad/10 px-2 py-0.5 text-[11.5px] font-semibold text-bad transition-all hover:bg-bad/20"
-                              onClick={() => addSkillToProfile(s)}
-                              title={`Add \"${s}\" to my profile skills`}
-                            >
-                              {s} <span className="text-[10px] opacity-60">+add</span>
-                            </button>
-                          ))}
-                        </span>
-                      )}
-                      {m.missing.length > 0 && (
-                        <button
-                          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
-                          onClick={() => setGapJob({ job: j, missing: m.missing })}
-                        >
-                          📈 Gap plan
-                        </button>
-                      )}
-                      <button
-                        className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
-                        onClick={() => (locked ? setUpgrade("Tailored resumes and cover letters are Pro features.") : setKitJob(j))}
-                      >
-                        📄 Resume & letter
-                      </button>
-                      <button
-                        className="rounded-full border border-ok/30 bg-ok/10 px-2.5 py-0.5 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/20"
-                        onClick={() => applyOnPlatform(j)}
-                        title={`Open the official application on ${sourceLabel(j.source)} — you complete it there; InterviewIQ never applies for you`}
-                      >
-                        🔗 Apply on {sourceLabel(j.source)} ↗
-                      </button>
-                      {m.blockers.map((b, i) => (
-                        <span key={i} className="text-warn">⚠️ {b}</span>
-                      ))}
-                    </div>
-                  )}
-                  {!locked && m && m.missing.length === 0 && (() => {
-                    /* no missing-skill chips to suggest — offer the posting's own
-                       mined vocabulary instead, so skill-less postings stay actionable */
-                    const has = new Set((profile?.skills ?? []).map(s => s.toLowerCase()));
-                    const skip = new Set([...m.matched, ...m.missing].map(s => s.toLowerCase()));
-                    const jd = jdKeywords(j, 6).filter(k => !has.has(k) && !skip.has(k));
-                    if (!jd.length) return null;
-                    return (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                        <span className="text-[10.5px] font-bold uppercase tracking-wider text-mut">💡 Leans on</span>
-                        {jd.slice(0, 4).map(k => (
-                          <button
-                            className="inline-flex items-center gap-1 rounded-full border border-acc1/30 bg-acc1/10 px-2 py-0.5 text-[11.5px] font-semibold text-acctxt transition-all hover:bg-acc1/20"
-                            onClick={() => addSkillToProfile(k)}
-                          >
-                            {k} <span className="text-[10px] opacity-60">+</span>
-                          </button>
-                        ))}
-                      </div>
-                    );
-                  })()}
-                  {!locked && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/10 pt-2.5">
-                      {dueIds.has(j.id) && (
-                        <button
-                          className="rounded-full border border-warn/50 bg-warn/15 px-2.5 py-1 text-[11.5px] font-extrabold text-warn transition-all hover:bg-warn/25"
-                          onClick={() => setDraftJob(tracks[j.id]!)}
-                          title="Follow-up is due — draft a message or update the status"
-                        >
-                          🔔 Follow up
-                        </button>
-                      )}
-                      <span className="text-[11px] font-bold uppercase tracking-wider text-mut">Track:</span>
-                      <select
-                        className="cursor-pointer rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-fnt outline-none transition-all hover:text-ink"
-                        value={tracks[j.id]?.status ?? "saved"}
-                        onChange={e => setJobStatus(j.id, e.target.value as ApplyStatus)}
-                        title="Application status"
-                      >
-                        {STATUS_ORDER.map(s => (
-                          <option key={s} value={s}>{STATUS_META[s].emoji} {STATUS_META[s].label}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="date"
-                        className="cursor-pointer rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-fnt outline-none transition-all hover:text-ink"
-                        value={tracks[j.id]?.followUpAt ? new Date(tracks[j.id]!.followUpAt!).toISOString().slice(0, 10) : ""}
-                        onChange={e => setJobFollowUp(j.id, e.target.value)}
-                        title="Follow-up date — you'll be reminded when it's due"
-                      />      {tracks[j.id] && (tracks[j.id]!.status === "applied" || tracks[j.id]!.status === "interview" || tracks[j.id]!.status === "offer") && (
-        <button
-          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-1 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
-          onClick={() => setDraftJob(tracks[j.id]!)}
-          title="Copy a professional follow-up message"
-        >
-          ✍️ Follow-up
-        </button>
-      )}
-      {tracks[j.id]?.status === "interview" && (
-        <button
-          className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-1 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
-          onClick={() => setRoundJob(tracks[j.id]!)}
-          title="Track interview rounds — what was asked and how it went"
-        >
-          🎤 Rounds {tracks[j.id]!.rounds.length > 0 ? `(${tracks[j.id]!.rounds.length})` : ""}
-        </button>
-      )}
-                    </div>
-                  )}
-                  {locked && (
-                    <p className="mt-2 text-[11.5px] text-mut">Unlock Pro to see why this is or isn't a match — and get a step-by-step plan to close the gaps.</p>
-                  )}
-                </li>
+                <MatchFeedCard
+                  key={j.id}
+                  job={j}
+                  match={m!}
+                  locked={locked}
+                  track={tracks[j.id]}
+                  displayCurrency={displayCurrency}
+                  profile={profile}
+                  onAddSkill={addSkillToProfile}
+                  onGapPlan={(job, missing) => setGapJob({ job, missing })}
+                  onKit={setKitJob}
+                  onApply={applyOnPlatform}
+                  onStatusChange={(jobId, status) => setJobStatus(jobId, status)}
+                  onFollowUpDate={(jobId, date) => setJobFollowUp(jobId, date)}
+                  onDraft={setDraftJob}
+                  onRound={setRoundJob}
+                  onUpgrade={setUpgrade}
+                  isDue={dueIds.has(j.id)}
+                />
               );
             })}
           </ul>
