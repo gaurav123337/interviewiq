@@ -4,7 +4,7 @@ import { adminCreateGrant } from "../../../services/entitlement";
 import { toast } from "../../../toast";
 import { cardCls, btnPrimary, btnGhost, btnSm } from "../../ui";
 
-export const GrantCodeCard = memo(function GrantCodeCard({ busy, setBusy, load }: { busy: boolean; setBusy: (v: boolean) => void; load: () => void }) {
+export const GrantCodeCard = memo(function GrantCodeCard({ busy, setBusy }: { busy: boolean; setBusy: (v: boolean) => void }) {
   const [cPlan, setCPlan] = useState<string>("monthly");
   const [cDays, setCDays] = useState(30);
   const [cPct, setCPct] = useState(0);

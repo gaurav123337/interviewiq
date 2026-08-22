@@ -3,7 +3,7 @@ import type { Config } from "../types";
 import {aiAvailable, chat, getSettings, saveSettings} from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import {
-  clearServerEntitlement, getCachedEntitlement, redeemGrant, refreshEntitlement, testLicensing, tierSource, type ServerEntitlement
+  getCachedEntitlement, redeemGrant, refreshEntitlement, testLicensing, tierSource, type ServerEntitlement
 } from "../services/entitlement";
 import { cancelSubscription, fmtMinor, getMyPayments, getMySubscription, type MyPayment, type MySubscription } from "../services/billing";
 import { getTheme, setTheme, type Theme } from "../services/theme";

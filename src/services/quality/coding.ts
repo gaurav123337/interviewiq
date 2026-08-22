@@ -2,8 +2,6 @@
 
 import { getSupabaseClient } from "../cloud";
 
-import { QualityRow } from "./scoring";
-
 export interface CodingQualityRow {
   problemId: string;
   attempts: number;

@@ -3,18 +3,18 @@
 import type { JobPosting } from "../../types";
 import type { ApplyTrack } from "../../services/applyTrack";
 import { sourceLabel } from "../../services/importJob";
-import { btnGhost, btnSm, Chip, Modal } from "../ui";
+import { Chip, Modal } from "../ui"
 
 interface Props {
   queue: JobPosting[];
   tracks: Record<string, ApplyTrack>;
-  jobs: JobPosting[];
+  
   onApply: (j: JobPosting) => void;
   onKit: (j: JobPosting) => void;
   onClose: () => void;
 }
 
-export function ApplyQueueModal({ queue, tracks, jobs, onApply, onKit, onClose }: Props) {
+export function ApplyQueueModal({ queue, tracks, onApply, onKit, onClose }: Props) {
   return (
     <Modal
       onClose={onClose}

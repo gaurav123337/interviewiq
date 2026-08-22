@@ -1,10 +1,10 @@
 /* Priority + progress assignment — assigns P0/P1/P2 to every phase topic */
 
 import type { CareerGoal, SavedSession, SkillProfile } from "../../types";
-import { companyById, fieldById, levelById } from "../../data";
+import { companyById, levelById } from "../../data"
 import { tokenize } from "../../engine/scoring";
 import { buildPhases, type Phase, type PhaseTopic } from "./phases";
-import { buildSignals, type Signals } from "./signals";
+import { buildSignals } from "./signals"
 import type { Priority, RoadmapTopic, TopicProgress } from "./types";
 
 /** Most-missed key points from recent low-scoring sessions (same idea as planner weak topics). */

@@ -3,7 +3,7 @@
 import { getSupabaseClient } from "../cloud";
 import { storageGet, storageSet } from "../storage";
 
-import { Ad, Banner, Resource, Testimonial, TipConfig } from "./types";
+import { Ad, Resource, Testimonial, TipConfig } from "./types"
 
 /* ------------------------------------------------------------------ */
 /* LocalStorage cache keys                                             */

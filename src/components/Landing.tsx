@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useWebVitals, PerfOverlay } from "./PerformanceMonitor";
 import { useApp } from "../store";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
@@ -29,6 +30,7 @@ const FAQS = [
 
 export function Landing() {
   const { nav } = useApp();
+  const vitals = useWebVitals();
   const [upgrade, setUpgrade] = useState(false);
   /* admin-published pricing (app_config → pricing) — shows INR when
      published, falls back to the baked-in USD catalog */
@@ -219,6 +221,7 @@ export function Landing() {
       </footer>
 
       {upgrade && <UpgradeModal onClose={() => setUpgrade(false)} reason="Go Pro — unlimited sessions, AI coaching and voice mode." />}
+      {vitals.adminView && <PerfOverlay metrics={vitals} />}
     </div>
   );
 }

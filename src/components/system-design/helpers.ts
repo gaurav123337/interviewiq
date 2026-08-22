@@ -99,7 +99,7 @@ export function calculateStreak(completed: CompletedMap): { current: number; bes
 
 export function exportProgress(): string {
   const completed = loadCompleted();
-  const history = loadHistory();
+  const _history = loadHistory();
   const bookmarks = loadBookmarks();
   const flashcards = loadFlashcards();
   const total = SYSTEM_DESIGN_CASES.length;

@@ -1,7 +1,7 @@
 /* Analytics tracking — clicks, impressions, summaries, daily analytics */
 
 import { getSupabaseClient } from "../cloud";
-import { storageGet, storageSet } from "../storage";
+import { storageSet } from "../storage"
 
 import { type Ad, type Banner, type AnalyticsSummary, type ABTestResult, type DailyAnalytics } from "./types";
 import { CACHE, fetchFromDB } from "./cache";

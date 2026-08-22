@@ -3,14 +3,14 @@ import type { CareerProfile, JobPosting, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { isCloudConfigured } from "../services/cloud";
 import { toast } from "../toast";
-import {btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal} from "./ui";
+import { btnGhost, btnSm, cardCls, Chip } from "./ui"
 import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
 import {
-  addImportedJob, dedupeJobs, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
+  dedupeJobs, EMPTY_FILTERS, EMPTY_RANK_FILTERS, filterJobs, filterRanks, getCareerProfile,
   lastJobsRefresh, listJobs, listShortlist, loadJobsFromCloud, matchJob, rankCompanies, refreshJobs,
-  recommendationReason, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type JobFilters, type RankFilters
+  saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
 import { sourceLabel, sourcePriority } from "../services/importJob";
@@ -40,7 +40,7 @@ import { FeedFilters } from "./jobs/FeedFilters";
 import { MatchFeedCard } from "./jobs/MatchFeedCard";
 
 /* verdict tone → text color (matches VERDICT_META tones) */
-const verdictToneCls = (tone: string) =>
+const _verdictToneCls = (tone: string) =>
   tone === "ok" ? "text-ok" : tone === "co" ? "text-acctxt" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-mut";
 export function Jobs() {
   const [profile, setProfile] = useState<CareerProfile | null>(() => getCareerProfile());
@@ -241,8 +241,8 @@ export function Jobs() {
     feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  const star = (company: string) => setShortlist(new Set(toggleShortlist(company)));
-  const isStarred = (company: string) => shortlist.has(company.toLowerCase());
+  const _star = (company: string) => setShortlist(new Set(toggleShortlist(company)));
+  const _isStarred = (company: string) => shortlist.has(company.toLowerCase());
   const filterActive = rankFilters.remoteOnly || rankFilters.minScore > 0 || rankFilters.minSalary > 0 || rankFilters.shortlistOnly;
 
   const applyResume = (text: string, fileName: string) => {
@@ -563,7 +563,6 @@ export function Jobs() {
         <ApplyQueueModal
           queue={applyQueue}
           tracks={tracks}
-          jobs={jobs}
           onApply={applyOnPlatform}
           onKit={setKitJob}
           onClose={() => setApplyQueue(null)}

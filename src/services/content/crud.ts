@@ -1,7 +1,7 @@
 /* CRUD operations — testimonials, ads, resources, tips, banners, positions */
 
 import { getSupabaseClient } from "../cloud";
-import { storageGet, storageSet } from "../storage";
+import { storageSet } from "../storage"
 
 import { type Testimonial, type Ad, type Resource, type TipConfig } from "./types";
 import { CACHE, DEFAULT_ADS, DEFAULT_RESOURCES, DEFAULT_TESTIMONIALS, DEFAULT_TIPS, fetchFromDB, fetchSingleton } from "./cache";

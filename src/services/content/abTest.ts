@@ -22,7 +22,7 @@ export function getVisitorVariant(): "A" | "B" {
 /* LocalStorage cache keys                                             */
 /* ------------------------------------------------------------------ */
 
-const CACHE = {
+const _CACHE = {
   testimonials: "iq.cms.testimonials",
   ads: "iq.cms.ads",
   resources: "iq.cms.resources",

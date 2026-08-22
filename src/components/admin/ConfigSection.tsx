@@ -67,12 +67,12 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
     setConfig({ ...config, ai: { ...config.ai, [k]: v } });
   const setLimit = (k: keyof NonNullable<RemoteConfig["limits"]>, v: number) =>
     setConfig({ ...config, limits: { ...config.limits, [k]: v } });
-  const setRag = (k: keyof NonNullable<RemoteConfig["rag"]>, v: number) =>
+  const _setRag = (k: keyof NonNullable<RemoteConfig["rag"]>, v: number) =>
     setConfig({ ...config, rag: { ...config.rag, [k]: v } });
-  const setRagDigest = (k: keyof NonNullable<NonNullable<RemoteConfig["rag"]>["digest"]>, v: number | string | boolean) =>
+  const _setRagDigest = (k: keyof NonNullable<NonNullable<RemoteConfig["rag"]>["digest"]>, v: number | string | boolean) =>
     setConfig({ ...config, rag: { ...config.rag, digest: { ...config.rag?.digest, [k]: v } } });
   /* coach vocabulary JSON editor (families + misconceptions) */
-  const [vocabJson, setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
+  const [_vocabJson, _setVocabJson] = useState<string>(() => JSON.stringify(config.coachVocab ?? {}, null, 2));
   /* resume branding (Apply Kit): per-company accent + font for the designed one-pager */
   const [brandJson, setBrandJson] = useState<string>(() => JSON.stringify(config.resumeBranding ?? {}, null, 2));
   const [brandCo, setBrandCo] = useState<string>("_default");
@@ -100,14 +100,14 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
     setBrandJson(JSON.stringify(next, null, 2));
   };
   /* job feed (Apply Kit): auto-refresh interval + ATS sources */
-  const [jobsHours, setJobsHours] = useState<number>(() => config.jobs?.refreshHours ?? 24);
-  const [jobsSources, setJobsSources] = useState<string>(() =>
+  const [jobsHours, _setJobsHours] = useState<number>(() => config.jobs?.refreshHours ?? 24);
+  const [jobsSources, _setJobsSources] = useState<string>(() =>
     (config.jobs?.sources ?? []).map(s => `${s.provider}:${s.board}`).join("\n")
   );
   /* last refresh report — per-source counts + failures, so a broken board
      surfaces here instead of only in the function logs */
   const [jobsReport, setJobsReport] = useState<JobsFetchReport | null>(null);
-  const [jobsReportErr, setJobsReportErr] = useState<string | null>(null);
+  const [_jobsReportErr, setJobsReportErr] = useState<string | null>(null);
   const [jobsRefreshing, setJobsRefreshing] = useState(false);
   const loadJobsReport = async () => {
     try {
@@ -146,31 +146,31 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
     }
   };
   /* compensation enrichment — provider + country for jobs the posting didn't price */
-  const [enrProvider, setEnrProvider] = useState<string>(() => config.jobs?.salaryEnrichment?.provider ?? "none");
-  const [enrCountry, setEnrCountry] = useState<string>(() => config.jobs?.salaryEnrichment?.country ?? "us");
-  const [enrCap, setEnrCap] = useState<number>(() => config.jobs?.salaryEnrichment?.cap ?? 30);
+  const [enrProvider, _setEnrProvider] = useState<string>(() => config.jobs?.salaryEnrichment?.provider ?? "none");
+  const [enrCountry, _setEnrCountry] = useState<string>(() => config.jobs?.salaryEnrichment?.country ?? "us");
+  const [enrCap, _setEnrCap] = useState<number>(() => config.jobs?.salaryEnrichment?.cap ?? 30);
   /* apply digest email — authenticated by the admin session; no local secrets */
-  const [digestTesting, setDigestTesting] = useState<null | "dryrun" | "send">(null);
-  const [applyPreview, setApplyPreview] = useState<string | null>(null);
-  const [applyRecipients, setApplyRecipients] = useState<string[] | null>(null);
-  const previewApply = () => setApplyPreview(applyDigest());
+  const [_digestTesting, setDigestTesting] = useState<null | "dryrun" | "send">(null);
+  const [_applyPreview, setApplyPreview] = useState<string | null>(null);
+  const [_applyRecipients, setApplyRecipients] = useState<string[] | null>(null);
+  const _previewApply = () => setApplyPreview(applyDigest());
   /* recommendations digest — admin-session broadcast, with a dry-run preview */
-  const [recsBusy, setRecsBusy] = useState<null | "dryrun" | "send">(null);
-  const [recsPreview, setRecsPreview] = useState<string | null>(null);
-  const [recsRecipients, setRecsRecipients] = useState<string[] | null>(null);
+  const [_recsBusy, setRecsBusy] = useState<null | "dryrun" | "send">(null);
+  const [_recsPreview, setRecsPreview] = useState<string | null>(null);
+  const [_recsRecipients, setRecsRecipients] = useState<string[] | null>(null);
   /* 🇮🇳 India & startup digest — the same broadcast with kind: "india" */
-  const [indiaRecsBusy, setIndiaRecsBusy] = useState<null | "dryrun" | "send">(null);
-  const [indiaRecsPreview, setIndiaRecsPreview] = useState<string | null>(null);
-  const [indiaRecsRecipients, setIndiaRecsRecipients] = useState<string[] | null>(null);
+  const [_indiaRecsBusy, setIndiaRecsBusy] = useState<null | "dryrun" | "send">(null);
+  const [_indiaRecsPreview, setIndiaRecsPreview] = useState<string | null>(null);
+  const [_indiaRecsRecipients, setIndiaRecsRecipients] = useState<string[] | null>(null);
   const recsHeaders = (): Promise<Record<string, string>> => cloudFnHeaders();
-  const previewRecs = () => {
+  const _previewRecs = () => {
     const p = getCareerProfile();
     const jobs = listJobs();
     if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
     if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
     setRecsPreview(recommendationsDigest(p, rankCompanies(p, jobs)));
   };
-  const runRecsBroadcast = async (dryRun: boolean) => {
+  const _runRecsBroadcast = async (dryRun: boolean) => {
     setRecsBusy(dryRun ? "dryrun" : "send");
     try {
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-recommendations-digest`, {
@@ -191,14 +191,14 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
       setRecsBusy(null);
     }
   };
-  const previewIndiaRecs = () => {
+  const _previewIndiaRecs = () => {
     const p = getCareerProfile();
     const jobs = listJobs();
     if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
     if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
     setIndiaRecsPreview(indiaDigest(p, jobs));
   };
-  const runIndiaRecsBroadcast = async (dryRun: boolean) => {
+  const _runIndiaRecsBroadcast = async (dryRun: boolean) => {
     setIndiaRecsBusy(dryRun ? "dryrun" : "send");
     try {
       const res = await fetch(`${CONFIG.supabase.url}/functions/v1/send-recommendations-digest`, {
@@ -219,7 +219,7 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
       setIndiaRecsBusy(null);
     }
   };
-  const runApplyDigest = async (dryRun: boolean) => {
+  const _runApplyDigest = async (dryRun: boolean) => {
     setDigestTesting(dryRun ? "dryrun" : "send");
     try {
       const headers = await cloudFnHeaders();

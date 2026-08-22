@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  adminCreateGrant, adminIssueDiscount, adminSetEntitlement, PLANS,
+  adminIssueDiscount, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../../services/entitlement";
 import {
@@ -22,8 +22,8 @@ import { RefundPolicyCard } from "./billing/RefundPolicyCard";
 export function BillingSection() {
   const { data: billingData, isLoading: loading, refetch: load } = useAllBillingData();
   const { entitlements: rows, payments, subscriptions: subs, audit, coupons } = billingData;
-  const revenue = revenueSummary(payments);
-  const subsSummary = subscriptionSummary(subs);
+  const _revenue = revenueSummary(payments);
+  const _subsSummary = subscriptionSummary(subs);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Record<string, "grant" | "discount" | undefined>>({});
   /* create-grant form */
@@ -39,7 +39,7 @@ export function BillingSection() {
   const [dPct, setDPct] = useState(30);
   const [dDays, setDDays] = useState(90);
   const [policyDraft, setPolicyDraft] = useState<RefundPolicy>({ ...REFUND_POLICY_DEFAULTS });
-  const [presetsText, setPresetsText] = useState((REFUND_POLICY_DEFAULTS.reason_presets ?? []).join(", "));
+  const [_presetsText, setPresetsText] = useState((REFUND_POLICY_DEFAULTS.reason_presets ?? []).join(", "));
 
   useEffect(() => {
     void getRefundPolicy().then(p => { setPolicyDraft(p); setPresetsText((p.reason_presets ?? []).join(", ")); }).catch(() => {});
@@ -154,7 +154,7 @@ export function BillingSection() {
         </p>
       </div>
 
-      <GrantCodeCard busy={busy} setBusy={setBusy} load={load} />
+      <GrantCodeCard busy={busy} setBusy={setBusy} />
       <RevenueSnapshotCard payments={payments} />
       <div className={`${cardCls} p-5`}>
         <h3 className="text-[14.5px] font-extrabold">🎟️ Coupon codes</h3>

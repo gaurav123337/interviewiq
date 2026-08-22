@@ -7,8 +7,8 @@ import { javascript } from "@codemirror/lang-javascript";
 import { cpp } from "@codemirror/lang-cpp";
 import { java } from "@codemirror/lang-java";
 import { go } from "@codemirror/lang-go";
-import { html as htmlLang } from "@codemirror/lang-html";
-import { css as cssLang } from "@codemirror/lang-css";
+import { html as htmlLang } from "@codemirror/lang-html"
+import { css as cssLang } from "@codemirror/lang-css"
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
 import { PATTERN_LABELS } from "../data/patterns";
 import { companyById } from "../data";
@@ -44,7 +44,7 @@ const starterFor = (p: CodingProblem, lang: LangId): string =>
   p.kind === "fn" ? p.starter : p.kind === "cli" ? (p.starters[lang] ?? "") : "";
 
 /* Compact value formatting for the fn-mode results table. */
-const fmt = (v: unknown): string => {
+const _fmt = (v: unknown): string => {
   if (typeof v === "function") return `ƒ ${v.name || "anonymous"}`;
   if (v === undefined) return "undefined";
   if (typeof v === "number" && Number.isNaN(v)) return "NaN";
@@ -53,7 +53,7 @@ const fmt = (v: unknown): string => {
 };
 
 /* Language → CodeMirror grammar (TS builds on the JS grammar with types). */
-const LANG_EXT: Record<LangId, () => Extension> = {
+const _LANG_EXT: Record<LangId, () => Extension> = {
   python: () => python(),
   javascript: () => javascript(),
   typescript: () => javascript({ typescript: true }),
@@ -122,18 +122,18 @@ export function Playground() {
   const goalCompany = goalCompanyId ? companyById(goalCompanyId) : null;
   const [companyFilter, setCompanyFilter] = useState<string | null>(goalCompanyId);
   /* difficulty-aware plan for the filtered company — one easy + one medium pick */
-  const companyPlan = useMemo(
+  const _companyPlan = useMemo(
     () => (companyFilter ? companyInterviewPlan(companyFilter) : []),
     [companyFilter]
   );
   /* personalized focus — company heat blended with the user's misses + weak skills */
   const personalSignals = hasPersonalSignals();
-  const focusRanks = useMemo(
+  const _focusRanks = useMemo(
     () => (companyFilter && personalSignals ? personalPlan(companyFilter) : []),
     [companyFilter, personalSignals]
   );
   /* frequency breakdown by difficulty + topic for the filtered company */
-  const companyFreq = useMemo(
+  const _companyFreq = useMemo(
     () => (companyFilter ? companyFrequency(companyFilter) : null),
     [companyFilter]
   );
