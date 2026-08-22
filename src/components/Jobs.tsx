@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CareerProfile, JobPosting, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
-import { getSupabaseClient, isCloudConfigured } from "../services/cloud";
-import { CONFIG } from "../config";
+import { isCloudConfigured } from "../services/cloud";
 import { toast } from "../toast";
 import {btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal} from "./ui";
 import { UpgradeModal } from "./Upgrade";
@@ -14,7 +13,7 @@ import {
   recommendationReason, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
-import {importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls} from "../services/importJob";
+import { sourceLabel, sourcePriority } from "../services/importJob";
 import { getDisplayCurrency, setDisplayCurrency } from "../services/currency";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
@@ -27,6 +26,8 @@ import {benchLevelForYears, detectMarket, type BenchLevel, type Market} from "..
 import { downloadZip } from "../services/zip";
 
 import { ReportModal } from "./jobs/ReportModal";
+import { ImportModal } from "./jobs/ImportModal";
+import { ApplyQueueModal } from "./jobs/ApplyQueueModal";
 import { RoundModal } from "./jobs/RoundModal";
 import { DraftModal } from "./jobs/DraftModal";
 import { RecsDigestModal } from "./jobs/RecsDigestModal";
@@ -41,14 +42,6 @@ import { MatchFeedCard } from "./jobs/MatchFeedCard";
 /* verdict tone → text color (matches VERDICT_META tones) */
 const verdictToneCls = (tone: string) =>
   tone === "ok" ? "text-ok" : tone === "co" ? "text-acctxt" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-mut";
-/* real public postings the "✨ Try sample links" button pre-fills — stable
-   ATS-board URLs so the flow can be demoed without hunting for a link */
-const SAMPLE_IMPORT_URLS = [
-  "https://jobs.ashbyhq.com/notion/f1f9e19d-cbf3-49eb-9824-d04adf2e3d75",
-  "https://jobs.ashbyhq.com/notion/72532ca0-eb7d-4d9e-b982-50f52614fca9",
-  "https://app.careerpuck.com/job-board/lyft/job/8603653002?gh_jid=8603653002"
-];
-
 export function Jobs() {
   const [profile, setProfile] = useState<CareerProfile | null>(() => getCareerProfile());
   /* one currency everywhere — persisted preference, defaults from location */
@@ -81,11 +74,6 @@ export function Jobs() {
   const [resumeBannerDismissed, setResumeBannerDismissed] = useState(() => storageGet<boolean>(STORAGE_KEYS.resumeStrictBanner, false));
   /* platform import (Lane B) — paste a job URL from any site */
   const [importOpen, setImportOpen] = useState(false);
-  const [importUrl, setImportUrl] = useState("");
-  const [importing, setImporting] = useState(false);
-  /* one result row per pasted URL — multiple jobs in a single shot */
-  const [importResults, setImportResults] = useState<{ url: string; job: JobPosting | null; error: string | null }[]>([]);
-  const [importErr, setImportErr] = useState<string | null>(null);
   /* batch apply queue — work through the just-imported jobs one by one */
   const [applyQueue, setApplyQueue] = useState<JobPosting[] | null>(null);
   /* apply hand-off (Lane C) — first-use explainer shown once */
@@ -335,44 +323,6 @@ export function Jobs() {
     toast(iso ? `📅 Follow-up set for ${new Date(iso + "T09:00:00").toLocaleDateString()}` : "🗑️ Follow-up cleared");
   };
 
-  /* --- platform import: paste one or more job URLs → preview → add ----- */
-  const previewImport = async () => {
-    const urls = splitJobUrls(importUrl);
-    if (!urls.length) { setImportErr("Paste at least one job link — one per line."); return; }
-    setImporting(true);
-    setImportErr(null);
-    setImportResults([]);
-    try {
-      const client = await getSupabaseClient();
-      const session = await client?.auth.getSession().catch(() => null);
-      const token = session?.data?.session?.access_token ?? undefined;
-      /* sequential on purpose — polite fetching, rate-limited per host */
-      const results: { url: string; job: JobPosting | null; error: string | null }[] = [];
-      for (const raw of urls) {
-        const out = await importFromUrlWithFallback(raw, { supabaseUrl: CONFIG.supabase.url, token });
-        results.push(out.ok ? { url: raw, job: out.job, error: null } : { url: raw, job: null, error: out.message });
-      }
-      setImportResults(results);
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const confirmImport = () => {
-    const jobs = importResults.filter(r => r.job).map(r => r.job!);
-    if (!jobs.length) return;
-    for (const j of jobs) addImportedJob(j);
-    setJobs(listJobs());
-    toast(`➕ Imported ${jobs.length} job${jobs.length === 1 ? "" : "s"} — now in your match feed`);
-    setImportOpen(false);
-    setImportUrl("");
-    setImportResults([]);
-    setImportErr(null);
-    /* hand straight into the batch apply queue so users can work through
-       the apply hand-offs instead of hunting cards one at a time */
-    if (jobs.length) setApplyQueue(jobs);
-  };
-
   /* --- apply hand-off: open the platform's own page, track locally ----- */
   const applyOnPlatform = (j: JobPosting) => {
     const via = sourceLabel(j.source);
@@ -603,150 +553,21 @@ export function Jobs() {
       {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onAddSkill={addSkillToProfile} onClose={() => setKitJob(null)} />}
       {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
       {importOpen && (
-        <Modal
-          onClose={() => { setImportOpen(false); setImportUrl(""); setImportResults([]); setImportErr(null); }}
-          title="➕ Add jobs from platforms"
-          desc="Paste one or more job links (one per line) from Naukri, LinkedIn, Indeed — or any company page. We read the public postings and score them like any feed job. Applying always happens on the platform's own page; InterviewIQ never applies for you."
-        >
-          <div className="flex items-start gap-2">
-            <textarea
-              className="inp h-24 w-full flex-1"
-              placeholder={"https://www.naukri.com/job/…\nhttps://www.linkedin.com/jobs/view/…\nhttps://in.indeed.com/viewjob?jk=…"}
-              value={importUrl}
-              onChange={e => { setImportUrl(e.target.value); setImportErr(null); setImportResults([]); }}
-              spellCheck={false}
-            />
-            <button className={btnPrimary + btnSm} onClick={() => void previewImport()} disabled={importing || !importUrl.trim()}>
-              {importing ? "⏳ Reading…" : "🔎 Preview"}
-            </button>
-          </div>
-          <button
-            className="mt-2 text-[11.5px] font-bold text-acctxt underline-offset-2 hover:underline"
-            onClick={() => setImportUrl(SAMPLE_IMPORT_URLS.join("\n"))}
-            title="Fill the box with a few real public postings to try the flow"
-          >
-            ✨ Try sample links
-          </button>
-
-          {importing && <p className="mt-3 text-[12px] text-mut">⏳ Reading postings… (public fetch, rate-limited per site)</p>}
-
-          {importErr && !importing && (
-            <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3.5">
-              <p className="text-[12.5px] text-fnt">✗ {importErr}</p>
-            </div>
-          )}
-
-          {importResults.length > 0 && !importing && (
-            <div className="mt-3 space-y-2">
-              {importResults.map((r, i) => (
-                <div key={i} className={`rounded-xl border p-3.5 ${r.job ? "border-line/15 bg-deep/30" : "border-warn/30 bg-warn/10"}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      {r.job ? (
-                        <>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Chip tone="co">{sourceLabel(r.job.source)}</Chip>
-                            {r.job.remote && <Chip tone="ok">REMOTE</Chip>}
-                            {r.job.level && <span className="text-[11px] font-bold uppercase tracking-wider text-mut">· {r.job.level}</span>}
-                          </div>
-                          <div className="mt-1.5 text-[13.5px] font-extrabold text-ink">{r.job.title}</div>
-                          {r.job.company && <div className="text-[12px] font-bold text-fnt">{r.job.company}</div>}
-                          {r.job.location && <div className="text-[11.5px] text-mut">📍 {r.job.location}</div>}
-                          {r.job.skills.length > 0 && (
-                            <div className="mt-1.5 flex flex-wrap gap-1">
-                              {r.job.skills.slice(0, 6).map(s => <Chip key={s} tone="default">{s}</Chip>)}
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-[12.5px] font-bold text-warn">✗ Couldn't read this link</p>
-                          <p className="mt-0.5 break-all text-[11.5px] text-fnt">{r.error}</p>
-                          <a href={r.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-[12px] font-bold text-acctxt underline">
-                            Open the job page manually ↗
-                          </a>
-                        </>
-                      )}
-                    </div>
-                    {r.job && (
-                      <button
-                        className="shrink-0 text-[12px] font-bold text-mut hover:text-ink"
-                        onClick={() => setImportResults(list => list.filter((_, x) => x !== i))}
-                        title="Remove from this import"
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  className={btnPrimary + btnSm}
-                  onClick={confirmImport}
-                  disabled={!importResults.some(r => r.job)}
-                >
-                  ➕ Add {importResults.filter(r => r.job).length} to feed
-                </button>
-                <button className={btnGhost + btnSm} onClick={() => { setImportResults([]); setImportUrl(""); setImportErr(null); }}>
-                  ↺ Start over
-                </button>
-              </div>
-              <p className="mt-1 text-[11px] text-mut">The apply button on each job opens its page on the platform — you complete it there.</p>
-            </div>
-          )}
-        </Modal>
+        <ImportModal
+          onClose={() => setImportOpen(false)}
+          onImported={setJobs}
+          onApplyQueue={setApplyQueue}
+        />
       )}
       {applyQueue && applyQueue.length > 0 && (
-        <Modal
+        <ApplyQueueModal
+          queue={applyQueue}
+          tracks={tracks}
+          jobs={jobs}
+          onApply={applyOnPlatform}
+          onKit={setKitJob}
           onClose={() => setApplyQueue(null)}
-          title="📋 Apply queue"
-          desc="Work through the batch one at a time — each Apply opens the platform's own page in a new tab, where you complete the submission. InterviewIQ never applies for you; it just tracks progress. Use 📄 Kit to review the tailored resume & cover letter first."
-        >
-          <div className="space-y-2">
-            {applyQueue.map((j, i) => {
-              const tr = tracks[j.id];
-              const done = tr && (tr.status === "applied" || tr.status === "interview" || tr.status === "offer" || tr.status === "rejected");
-              return (
-                <div key={j.id} className="flex items-start justify-between gap-3 rounded-xl border border-line/15 bg-deep/30 p-3.5">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <Chip tone="co">{sourceLabel(j.source)}</Chip>
-                      <span className="text-[11px] font-bold text-mut">{i + 1}/{applyQueue.length}</span>
-                    </div>
-                    <div className="mt-1 truncate text-[13px] font-extrabold text-ink">{j.title}</div>
-                    {j.company && <div className="text-[11.5px] font-bold text-fnt">{j.company}</div>}
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1.5">
-                    <button
-                      className="rounded-full border border-line/20 bg-deep/40 px-2.5 py-1 text-[11.5px] font-bold text-mut transition-all hover:text-ink"
-                      onClick={() => setKitJob(j)}
-                      title="Open the tailored resume & cover letter for this role"
-                    >
-                      📄 Kit
-                    </button>
-                    {done ? (
-                      <Chip tone="ok" title={tr.via ? `Applied via ${tr.via}` : "Marked applied"}>
-                        ✓ {tr.via ? `Applied via ${tr.via}` : "Applied"}
-                      </Chip>
-                    ) : (
-                      <button
-                        className="rounded-full border border-ok/30 bg-ok/10 px-2.5 py-1 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/20"
-                        onClick={() => applyOnPlatform(j)}
-                      >
-                        🔗 Apply on {sourceLabel(j.source)} ↗
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-3 text-[11px] text-mut">Each apply is also tracked on its feed card — follow-ups land in the apply tracker.</p>
-          <button className="mt-3 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={() => setApplyQueue(null)}>
-            Done — close
-          </button>
-        </Modal>
+        />
       )}
       {recsDigestOpen && profile && <RecsDigestModal profile={profile} ranks={ranks} onClose={() => setRecsDigestOpen(false)} />}
       {draftJob && (
