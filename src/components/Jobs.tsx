@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CareerProfile, JobPosting, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { getSupabaseClient, isCloudConfigured } from "../services/cloud";
@@ -132,7 +132,7 @@ export function Jobs() {
     }
   }, [cloud]);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
       const r = await refreshJobs();
@@ -146,9 +146,9 @@ export function Jobs() {
     } finally {
       setRefreshing(false);
     }
-  };
+  }, []);
 
-  const save = () => {
+  const save = useCallback(() => {
     if (!profile) return;
     if (!profile.headline.trim()) { toast("Add a headline (e.g. Senior Frontend Engineer)"); return; }
     setSaving(true);
@@ -158,7 +158,7 @@ export function Jobs() {
     } finally {
       setSaving(false);
     }
-  };
+  }, [profile]);
 
   /* one-click ATS fix — add a missing posting skill to the profile; matches
      recompute instantly so the chip flips from ✗ to ✓ where true */

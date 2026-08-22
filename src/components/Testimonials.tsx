@@ -8,7 +8,7 @@
    Data is fetched from Supabase (database) with localStorage cache fallback.
    Admins manage this content via the Content CMS in the Admin dashboard. */
 
-import { useState, useEffect, useCallback } from "react";
+import { memo, useState, useEffect, useCallback } from "react";
 import { cardCls } from "./ui";
 import { toast } from "../toast";
 import { fetchTestimonials, fetchResources, fetchBannersForPosition, trackClick, trackImpression, getVisitorVariant } from "../services/contentService";
@@ -97,7 +97,7 @@ function StarRating({ count }: { count: number }) {
   );
 }
 
-export function TestimonialsSection() {
+export const TestimonialsSection = memo(function TestimonialsSection() {
   const [showAll, setShowAll] = useState(false);
   const [testimonials, setTestimonials] = useState<Testimonial[]>(FALLBACK_TESTIMONIALS);
 
@@ -166,7 +166,7 @@ export function TestimonialsSection() {
       </div>
     </section>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /* Recommended Resources (affiliate)                                   */

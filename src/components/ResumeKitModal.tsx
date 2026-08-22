@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
 import { aiAvailable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, getApplyKit, jdKeywords, quantifiedClaims, saveApplyKit, type ApplyKit, type AtsKeywordRow } from "../services/applyKit";
@@ -27,7 +27,7 @@ function downloadText(name: string, text: string, job: JobPosting) {
   URL.revokeObjectURL(url);
 }
 
-export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
+export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
   job: JobPosting;
   profile: CareerProfile;
   match: JobMatch | null;
@@ -414,7 +414,7 @@ export function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
       </button>
     </Modal>
   );
-}
+});
 
 /* one drill-down row — a posting keyword with its match verdict; when an
    add handler is given, missing skills get a one-click ➕ into the profile */
