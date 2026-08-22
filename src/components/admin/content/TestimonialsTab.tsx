@@ -1,7 +1,7 @@
 import { type Testimonial, fetchTestimonials, saveTestimonial, deleteTestimonial } from '../../../services/contentService';
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from '../../../toast';
-import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from '../../ui';
+import {btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal} from '../../ui';
 
 export function TestimonialsTab() {
   const [items, setItems] = useState<Testimonial[]>([]);

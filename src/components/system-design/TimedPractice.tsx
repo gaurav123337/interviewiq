@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SYSTEM_DESIGN_CASES, getCategories, casesByCategory, type SystemDesignCase, type WhiteboardFlow } from '../../data/systemDesignBank';
+import {useEffect, useRef, useState} from 'react';
+import {SYSTEM_DESIGN_CASES} from '../../data/systemDesignBank';
 import { toast } from '../../toast';
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer, ProgressBar } from '../ui';
+import {btnGhost, btnPrimary, btnSm, Chip, Drawer} from '../ui';
 import { DifficultyDots } from './DifficultyDots';
 import { WhiteboardPhase } from './WhiteboardPhase';
-import { loadCompleted, markCompleted, loadQuiz, saveQuiz, loadHistory, saveHistoryEntry, loadBookmarks, loadTimerPreset, saveTimerPreset, loadFlashcards, calculateStreak, exportProgress, CATEGORY_META, type CompletedMap, type QuizState, type QuizHistoryEntry, type BookmarkMap, type FlashcardData, type FlashcardMap } from './helpers';
-
+import {loadQuiz, saveQuiz, saveHistoryEntry, type QuizState} from './helpers';
 
 export function TimedPractice({
   timePerCase,

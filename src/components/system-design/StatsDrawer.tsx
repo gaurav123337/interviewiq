@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SYSTEM_DESIGN_CASES, getCategories, casesByCategory, type SystemDesignCase, type WhiteboardFlow } from '../../data/systemDesignBank';
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer, ProgressBar } from '../ui';
-import { loadCompleted, markCompleted, loadQuiz, saveQuiz, loadHistory, saveHistoryEntry, loadBookmarks, loadTimerPreset, saveTimerPreset, loadFlashcards, calculateStreak, exportProgress, CATEGORY_META, type CompletedMap, type QuizState, type QuizHistoryEntry, type BookmarkMap, type FlashcardData, type FlashcardMap } from './helpers';
-
+import {useMemo} from 'react';
+import {SYSTEM_DESIGN_CASES, getCategories, casesByCategory} from '../../data/systemDesignBank';
+import {Drawer, ProgressBar} from '../ui';
+import {loadCompleted, loadHistory, CATEGORY_META} from './helpers';
 
 export function StatsDrawer({ onClose }: { onClose: () => void }) {
   const completed = loadCompleted();

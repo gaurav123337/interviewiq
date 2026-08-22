@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Config } from "../types";
-import { aiAvailable, chat, clearKey, getSettings, saveSettings } from "../ai";
+import {aiAvailable, chat, getSettings, saveSettings} from "../ai";
 import { activatePro, deactivatePro, getStoredKey } from "../services/license";
 import {
   clearServerEntitlement, getCachedEntitlement, redeemGrant, refreshEntitlement, testLicensing, tierSource, type ServerEntitlement
@@ -8,8 +8,8 @@ import {
 import { cancelSubscription, fmtMinor, getMyPayments, getMySubscription, type MyPayment, type MySubscription } from "../services/billing";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { aiCallsLeft, getTier, sessionsLeft } from "../services/entitlements";
-import { digestSummary, fire, getPermission, getPrefs, isSupported, requestPermission, savePrefs } from "../services/notifications";
-import { cloudEmailRecoveryBackup, cloudMfaEnroll, cloudMfaFactors, cloudMfaRecover, cloudMfaUnenroll, cloudMfaVerify, cloudOAuthSignIn, cloudRecoveryStatus, cloudSaveRecoveryCodes, cloudSignIn, cloudSignOut, cloudSignUp, cloudSyncNow, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud, type EnrolledTotp, type TotpFactor } from "../services/cloud";
+import {digestSummary, fire, getPermission, getPrefs, requestPermission, savePrefs} from "../services/notifications";
+import {cloudEmailRecoveryBackup, cloudMfaEnroll, cloudMfaFactors, cloudMfaRecover, cloudMfaUnenroll, cloudMfaVerify, cloudOAuthSignIn, cloudRecoveryStatus, cloudSaveRecoveryCodes, cloudSignIn, cloudSignUp, getCloudState, isCloudConfigured, refreshOAuthProviders, subscribeCloud, type EnrolledTotp, type TotpFactor} from "../services/cloud";
 import { generateRecoveryCodes, hashRecoveryCodeSet } from "../services/recoveryCodes";
 import type { OAuthProvider } from "../services/cloud";
 import { useApp } from "../store";

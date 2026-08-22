@@ -3,10 +3,10 @@ import { getProfile } from '../../services/goal';
 import { codingForTopicLabels } from '../../data/codingMap';
 import { freqForProblem } from '../../data/codingCompanies';
 import type { CodingProblem } from '../../data/coding';
-import { LEVELS, LEVEL_INDEX, companyById, fieldById, levelById } from '../../data';
+import {companyById, fieldById, levelById} from '../../data';
 
 import { type Roadmap, type RoadmapTopic } from '../../services/roadmap';
-import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip } from '../ui';
+import {btn, btnGhost, btnPrimary, btnSm, cardCls, Chip} from '../ui';
 import { WizardHeader, Stat, weekChip, exportRoadmap } from './helpers';
 
 function codeFocusFor(topics: RoadmapTopic[]): CodingProblem[] {

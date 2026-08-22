@@ -16,9 +16,8 @@ import { toast } from "../../toast";
 import { cardCls, btnPrimary, btnGhost, btnDanger, btnOk, btnSm, Chip } from "../ui";
 import { GrantCodeCard } from "./billing/GrantCodeCard";
 import { RevenueSnapshotCard } from "./billing/RevenueSnapshotCard";
-import { SubscriptionHealthCard } from "./billing/SubscriptionHealthCard";
+
 import { RefundPolicyCard } from "./billing/RefundPolicyCard";
-import { LegalPoliciesCard } from "./billing/LegalPoliciesCard";
 
 export function BillingSection() {
   const { data: billingData, isLoading: loading, refetch: load } = useAllBillingData();
@@ -141,7 +140,6 @@ export function BillingSection() {
     } catch (e) { toast("✗ " + ((e as Error).message || "Discount failed")); }
     finally { setBusy(false); }
   };
-
 
   const planLabel = (p: string | null) => (PLANS as readonly { id: string; label: string }[]).find(x => x.id === p)?.label ?? p ?? "—";
 

@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { basicSetup } from "codemirror";
-import { EditorView } from "@codemirror/view";
-import { EditorState, type Extension } from "@codemirror/state";
-import { oneDark } from "@codemirror/theme-one-dark";
+import {useEffect, useMemo, useState} from "react";
+
+import {type Extension} from "@codemirror/state";
+
 import { python } from "@codemirror/lang-python";
 import { javascript } from "@codemirror/lang-javascript";
 import { cpp } from "@codemirror/lang-cpp";
@@ -13,16 +12,16 @@ import { css as cssLang } from "@codemirror/lang-css";
 import { CODING_PROBLEMS, RUNNER_LANGS, codingProblemById, type CodingProblem, type LangId } from "../data/coding";
 import { PATTERN_LABELS } from "../data/patterns";
 import { companyById } from "../data";
-import { companyFrequency, companyInterviewPlan, freqForProblem, hasPersonalSignals, personalPlan, problemIsForCompany } from "../data/codingCompanies";
+import {companyFrequency, companyInterviewPlan, hasPersonalSignals, personalPlan} from "../data/codingCompanies";
 import { useApp } from "../store";
 import { buildProgram, runCase, runFnTests, runLocalJavaScript, runTests, runUiTests, type FnCaseResult, type UiCaseResult } from "../services/runner";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
-import { getTheme, type Theme } from "../services/theme";
+import {getTheme} from "../services/theme";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { recordCodingAttempt } from "../services/codingTrack";
 import { getGoal } from "../services/goal";
 import { toast } from "../toast";
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Difficulty, Seg } from "./ui";
+import {btnGhost, btnPrimary, btnSm, cardCls, Chip, Seg} from "./ui";
 import { UpgradeModal } from "./Upgrade";
 import { CodeEditor } from "./playground/CodeEditor";
 import { ProblemList } from "./playground/ProblemList";

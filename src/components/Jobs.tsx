@@ -4,7 +4,7 @@ import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { getSupabaseClient, isCloudConfigured } from "../services/cloud";
 import { CONFIG } from "../config";
 import { toast } from "../toast";
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal, ProgressBar } from "./ui";
+import {btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal} from "./ui";
 import { UpgradeModal } from "./Upgrade";
 import { GapPlanModal } from "./GapPlanModal";
 import { ResumeKitModal } from "./ResumeKitModal";
@@ -14,21 +14,17 @@ import {
   recommendationReason, salaryLabel, saveCareerProfile, skillImpact, sortJobsByMatch, toggleShortlist, VERDICT_META, type JobFilters, type RankFilters
 } from "../services/jobs";
 import { analyzeResume, clearUploadedResume, getUploadedResume, profileHasStaleSkills, resumeToProfile, saveUploadedResume, suggestSkills } from "../services/resume";
-import { importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls, trustOf } from "../services/importJob";
+import {importFromUrlWithFallback, sourceLabel, sourcePriority, splitJobUrls} from "../services/importJob";
 import { getDisplayCurrency, setDisplayCurrency } from "../services/currency";
 import { extractFileText } from "../services/pdf";
 import { getRemoteConfig } from "../services/remoteConfig";
 import { fire } from "../services/notifications";
 import { STORAGE_KEYS, storageGet, storageSet } from "../services/storage";
-import { buildCoverLetter, buildResume, getApplyKit, jdKeywords, saveApplyKit } from "../services/applyKit";
-import { dueFollowUps, getTrack, listTracks, markAppliedVia, markFollowUpNotified, setFollowUp, setStatus, STATUS_META, STATUS_ORDER, type ApplyStatus, type ApplyTrack } from "../services/applyTrack";
-import { benchLevelForYears, currencySymbol, detectMarket, type BenchLevel, type Market } from "../services/salaryBench";
+import {buildCoverLetter, buildResume, getApplyKit, saveApplyKit} from "../services/applyKit";
+import {dueFollowUps, getTrack, listTracks, markAppliedVia, markFollowUpNotified, setFollowUp, setStatus, STATUS_META, type ApplyStatus, type ApplyTrack} from "../services/applyTrack";
+import {benchLevelForYears, detectMarket, type BenchLevel, type Market} from "../services/salaryBench";
 
 import { downloadZip } from "../services/zip";
-
-
-
-
 
 import { ReportModal } from "./jobs/ReportModal";
 import { RoundModal } from "./jobs/RoundModal";

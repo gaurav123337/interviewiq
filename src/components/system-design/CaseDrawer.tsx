@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {useState} from 'react';
 import { aiAvailable } from '../../ai';
 import type { SystemDesignCase } from '../../data/systemDesignBank';
 import { lexicalSearch, documentTitles, ragTuningInfo } from '../../services/rag';
@@ -7,12 +7,11 @@ import { getPrereqExplanation } from '../../data/prerequisiteKnowledge';
 import { explainSystemDesign, systemDesignChat } from '../../services/systemDesignTutor';
 import { CitationChip } from '../CitationChip';
 import { toast } from '../../toast';
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer, ProgressBar } from '../ui';
+import {btnGhost, btnPrimary, btnSm, Chip, Drawer} from '../ui';
 import { DifficultyDots } from './DifficultyDots';
 import { WhiteboardPhase } from './WhiteboardPhase';
 import { GroundingNote } from '../GroundingNote';
 import { DeepDiveBlock } from './DeepDiveBlock';
-
 
 export function CaseDrawer({ caseData: c, goal, isCompleted, isBookmarked, onClose, onMarkComplete, onToggleBookmark }: {
   caseData: SystemDesignCase;

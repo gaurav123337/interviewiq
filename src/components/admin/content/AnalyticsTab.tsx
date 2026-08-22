@@ -1,7 +1,7 @@
 import { type AnalyticsSummary, type ABTestResult, type DailyAnalytics, fetchAnalyticsSummary, fetchABTestResults, fetchDailyAnalytics } from '../../../services/contentService';
 import { useState, useEffect } from 'react';
-import { toast } from '../../../toast';
-import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from '../../ui';
+
+import {cardCls} from '../../ui';
 
 export function AnalyticsTab() {
   const [summary, setSummary] = useState<AnalyticsSummary[]>([]);

@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { subscriptionSummary, fmtMinor } from "../../../services/billing";
-import { Chip, cardCls } from "../../ui";
+import {cardCls} from "../../ui";
 
 import type { AdminSubscriptionRow } from "../../../services/billing";
 

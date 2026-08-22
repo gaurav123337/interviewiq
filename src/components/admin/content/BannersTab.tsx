@@ -1,7 +1,7 @@
 import { type Banner, fetchBanners, saveBanner, deleteBanner } from '../../../services/contentService';
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from '../../../toast';
-import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from '../../ui';
+import {btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, Modal} from '../../ui';
 
 export function BannersTab() {
   const [items, setItems] = useState<Banner[]>([]);

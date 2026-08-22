@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import {useMemo, useState} from "react";
 import type { CareerGoal, LevelId, SkillRating } from "../types";
 import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, LEVEL_INDEX, companyById, fieldById, levelById } from "../data";
-import { getDeepDive } from "../data/deepDive";
-import { aiAvailable } from "../ai";
+
 import { explainTopic, tutorChat, type TutorMsg } from "../services/tutor";
 import { isSystemDesignTopic, explainSystemDesign, systemDesignChat } from "../services/systemDesignTutor";
-import { GroundingNote } from "./GroundingNote";
+
 import { analyzeJd } from "../services/jd";
 import { analyzeResume } from "../services/resume";
 import { extractFileText } from "../services/pdf";
@@ -14,14 +13,10 @@ import {
   clearGoal, getGoal, getProfile, getProgress, markDiagnosticSkipped,
   saveGoal, saveProfile, toggleTopicProgress, type RoadmapProgress
 } from "../services/goal";
-import { applyProgress, buildRoadmap, downloadRoadmapMarkdown, exportRoadmapMarkdown, type Roadmap, type RoadmapTopic } from "../services/roadmap";
+import {applyProgress, buildRoadmap, type Roadmap, type RoadmapTopic} from "../services/roadmap";
 import { useApp } from "../store";
 import { toast } from "../toast";
-import { btn, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Drawer, Seg } from "./ui";
-import { CitationChip } from "./CitationChip";
-import { type CodingProblem } from "../data/coding";
-import { codingForTopicLabels } from "../data/codingMap";
-import { freqForProblem } from "../data/codingCompanies";
+import {btnGhost, btnOk, btnPrimary, btnSm, cardCls, Seg} from "./ui";
 
 /* P4 roadmap → coding wiring: match this week's topic labels to playground
    problems so "solve X problems in category Y" becomes concrete actions.
@@ -495,11 +490,10 @@ export function Roadmap() {
   );
 }
 
-
 /* ------------------------------------------------------------------ */
 /* Extracted sub-components                                             */
 /* ------------------------------------------------------------------ */
 import { Dashboard } from './roadmap/Dashboard';
 import { LearnModal } from './roadmap/LearnModal';
-import { weekChip, WizardHeader, Field, Stat } from './roadmap/helpers';
+import {WizardHeader, Field} from './roadmap/helpers';
 

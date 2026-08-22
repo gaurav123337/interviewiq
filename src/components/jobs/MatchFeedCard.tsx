@@ -5,7 +5,7 @@ import type { MatchVerdict } from "../../types";
 import { sourceLabel, trustOf } from "../../services/importJob";
 import { jdKeywords } from "../../services/applyKit";
 import { STATUS_META, STATUS_ORDER, type ApplyStatus, type ApplyTrack } from "../../services/applyTrack";
-import { btnGhost, btnSm, Chip } from "../ui";
+import {Chip} from "../ui";
 
 const verdictToneCls = (tone: string) =>
   tone === "ok" ? "text-ok" : tone === "co" ? "text-acctxt" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-mut";

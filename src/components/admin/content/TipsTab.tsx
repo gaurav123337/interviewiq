@@ -1,7 +1,7 @@
 import { type TipConfig, fetchTips, saveTips } from '../../../services/contentService';
 import { useState, useEffect } from 'react';
 import { toast } from '../../../toast';
-import { btnDanger, btnGhost, btnOk, btnPrimary, btnSm, cardCls, Chip, Modal } from '../../ui';
+import {btnDanger, btnOk, btnPrimary, btnSm, cardCls} from '../../ui';
 
 export function TipsTab() {
   const [config, setConfig] = useState<TipConfig>({ id: "default", amounts: [5, 15, 30], labels: ["☕ Coffee", "🍕 Lunch", "🎉 Celebration"], descriptions: ["Buy me a coffee", "Buy me lunch", "Celebrating a new offer?"], stripe_link: "", buymeacoffee_link: "", enabled: true });

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { SYSTEM_DESIGN_CASES, getCategories, casesByCategory, type SystemDesignCase, type WhiteboardFlow } from '../../data/systemDesignBank';
-import { storageGet, storageSet } from '../../services/storage';
+import {useMemo, useState} from 'react';
+import {SYSTEM_DESIGN_CASES} from '../../data/systemDesignBank';
+import {storageSet} from '../../services/storage';
 import { toast } from '../../toast';
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, Drawer, ProgressBar } from '../ui';
-import { loadCompleted, markCompleted, loadQuiz, saveQuiz, loadHistory, saveHistoryEntry, loadBookmarks, loadTimerPreset, saveTimerPreset, loadFlashcards, calculateStreak, exportProgress, CATEGORY_META, type CompletedMap, type QuizState, type QuizHistoryEntry, type BookmarkMap, type FlashcardData, type FlashcardMap } from './helpers';
-
+import {Drawer} from '../ui';
+import {loadFlashcards, type FlashcardData, type FlashcardMap} from './helpers';
 
 export function FlashcardDrawer({ onClose }: { onClose: () => void }) {
   const [cards, setCards] = useState<FlashcardMap>(() => loadFlashcards());

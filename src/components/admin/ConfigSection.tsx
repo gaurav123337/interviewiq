@@ -11,7 +11,7 @@ import { type RemoteConfig } from "../../services/remoteConfig";
 
 import { adminListUsers } from "../../services/admin";
 import { toast } from "../../toast";
-import { cardCls, btnPrimary, btnGhost, btnSm, Chip, Modal, Switch, NumField, OptRow } from "../ui";
+import {cardCls, btnPrimary, Chip, Switch, NumField, OptRow} from "../ui";
 
 const FEATURE_LABELS: Record<string, string> = {
   paywall: "Freemium paywall (quotas + upsells)",

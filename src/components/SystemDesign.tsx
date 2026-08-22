@@ -5,7 +5,7 @@ import { getGoal } from '../services/goal';
 import { storageGet, storageSet } from '../services/storage';
 import type { CoachTopicContext } from '../contexts/CoachContext';
 import { toast } from '../toast';
-import { btnGhost, btnPrimary, btnSm, cardCls, Chip, ProgressBar } from './ui';
+import {cardCls, Chip, ProgressBar} from './ui';
 import { TimedPractice, StatsDrawer, FlashcardDrawer, CaseCard, CaseDrawer, DeepDiveArchitectures } from './system-design';
 import { loadCompleted, markCompleted, loadBookmarks, loadTimerPreset, saveTimerPreset, calculateStreak, exportProgress, CATEGORY_META, type CompletedMap, type BookmarkMap } from './system-design/helpers';
 
