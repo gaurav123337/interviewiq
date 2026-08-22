@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { memo, useMemo, useState, useEffect } from "react";
 import { CONFIG } from "../../config";
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../../services/secrets";
 import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, type AiProviderStatus } from "../../services/aiProvider";
@@ -224,7 +224,7 @@ function EdgeSecretsCard({ statuses, onLoad, onToast }: { statuses: EdgeSecretSt
 /* check via Deno.env.has — values are never readable or returned).    */
 /* ------------------------------------------------------------------ */
 
-export function SecretsSection() {
+export const SecretsSection = memo(function SecretsSection() {
   const [report, setReport] = useState<SecretStatusReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -397,7 +397,7 @@ export function SecretsSection() {
       </p>
     </div>
   );
-}
+});
 
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { JobFeedCard, RagRetrievalCard, CoachVocabCard } from "./config";
 import { COMPANIES, companyById } from "../../data";
 import { COMPANY_FREQ, problemsForCompany } from "../../data/codingCompanies";
@@ -58,7 +58,7 @@ function parseBrandJson(json: string): Record<string, { accent?: string; fontFam
   }
 }
 
-export function ConfigSection({ config, setConfig, busy, setBusy }: {
+export const ConfigSection = memo(function ConfigSection({ config, setConfig, busy, setBusy }: {
   config: RemoteConfig; setConfig: (c: RemoteConfig) => void; busy: boolean; setBusy: (b: boolean) => void;
 }) {
   const setFeature = (f: keyof NonNullable<RemoteConfig["features"]>, v: boolean) =>
@@ -510,5 +510,5 @@ export function ConfigSection({ config, setConfig, busy, setBusy }: {
       </div>
     </div>
   );
-}
+});
 

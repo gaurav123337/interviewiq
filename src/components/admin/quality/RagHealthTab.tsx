@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { CONFIG } from "../../../config";
 import { aiAvailable } from "../../../ai";
 import { listPdfChunks, type PdfDocumentRow } from "../../../services/admin";
@@ -40,7 +40,7 @@ interface RagHealthTabProps {
   onRefresh: () => void;
 }
 
-export function RagHealthTab({
+export const RagHealthTab = memo(function RagHealthTab({
   ragRows, ragDigest, ragDocs, ragDomains,
   kbSuggestions, kbDocs,
   busy, onApplyHardFloor, onStageTuning, onRefresh
@@ -601,4 +601,4 @@ export function RagHealthTab({
       })()}
     </div>
   );
-}
+});
