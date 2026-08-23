@@ -353,3 +353,36 @@ function getAiSettingsForScoring(model: string): { key: string; base: string; mo
 
   return null;
 }
+
+/** Batch score all pending content items that haven't been scored yet */
+export async function batchScoreContent(): Promise<{ scored: number; errors: number }> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+
+  // Fetch pending items without quality scores
+  const { data: items, error: fetchError } = await client
+    .from("content_items")
+    .select("id, title, content, source_name, domain, content_type")
+    .eq("status", "pending")
+    .is("quality_score", null)
+    .limit(10);
+
+  if (fetchError) throw fetchError;
+  if (!items?.length) return { scored: 0, errors: 0 };
+
+  let scored = 0;
+  let errors = 0;
+
+  for (const item of items) {
+    try {
+      await scoreAndUpdateContent(item.id);
+      scored++;
+    } catch {
+      errors++;
+    }
+    // Rate limit between AI calls
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  return { scored, errors };
+}

@@ -175,6 +175,47 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
     finally { setIndexing(false); }
   };
 
+  /* ── Batch quality check ──────────────────────────────────────── */
+  const [qualityChecking, setQualityChecking] = useState(false);
+
+  const batchQualityCheck = async () => {
+    setQualityChecking(true);
+    try {
+      const { batchScoreContent } = await import("../../services/contentQuality");
+      const result = await batchScoreContent();
+      toast(`✅ Quality check: ${result.scored} scored, ${result.errors} errors`);
+      await load();
+    } catch (e) { toast("Quality check failed: " + ((e as Error).message || "Unknown")); }
+    finally { setQualityChecking(false); }
+  };
+
+  /* ── Batch content refinement ────────────────────────────────── */
+  const [refining, setRefining] = useState(false);
+
+  const batchRefine = async () => {
+    setRefining(true);
+    try {
+      const { batchRefineContent } = await import("../../services/contentRefiner");
+      const result = await batchRefineContent();
+      toast(`✨ Refined ${result.refined} articles (${result.errors} errors)`);
+      await load();
+    } catch (e) { toast("Refinement failed: " + ((e as Error).message || "Unknown")); }
+    finally { setRefining(false); }
+  };
+
+  /** Refine a single content item */
+  const refineSingle = async (contentId: string) => {
+    setBusy(true);
+    try {
+      const { refineAndUpdateContent } = await import("../../services/contentRefiner");
+      const result = await refineAndUpdateContent(contentId);
+      if (result.success) toast("✨ Content refined into progressive difficulty levels");
+      else toast("Refinement failed: " + (result.error || "Unknown"));
+      await load();
+    } catch (e) { toast("Refinement failed: " + ((e as Error).message || "Unknown")); }
+    finally { setBusy(false); }
+  };
+
   const bulkAction = async (status: "approved" | "rejected") => {
     if (selectedIds.size === 0) { toast("Select items first"); return; }
     setBusy(true);
@@ -371,6 +412,16 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                   <button className={`${btnDanger} ${btnSm}`} onClick={() => bulkAction("rejected")}>❌ Reject all</button>
                 </>
               )}
+              {statusFilter === "pending" && (
+                <button className={`${btnPrimary} ${btnSm}`} onClick={batchQualityCheck} disabled={qualityChecking}>
+                  {qualityChecking ? "🔍 Checking..." : "🔍 Quality Check All"}
+                </button>
+              )}
+              {(statusFilter === "approved" || statusFilter === "all") && (
+                <button className={`${btnPrimary} ${btnSm}`} onClick={batchRefine} disabled={refining}>
+                  {refining ? "✨ Refining..." : "✨ Refine All Content"}
+                </button>
+              )}
               {statusFilter === "approved" && (
                 <button className={`${btnPrimary} ${btnSm}`} onClick={indexAllUnindexed} disabled={indexing}>
                   {indexing ? "🧠 Indexing..." : "🧠 Index All to AI"}
@@ -441,6 +492,12 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                           <button className={`${btnOk} ${btnSm}`} onClick={() => approveItem(item.id)}>✅</button>
                           <button className={`${btnDanger} ${btnSm}`} onClick={() => rejectItem(item.id)}>❌</button>
                         </>
+                      )}
+                      {item.status === "approved" && (
+                        <button
+                          className={`${btnPrimary} ${btnSm}`}
+                          onClick={() => refineSingle(item.id)}
+                        >✨ Refine</button>
                       )}
                       {item.status === "approved" && !(item as any).ragDocumentId && (
                         <button

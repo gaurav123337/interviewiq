@@ -120,6 +120,7 @@ ALTER TABLE content_items ADD COLUMN IF NOT EXISTS summary TEXT;
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS quality_notes TEXT;
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS quality_model TEXT;
 ALTER TABLE content_items ADD COLUMN IF NOT EXISTS quality_checked_at TIMESTAMPTZ;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS content_refined JSONB;
 ALTER TABLE content_sources ADD COLUMN IF NOT EXISTS scrape_count INT DEFAULT 0;
 ALTER TABLE content_sources ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_content_items_hash_unique ON content_items (content_hash) WHERE content_hash IS NOT NULL;
