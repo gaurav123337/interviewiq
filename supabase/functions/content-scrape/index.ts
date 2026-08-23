@@ -180,8 +180,40 @@ function extractArticle(html: string, url: string): { title: string; content: st
     articleHtml = bodyMatch?.[1] ?? html;
   }
 
-  // Clean to text
-  const content = articleHtml
+  // Clean to text — preserve code blocks before stripping tags
+  // First, wrap <pre> and <code> content in markers so they survive tag stripping
+  let preserved = articleHtml
+    .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_m, inner: string) => {
+      // Decode HTML entities inside code blocks
+      const decoded = inner
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&#x27;/g, "'")
+        .replace(/&#x2F;/g, "/")
+        .split("\n")
+        .map((l: string) => l.trim())
+        .filter(Boolean)
+        .join("\n");
+      return `\nCODE_BLOCK_START\n${decoded}\nCODE_BLOCK_END\n`;
+    })
+    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, inner: string) => {
+      // Inline code — keep on one line
+      const decoded = inner
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&nbsp;/g, " ")
+        .trim();
+      return `\`\${decoded}\`\`;
+    })
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
@@ -195,10 +227,26 @@ function extractArticle(html: string, url: string): { title: string; content: st
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, "/")
     .split("\n")
-    .map((l) => l.trim())
+    .map((l: string) => l.trim())
     .filter(Boolean)
     .join("\n");
+
+  // Now restore CODE_BLOCK markers as proper markdown code fences
+  const content = preserved
+    .replace(/CODE_BLOCK_START\n([\s\S]*?)\nCODE_BLOCK_END/g, (_m: string, code: string) => {
+      // Detect language from content
+      let lang = "";
+      const sample = code.slice(0, 200).trim();
+      if (/^[{[]/.test(sample) && /[}\]]\s*$/.test(sample.slice(-50))) lang = "json";
+      else if (/^(import|export|const|let|function|class)\b/.test(sample)) lang = "js";
+      else if (/^(SELECT|INSERT|CREATE|ALTER|DROP)\b/i.test(sample)) lang = "sql";
+      else if (/^(def |class |import )/.test(sample)) lang = "python";
+      else if (/^(fn |let mut |pub |struct )/.test(sample)) lang = "rust";
+      return `\n\n\`\`\`${lang}\n${code}\n\`\`\n\n`;
+    });
 
   return { title, content, author };
 }
