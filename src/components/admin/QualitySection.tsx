@@ -98,14 +98,14 @@ Practice questions:
 
   return (
     <div className="space-y-4">
+      <div>
+        <h2 className="text-[16px] font-extrabold">🔎 Content quality center</h2>
+        <p className="text-[12.5px] text-mut">
+          Every question that real users answered, scored on performance, difficulty, feedback and freshness.
+          The composite score (0-100) is: avg score · pass-rate band · 👍/👎/🚩 · days since review.
+        </p>
+      </div>
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex-1">
-          <h2 className="text-[16px] font-extrabold">🔎 Content quality center</h2>
-          <p className="text-[12.5px] text-mut">
-            Every question that real users answered, scored on performance, difficulty, feedback and freshness.
-            The composite score (0-100) is: avg score · pass-rate band · 👍/👎/🚩 · days since review.
-          </p>
-        </div>
         <Seg
           options={QUALITY_TABS.map(t => t.value === "coach" && gapAlerts.length > 0 ? { ...t, label: `${t.label} · ${gapAlerts.length}` } : t)}
           value={tab}
