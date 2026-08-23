@@ -82,13 +82,23 @@ const MODULE_MAX_TOKENS: Record<string, number> = {
   rag: 500,
 };
 
-/** Model quality tiers for fallback — cheapest first within each tier. */
-const FALLBACK_CHAIN = [
-  "gpt-4o-mini",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-  "gpt-4.1-nano",
-];
+/** Fallback chains per provider — only models the provider actually serves. */
+const FALLBACK_CHAINS: Record<string, string[]> = {
+  // OpenAI direct
+  openai: ["gpt-4o-mini", "gpt-4.1-nano"],
+  // Google Gemini
+  gemini: ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+  // OpenRouter / OrcaRouter / any OpenAI-compatible router
+  default: [], // Don't fall back to other providers — retry the same model
+};
+
+function getFallbackChain(base: string, model: string): string[] {
+  const lower = base.toLowerCase();
+  if (lower.includes("openai.com")) return FALLBACK_CHAINS.openai;
+  if (lower.includes("gemini") || lower.includes("google")) return FALLBACK_CHAINS.gemini;
+  // For OrcaRouter, OpenRouter, etc — only retry the same model (no cross-provider fallback)
+  return [];
+}
 
 
 
@@ -136,7 +146,8 @@ async function chatWithSettings(
   }
 
   /* ── Step 2: Call API with fallback chain on failure ─────────────────── */
-  const models = [s.model, ...FALLBACK_CHAIN.filter((m) => m !== s.model)];
+  const fallbackModels = getFallbackChain(s.base, s.model);
+  const models = [s.model, ...fallbackModels.filter((m) => m !== s.model)];
   let lastError: string = "";
 
   for (const model of models) {
@@ -191,7 +202,7 @@ async function chatWithSettings(
     }
   }
 
-  throw new Error(`AI request failed after trying ${models.length} models: ${lastError}`);
+  throw new Error(`AI request failed after ${models.length} attempt${models.length > 1 ? "s" : ""}: ${lastError}` + (models.length === 1 ? `\nTip: The provider may not support this model. Try a different model in Settings → AI.` : ""));
 }
 
 export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
