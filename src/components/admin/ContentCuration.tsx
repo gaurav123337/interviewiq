@@ -1,0 +1,413 @@
+/* ContentCuration — Admin dashboard for the content curation pipeline.
+   Shows content sources, scraped items with quality scores, review workflow,
+   and stats. Integrates with contentScraper + contentQuality services. */
+
+import { useEffect, useState } from "react";
+import { FIELDS } from "../../data";
+import {
+  listContentSources, saveContentSource, toggleContentSource, deleteContentSource,
+  listContentItems, reviewContentItem, bulkReviewItems, getContentStats,
+  type ContentSourceRow, type ContentItemRow, type ContentStats,
+} from "../../services/contentCuration";
+import { toast } from "../../toast";
+import { btnPrimary, btnSm, btnOk, btnDanger, cardCls, Chip, Switch } from "../ui";
+
+/* ── Quality badge color ────────────────────────────────────────────────── */
+
+function qualityColor(score: number | null): string {
+  if (score == null) return "text-mut";
+  if (score >= 80) return "text-green";
+  if (score >= 60) return "text-acc";
+  if (score >= 40) return "text-warn";
+  return "text-err";
+}
+
+function qualityBand(score: number | null): string {
+  if (score == null) return "—";
+  if (score >= 80) return "Excellent";
+  if (score >= 60) return "Good";
+  if (score >= 40) return "Fair";
+  return "Poor";
+}
+
+/* ── Main Component ─────────────────────────────────────────────────────── */
+
+export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean) => void }) {
+  const [tab, setTab] = useState<"sources" | "items" | "stats">("items");
+  const [sources, setSources] = useState<ContentSourceRow[]>([]);
+  const [items, setItems] = useState<ContentItemRow[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
+  const [stats, setStats] = useState<ContentStats | null>(null);
+  const [statusFilter, setStatusFilter] = useState("pending");
+  const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Add source form
+  const [showAddSource, setShowAddSource] = useState(false);
+  const [newUrl, setNewUrl] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState("article");
+  const [newField, setNewField] = useState("general");
+
+  // Expanded item for review
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [s, { items: i, total }, st] = await Promise.all([
+        listContentSources(),
+        listContentItems({ status: statusFilter, limit: 50 }),
+        getContentStats(),
+      ]);
+      setSources(s);
+      setItems(i);
+      setTotalItems(total);
+      setStats(st);
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, [statusFilter]);
+
+  /* ── Source actions ────────────────────────────────────────────────── */
+
+  const addSource = async () => {
+    if (!newUrl.trim().startsWith("http")) { toast("Enter a valid URL"); return; }
+    setBusy(true);
+    try {
+      await saveContentSource({ url: newUrl.trim(), name: newName.trim() || new URL(newUrl).hostname, sourceType: newType, fieldId: newField });
+      toast("✅ Source added");
+      setNewUrl(""); setNewName(""); setShowAddSource(false);
+      await load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const toggleSource = async (s: ContentSourceRow, enabled: boolean) => {
+    setBusy(true);
+    try { await toggleContentSource(s.id, enabled); await load(); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const removeSource = async (id: string) => {
+    setBusy(true);
+    try { await deleteContentSource(id); toast("Source removed"); await load(); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  /* ── Item review actions ───────────────────────────────────────────── */
+
+  const approveItem = async (id: string) => {
+    setBusy(true);
+    try { await reviewContentItem(id, "approved"); toast("✅ Approved"); await load(); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const rejectItem = async (id: string) => {
+    setBusy(true);
+    try { await reviewContentItem(id, "rejected"); toast("❌ Rejected"); await load(); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const bulkAction = async (status: "approved" | "rejected") => {
+    if (selectedIds.size === 0) { toast("Select items first"); return; }
+    setBusy(true);
+    try {
+      await bulkReviewItems([...selectedIds], status);
+      toast(`${selectedIds.size} items ${status}`);
+      setSelectedIds(new Set());
+      await load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === items.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(items.map((i) => i.id)));
+  };
+
+  /* ── Render ────────────────────────────────────────────────────────── */
+
+  return (
+    <div className="space-y-4">
+      {/* Header + tabs */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-extrabold">📝 Content Curation</h2>
+        <div className="flex gap-1">
+          {(["items", "sources", "stats"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${
+                tab === t ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"
+              }`}
+            >
+              {t === "items" ? "📋 Items" : t === "sources" ? "🌐 Sources" : "📊 Stats"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ─── ITEMS TAB ─────────────────────────────────────────────── */}
+      {tab === "items" && (
+        <div className="space-y-3">
+          {/* Filters + bulk actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex gap-1">
+              {["pending", "approved", "rejected", "all"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => { setStatusFilter(s); setSelectedIds(new Set()); }}
+                  className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${
+                    statusFilter === s ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"
+                  }`}
+                >
+                  {s === "pending" ? `⏳ Pending` : s === "approved" ? `✅ Approved` : s === "rejected" ? `❌ Rejected` : `📋 All`}
+                  {s === "pending" && stats?.pending != null ? ` (${stats.pending})` : ""}
+                </button>
+              ))}
+            </div>
+            {selectedIds.size > 0 && (
+              <div className="flex gap-1 ml-auto">
+                <span className="text-[12px] text-mut self-center">{selectedIds.size} selected</span>
+                <button className={`${btnOk} ${btnSm}`} onClick={() => bulkAction("approved")}>✅ Approve all</button>
+                <button className={`${btnDanger} ${btnSm}`} onClick={() => bulkAction("rejected")}>❌ Reject all</button>
+              </div>
+            )}
+          </div>
+
+          {/* Items list */}
+          {loading ? (
+            <div className="py-10 text-center text-[13px] text-mut"><span className="spinner" /> Loading…</div>
+          ) : items.length === 0 ? (
+            <div className={`${cardCls} p-8 text-center`}>
+              <p className="text-[22px]">📭</p>
+              <p className="mt-2 text-[14px] font-bold">No {statusFilter} items</p>
+              <p className="text-[12px] text-mut">Add content sources and run the scraper to populate this feed.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {items.map((item) => (
+                <div key={item.id} className={`${cardCls} p-4`}>
+                  {/* Header row */}
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(item.id)}
+                      onChange={() => toggleSelect(item.id)}
+                      className="mt-1 h-4 w-4 accent-acc"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
+                          className="text-left text-[14px] font-extrabold hover:underline"
+                        >
+                          {item.title}
+                        </button>
+                        <Chip tone={item.status === "approved" ? "ok" : item.status === "rejected" ? "err" : "default"}>
+                          {item.status}
+                        </Chip>
+                        <Chip tone="cat">{item.contentType}</Chip>
+                        {item.qualityScore != null && (
+                          <span className={`text-[12px] font-bold ${qualityColor(item.qualityScore)}`}>
+                            🎯 {item.qualityScore} · {qualityBand(item.qualityScore)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-mut">
+                        <span>🌐 {item.sourceName}</span>
+                        <span>·</span>
+                        <a href={item.sourceUrl} target="_blank" rel="noopener" className="hover:underline text-acc">
+                          {item.domain}
+                        </a>
+                        {item.author && <><span>·</span><span>✍️ {item.author}</span></>}
+                        {item.publishedDate && <><span>·</span><span>📅 {item.publishedDate}</span></>}
+                        <span>·</span>
+                        <span>{item.content.split(/\s+/).length} words</span>
+                      </div>
+                      {item.summary && (
+                        <p className="mt-1.5 text-[12.5px] text-fnt leading-relaxed line-clamp-2">{item.summary}</p>
+                      )}
+                    </div>
+
+                    {/* Quick review buttons */}
+                    {item.status === "pending" && (
+                      <div className="flex gap-1">
+                        <button className={`${btnOk} ${btnSm}`} onClick={() => approveItem(item.id)}>✅</button>
+                        <button className={`${btnDanger} ${btnSm}`} onClick={() => rejectItem(item.id)}>❌</button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Expanded details */}
+                  {expandedId === item.id && (
+                    <div className="mt-3 space-y-3 border-t border-line/10 pt-3">
+                      {/* Quality scores breakdown */}
+                      {item.qualityScore != null && (
+                        <div className="grid grid-cols-5 gap-2">
+                          {[
+                            { label: "Accuracy", score: item.accuracyScore },
+                            { label: "Relevance", score: item.relevanceScore },
+                            { label: "Depth", score: item.depthScore },
+                            { label: "Freshness", score: item.freshnessScore },
+                            { label: "Credibility", score: item.credibilityScore },
+                          ].map((d) => (
+                            <div key={d.label} className="rounded-lg bg-wht5 px-2 py-1.5 text-center">
+                              <div className={`text-[14px] font-extrabold ${qualityColor(d.score)}`}>{d.score ?? "—"}</div>
+                              <div className="text-[10px] text-mut">{d.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {item.qualityNotes && (
+                        <p className="text-[12px] text-mut italic">🤖 {item.qualityNotes}</p>
+                      )}
+
+                      {/* Content preview */}
+                      <div className="max-h-[300px] overflow-y-auto rounded-lg bg-deep/40 p-3 text-[12px] text-fnt leading-relaxed whitespace-pre-wrap">
+                        {item.content.slice(0, 3000)}
+                      </div>
+
+                      {/* Review notes */}
+                      {item.reviewNotes && (
+                        <p className="text-[12px] text-mut">📝 Review: {item.reviewNotes}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── SOURCES TAB ───────────────────────────────────────────── */}
+      {tab === "sources" && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-[13px] text-mut">{sources.length} content source(s)</p>
+            <button className={btnPrimary + btnSm} onClick={() => setShowAddSource(!showAddSource)}>
+              {showAddSource ? "Cancel" : "➕ Add source"}
+            </button>
+          </div>
+
+          {/* Add source form */}
+          {showAddSource && (
+            <div className={`${cardCls} p-4`}>
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[1fr_150px_130px]">
+                <input
+                  value={newUrl}
+                  onChange={(e) => setNewUrl(e.target.value)}
+                  placeholder="https://example.com/article"
+                  className="inp"
+                />
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Source name"
+                  className="inp"
+                />
+                <select value={newType} onChange={(e) => setNewType(e.target.value)} className="inp">
+                  <option value="article">📄 Article</option>
+                  <option value="tutorial">📚 Tutorial</option>
+                  <option value="docs">📖 Docs</option>
+                  <option value="video_transcript">🎬 Video transcript</option>
+                </select>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <select value={newField} onChange={(e) => setNewField(e.target.value)} className="inp max-w-[200px]">
+                  {FIELDS.map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+                </select>
+                <button className={btnPrimary + btnSm} onClick={addSource} disabled={busy}>Add</button>
+              </div>
+            </div>
+          )}
+
+          {/* Sources list */}
+          {sources.map((s) => (
+            <div key={s.id} className="flex items-center gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip tone={s.enabled ? "ok" : "default"}>{s.enabled ? "ON" : "OFF"}</Chip>
+                  <span className="text-[13px] font-bold">{s.name}</span>
+                  <span className="text-[11.5px] text-mut">{s.domain}</span>
+                  <span className="text-[11.5px] text-mut">⭐ {s.domainReputation}/10</span>
+                  {s.scrapeCount > 0 && <span className="text-[11px] text-mut">{s.scrapeCount} scraped</span>}
+                </div>
+                <div className="mt-1 truncate text-[12px] text-mut">{s.url}</div>
+              </div>
+              <div className="flex gap-2">
+                <Switch checked={s.enabled} onChange={(v) => toggleSource(s, v)} />
+                <button className={btnDanger + btnSm} onClick={() => removeSource(s.id)} disabled={busy}>Delete</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ─── STATS TAB ─────────────────────────────────────────────── */}
+      {tab === "stats" && stats && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <StatCard label="Total" value={stats.total} icon="📦" />
+            <StatCard label="Pending" value={stats.pending} icon="⏳" />
+            <StatCard label="Approved" value={stats.approved} icon="✅" />
+            <StatCard label="Rejected" value={stats.rejected} icon="❌" />
+            <StatCard label="Avg Quality" value={stats.avgQuality != null ? `${stats.avgQuality}/100` : "—"} icon="🎯" />
+          </div>
+
+          {stats.topSources.length > 0 && (
+            <div className={`${cardCls} p-4`}>
+              <h3 className="mb-3 text-[14px] font-extrabold">🌐 Top Sources</h3>
+              <div className="space-y-2">
+                {stats.topSources.map((s) => (
+                  <div key={s.name} className="flex items-center justify-between rounded-lg bg-wht5 px-3 py-2">
+                    <div>
+                      <span className="text-[13px] font-bold">{s.name}</span>
+                      <span className="ml-2 text-[11px] text-mut">{s.count} items</span>
+                    </div>
+                    <span className={`text-[12px] font-bold ${qualityColor(s.avgQuality)}`}>
+                      {s.avgQuality != null ? `${s.avgQuality}/100` : "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Stat card ─────────────────────────────────────────────────────────── */
+
+function StatCard({ label, value, icon }: { label: string; value: string | number; icon: string }) {
+  return (
+    <div className={`${cardCls} p-3 text-center`}>
+      <div className="text-[18px]">{icon}</div>
+      <div className="mt-1 text-[18px] font-extrabold">{value}</div>
+      <div className="text-[11px] text-mut">{label}</div>
+    </div>
+  );
+}

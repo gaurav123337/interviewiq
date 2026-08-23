@@ -29,9 +29,10 @@ const ContentSection = lazy(() => import("./AdminContent").then(m => ({ default:
 const AdminSkillRoadmaps = lazy(() => import("./AdminSkillRoadmaps").then(m => ({ default: m.AdminSkillRoadmaps })));
 const BillingSection = lazy(() => import("./admin/BillingSection").then(m => ({ default: m.BillingSection })));
 const AICostSection = lazy(() => import("./admin/AICostSection").then(m => ({ default: m.AICostSection })));
+const ContentCuration = lazy(() => import("./admin/ContentCuration").then(m => ({ default: m.ContentCuration })));
 
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts" | "contentCuration";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -52,7 +53,8 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "trends", label: "Trends", icon: "📈" },
   { id: "content", label: "Content CMS", icon: "✍️" },
   { id: "skillRoadmaps", label: "Skill Roadmaps", icon: "🛤️" },
-  { id: "aiCosts", label: "AI Costs", icon: "🤖" }
+  { id: "aiCosts", label: "AI Costs", icon: "🤖" },
+  { id: "contentCuration", label: "Content Pipeline", icon: "📝" }
 ];
 
 /** Suspense fallback for lazy-loaded admin sections */
@@ -183,6 +185,7 @@ export function Admin() {
         {section === "trends" && <TrendsSection />}
         {section === "content" && <ContentSection />}
         {section === "aiCosts" && <AICostSection busy={busy} setBusy={setBusy} />}
+        {section === "contentCuration" && <ContentCuration busy={busy} setBusy={setBusy} />}
         {section === "skillRoadmaps" && <AdminSkillRoadmaps />}
         </Suspense>
       </div>
