@@ -170,6 +170,29 @@ function inlineMarkdown(text: string): ReactNode {
   return parts.length === 1 ? parts[0] : <>{parts}</>;
 }
 
+/** Detect if a line looks like code (JSON, config, imports, etc.) */
+function isCodeLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+  // JSON structure
+  if (/^[{\[]/.test(trimmed) && /[}\]],?$/.test(trimmed)) return true;
+  if (/^"[^"]+"\s*[:=]/.test(trimmed)) return true;
+  if (/^import\s/.test(trimmed) || /^export\s/.test(trimmed) || /^from\s/.test(trimmed)) return true;
+  if (/^const\s|^let\s|^var\s|^function\s|^class\s|^interface\s|^type\s/.test(trimmed)) return true;
+  if (/^\s*(if|else|for|while|return|throw|try|catch|switch|case|break)\b/.test(line)) return true;
+  if (/^\s*}\s*$/.test(trimmed) || /^\s*\{\s*$/.test(trimmed)) return true;
+  if (/^\s*\)\s*;?\s*$/.test(trimmed)) return true;
+  if (/^[a-zA-Z_$]+\s*\(/.test(trimmed) && /[)]\s*$/.test(trimmed)) return true;
+  return false;
+}
+
+/** Count code lines in a block */
+function codeLineRatio(lines: string[]): number {
+  if (lines.length === 0) return 0;
+  const codeCount = lines.filter(l => isCodeLine(l)).length;
+  return codeCount / lines.length;
+}
+
 /** Split markdown into blocks and render as safe React elements */
 function MarkdownContent({ text }: { text: string }) {
   const lines = text.split("\n");
@@ -177,6 +200,7 @@ function MarkdownContent({ text }: { text: string }) {
   let inCodeBlock = false;
   let codeLines: string[] = [];
   let listItems: { text: string; ordered: boolean }[] = [];
+  let buffer: string[] = []; // accumulate non-list lines for code detection
 
   const flushList = () => {
     if (listItems.length > 0) {
@@ -200,14 +224,52 @@ function MarkdownContent({ text }: { text: string }) {
     }
   };
 
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    // Check if this buffer is mostly code
+    if (buffer.length >= 2 && codeLineRatio(buffer) >= 0.5) {
+      // Render as code block
+      elements.push(
+        <pre key={`code-${elements.length}`} className="rounded-lg bg-panel2/80 p-3 my-3 overflow-x-auto">
+          <code className="text-[12px] text-ink/90 font-mono">{buffer.join("\n")}</code>
+        </pre>
+      );
+    } else {
+      buffer.forEach((line, idx) => {
+        if (line.trim() === "") return;
+        if (line.startsWith("### ")) {
+          elements.push(
+            <h3 key={`h3-${elements.length}-${idx}`} className="mt-5 mb-2 text-[15px] font-extrabold text-ink">
+              {inlineMarkdown(line.slice(4))}
+            </h3>
+          );
+        } else if (line.startsWith("## ")) {
+          elements.push(
+            <h2 key={`h2-${elements.length}-${idx}`} className="mt-7 mb-3 text-[17px] font-extrabold text-ink border-b border-line/10 pb-1">
+              {inlineMarkdown(line.slice(3))}
+            </h2>
+          );
+        } else {
+          elements.push(
+            <p key={`p-${elements.length}-${idx}`} className="mb-3 text-[13px] text-ink/85 leading-relaxed">
+              {inlineMarkdown(line)}
+            </p>
+          );
+        }
+      });
+    }
+    buffer = [];
+  };
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    if (line.startsWith("```")) {
+    // Explicit ``` code fences
+    if (line.trim().startsWith("```")) {
       if (inCodeBlock) {
         elements.push(
           <pre key={`code-${elements.length}`} className="rounded-lg bg-panel2/80 p-3 my-3 overflow-x-auto">
-            <code className="text-[12px] text-ink/90">{codeLines.join("\n")}</code>
+            <code className="text-[12px] text-ink/90 font-mono">{codeLines.join("\n")}</code>
           </pre>
         );
         inCodeBlock = false;
@@ -215,6 +277,7 @@ function MarkdownContent({ text }: { text: string }) {
         continue;
       }
       flushList();
+      flushBuffer();
       inCodeBlock = true;
       continue;
     }
@@ -224,13 +287,17 @@ function MarkdownContent({ text }: { text: string }) {
       continue;
     }
 
+    // Empty line = paragraph break
     if (line.trim() === "") {
       flushList();
+      flushBuffer();
       continue;
     }
 
+    // Headings
     if (line.startsWith("### ")) {
       flushList();
+      flushBuffer();
       elements.push(
         <h3 key={`h3-${elements.length}`} className="mt-5 mb-2 text-[15px] font-extrabold text-ink">
           {inlineMarkdown(line.slice(4))}
@@ -241,6 +308,7 @@ function MarkdownContent({ text }: { text: string }) {
 
     if (line.startsWith("## ")) {
       flushList();
+      flushBuffer();
       elements.push(
         <h2 key={`h2-${elements.length}`} className="mt-7 mb-3 text-[17px] font-extrabold text-ink border-b border-line/10 pb-1">
           {inlineMarkdown(line.slice(3))}
@@ -249,18 +317,30 @@ function MarkdownContent({ text }: { text: string }) {
       continue;
     }
 
-    if (line.startsWith("- ")) {
+    // Lists
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      flushBuffer();
       listItems.push({ text: line.slice(2), ordered: false });
       continue;
     }
 
-    const orderedMatch = line.match(/^(\d+)\.\s+(.+)/);
+    const orderedMatch = line.match(/^(\d+)[.)]\s+(.+)/);
     if (orderedMatch) {
+      flushBuffer();
       listItems.push({ text: orderedMatch[2], ordered: true });
       continue;
     }
 
+    // Code-like lines → buffer for batch detection
+    if (isCodeLine(line)) {
+      flushList();
+      buffer.push(line);
+      continue;
+    }
+
+    // Regular text → flush buffer and add paragraph
     flushList();
+    flushBuffer();
     elements.push(
       <p key={`p-${elements.length}`} className="mb-3 text-[13px] text-ink/85 leading-relaxed">
         {inlineMarkdown(line)}
@@ -269,6 +349,7 @@ function MarkdownContent({ text }: { text: string }) {
   }
 
   flushList();
+  flushBuffer();
 
   return <>{elements}</>;
 }
@@ -375,12 +456,11 @@ function ArticleCard({ article }: { article: Article }) {
   const [expanded, setExpanded] = useState(false);
   const [difficulty, setDifficulty] = useState<DifficultyLevel>("beginner");
   const [showGlossary, setShowGlossary] = useState(false);
-  const [showFull, setShowFull] = useState(false);
 
   const refined = article.contentRefined;
   const hasRefined = Boolean(refined?.beginner);
 
-  const currentContent = hasRefined ? refined![difficulty] : (showFull ? article.content : article.content.slice(0, 3000));
+  const currentContent = hasRefined ? refined![difficulty] : article.content;
 
   const preview = article.summary || (hasRefined
     ? refined!.beginner.replace(/[#*`[\]]/g, "").slice(0, 200) + "..."
@@ -454,15 +534,10 @@ function ArticleCard({ article }: { article: Article }) {
                 <span className="font-bold">⏳ This article needs AI refinement.</span> Admins can click "✨ Refine" in Content Pipeline to generate progressive difficulty levels, key takeaways, and a glossary.
               </div>
               <div className="rounded-lg bg-panel2/50 p-4">
-                <MarkdownContent text={showFull ? article.content : currentContent} />
+                <MarkdownContent text={currentContent} />
               </div>
               {article.content.length > 3000 && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowFull(!showFull); }}
-                  className="text-[12px] font-bold text-acc hover:underline"
-                >
-                  {showFull ? "▾ Show less" : "▸ Show full article"}
-                </button>
+                <p className="text-[11px] text-mut">📄 Full article ({(article.content.length / 1000).toFixed(1)}K characters)</p>
               )}
             </div>
           )}
