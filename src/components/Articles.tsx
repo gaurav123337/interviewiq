@@ -182,6 +182,8 @@ function isCodeLine(line: string): boolean {
   if (/^\s*}\s*$/.test(trimmed) || /^\s*\{\s*$/.test(trimmed)) return true;
   if (/^\s*\)\s*;?\s*$/.test(trimmed)) return true;
   if (/^[a-zA-Z_$]+\s*\(/.test(trimmed) && /[)]\s*$/.test(trimmed)) return true;
+  // JSON value tokens (colon, comma, bracket patterns)
+  if (/^[:},\]\[]+$/.test(trimmed)) return true;
   return false;
 }
 
@@ -197,6 +199,20 @@ function detectLanguage(lines: string[]): string {
   if (/^\s*[.#@][a-zA-Z]/.test(joined) && /[{}]\s*$/.test(joined)) return "CSS";
   if (/^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i.test(joined)) return "SQL";
   return "";
+}
+
+/** Count code-like lines in an array (skipping empty lines) */
+function countCodeLines(lines: string[]): number {
+  return lines.filter(l => l.trim() && isCodeLine(l)).length;
+}
+
+/** Check if a block of lines looks like a code structure (JSON, JS, etc.) */
+function isLikelyCodeBlock(lines: string[]): boolean {
+  if (lines.length < 2) return false;
+  const nonEmpty = lines.filter(l => l.trim());
+  if (nonEmpty.length < 2) return false;
+  const codeCount = countCodeLines(lines);
+  return codeCount / nonEmpty.length >= 0.45;
 }
 
 /* ── Syntax Highlighting ───────────────────────────────────────────────── */
@@ -378,34 +394,95 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
   );
 }
 
-/** Count code lines in a block */
-function codeLineRatio(lines: string[]): number {
-  if (lines.length === 0) return 0;
-  const codeCount = lines.filter(l => isCodeLine(l)).length;
-  return codeCount / lines.length;
+
+/**
+ * Pre-scan: identify code regions in the content.
+ * Returns a set of line indices that belong to code blocks.
+ * Handles the case where JSON tokens are on separate lines with blank lines between them.
+ */
+function findCodeRegions(lines: string[]): Set<number> {
+  const codeLines = new Set<number>();
+
+  // Pass 1: Mark lines that are clearly code
+  const isCode: boolean[] = lines.map(l => isCodeLine(l));
+
+  // Pass 2: Find runs of code lines (allowing up to 2 blank lines between code lines)
+  let runStart = -1;
+  let runEnd = -1;
+  let lastCodeIdx = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (isCode[i]) {
+      if (runStart === -1) runStart = i;
+      runEnd = i;
+      lastCodeIdx = i;
+    } else if (lines[i].trim() === "") {
+      // Blank line — check if there's code within the next 3 lines
+      let foundNextCode = false;
+      for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+        if (isCode[j]) { foundNextCode = true; break; }
+      }
+      if (foundNextCode && runStart !== -1) {
+        runEnd = i; // include the blank line in the run
+        lastCodeIdx = i;
+      }
+    } else {
+      // Non-code, non-blank line — flush the run if it's long enough
+      if (runStart !== -1 && runEnd - runStart >= 1) {
+        const runLines = lines.slice(runStart, runEnd + 1);
+        if (isLikelyCodeBlock(runLines)) {
+          for (let k = runStart; k <= runEnd; k++) codeLines.add(k);
+        }
+      }
+      runStart = -1;
+      runEnd = -1;
+    }
+  }
+
+  // Flush final run
+  if (runStart !== -1 && runEnd - runStart >= 1) {
+    const runLines = lines.slice(runStart, runEnd + 1);
+    if (isLikelyCodeBlock(runLines)) {
+      for (let k = runStart; k <= runEnd; k++) codeLines.add(k);
+    }
+  }
+
+  // Pass 3: If we found code regions, also merge adjacent blank lines
+  const expanded = new Set<number>();
+  codeLines.forEach(idx => expanded.add(idx));
+  codeLines.forEach(idx => {
+    // Expand to include surrounding blank lines
+    if (idx > 0 && lines[idx - 1].trim() === "") expanded.add(idx - 1);
+    if (idx < lines.length - 1 && lines[idx + 1].trim() === "") expanded.add(idx + 1);
+  });
+
+  return expanded;
 }
 
 /** Split markdown into blocks and render as safe React elements */
 function MarkdownContent({ text }: { text: string }) {
   const lines = text.split("\n");
   const elements: ReactNode[] = [];
-  let inCodeBlock = false;
-  let codeLines: string[] = [];
+  let inExplicitCodeBlock = false;
+  let explicitCodeLines: string[] = [];
   let listItems: { text: string; ordered: boolean }[] = [];
-  let buffer: string[] = []; // accumulate non-list lines for code detection
+  let keyCounter = 0;
+
+  // Pre-scan for auto-detected code regions
+  const codeRegions = findCodeRegions(lines);
 
   const flushList = () => {
     if (listItems.length > 0) {
       const isOrdered = listItems[0].ordered;
       elements.push(
         isOrdered ? (
-          <ol key={`ol-${elements.length}`} className="ml-5 mb-3 list-decimal space-y-1">
+          <ol key={`ol-${keyCounter++}`} className="ml-5 mb-3 list-decimal space-y-1">
             {listItems.map((li, i) => (
               <li key={i} className="text-[13px] text-ink/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
             ))}
           </ol>
         ) : (
-          <ul key={`ul-${elements.length}`} className="ml-5 mb-3 list-disc space-y-1">
+          <ul key={`ul-${keyCounter++}`} className="ml-5 mb-3 list-disc space-y-1">
             {listItems.map((li, i) => (
               <li key={i} className="text-[13px] text-ink/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
             ))}
@@ -416,78 +493,72 @@ function MarkdownContent({ text }: { text: string }) {
     }
   };
 
-  const flushBuffer = () => {
-    if (buffer.length === 0) return;
-    if (buffer.length >= 2 && codeLineRatio(buffer) >= 0.5) {
-      const codeText = buffer.join("\n");
-      elements.push(
-        <CodeBlock key={`code-${elements.length}`} code={codeText} />
-      );
-    } else {
-      buffer.forEach((line, idx) => {
-        if (line.trim() === "") return;
-        if (line.startsWith("### ")) {
-          elements.push(
-            <h3 key={`h3-${elements.length}-${idx}`} className="mt-5 mb-2 text-[15px] font-extrabold text-ink">
-              {inlineMarkdown(line.slice(4))}
-            </h3>
-          );
-        } else if (line.startsWith("## ")) {
-          elements.push(
-            <h2 key={`h2-${elements.length}-${idx}`} className="mt-7 mb-3 text-[17px] font-extrabold text-ink border-b border-line/10 pb-1">
-              {inlineMarkdown(line.slice(3))}
-            </h2>
-          );
-        } else {
-          elements.push(
-            <p key={`p-${elements.length}-${idx}`} className="mb-3 text-[13px] text-ink/85 leading-relaxed">
-              {inlineMarkdown(line)}
-            </p>
-          );
-        }
-      });
-    }
-    buffer = [];
-  };
-
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
     // Explicit ``` code fences
     if (line.trim().startsWith("```")) {
-      if (inCodeBlock) {
-        const lang = codeLines.length > 0 ? undefined : undefined; // language detected by CodeBlock
+      if (inExplicitCodeBlock) {
         elements.push(
-          <CodeBlock key={`code-${elements.length}`} code={codeLines.join("\n")} />
+          <CodeBlock key={`code-${keyCounter++}`} code={explicitCodeLines.join("\n")} />
         );
-        inCodeBlock = false;
-        codeLines = [];
+        inExplicitCodeBlock = false;
+        explicitCodeLines = [];
         continue;
       }
       flushList();
-      flushBuffer();
-      inCodeBlock = true;
+      inExplicitCodeBlock = true;
+      explicitCodeLines = [];
       continue;
     }
 
-    if (inCodeBlock) {
-      codeLines.push(line);
+    if (inExplicitCodeBlock) {
+      explicitCodeLines.push(line);
       continue;
     }
 
-    // Empty line = paragraph break
+    // Skip lines that are part of auto-detected code regions
+    if (codeRegions.has(i)) {
+      flushList();
+      // Collect all consecutive code-region lines
+      const codeBlockLines: string[] = [];
+      while (i < lines.length && codeRegions.has(i)) {
+        // Skip explicit ``` fences that might be in the region
+        if (lines[i].trim().startsWith("```") && codeBlockLines.length === 0) {
+          inExplicitCodeBlock = true;
+          break;
+        }
+        codeBlockLines.push(lines[i]);
+        i++;
+      }
+      i--; // back up one since the for-loop will increment
+      if (codeBlockLines.length > 0) {
+        // Clean leading/trailing blank lines from the code block
+        let start = 0;
+        let end = codeBlockLines.length;
+        while (start < end && codeBlockLines[start].trim() === "") start++;
+        while (end > start && codeBlockLines[end - 1].trim() === "") end--;
+        const cleaned = codeBlockLines.slice(start, end);
+        if (cleaned.length > 0) {
+          elements.push(
+            <CodeBlock key={`code-${keyCounter++}`} code={cleaned.join("\n")} />
+          );
+        }
+      }
+      continue;
+    }
+
+    // Empty line
     if (line.trim() === "") {
       flushList();
-      flushBuffer();
       continue;
     }
 
     // Headings
     if (line.startsWith("### ")) {
       flushList();
-      flushBuffer();
       elements.push(
-        <h3 key={`h3-${elements.length}`} className="mt-5 mb-2 text-[15px] font-extrabold text-ink">
+        <h3 key={`h3-${keyCounter++}`} className="mt-5 mb-2 text-[15px] font-extrabold text-ink">
           {inlineMarkdown(line.slice(4))}
         </h3>
       );
@@ -496,9 +567,8 @@ function MarkdownContent({ text }: { text: string }) {
 
     if (line.startsWith("## ")) {
       flushList();
-      flushBuffer();
       elements.push(
-        <h2 key={`h2-${elements.length}`} className="mt-7 mb-3 text-[17px] font-extrabold text-ink border-b border-line/10 pb-1">
+        <h2 key={`h2-${keyCounter++}`} className="mt-7 mb-3 text-[17px] font-extrabold text-ink border-b border-line/10 pb-1">
           {inlineMarkdown(line.slice(3))}
         </h2>
       );
@@ -507,37 +577,26 @@ function MarkdownContent({ text }: { text: string }) {
 
     // Lists
     if (line.startsWith("- ") || line.startsWith("* ")) {
-      flushBuffer();
       listItems.push({ text: line.slice(2), ordered: false });
       continue;
     }
 
     const orderedMatch = line.match(/^(\d+)[.)]\s+(.+)/);
     if (orderedMatch) {
-      flushBuffer();
       listItems.push({ text: orderedMatch[2], ordered: true });
       continue;
     }
 
-    // Code-like lines → buffer for batch detection
-    if (isCodeLine(line)) {
-      flushList();
-      buffer.push(line);
-      continue;
-    }
-
-    // Regular text → flush buffer and add paragraph
+    // Regular text
     flushList();
-    flushBuffer();
     elements.push(
-      <p key={`p-${elements.length}`} className="mb-3 text-[13px] text-ink/85 leading-relaxed">
+      <p key={`p-${keyCounter++}`} className="mb-3 text-[13px] text-ink/85 leading-relaxed">
         {inlineMarkdown(line)}
       </p>
     );
   }
 
   flushList();
-  flushBuffer();
 
   return <>{elements}</>;
 }
