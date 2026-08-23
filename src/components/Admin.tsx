@@ -4,7 +4,6 @@ import { getTeamsState, subscribeTeams, type TeamsState } from "../services/team
 import { getAdminState, subscribeAdmin, adminMetrics, adminListUsers, listAdmins, type AdminMetrics, type AdminUserRow } from "../services/admin";
 import { getAnnouncements, getPublishedQuestions, getRemoteConfig, type RemoteConfig } from "../services/remoteConfig";
 import { toast } from "../toast";
-import { Seg } from "./ui";
 
 /* ------------------------------------------------------------------ */
 /* Lazy-loaded admin sections — only bundled when the tab is opened    */
@@ -34,28 +33,100 @@ const ContentCuration = lazy(() => import("./admin/ContentCuration").then(m => (
 
 type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts" | "contentCuration";
 
-const SECTIONS: { id: Section; label: string; icon: string }[] = [
-  { id: "overview", label: "Overview", icon: "📈" },
-  { id: "users", label: "Users", icon: "👥" },
-  { id: "billing", label: "Billing", icon: "💰" },
-  { id: "announcements", label: "Announcements", icon: "📣" },
-  { id: "questions", label: "Question bank", icon: "📚" },
-  { id: "review", label: "Review inbox", icon: "🛂" },
-  { id: "import", label: "Auto-fill", icon: "⚡" },
-  { id: "scraper", label: "Scraper", icon: "🕷️" },
-  { id: "config", label: "Product config", icon: "🎛️" },
-  { id: "activity", label: "Activity", icon: "🧾" },
-  { id: "quality", label: "Quality", icon: "🔎" },
-  { id: "teams", label: "Teams", icon: "🏢" },
-  { id: "security", label: "Security", icon: "🔐" },
-  { id: "secrets", label: "Secrets", icon: "🔑" },
-  { id: "resources", label: "Resources", icon: "🔗" },
-  { id: "trends", label: "Trends", icon: "📈" },
-  { id: "content", label: "Content CMS", icon: "✍️" },
-  { id: "skillRoadmaps", label: "Skill Roadmaps", icon: "🛤️" },
-  { id: "aiCosts", label: "AI Costs", icon: "🤖" },
-  { id: "contentCuration", label: "Content Pipeline", icon: "📝" }
+interface NavItem { id: Section; label: string; icon: string; }
+interface NavGroup { label: string; icon: string; items: NavItem[]; }
+
+const NAV_GROUPS: NavGroup[] = [
+  { label: "Analytics", icon: "\u{1F4CA}", items: [
+    { id: "overview", label: "Overview", icon: "\u{1F4C8}" },
+    { id: "activity", label: "Activity", icon: "\u{1F9FE}" },
+    { id: "trends", label: "Trends", icon: "\u{1F4C9}" },
+    { id: "aiCosts", label: "AI Costs", icon: "\u{1F916}" },
+  ]},
+  { label: "Content", icon: "\u{1F4DA}", items: [
+    { id: "questions", label: "Question Bank", icon: "\u2753" },
+    { id: "review", label: "Review Inbox", icon: "\u{1F6C2}" },
+    { id: "scraper", label: "Scraper", icon: "\u{1F577}\uFE0F" },
+    { id: "contentCuration", label: "Content Pipeline", icon: "\u{1F4DD}" },
+    { id: "content", label: "Content CMS", icon: "\u270D\uFE0F" },
+    { id: "skillRoadmaps", label: "Skill Roadmaps", icon: "\u{1F6E4}\uFE0F" },
+    { id: "import", label: "Auto-fill", icon: "\u26A1" },
+  ]},
+  { label: "People", icon: "\u{1F465}", items: [
+    { id: "users", label: "Users", icon: "\u{1F464}" },
+    { id: "teams", label: "Teams", icon: "\u{1F3E2}" },
+    { id: "announcements", label: "Announcements", icon: "\u{1F4E3}" },
+    { id: "resources", label: "Resources", icon: "\u{1F517}" },
+  ]},
+  { label: "System", icon: "\u2699\uFE0F", items: [
+    { id: "config", label: "Product Config", icon: "\u{1F39B}\uFE0F" },
+    { id: "quality", label: "Quality", icon: "\u{1F50E}" },
+    { id: "billing", label: "Billing", icon: "\u{1F4B0}" },
+    { id: "security", label: "Security", icon: "\u{1F510}" },
+    { id: "secrets", label: "Secrets", icon: "\u{1F511}" },
+  ]},
 ];
+
+function AdminSidebar({ section, setSection, collapsed, setCollapsed }: {
+  section: Section; setSection: (s: Section) => void;
+  collapsed: boolean; setCollapsed: (v: boolean) => void;
+}) {
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set(NAV_GROUPS.map(g => g.label)));
+  const toggleGroup = (label: string) => {
+    setOpenGroups(prev => { const n = new Set(prev); if (n.has(label)) n.delete(label); else n.add(label); return n; });
+  };
+
+  return (
+    <aside className={`flex flex-col border-r border-line/10 bg-deep/60 transition-all duration-200 ${collapsed ? "w-[52px]" : "w-[220px]"} shrink-0 overflow-y-auto`}>
+      <button onClick={() => setCollapsed(!collapsed)}
+        className="flex h-10 items-center justify-center border-b border-line/10 text-[14px] text-mut hover:text-ink transition-colors"
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+        {collapsed ? "\u00BB" : "\u00AB"}
+      </button>
+      <nav className="flex-1 py-2">
+        {NAV_GROUPS.map(group => {
+          const isOpen = openGroups.has(group.label);
+          const hasActive = group.items.some(i => i.id === section);
+          return (
+            <div key={group.label} className="mb-1">
+              <button onClick={() => !collapsed && toggleGroup(group.label)}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors ${collapsed ? "justify-center" : ""} ${hasActive ? "text-acc" : "text-mut hover:text-fnt"}`}
+                title={collapsed ? group.label : undefined}>
+                <span className="text-[13px]">{group.icon}</span>
+                {!collapsed && (
+                  <>
+                    <span className="flex-1 text-left">{group.label}</span>
+                    <span className="text-[10px] opacity-50">{isOpen ? "\u25BE" : "\u25B8"}</span>
+                  </>
+                )}
+              </button>
+              {isOpen && !collapsed && (
+                <div className="ml-1">
+                  {group.items.map(item => (
+                    <button key={item.id} onClick={() => setSection(item.id)}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-all ${section === item.id ? "bg-acc/15 font-bold text-acc" : "text-fnt/70 hover:bg-wht5 hover:text-fnt"}`}>
+                      <span className="text-[14px] w-5 text-center">{item.icon}</span>
+                      <span>{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {collapsed && (
+                <div className="flex flex-col items-center gap-0.5">
+                  {group.items.map(item => (
+                    <button key={item.id} onClick={() => setSection(item.id)}
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg text-[15px] transition-all ${section === item.id ? "bg-acc/20 text-acc" : "text-fnt/60 hover:bg-wht5 hover:text-fnt"}`}
+                      title={item.label}>{item.icon}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
 
 /** Suspense fallback for lazy-loaded admin sections */
 function SectionSkeleton() {
@@ -82,6 +153,7 @@ export function Admin() {
   const [announcements, setAnnouncements] = useState(getAnnouncements());
   const [questions, setQuestions] = useState(getPublishedQuestions());
   const [config, setConfig] = useState<RemoteConfig>(() => getRemoteConfig());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => subscribeAdmin(setAdmin), []);
   useEffect(() => subscribeCloud(setCloud), []);
@@ -131,22 +203,34 @@ export function Admin() {
     );
   }
 
+  const activeGroup = NAV_GROUPS.find(g => g.items.some(i => i.id === section));
+  const activeItem = activeGroup?.items.find(i => i.id === section);
+
   return (
-    <div className="anim-view mx-auto max-w-[1100px] overflow-x-hidden">
-      <div className="pt-4 text-center">
-        <span className="eyebrow text-[12.5px] font-bold uppercase tracking-[.14em] text-acc3">🛡️ Admin</span>
-        <h1 className="mt-1 text-[clamp(26px,4vw,38px)] font-extrabold tracking-tight">Product <span className="grad-text">command center</span>.</h1>
-        <p className="mx-auto mt-2 max-w-[560px] text-[14.5px] text-mut">Users, metrics, releases, question-bank updates and feature toggles — published instantly to every client.</p>
-      </div>
-
-      <div className="mt-6 flex justify-center">
-        <Seg options={SECTIONS.map(s => ({ value: s.id, label: `${s.icon} ${s.label}` }))} value={section} onChange={v => setSection(v as Section)} />
-      </div>
-
-      <div className="mt-6">
-        <Suspense fallback={<SectionSkeleton />}>
-          {section === "overview" && <OverviewSection metrics={metrics} loading={loading} onOpenSecrets={() => setSection("secrets")} />}
-        {section === "users" && <UsersSection users={users} admins={admins} busy={busy} setBusy={setBusy} onChanged={load} />}
+    <div className="anim-view flex h-[calc(100vh-52px)] overflow-hidden">
+      <AdminSidebar section={section} setSection={setSection} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} />
+      <main className="flex-1 overflow-y-auto">
+        <div className="sticky top-0 z-10 border-b border-line/10 bg-deep/80 backdrop-blur-sm px-6 py-3">
+          <div className="flex items-center gap-2 text-[12px] text-mut">
+            <span>🛡️ Admin</span>
+            {activeGroup && (
+              <>
+                <span className="opacity-40">/</span>
+                <span>{activeGroup.icon} {activeGroup.label}</span>
+              </>
+            )}
+            {activeItem && (
+              <>
+                <span className="opacity-40">/</span>
+                <span className="font-bold text-ink">{activeItem.icon} {activeItem.label}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="mx-auto max-w-[1100px] px-6 py-6">
+          <Suspense fallback={<SectionSkeleton />}>
+            {section === "overview" && <OverviewSection metrics={metrics} loading={loading} onOpenSecrets={() => setSection("secrets")} />}
+            {section === "users" && <UsersSection users={users} admins={admins} busy={busy} setBusy={setBusy} onChanged={load} />}
         {section === "announcements" && (
           <AnnouncementsSection list={announcements} busy={busy} setBusy={setBusy} onChanged={async () => { setAnnouncements(getAnnouncements()); }} />
         )}
@@ -186,9 +270,10 @@ export function Admin() {
         {section === "content" && <ContentSection />}
         {section === "aiCosts" && <AICostSection busy={busy} setBusy={setBusy} />}
         {section === "contentCuration" && <ContentCuration busy={busy} setBusy={setBusy} />}
-        {section === "skillRoadmaps" && <AdminSkillRoadmaps />}
-        </Suspense>
-      </div>
+            {section === "skillRoadmaps" && <AdminSkillRoadmaps />}
+          </Suspense>
+        </div>
+      </main>
     </div>
   );
 }
