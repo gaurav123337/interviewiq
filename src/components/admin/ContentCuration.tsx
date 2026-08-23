@@ -109,8 +109,13 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
   const approveItem = async (id: string) => {
     setBusy(true);
-    try { await reviewContentItem(id, "approved"); toast("✅ Approved"); await load(); }
-    catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    try {
+      await reviewContentItem(id, "approved");
+      toast("✅ Approved");
+      // Auto-index to RAG knowledge base in background
+      indexContentToRAG(id).catch(() => {});
+      await load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
     finally { setBusy(false); }
   };
 
@@ -119,6 +124,55 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
     try { await reviewContentItem(id, "rejected"); toast("❌ Rejected"); await load(); }
     catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
     finally { setBusy(false); }
+  };
+
+  /* ── RAG indexing ─────────────────────────────────────────────── */
+  const [indexing, setIndexing] = useState(false);
+
+  /** Index a single approved content item into the RAG knowledge base */
+  const indexContentToRAG = async (contentId: string) => {
+    try {
+      const client = await import("../../services/cloud").then(m => m.getSupabaseClient());
+      if (!client) return;
+      const { data: session } = await client.auth.getSession();
+      const token = session?.session?.access_token;
+      if (!token) return;
+      const config = await import("../../config").then(m => m.CONFIG);
+      const edgeUrl = `${config.supabase.url}/functions/v1/content-index`;
+      const res = await fetch(edgeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ contentId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.indexed > 0) toast("🧠 Indexed to AI knowledge base");
+      }
+    } catch { /* silent — background task */ }
+  };
+
+  /** Index all approved, un-indexed items */
+  const indexAllUnindexed = async () => {
+    setIndexing(true);
+    try {
+      const client = await import("../../services/cloud").then(m => m.getSupabaseClient());
+      if (!client) { toast("Cloud not configured"); setIndexing(false); return; }
+      const { data: session } = await client.auth.getSession();
+      const token = session?.session?.access_token;
+      if (!token) { toast("Sign in required"); setIndexing(false); return; }
+      const config = await import("../../config").then(m => m.CONFIG);
+      const edgeUrl = `${config.supabase.url}/functions/v1/content-index`;
+      const res = await fetch(edgeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.indexed > 0) toast(`🧠 Indexed ${data.indexed} items to AI knowledge base`);
+      else toast("All approved items are already indexed");
+      await load();
+    } catch (e) { toast("Index failed: " + ((e as Error).message || "Unknown")); }
+    finally { setIndexing(false); }
   };
 
   const bulkAction = async (status: "approved" | "rejected") => {
@@ -309,13 +363,20 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                 </button>
               ))}
             </div>
-            {selectedIds.size > 0 && (
-              <div className="flex gap-1 ml-auto">
-                <span className="text-[12px] text-mut self-center">{selectedIds.size} selected</span>
-                <button className={`${btnOk} ${btnSm}`} onClick={() => bulkAction("approved")}>✅ Approve all</button>
-                <button className={`${btnDanger} ${btnSm}`} onClick={() => bulkAction("rejected")}>❌ Reject all</button>
-              </div>
-            )}
+            <div className="flex gap-1 ml-auto">
+              {selectedIds.size > 0 && (
+                <>
+                  <span className="text-[12px] text-mut self-center">{selectedIds.size} selected</span>
+                  <button className={`${btnOk} ${btnSm}`} onClick={() => bulkAction("approved")}>✅ Approve all</button>
+                  <button className={`${btnDanger} ${btnSm}`} onClick={() => bulkAction("rejected")}>❌ Reject all</button>
+                </>
+              )}
+              {statusFilter === "approved" && (
+                <button className={`${btnPrimary} ${btnSm}`} onClick={indexAllUnindexed} disabled={indexing}>
+                  {indexing ? "🧠 Indexing..." : "🧠 Index All to AI"}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Items list */}
@@ -374,12 +435,23 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                     </div>
 
                     {/* Quick review buttons */}
-                    {item.status === "pending" && (
-                      <div className="flex gap-1">
-                        <button className={`${btnOk} ${btnSm}`} onClick={() => approveItem(item.id)}>✅</button>
-                        <button className={`${btnDanger} ${btnSm}`} onClick={() => rejectItem(item.id)}>❌</button>
-                      </div>
-                    )}
+                    <div className="flex gap-1">
+                      {item.status === "pending" && (
+                        <>
+                          <button className={`${btnOk} ${btnSm}`} onClick={() => approveItem(item.id)}>✅</button>
+                          <button className={`${btnDanger} ${btnSm}`} onClick={() => rejectItem(item.id)}>❌</button>
+                        </>
+                      )}
+                      {item.status === "approved" && !(item as any).ragDocumentId && (
+                        <button
+                          className={`${btnPrimary} ${btnSm}`}
+                          onClick={() => indexContentToRAG(item.id)}
+                        >🧠 Index</button>
+                      )}
+                      {item.status === "approved" && (item as any).ragDocumentId && (
+                        <span className="text-[11px] text-acc font-bold">🧠 Indexed</span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Expanded details */}

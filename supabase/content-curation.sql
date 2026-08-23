@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS content_items (
   tags            TEXT[] DEFAULT '{}',
   content_type    TEXT DEFAULT 'article',
   content_hash    TEXT,
+  rag_document_id UUID,
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );
@@ -111,3 +112,14 @@ ALTER TABLE content_quality_config ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "quality config admin" ON content_quality_config;
 CREATE POLICY "quality config admin" ON content_quality_config
   FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+
+-- ── Migrations for existing databases ────────────────────────────────────
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS rag_document_id UUID;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS summary TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS quality_notes TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS quality_model TEXT;
+ALTER TABLE content_items ADD COLUMN IF NOT EXISTS quality_checked_at TIMESTAMPTZ;
+ALTER TABLE content_sources ADD COLUMN IF NOT EXISTS scrape_count INT DEFAULT 0;
+ALTER TABLE content_sources ADD COLUMN IF NOT EXISTS last_scraped_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_content_items_hash_unique ON content_items (content_hash) WHERE content_hash IS NOT NULL;

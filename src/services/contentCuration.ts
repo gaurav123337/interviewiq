@@ -44,6 +44,7 @@ export interface ContentItemRow {
   fieldId: string;
   tags: string[];
   contentType: string;
+  ragDocumentId: string | null;
   createdAt: string;
 }
 
@@ -167,6 +168,7 @@ export async function listContentItems(params: {
       fieldId: String(r.field_id),
       tags: Array.isArray(r.tags) ? r.tags : [],
       contentType: String(r.content_type),
+      ragDocumentId: r.rag_document_id ?? null,
       createdAt: r.created_at,
     })),
     total: count ?? 0,
