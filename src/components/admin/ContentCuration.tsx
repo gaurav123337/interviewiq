@@ -49,6 +49,10 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
   const [newType, setNewType] = useState("article");
   const [newField, setNewField] = useState("general");
 
+  // Scraper run state
+  const [scraping, setScraping] = useState(false);
+  const [scrapeReport, setScrapeReport] = useState<{ stored: number; errors: number; results: { sourceId: string; url: string; title: string; success: boolean; error?: string }[] } | null>(null);
+
   // Expanded item for review
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -144,6 +148,36 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
   };
 
   /* ── Render ────────────────────────────────────────────────────────── */
+
+  /* ── Run scraper ───────────────────────────────────────────────── */
+
+  const runScraper = async () => {
+    const enabled = sources.filter(s => s.enabled);
+    if (!enabled.length) { toast("Enable at least one source first"); return; }
+    setScraping(true); setScrapeReport(null);
+    try {
+      const client = await import("../../services/cloud").then(m => m.getSupabaseClient());
+      if (!client) { toast("Cloud not configured"); setScraping(false); return; }
+      const { data: session } = await client.auth.getSession();
+      const token = session?.session?.access_token;
+      if (!token) { toast("Sign in required"); setScraping(false); return; }
+
+      const res = await fetch(
+        `${(await import("../../config")).CONFIG.supabase.url}/functions/v1/content-scrape`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ sources: enabled.map(s => s.id) }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Scrape failed");
+      setScrapeReport(data);
+      toast(`🕷️ Scraped ${data.stored} items (${data.errors} errors)`);
+      await load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Scrape failed")); }
+    finally { setScraping(false); }
+  };
 
   return (
     <div className="space-y-4">
@@ -304,9 +338,14 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-[13px] text-mut">{sources.length} content source(s)</p>
-            <button className={btnPrimary + btnSm} onClick={() => setShowAddSource(!showAddSource)}>
-              {showAddSource ? "Cancel" : "➕ Add source"}
-            </button>
+            <div className="flex gap-2">
+              <button className={`${btnOk} ${btnSm}`} onClick={runScraper} disabled={scraping || busy}>
+                {scraping ? <><span className="spinner" /> Scraping...</> : `🕷️ Run Scraper (${sources.filter(s => s.enabled).length})`}
+              </button>
+              <button className={btnPrimary + btnSm} onClick={() => setShowAddSource(!showAddSource)}>
+                {showAddSource ? "Cancel" : "➕ Add source"}
+              </button>
+            </div>
           </div>
 
           {/* Add source form */}
@@ -339,6 +378,26 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                   ))}
                 </select>
                 <button className={btnPrimary + btnSm} onClick={addSource} disabled={busy}>Add</button>
+              </div>
+            </div>
+          )}
+
+          {/* Scrape report */}
+          {scrapeReport && (
+            <div className="rounded-xl border border-line/10 bg-wht/5 p-4">
+              <h3 className="mb-2 text-[14px] font-extrabold">🕷️ Scrape Report</h3>
+              <div className="flex gap-3 text-[12px]">
+                <span className="font-bold text-green">✅ {scrapeReport.stored} stored</span>
+                <span className="font-bold text-err">❌ {scrapeReport.errors} errors</span>
+              </div>
+              <div className="mt-2 space-y-1">
+                {scrapeReport.results.map((r) => (
+                  <div key={r.sourceId} className="flex items-center gap-2 rounded-lg bg-deep/40 px-3 py-1.5 text-[11.5px]">
+                    <span className={r.success ? "text-green" : "text-err"}>{r.success ? "✅" : "❌"}</span>
+                    <span className="truncate flex-1 text-fnt">{r.title || r.url}</span>
+                    {r.error && <span className="text-err">{r.error}</span>}
+                  </div>
+                ))}
               </div>
             </div>
           )}
