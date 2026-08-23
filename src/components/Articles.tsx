@@ -481,6 +481,16 @@ function MarkdownContent({ text }: { text: string }) {
   // Pre-scan for auto-detected code regions
   const codeRegions = findCodeRegions(lines);
 
+  // If most of the content looks like scattered code tokens, treat the ENTIRE thing as code
+  const totalCodeLines = lines.filter(l => isCodeLine(l)).length;
+  const totalNonEmpty = lines.filter(l => l.trim()).length;
+  const isMostlyCode = totalNonEmpty > 5 && totalCodeLines / totalNonEmpty > 0.35;
+
+  if (isMostlyCode && !text.includes("```")) {
+    // The whole content is broken code tokens — render as a single code block
+    return <CodeBlock code={text} />;
+  }
+
   const flushList = () => {
     if (listItems.length > 0) {
       const isOrdered = listItems[0].ordered;
