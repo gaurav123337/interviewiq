@@ -376,7 +376,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
               key={t}
               onClick={() => setTab(t)}
               className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${
-                tab === t ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"
+                tab === t ? "bg-acc text-white" : "bg-panel3 text-ink hover:bg-panel2"
               }`}
             >
               {t === "items" ? "📋 Items" : t === "sources" ? "🌐 Sources" : "📊 Stats"}
@@ -396,7 +396,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                   key={s}
                   onClick={() => { setStatusFilter(s); setSelectedIds(new Set()); }}
                   className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${
-                    statusFilter === s ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"
+                    statusFilter === s ? "bg-acc text-white" : "bg-panel3 text-ink hover:bg-panel2"
                   }`}
                 >
                   {s === "pending" ? `⏳ Pending` : s === "approved" ? `✅ Approved` : s === "rejected" ? `❌ Rejected` : `📋 All`}
@@ -524,7 +524,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                             { label: "Freshness", score: item.freshnessScore },
                             { label: "Credibility", score: item.credibilityScore },
                           ].map((d) => (
-                            <div key={d.label} className="rounded-lg bg-wht5 px-2 py-1.5 text-center">
+                            <div key={d.label} className="rounded-lg bg-panel3 px-2 py-1.5 text-center">
                               <div className={`text-[14px] font-extrabold ${qualityColor(d.score)}`}>{d.score ?? "—"}</div>
                               <div className="text-[10px] text-mut">{d.label}</div>
                             </div>
@@ -660,7 +660,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
               <h3 className="mb-3 text-[14px] font-extrabold">🌐 Top Sources</h3>
               <div className="space-y-2">
                 {stats.topSources.map((s) => (
-                  <div key={s.name} className="flex items-center justify-between rounded-lg bg-wht5 px-3 py-2">
+                  <div key={s.name} className="flex items-center justify-between rounded-lg bg-panel3 px-3 py-2">
                     <div>
                       <span className="text-[13px] font-bold">{s.name}</span>
                       <span className="ml-2 text-[11px] text-mut">{s.count} items</span>

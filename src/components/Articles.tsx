@@ -144,7 +144,7 @@ function inlineMarkdown(text: string): ReactNode {
     switch (earliest.type) {
       case "code":
         parts.push(
-          <code key={key++} className="rounded bg-deep/60 px-1.5 py-0.5 text-[12px] text-acc">
+          <code key={key++} className="rounded bg-panel2/80 px-1.5 py-0.5 text-[12px] text-acc">
             {earliest.match[1]}
           </code>
         );
@@ -206,7 +206,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith("```")) {
       if (inCodeBlock) {
         elements.push(
-          <pre key={`code-${elements.length}`} className="rounded-lg bg-deep/80 p-3 my-3 overflow-x-auto">
+          <pre key={`code-${elements.length}`} className="rounded-lg bg-panel2/80 p-3 my-3 overflow-x-auto">
             <code className="text-[12px] text-fnt/90">{codeLines.join("\n")}</code>
           </pre>
         );
@@ -304,7 +304,7 @@ function SourceBadge({ article }: { article: Article }) {
 function TableOfContents({ items }: { items: string[] }) {
   if (!items.length) return null;
   return (
-    <div className="rounded-lg bg-deep/40 p-3">
+    <div className="rounded-lg bg-panel2/50 p-3">
       <h4 className="mb-2 text-[12px] font-extrabold text-fnt">📑 In this article</h4>
       <ul className="space-y-1">
         {items.map((item, i) => (
@@ -335,7 +335,7 @@ function KeyTakeaways({ takeaways }: { takeaways: string[] }) {
 function Glossary({ terms }: { terms: { term: string; definition: string }[] }) {
   if (!terms.length) return null;
   return (
-    <div className="rounded-lg bg-deep/40 p-4">
+    <div className="rounded-lg bg-panel2/50 p-4">
       <h4 className="mb-2 text-[13px] font-extrabold text-fnt">📖 Glossary</h4>
       <dl className="space-y-2">
         {terms.map((t, i) => (
@@ -351,7 +351,7 @@ function Glossary({ terms }: { terms: { term: string; definition: string }[] }) 
 
 function DifficultySelector({ level, onChange }: { level: DifficultyLevel; onChange: (l: DifficultyLevel) => void }) {
   return (
-    <div className="flex gap-1 rounded-lg bg-deep/40 p-1">
+    <div className="flex gap-1 rounded-lg bg-panel2/50 p-1">
       {(["beginner", "intermediate", "advanced"] as DifficultyLevel[]).map((l) => {
         const config = DIFFICULTY_CONFIG[l];
         return (
@@ -359,7 +359,7 @@ function DifficultySelector({ level, onChange }: { level: DifficultyLevel; onCha
             key={l}
             onClick={() => onChange(l)}
             className={`flex-1 rounded-md px-3 py-2 text-[12px] font-bold transition ${
-              level === l ? "bg-acc text-white shadow-sm" : "text-mut hover:bg-wht5 hover:text-fnt"
+              level === l ? "bg-acc text-white shadow-sm" : "text-ink hover:bg-panel3 hover:text-acc"
             }`}
           >
             <span className="mr-1">{config.icon}</span>
@@ -397,8 +397,10 @@ function ArticleCard({ article }: { article: Article }) {
                   🎯 {article.qualityScore}
                 </span>
               )}
-              {hasRefined && (
+              {hasRefined ? (
                 <span className="rounded bg-acc/15 px-1.5 py-0.5 text-[10px] font-bold text-acc">✨ AI Refined</span>
+              ) : (
+                <span className="rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-bold text-warn">⏳ Needs refinement</span>
               )}
             </div>
             <SourceBadge article={article} />
@@ -414,14 +416,14 @@ function ArticleCard({ article }: { article: Article }) {
       </div>
 
       {expanded && (
-        <div className="border-t border-line/10 bg-deep/20 px-5 py-4 space-y-4">
+        <div className="border-t border-line/10 bg-panel2/50 px-5 py-4 space-y-4">
           <div className="flex flex-wrap gap-2">
             <a href={article.sourceUrl} target="_blank" rel="noopener"
               className="rounded-lg bg-acc px-4 py-1.5 text-[12px] font-bold text-white hover:opacity-90 transition">
               🔗 Read original
             </a>
             <button onClick={() => navigator.clipboard.writeText(article.sourceUrl).catch(() => {})}
-              className="rounded-lg bg-wht5 px-4 py-1.5 text-[12px] font-bold text-mut hover:bg-wht8 transition">
+              className="rounded-lg bg-panel3 px-4 py-1.5 text-[12px] font-bold text-ink hover:bg-panel2 transition">
               📋 Copy link
             </button>
           </div>
@@ -431,7 +433,7 @@ function ArticleCard({ article }: { article: Article }) {
               <DifficultySelector level={difficulty} onChange={setDifficulty} />
               <p className="text-[11px] text-mut italic">{DIFFICULTY_CONFIG[difficulty].desc}</p>
               {refined!.tableOfContents.length > 0 && <TableOfContents items={refined!.tableOfContents} />}
-              <div className="rounded-lg bg-deep/40 p-4">
+              <div className="rounded-lg bg-panel2/50 p-4">
                 <MarkdownContent text={currentContent} />
               </div>
               <KeyTakeaways takeaways={refined!.keyTakeaways} />
@@ -446,13 +448,18 @@ function ArticleCard({ article }: { article: Article }) {
               )}
             </>
           ) : (
-            <div className="max-h-[500px] overflow-y-auto rounded-lg bg-deep/50 p-4">
-              <MarkdownContent text={article.content.slice(0, 5000)} />
-              {article.content.length > 5000 && (
-                <div className="mt-2 text-[12px] text-mut">
-                  ... ({article.content.length.toLocaleString()} characters total)
-                </div>
-              )}
+            <div className="space-y-3">
+              <div className="rounded-lg border border-warn/20 bg-warn/5 p-3 text-[12px] text-ink">
+                <span className="font-bold">⏳ This article needs AI refinement.</span> Admins can click "✨ Refine" in Content Pipeline to generate progressive difficulty levels, key takeaways, and a glossary.
+              </div>
+              <div className="max-h-[500px] overflow-y-auto rounded-lg bg-panel2/80 p-4">
+                <MarkdownContent text={article.content.slice(0, 5000)} />
+                {article.content.length > 5000 && (
+                  <div className="mt-2 text-[12px] text-mut">
+                    ... ({article.content.length.toLocaleString()} characters total)
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -570,12 +577,12 @@ export function Articles() {
       {fields.length > 1 && (
         <div className="mb-4 flex flex-wrap gap-1.5">
           <button onClick={() => setFilter("all")}
-            className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${filter === "all" ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"}`}>
+            className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${filter === "all" ? "bg-acc text-white" : "bg-panel3 text-ink hover:bg-panel2"}`}>
             All ({articles.length})
           </button>
           {fields.map(f => (
             <button key={f} onClick={() => setFilter(f)}
-              className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${filter === f ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"}`}>
+              className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${filter === f ? "bg-acc text-white" : "bg-panel3 text-ink hover:bg-panel2"}`}>
               {f} ({articles.filter(a => a.fieldId === f).length})
             </button>
           ))}
