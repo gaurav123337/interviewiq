@@ -1,6 +1,6 @@
 export type LevelId = "junior" | "mid" | "senior" | "staff" | "principal" | "cto" | "ceo";
 
-export type View = "landing" | "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner" | "roadmap" | "playground" | "admin" | "progress" | "team" | "account" | "legal" | "jobs" | "resources" | "counselor" | "systemDesign" | "learn" | "learn-detail";
+export type View = "landing" | "onboard" | "interview" | "results" | "drill" | "bank" | "history" | "settings" | "planner" | "roadmap" | "playground" | "admin" | "progress" | "team" | "account" | "legal" | "jobs" | "resources" | "counselor" | "systemDesign" | "learn" | "learn-detail" | "articles";
 
 export interface Level {
   id: LevelId;

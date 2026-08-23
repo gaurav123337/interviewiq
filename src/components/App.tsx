@@ -40,6 +40,7 @@ const Counselor        = lazy(() => import("./Counselor").then(m => ({ default: 
 const SkillExplorer    = lazy(() => import("./SkillExplorer").then(m => ({ default: m.SkillExplorer })));
 const SkillDetail      = lazy(() => import("./SkillDetail").then(m => ({ default: m.SkillDetail }))); 
 const SystemDesign     = lazy(() => import("./SystemDesign").then(m => ({ default: m.SystemDesign })));
+const Articles         = lazy(() => import("./Articles").then(m => ({ default: m.Articles })));
 const Legal            = lazy(() => import("./Legal").then(m => ({ default: m.Legal })));             
 const ShareView        = lazy(() => import("./ShareView").then(m => ({ default: m.ShareView })));
 
@@ -58,6 +59,7 @@ const MORE_TABS: { id: View; label: string; icon: string }[] = [
   { id: "jobs", label: "Jobs", icon: "💼" },
   { id: "learn", label: "Learn a Skill", icon: "🔍" },
   { id: "counselor", label: "Skill Counselor", icon: "🧑‍🏫" },
+  { id: "articles", label: "Articles", icon: "📰" },
   { id: "resources", label: "Resources", icon: "🔗" },
   { id: "progress", label: "Progress", icon: "📈" },
   { id: "history", label: "History", icon: "🗂️" },
@@ -300,6 +302,7 @@ export function App() {
           {view === "team" && <Team />}
           {view === "legal" && <Legal />}
           {view === "jobs" && <Jobs />}
+          {view === "articles" && <Articles />}
           {view === "resources" && <Resources />}
           {view === "counselor" && <Counselor />}
           {view === "learn" && <SkillExplorer />}
