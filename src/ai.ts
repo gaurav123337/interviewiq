@@ -10,6 +10,8 @@ import { getCloudState, getSupabaseClient } from "./services/cloud";
 import { CONFIG } from "./config";
 import type { AiModuleId } from "./services/aiProvider";
 import { resolveModuleModel, type ModuleId } from "./services/moduleModels";
+import { cacheLookup, cacheStore, logAiCost, checkRateLimit } from "./services/aiCache";
+import { getTier } from "./services/entitlements";
 
 export interface AISettings {
   key: string;
@@ -69,31 +71,127 @@ export interface ChatOptions {
   module?: AiModuleId;
 }
 
-/** Core fetch — separated so both chat() and chatForModule() share it. */
+/* ── Smart Model Routing + Fallback Chain ──────────────────────────────── */
+
+/** Module-specific token caps — prevents runaway output costs. */
+const MODULE_MAX_TOKENS: Record<string, number> = {
+  hint: 120,
+  feedback: 500,
+  coach: 400,
+  deepdive: 600,
+  rag: 500,
+};
+
+/** Model quality tiers for fallback — cheapest first within each tier. */
+const FALLBACK_CHAIN = [
+  "gpt-4o-mini",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gpt-4.1-nano",
+];
+
+
+
+/** Core fetch — separated so both chat() and chatForModule() share it.
+    Now includes: semantic caching, token caps, cost logging, and fallback. */
 async function chatWithSettings(
   s: AISettings,
   messages: ChatMessage[],
-  opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal } = {}
+  opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal; module?: string } = {}
 ): Promise<string> {
   if (!s.key) throw new Error("No API key configured");
-  const res = await fetch(s.base + "/chat/completions", {
-    method: "POST",
-    signal: opts.signal,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + s.key },
-    body: JSON.stringify({
-      model: s.model,
-      messages,
-      temperature: opts.temperature ?? getAiDefaults().temperature ?? 0.6,
-      max_tokens: opts.maxTokens ?? getAiDefaults().maxTokens ?? 700
-    })
-  });
-  if (!res.ok) {
-    let msg = "AI request failed (" + res.status + ")";
-    try { const j = await res.json(); msg = j.error?.message || msg; } catch { /* ignore */ }
-    throw new Error(msg);
+
+  const moduleId = opts.module ?? "general";
+  const sysPrompt = messages.find((m) => m.role === "system")?.content ?? "";
+  const usrPrompt = messages.find((m) => m.role === "user")?.content ?? "";
+  const maxTokens = Math.min(
+    opts.maxTokens ?? getAiDefaults().maxTokens ?? 700,
+    MODULE_MAX_TOKENS[moduleId] ?? 700,
+  );
+  const temperature = opts.temperature ?? getAiDefaults().temperature ?? 0.6;
+
+  /* ── Step 0: Rate limit (BYOK users are exempt — they pay their own API) */
+  const cloudUser = getCloudState().user;
+  if (cloudUser) {
+    const tier = getTier();
+    const rl = await checkRateLimit(cloudUser.id, moduleId, tier);
+    if (!rl.allowed) {
+      throw new Error(`Rate limit exceeded for ${moduleId}. Please wait a moment and try again.`);
+    }
   }
-  const j = await res.json();
-  return (j.choices?.[0]?.message?.content || "").trim();
+
+  /* ── Step 1: Check semantic cache ───────────────────────────────────── */
+  const start = Date.now();
+  const cached = await cacheLookup(sysPrompt, usrPrompt, s.model);
+  if (cached) {
+    void logAiCost({
+      module: moduleId,
+      model: cached.model,
+      inputTokens: 0,
+      outputTokens: 0,
+      cached: true,
+      latencyMs: Date.now() - start,
+    });
+    return cached.response;
+  }
+
+  /* ── Step 2: Call API with fallback chain on failure ─────────────────── */
+  const models = [s.model, ...FALLBACK_CHAIN.filter((m) => m !== s.model)];
+  let lastError: string = "";
+
+  for (const model of models) {
+    try {
+      const res = await fetch(s.base + "/chat/completions", {
+        method: "POST",
+        signal: opts.signal,
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + s.key },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+        }),
+      });
+
+      if (res.status === 429 || res.status >= 500) {
+        // Rate limited or server error — try next model in chain
+        try { const j = await res.json(); lastError = j.error?.message || `HTTP ${res.status}`; } catch { lastError = `HTTP ${res.status}`; }
+        continue;
+      }
+
+      if (!res.ok) {
+        let msg = "AI request failed (" + res.status + ")";
+        try { const j = await res.json(); msg = j.error?.message || msg; } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+
+      const j = await res.json();
+      const text = (j.choices?.[0]?.message?.content || "").trim();
+      const usage = j.usage ?? {};
+      const inputTokens = usage.prompt_tokens ?? Math.ceil((sysPrompt.length + usrPrompt.length) / 4);
+      const outputTokens = usage.completion_tokens ?? Math.ceil(text.length / 4);
+
+      /* ── Step 3: Cache the response + log cost ───────────────────────── */
+      void cacheStore(sysPrompt, usrPrompt, model, text, inputTokens, outputTokens, moduleId);
+      void logAiCost({
+        module: moduleId,
+        model,
+        inputTokens,
+        outputTokens,
+        cached: false,
+        latencyMs: Date.now() - start,
+      });
+
+      return text;
+    } catch (e) {
+      lastError = (e as Error).message;
+      // Only continue fallback on network/abort errors, not on user errors
+      if (opts.signal?.aborted) throw e;
+      continue;
+    }
+  }
+
+  throw new Error(`AI request failed after trying ${models.length} models: ${lastError}`);
 }
 
 export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
@@ -156,16 +254,12 @@ export async function getFeedback(ctx: FeedbackContext): Promise<string> {
     throw new Error("You've used your free AI feedback for today — upgrade to Pro for unlimited coaching.");
   }
   const sys =
-    "You are a senior technical interviewer at " + (ctx.companyName || "a top tech company") +
-    " conducting an interview for a " + ctx.levelName + " role in " + ctx.fieldName + ". " +
-    "Give concise, specific, actionable feedback on the candidate's answer. " +
-    "Respond with at most ~200 words, using plain prose with short sections. Do not invent quotes from the candidate.";
+    "Senior interviewer at " + (ctx.companyName || "a top tech company") +
+    " for " + ctx.levelName + " " + ctx.fieldName + ". " +
+    "Give concise actionable feedback. ~200 words max. Score /10, strongest parts, key gaps, one tip.";
   const usr =
-    "INTERVIEW QUESTION:\n" + ctx.question + "\n\n" +
-    "CANDIDATE'S ANSWER:\n" + (ctx.userAnswer || "(no answer given)") + "\n\n" +
-    "Evaluate: (1) Overall quality score /10 and why, (2) the strongest parts, " +
-    "(3) the most important gaps for this level, (4) one concrete tip to improve. " +
-    "If the answer is empty or off-topic, say so directly and coach them on how to approach it.";
+    "Q: " + ctx.question + "\nA: " + (ctx.userAnswer || "(empty)") +
+    "\nEvaluate score, strengths, gaps for this level, one improvement tip.";
   const out = await chat([{ role: "system", content: sys }, { role: "user", content: usr }], { maxTokens: 500, module: "feedback" });
   recordAiCall();
   void queueEvent("ai_call", { pct: ctx.userAnswer.length });
@@ -179,9 +273,8 @@ export async function getHint(question: string, levelName: string): Promise<stri
   if (isPaywallEnabled() && aiCallsLeft() <= 0) {
     throw new Error("You've used your free AI hints for today — upgrade to Pro for unlimited coaching.");
   }
-  const sys = "You are a helpful interview coach. Give ONE short hint (under 60 words) to help a " +
-    levelName + " candidate start answering this interview question. Do not give the full answer.";
-  const out = await chat([{ role: "system", content: sys }, { role: "user", content: "Question: " + question }], { maxTokens: 120, temperature: 0.8, module: "hint" });
+  const sys = "Interview coach. ONE hint under 60 words for " + levelName + " candidate. Do not give the full answer.";
+  const out = await chat([{ role: "system", content: sys }, { role: "user", content: "Q: " + question }], { maxTokens: 120, temperature: 0.8, module: "hint" });
   recordAiCall();
   void queueEvent("ai_call", { hint: true });
   return out;

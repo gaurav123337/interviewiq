@@ -28,9 +28,10 @@ const TrendsSection = lazy(() => import("./admin/TrendsSection").then(m => ({ de
 const ContentSection = lazy(() => import("./AdminContent").then(m => ({ default: m.ContentSection })));
 const AdminSkillRoadmaps = lazy(() => import("./AdminSkillRoadmaps").then(m => ({ default: m.AdminSkillRoadmaps })));
 const BillingSection = lazy(() => import("./admin/BillingSection").then(m => ({ default: m.BillingSection })));
+const AICostSection = lazy(() => import("./admin/AICostSection").then(m => ({ default: m.AICostSection })));
 
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "📈" },
@@ -50,7 +51,8 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "resources", label: "Resources", icon: "🔗" },
   { id: "trends", label: "Trends", icon: "📈" },
   { id: "content", label: "Content CMS", icon: "✍️" },
-  { id: "skillRoadmaps", label: "Skill Roadmaps", icon: "🛤️" }
+  { id: "skillRoadmaps", label: "Skill Roadmaps", icon: "🛤️" },
+  { id: "aiCosts", label: "AI Costs", icon: "🤖" }
 ];
 
 /** Suspense fallback for lazy-loaded admin sections */
@@ -180,6 +182,7 @@ export function Admin() {
         {section === "resources" && <ResourcesSection />}
         {section === "trends" && <TrendsSection />}
         {section === "content" && <ContentSection />}
+        {section === "aiCosts" && <AICostSection busy={busy} setBusy={setBusy} />}
         {section === "skillRoadmaps" && <AdminSkillRoadmaps />}
         </Suspense>
       </div>
