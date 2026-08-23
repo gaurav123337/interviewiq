@@ -192,11 +192,31 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
   /* ── Batch content refinement ────────────────────────────────── */
   const [refining, setRefining] = useState(false);
 
+  /** Call the server-side content-refine edge function */
+  const callRefineEdge = async (contentId?: string) => {
+    const client = await import("../../services/cloud").then(m => m.getSupabaseClient());
+    if (!client) throw new Error("Cloud not configured");
+    const { data: session } = await client.auth.getSession();
+    const token = session?.session?.access_token;
+    if (!token) throw new Error("Sign in required");
+    const config = await import("../../config").then(m => m.CONFIG);
+    const edgeUrl = `${config.supabase.url}/functions/v1/content-refine`;
+    const res = await fetch(edgeUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(contentId ? { contentId } : {}),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  };
+
   const batchRefine = async () => {
     setRefining(true);
     try {
-      const { batchRefineContent } = await import("../../services/contentRefiner");
-      const result = await batchRefineContent();
+      const result = await callRefineEdge();
       toast(`✨ Refined ${result.refined} articles (${result.errors} errors)`);
       await load();
     } catch (e) { toast("Refinement failed: " + ((e as Error).message || "Unknown")); }
@@ -207,10 +227,9 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
   const refineSingle = async (contentId: string) => {
     setBusy(true);
     try {
-      const { refineAndUpdateContent } = await import("../../services/contentRefiner");
-      const result = await refineAndUpdateContent(contentId);
-      if (result.success) toast("✨ Content refined into progressive difficulty levels");
-      else toast("Refinement failed: " + (result.error || "Unknown"));
+      const result = await callRefineEdge(contentId);
+      if (result.refined > 0) toast("✨ Content refined into progressive difficulty levels");
+      else toast("Refinement completed (check status)");
       await load();
     } catch (e) { toast("Refinement failed: " + ((e as Error).message || "Unknown")); }
     finally { setBusy(false); }
