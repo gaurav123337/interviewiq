@@ -8,7 +8,7 @@
 
    Returns: { results: ScrapeResult[], stored: number, errors: number } */
 
-import { requireUser } from "../_shared/auth.ts";
+import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/serviceClient.ts";
 
@@ -17,10 +17,10 @@ Deno.serve(async (req) => {
   if (!isAllowedOrigin(req)) return new Response("Forbidden", { status: 403 });
 
   try {
-    const caller = await requireUser(req);
-    if (!caller) {
-      return new Response(JSON.stringify({ error: "Unauthorized — sign in first" }), {
-        status: 401,
+    const admin = await requireAdmin(req);
+    if (!admin) {
+      return new Response(JSON.stringify({ error: "Admin access required — sign in with an admin account" }), {
+        status: 403,
         headers: { ...corsHeaders(req), "Content-Type": "application/json" },
       });
     }
@@ -28,15 +28,6 @@ Deno.serve(async (req) => {
     if (!client) {
       return new Response(JSON.stringify({ error: "Server configuration error" }), {
         status: 500,
-        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
-      });
-    }
-
-    // Verify admin
-    const { data: isAdmin } = await client.rpc("is_admin");
-    if (!isAdmin) {
-      return new Response(JSON.stringify({ error: "Admin only" }), {
-        status: 403,
         headers: { ...corsHeaders(req), "Content-Type": "application/json" },
       });
     }
