@@ -166,7 +166,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
       const edgeUrl = `${config.supabase.url}/functions/v1/content-scrape`;
 
       // Try edge function first
-      let res: Response;
+      let res: Response | undefined;
       let networkError = false;
       try {
         res = await fetch(edgeUrl, {
@@ -177,12 +177,12 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
       } catch {
         // Network error (CORS, DNS, etc.) — fall back to browser-side scraping
         networkError = true;
-        res = new Response(JSON.stringify({ error: "network error" }), { status: 0 });
       }
 
-      if (networkError) {
-        // Network error (CORS, DNS) — try browser-side scraping as fallback
-        toast("Edge function unreachable, trying browser-side scraping...");
+      if (networkError || (res && !res.ok)) {
+        // Network error (CORS, DNS) or HTTP error — try browser-side scraping as fallback
+        const errMsg = networkError ? "Edge function unreachable" : `HTTP ${res?.status ?? "unknown"}`;
+        toast(`${errMsg} — trying browser-side scraping...`);
         const results: { sourceId: string; url: string; title: string; success: boolean; error?: string }[] = [];
         let stored = 0;
         let errors = 0;
@@ -224,10 +224,10 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
       }
 
       // Edge function responded — check status
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const errMsg = (data as { error?: string }).error || `HTTP ${res.status}`;
-        if (res.status === 401) {
+      const data = await res!.json().catch(() => ({}));
+      if (!res!.ok) {
+        const errMsg = (data as { error?: string }).error || `HTTP ${res!.status}`;
+        if (res!.status === 401) {
           throw new Error("Auth failed — make sure you are signed in. If the error persists, the edge function may need to be redeployed.");
         }
         throw new Error(`Edge function error: ${errMsg}`);

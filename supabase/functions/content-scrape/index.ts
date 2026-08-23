@@ -17,15 +17,27 @@ Deno.serve(async (req) => {
   if (!isAllowedOrigin(req)) return new Response("Forbidden", { status: 403 });
 
   try {
-    const { user } = await requireUser(req);
+    const caller = await requireUser(req);
+    if (!caller) {
+      return new Response(JSON.stringify({ error: "Unauthorized — sign in first" }), {
+        status: 401,
+        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
+      });
+    }
     const client = serviceClient();
+    if (!client) {
+      return new Response(JSON.stringify({ error: "Server configuration error" }), {
+        status: 500,
+        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
+      });
+    }
 
     // Verify admin
     const { data: isAdmin } = await client.rpc("is_admin");
     if (!isAdmin) {
       return new Response(JSON.stringify({ error: "Admin only" }), {
         status: 403,
-        headers: { ...corsHeaders(), "Content-Type": "application/json" },
+        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
       });
     }
 
@@ -41,7 +53,7 @@ Deno.serve(async (req) => {
     if (srcError) throw srcError;
     if (!sources?.length) {
       return new Response(JSON.stringify({ results: [], stored: 0, errors: 0, message: "No enabled sources" }), {
-        headers: { ...corsHeaders(), "Content-Type": "application/json" },
+        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
       });
     }
 
@@ -131,12 +143,12 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ results, stored, errors }), {
-      headers: { ...corsHeaders(), "Content-Type": "application/json" },
+      headers: { ...corsHeaders(req), "Content-Type": "application/json" },
     });
   } catch (e) {
     return new Response(JSON.stringify({ error: (e as Error).message || "Internal error" }), {
       status: 500,
-      headers: { ...corsHeaders(), "Content-Type": "application/json" },
+      headers: { ...corsHeaders(req), "Content-Type": "application/json" },
     });
   }
 });
