@@ -86,36 +86,94 @@ function buildRefinementMessages(title: string, content: string, sourceName: str
 /* ── Parse LLM Response ────────────────────────────────────────────────── */
 
 function parseRefinedContent(raw: string): RefinedContent | null {
-  try {
-    let jsonStr = raw;
-    const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      jsonStr = codeBlockMatch[1];
-    } else {
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) jsonStr = jsonMatch[0];
-    }
+  if (!raw || raw.trim().length < 50) return null;
 
-    const parsed = JSON.parse(jsonStr);
-    if (!parsed.beginner || !parsed.intermediate || !parsed.advanced) return null;
+  // Try multiple strategies to extract JSON
+  let parsed: Record<string, unknown> | null = null;
 
-    return {
-      beginner: String(parsed.beginner || ""),
-      intermediate: String(parsed.intermediate || ""),
-      advanced: String(parsed.advanced || ""),
-      tableOfContents: Array.isArray(parsed.tableOfContents) ? parsed.tableOfContents.map(String) : [],
-      keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways.map(String) : [],
-      glossary: Array.isArray(parsed.glossary)
-        ? parsed.glossary.map((g: Record<string, unknown>) => ({
-            term: String(g.term || ""),
-            definition: String(g.definition || ""),
-          }))
-        : [],
-      estimatedReadMinutes: Number(parsed.estimatedReadMinutes) || 5,
-    };
-  } catch {
-    return null;
+  // Strategy 1: Extract from ```json code block
+  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    try { parsed = JSON.parse(codeBlockMatch[1].trim()); } catch { /* try next */ }
   }
+
+  // Strategy 2: Find the outermost { ... } block
+  if (!parsed) {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try { parsed = JSON.parse(jsonMatch[0]); } catch {
+        // Strategy 3: Try fixing common JSON issues
+        let fixed = jsonMatch[0]
+          .replace(/'/g, '"')  // single quotes
+          .replace(/\n/g, ' ') // newlines inside strings
+          .replace(/,\s*([}\]])/g, '$1') // trailing commas
+          .replace(/([\w]+)\s*:/g, '"$1":'); // unquoted keys
+        try { parsed = JSON.parse(fixed); } catch { /* try next */ }
+      }
+    }
+  }
+
+  // Strategy 4: Look for individual fields if JSON parsing failed
+  if (!parsed) {
+    const beginner = extractSection(raw, 'beginner') || extractSection(raw, 'level1') || extractSection(raw, 'intro');
+    const intermediate = extractSection(raw, 'intermediate') || extractSection(raw, 'level2') || extractSection(raw, 'details');
+    const advanced = extractSection(raw, 'advanced') || extractSection(raw, 'level3') || extractSection(raw, 'deep');
+    if (beginner && intermediate && advanced) {
+      parsed = { beginner, intermediate, advanced };
+    }
+  }
+
+  // Strategy 5: If nothing worked but we have substantial content, treat the whole response as beginner-level
+  if (!parsed && raw.length > 100) {
+    const sections = raw.split(/\n(?=##\s)/);
+    if (sections.length >= 2) {
+      // Split content roughly into thirds
+      const third = Math.ceil(raw.length / 3);
+      parsed = {
+        beginner: raw.slice(0, third).trim(),
+        intermediate: raw.slice(third, third * 2).trim(),
+        advanced: raw.slice(third * 2).trim(),
+      };
+    } else {
+      // Just one big chunk — use it as all three levels
+      parsed = {
+        beginner: raw.trim(),
+        intermediate: raw.trim(),
+        advanced: raw.trim(),
+      };
+    }
+  }
+
+  if (!parsed) return null;
+
+  const beginner = String(parsed.beginner || "");
+  const intermediate = String(parsed.intermediate || "");
+  const advanced = String(parsed.advanced || "");
+
+  // Need at least some content
+  if (!beginner && !intermediate && !advanced) return null;
+
+  return {
+    beginner: beginner || intermediate || advanced,
+    intermediate: intermediate || beginner,
+    advanced: advanced || intermediate || beginner,
+    tableOfContents: Array.isArray(parsed.tableOfContents) ? parsed.tableOfContents.map(String) : [],
+    keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways.map(String) : [],
+    glossary: Array.isArray(parsed.glossary)
+      ? parsed.glossary.map((g: Record<string, unknown>) => ({
+          term: String(g.term || ""),
+          definition: String(g.definition || ""),
+        }))
+      : [],
+    estimatedReadMinutes: Number(parsed.estimatedReadMinutes) || Math.ceil(raw.length / 1500),
+  };
+}
+
+/** Try to extract a named section from text (e.g. **BEGINNER:** ... ) */
+function extractSection(text: string, name: string): string {
+  const regex = new RegExp(`(?:\*\*\s*${name}\s*\*\*|###?\s*${name}|"${name}"\s*:|'${name}'\s*:)\s*([\s\S]*?)(?=\n(?:\*\*|###?\s*[A-Z]|"[a-z]|'[a-z]|$))`, 'i');
+  const match = text.match(regex);
+  return match ? match[1].trim() : '';
 }
 
 /* ── Main Refinement Function ──────────────────────────────────────────── */
@@ -142,7 +200,7 @@ export async function refineContent(params: {
     // Use the project's multi-provider chat function
     // This handles: BYOK fallback, cloud proxy, model fallback chain, caching
     const rawText = await chat(messages, {
-      maxTokens: 3000,
+      maxTokens: 4000,
       temperature: 0.3,
       module: "contentRefine",
     });
