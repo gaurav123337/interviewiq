@@ -66,6 +66,7 @@ CREATE INDEX IF NOT EXISTS idx_content_items_domain ON content_items (domain);
 CREATE INDEX IF NOT EXISTS idx_content_items_quality ON content_items (quality_score DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_content_items_field ON content_items (field_id);
 CREATE INDEX IF NOT EXISTS idx_content_items_hash ON content_items (content_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_content_items_hash_unique ON content_items (content_hash) WHERE content_hash IS NOT NULL;
 
 ALTER TABLE content_items ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "content items public read" ON content_items;

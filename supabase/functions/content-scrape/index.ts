@@ -93,9 +93,19 @@ Deno.serve(async (req) => {
           .map((b) => b.toString(16).padStart(2, "0"))
           .join("");
 
-        // Store in content_items
-        const { error: insertError } = await client.from("content_items").upsert(
-          {
+        // Store in content_items (dedup by content_hash)
+        const { data: existing } = await client
+          .from("content_items")
+          .select("id")
+          .eq("content_hash", contentHash)
+          .maybeSingle();
+
+        if (existing) {
+          // Already have this content — skip
+          results.push({ sourceId: String(source.id), url, title, success: true });
+          stored++;
+        } else {
+          const { error: insertError } = await client.from("content_items").insert({
             source_id: String(source.id),
             source_url: url,
             source_name: sourceName,
@@ -108,9 +118,11 @@ Deno.serve(async (req) => {
             content_hash: contentHash,
             status: "pending",
             tags: [],
-          },
-          { onConflict: "content_hash" },
-        );
+          });
+          if (insertError) throw insertError;
+          results.push({ sourceId: String(source.id), url, title, success: true });
+          stored++;
+        }
 
         if (insertError) throw insertError;
 
