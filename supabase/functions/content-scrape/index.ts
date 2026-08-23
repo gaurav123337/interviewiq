@@ -124,11 +124,6 @@ Deno.serve(async (req) => {
           stored++;
         }
 
-        if (insertError) throw insertError;
-
-        results.push({ sourceId: String(source.id), url, title, success: true });
-        stored++;
-
         // Update source last_scraped_at
         await client
           .from("content_sources")
