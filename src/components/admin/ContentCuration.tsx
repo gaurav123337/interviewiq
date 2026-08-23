@@ -197,7 +197,13 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
     try {
       const { batchRefineContent } = await import("../../services/contentRefiner");
       const result = await batchRefineContent();
-      toast(`✨ Refined ${result.refined} articles (${result.errors} errors)`);
+      if (result.refined > 0) {
+        toast(`✨ Refined ${result.refined} article(s)`);
+      } else if (result.firstError) {
+        toast(`⚠️ Refinement failed: ${result.firstError}`);
+      } else {
+        toast("All approved articles are already refined");
+      }
       await load();
     } catch (e) { toast("Refinement failed: " + ((e as Error).message || "Unknown")); }
     finally { setRefining(false); }

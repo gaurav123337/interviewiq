@@ -154,7 +154,15 @@ export async function refineContent(params: {
 
     return { success: true, refined };
   } catch (e) {
-    return { success: false, error: (e as Error).message || "Refinement failed" };
+    const msg = (e as Error).message || "Refinement failed";
+    // Provide helpful guidance for common AI configuration errors
+    if (msg.includes("No API key") || msg.includes("Sign in")) {
+      return {
+        success: false,
+        error: "AI not configured — add an API key in Settings → AI, or sign in to use the cloud proxy",
+      };
+    }
+    return { success: false, error: msg };
   }
 }
 
@@ -197,7 +205,7 @@ export async function refineAndUpdateContent(contentId: string): Promise<Content
 }
 
 /** Batch refine all approved content items that haven't been refined yet */
-export async function batchRefineContent(): Promise<{ refined: number; errors: number }> {
+export async function batchRefineContent(): Promise<{ refined: number; errors: number; firstError?: string }> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
 
@@ -213,12 +221,16 @@ export async function batchRefineContent(): Promise<{ refined: number; errors: n
 
   let refined = 0;
   let errors = 0;
+  let firstError: string | undefined;
 
   for (const item of items) {
     try {
       const result = await refineAndUpdateContent(item.id);
       if (result.success) refined++;
-      else errors++;
+      else {
+        errors++;
+        if (!firstError && result.error) firstError = result.error;
+      }
     } catch {
       errors++;
     }
@@ -226,5 +238,5 @@ export async function batchRefineContent(): Promise<{ refined: number; errors: n
     await new Promise(r => setTimeout(r, 2000));
   }
 
-  return { refined, errors };
+  return { refined, errors, firstError };
 }
