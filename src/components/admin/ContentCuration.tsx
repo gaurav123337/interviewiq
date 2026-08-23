@@ -162,21 +162,98 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
       const token = session?.session?.access_token;
       if (!token) { toast("Sign in required"); setScraping(false); return; }
 
-      const res = await fetch(
-        `${(await import("../../config")).CONFIG.supabase.url}/functions/v1/content-scrape`,
-        {
+      const config = await import("../../config").then(m => m.CONFIG);
+      const edgeUrl = `${config.supabase.url}/functions/v1/content-scrape`;
+
+      // Try edge function first
+      let res: Response;
+      try {
+        res = await fetch(edgeUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           body: JSON.stringify({ sources: enabled.map(s => s.id) }),
+        });
+      } catch {
+        // Edge function not deployed — fall back to browser-side scraping
+        toast("Edge function not available, scraping from browser (may fail on CORS-blocked sites)...");
+        const results: { sourceId: string; url: string; title: string; success: boolean; error?: string }[] = [];
+        let stored = 0;
+        let errors = 0;
+
+        for (const source of enabled) {
+          try {
+            const fetchRes = await fetch(source.url, { headers: { "User-Agent": "InterviewIQ-ContentScraper/1.0" } });
+            if (!fetchRes.ok) throw new Error(`HTTP ${fetchRes.status}`);
+            const html = await fetchRes.text();
+            const { title, content, author } = extractArticleFromHtml(html, source.url);
+            if (content.length < 100) { results.push({ sourceId: source.id, url: source.url, title, success: false, error: "Content too short" }); errors++; continue; }
+
+            // Store via Supabase client
+            const encoder = new TextEncoder();
+            const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(title + content));
+            const contentHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+            const { error: insertErr } = await client.from("content_items").upsert({
+              source_id: source.id, source_url: source.url, source_name: source.name,
+              domain: source.domain, title, content, author,
+              field_id: source.fieldId, content_type: source.sourceType,
+              content_hash: contentHash, status: "pending", tags: [],
+            }, { onConflict: "content_hash" });
+            if (insertErr) throw insertErr;
+            results.push({ sourceId: source.id, url: source.url, title, success: true });
+            stored++;
+          } catch (e) {
+            results.push({ sourceId: source.id, url: source.url, title: "", success: false, error: (e as Error).message });
+            errors++;
+          }
+          await new Promise(r => setTimeout(r, 1500));
         }
-      );
+
+        setScrapeReport({ results, stored, errors });
+        toast(`🕷️ Scraped ${stored} items (${errors} errors) from browser`);
+        await load();
+        setScraping(false);
+        return;
+      }
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Scrape failed");
       setScrapeReport(data);
       toast(`🕷️ Scraped ${data.stored} items (${data.errors} errors)`);
       await load();
-    } catch (e) { toast("✗ " + ((e as Error).message || "Scrape failed")); }
+    } catch (e) { toast("Scrape failed: " + ((e as Error).message || "Unknown error") + ". If this is a CORS error, deploy the edge function: supabase functions deploy content-scrape"); }
     finally { setScraping(false); }
+  };
+
+  /** Simple HTML article extraction for browser-side fallback */
+  function extractArticleFromHtml(html: string, url: string) {
+    const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "unknown"; } })();
+    const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+    const ogTitle = html.match(/<meta[^>]*property\s*=\s*["']og:title["'][^>]*content\s*=\s*["']([^"']*)["']/i);
+    const title = (ogTitle?.[1] ?? titleMatch?.[1] ?? domain).trim();
+    const authorMatch = html.match(/<meta[^>]*(?:name|property)\s*=\s*["'](?:author|article:author)["'][^>]*content\s*=\s*["']([^"']*)["']/i);
+    const author = authorMatch?.[1]?.trim() ?? null;
+    const selectors = ["article", "main", '[role="main"]', ".post-content", ".article-content"];
+    let articleHtml = "";
+    for (const sel of selectors) {
+      const tag = sel.split(/[[\s]/)[0];
+      const re = new RegExp(`<${tag.replace(/[[\]]/g, "\\$&")}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i");
+      const m = html.match(re);
+      if (m && m[1].length > articleHtml.length) articleHtml = m[1];
+    }
+    if (!articleHtml || articleHtml.length < 200) {
+      const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      articleHtml = bodyMatch?.[1] ?? html;
+    }
+    const content = articleHtml
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
+      .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
+      .replace(/<[^>]+>/g, "\n")
+      .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ")
+      .split("\n").map(l => l.trim()).filter(Boolean).join("\n");
+    return { title, content, author };
   };
 
   return (
