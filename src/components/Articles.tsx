@@ -150,10 +150,10 @@ function inlineMarkdown(text: string): ReactNode {
         );
         break;
       case "bold":
-        parts.push(<strong key={key++} className="font-bold text-fnt">{earliest.match[1]}</strong>);
+        parts.push(<strong key={key++} className="font-bold text-ink">{earliest.match[1]}</strong>);
         break;
       case "italic":
-        parts.push(<em key={key++} className="italic text-fnt/80">{earliest.match[1]}</em>);
+        parts.push(<em key={key++} className="italic text-ink/80">{earliest.match[1]}</em>);
         break;
       case "link":
         parts.push(
@@ -185,13 +185,13 @@ function MarkdownContent({ text }: { text: string }) {
         isOrdered ? (
           <ol key={`ol-${elements.length}`} className="ml-5 mb-3 list-decimal space-y-1">
             {listItems.map((li, i) => (
-              <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
+              <li key={i} className="text-[13px] text-ink/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
             ))}
           </ol>
         ) : (
           <ul key={`ul-${elements.length}`} className="ml-5 mb-3 list-disc space-y-1">
             {listItems.map((li, i) => (
-              <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
+              <li key={i} className="text-[13px] text-ink/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
             ))}
           </ul>
         )
@@ -207,7 +207,7 @@ function MarkdownContent({ text }: { text: string }) {
       if (inCodeBlock) {
         elements.push(
           <pre key={`code-${elements.length}`} className="rounded-lg bg-panel2/80 p-3 my-3 overflow-x-auto">
-            <code className="text-[12px] text-fnt/90">{codeLines.join("\n")}</code>
+            <code className="text-[12px] text-ink/90">{codeLines.join("\n")}</code>
           </pre>
         );
         inCodeBlock = false;
@@ -232,7 +232,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith("### ")) {
       flushList();
       elements.push(
-        <h3 key={`h3-${elements.length}`} className="mt-5 mb-2 text-[15px] font-extrabold text-fnt">
+        <h3 key={`h3-${elements.length}`} className="mt-5 mb-2 text-[15px] font-extrabold text-ink">
           {inlineMarkdown(line.slice(4))}
         </h3>
       );
@@ -242,7 +242,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith("## ")) {
       flushList();
       elements.push(
-        <h2 key={`h2-${elements.length}`} className="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/10 pb-1">
+        <h2 key={`h2-${elements.length}`} className="mt-7 mb-3 text-[17px] font-extrabold text-ink border-b border-line/10 pb-1">
           {inlineMarkdown(line.slice(3))}
         </h2>
       );
@@ -262,7 +262,7 @@ function MarkdownContent({ text }: { text: string }) {
 
     flushList();
     elements.push(
-      <p key={`p-${elements.length}`} className="mb-3 text-[13px] text-fnt/85 leading-relaxed">
+      <p key={`p-${elements.length}`} className="mb-3 text-[13px] text-ink/85 leading-relaxed">
         {inlineMarkdown(line)}
       </p>
     );
@@ -280,7 +280,7 @@ function SourceBadge({ article }: { article: Article }) {
     <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-mut">
       <span className="font-bold text-acc">{article.sourceName}</span>
       <span>·</span>
-      <a href={article.sourceUrl} target="_blank" rel="noopener" className="hover:underline text-fnt/60">
+      <a href={article.sourceUrl} target="_blank" rel="noopener" className="hover:underline text-ink/60">
         {article.domain}
       </a>
       {article.author && (
@@ -305,7 +305,7 @@ function TableOfContents({ items }: { items: string[] }) {
   if (!items.length) return null;
   return (
     <div className="rounded-lg bg-panel2/50 p-3">
-      <h4 className="mb-2 text-[12px] font-extrabold text-fnt">📑 In this article</h4>
+      <h4 className="mb-2 text-[12px] font-extrabold text-ink">📑 In this article</h4>
       <ul className="space-y-1">
         {items.map((item, i) => (
           <li key={i} className="text-[12px] text-acc">{i + 1}. {item}</li>
@@ -322,7 +322,7 @@ function KeyTakeaways({ takeaways }: { takeaways: string[] }) {
       <h4 className="mb-2 text-[13px] font-extrabold text-acc">💡 Key Takeaways</h4>
       <ol className="space-y-1.5">
         {takeaways.map((t, i) => (
-          <li key={i} className="flex gap-2 text-[12.5px] text-fnt/85">
+          <li key={i} className="flex gap-2 text-[12.5px] text-ink/85">
             <span className="shrink-0 font-bold text-acc">{i + 1}.</span>
             <span>{t}</span>
           </li>
@@ -336,12 +336,12 @@ function Glossary({ terms }: { terms: { term: string; definition: string }[] }) 
   if (!terms.length) return null;
   return (
     <div className="rounded-lg bg-panel2/50 p-4">
-      <h4 className="mb-2 text-[13px] font-extrabold text-fnt">📖 Glossary</h4>
+      <h4 className="mb-2 text-[13px] font-extrabold text-ink">📖 Glossary</h4>
       <dl className="space-y-2">
         {terms.map((t, i) => (
           <div key={i} className="text-[12px]">
             <dt className="font-bold text-acc">{t.term}</dt>
-            <dd className="ml-3 text-fnt/75">{t.definition}</dd>
+            <dd className="ml-3 text-ink/75">{t.definition}</dd>
           </div>
         ))}
       </dl>
@@ -404,7 +404,7 @@ function ArticleCard({ article }: { article: Article }) {
               )}
             </div>
             <SourceBadge article={article} />
-            <p className="mt-2 text-[13px] text-fnt/80 leading-relaxed line-clamp-2">{preview}</p>
+            <p className="mt-2 text-[13px] text-ink/80 leading-relaxed line-clamp-2">{preview}</p>
             {article.tags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
                 {article.tags.map(tag => <Chip key={tag} tone="cat">{tag}</Chip>)}
@@ -570,7 +570,7 @@ export function Articles() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="🔍 Search articles..."
-          className="w-full rounded-xl border border-line/15 bg-wht/5 px-4 py-2.5 text-[13px] text-fnt placeholder:text-mut focus:border-acc focus:outline-none"
+          className="w-full rounded-xl border border-line/15 bg-panel2/50 px-4 py-2.5 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
         />
       </div>
 

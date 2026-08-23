@@ -90,7 +90,7 @@ function AdminSidebar({ section, setSection, collapsed, setCollapsed }: {
           return (
             <div key={group.label} className="mb-1">
               <button onClick={() => !collapsed && toggleGroup(group.label)}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors ${collapsed ? "justify-center" : ""} ${hasActive ? "text-acc" : "text-mut hover:text-fnt"}`}
+                className={`flex w-full items-center gap-2 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-colors ${collapsed ? "justify-center" : ""} ${hasActive ? "text-acc" : "text-mut hover:text-ink"}`}
                 title={collapsed ? group.label : undefined}>
                 <span className="text-[13px]">{group.icon}</span>
                 {!collapsed && (
@@ -104,7 +104,7 @@ function AdminSidebar({ section, setSection, collapsed, setCollapsed }: {
                 <div className="ml-1">
                   {group.items.map(item => (
                     <button key={item.id} onClick={() => setSection(item.id)}
-                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-all ${section === item.id ? "bg-acc/15 font-bold text-acc" : "text-fnt/70 hover:bg-wht5 hover:text-fnt"}`}>
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] transition-all ${section === item.id ? "bg-acc/15 font-bold text-acc" : "text-ink/80 hover:bg-panel3 hover:text-ink"}`}>
                       <span className="text-[14px] w-5 text-center">{item.icon}</span>
                       <span>{item.label}</span>
                     </button>
@@ -115,7 +115,7 @@ function AdminSidebar({ section, setSection, collapsed, setCollapsed }: {
                 <div className="flex flex-col items-center gap-0.5">
                   {group.items.map(item => (
                     <button key={item.id} onClick={() => setSection(item.id)}
-                      className={`flex h-8 w-8 items-center justify-center rounded-lg text-[15px] transition-all ${section === item.id ? "bg-acc/20 text-acc" : "text-fnt/60 hover:bg-wht5 hover:text-fnt"}`}
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg text-[15px] transition-all ${section === item.id ? "bg-acc/20 text-acc" : "text-ink/70 hover:bg-panel3 hover:text-ink"}`}
                       title={item.label}>{item.icon}</button>
                   ))}
                 </div>

@@ -63,7 +63,7 @@ export function ActivitySection({ busy, setBusy }: { busy: boolean; setBusy: (b:
         </div>
         <button className={btnGhost + btnSm} onClick={load} disabled={busy}>↻ Refresh</button>
       </div>
-      {loading && <p className="mt-4 text-[12.5px] text-fnt"><span className="spinner" /> Loading…</p>}
+      {loading && <p className="mt-4 text-[12.5px] text-ink"><span className="spinner" /> Loading…</p>}
       {!loading && audit.length === 0 && <p className="mt-4 text-[13px] text-mut">No changes logged yet — bank edits appear here as they happen.</p>}
       {!loading && audit.length > 0 && (
         <div className="mt-4 space-y-2">
@@ -76,8 +76,8 @@ export function ActivitySection({ busy, setBusy }: { busy: boolean; setBusy: (b:
                 {e.field_id && <Chip tone="cat">{FIELDS.find(f => f.id === e.field_id)?.name ?? e.field_id}</Chip>}
                 {e.level && <Chip tone="lvl">{LEVELS.find(l => l.id === e.level)?.name ?? e.level}</Chip>}
                 <span className="min-w-[160px] flex-1 truncate text-[13px] font-bold">{e.question}</span>
-                <span className="text-[11.5px] text-fnt">{e.actor === "system" ? "🤖 scraper" : e.actor}</span>
-                <span className="text-[11.5px] text-fnt">{new Date(e.created_at).toLocaleString()}</span>
+                <span className="text-[11.5px] text-ink">{e.actor === "system" ? "🤖 scraper" : e.actor}</span>
+                <span className="text-[11.5px] text-ink">{new Date(e.created_at).toLocaleString()}</span>
               </div>
               {(e.action === "update" || e.action === "delete") && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -85,7 +85,7 @@ export function ActivitySection({ busy, setBusy }: { busy: boolean; setBusy: (b:
                     <summary className="cursor-pointer text-[11.5px] font-bold text-acc3">
                       {e.action === "delete" ? "View deleted content" : "View before → after"}
                     </summary>
-                    <div className="mt-1.5 space-y-1.5 rounded-lg bg-deep/50 p-2.5 text-[12px]">
+                    <div className="mt-1.5 space-y-1.5 rounded-lg bg-panel2/50 p-2.5 text-[12px]">
                       {e.action === "delete" && e.diff.row && (
                         <p className="whitespace-pre-wrap text-mut">
                           <span className="font-bold text-ink">{e.diff.row.question}</span>

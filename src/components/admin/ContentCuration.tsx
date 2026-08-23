@@ -487,7 +487,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                         <span>{item.content.split(/\s+/).length} words</span>
                       </div>
                       {item.summary && (
-                        <p className="mt-1.5 text-[12.5px] text-fnt leading-relaxed line-clamp-2">{item.summary}</p>
+                        <p className="mt-1.5 text-[12.5px] text-ink leading-relaxed line-clamp-2">{item.summary}</p>
                       )}
                     </div>
 
@@ -542,7 +542,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                       )}
 
                       {/* Content preview */}
-                      <div className="max-h-[300px] overflow-y-auto rounded-lg bg-deep/40 p-3 text-[12px] text-fnt leading-relaxed whitespace-pre-wrap">
+                      <div className="max-h-[300px] overflow-y-auto rounded-lg bg-panel2/50 p-3 text-[12px] text-ink leading-relaxed whitespace-pre-wrap">
                         {item.content.slice(0, 3000)}
                       </div>
 
@@ -610,7 +610,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
           {/* Scrape report */}
           {scrapeReport && (
-            <div className="rounded-xl border border-line/10 bg-wht/5 p-4">
+            <div className="rounded-xl border border-line/10 bg-panel2/30 p-4">
               <h3 className="mb-2 text-[14px] font-extrabold">🕷️ Scrape Report</h3>
               <div className="flex gap-3 text-[12px]">
                 <span className="font-bold text-green">✅ {scrapeReport.stored} stored</span>
@@ -620,7 +620,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                 {scrapeReport.results.map((r) => (
                   <div key={r.sourceId} className="flex items-center gap-2 rounded-lg bg-deep/40 px-3 py-1.5 text-[11.5px]">
                     <span className={r.success ? "text-green" : "text-err"}>{r.success ? "✅" : "❌"}</span>
-                    <span className="truncate flex-1 text-fnt">{r.title || r.url}</span>
+                    <span className="truncate flex-1 text-ink">{r.title || r.url}</span>
                     {r.error && <span className="text-err">{r.error}</span>}
                   </div>
                 ))}
@@ -630,7 +630,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
           {/* Sources list */}
           {sources.map((s) => (
-            <div key={s.id} className="flex items-center gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
+            <div key={s.id} className="flex items-center gap-3 rounded-xl border border-line/10 bg-panel2/30 p-3.5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip tone={s.enabled ? "ok" : "default"}>{s.enabled ? "ON" : "OFF"}</Chip>
