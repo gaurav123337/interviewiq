@@ -5,7 +5,7 @@
 
    Uses safe React text rendering with proper escaping. */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { getSupabaseClient } from "../services/cloud";
 import { cardCls, Chip } from "./ui";
 
@@ -174,7 +174,6 @@ function inlineMarkdown(text: string): ReactNode {
 function isCodeLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
-  // JSON structure
   if (/^[{\[]/.test(trimmed) && /[}\]],?$/.test(trimmed)) return true;
   if (/^"[^"]+"\s*[:=]/.test(trimmed)) return true;
   if (/^import\s/.test(trimmed) || /^export\s/.test(trimmed) || /^from\s/.test(trimmed)) return true;
@@ -184,6 +183,199 @@ function isCodeLine(line: string): boolean {
   if (/^\s*\)\s*;?\s*$/.test(trimmed)) return true;
   if (/^[a-zA-Z_$]+\s*\(/.test(trimmed) && /[)]\s*$/.test(trimmed)) return true;
   return false;
+}
+
+/** Detect the language of a code block */
+function detectLanguage(lines: string[]): string {
+  const joined = lines.join("\n").trim();
+  if (/^\s*[{[]/.test(joined) && /[}\]]\s*$/.test(joined)) return "JSON";
+  if (/^\s*import\s/.test(joined) || /^\s*export\s.*from\s/.test(joined) || /React\b/.test(joined)) return "JS";
+  if (/^\s*(const|let|var|function|class)\b/.test(joined)) return "JS";
+  if (/^\s*(def |class |import |from ).*:$/.test(joined) || /^\s*print\(/.test(joined)) return "Python";
+  if (/^\s*(fn |let |mut |pub |struct |impl |use )/.test(joined)) return "Rust";
+  if (/^\s*(<[a-z]+|<\/[a-z]+|<!DOCTYPE)/i.test(joined)) return "HTML";
+  if (/^\s*[.#@][a-zA-Z]/.test(joined) && /[{}]\s*$/.test(joined)) return "CSS";
+  if (/^\s*(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i.test(joined)) return "SQL";
+  return "";
+}
+
+/* ── Syntax Highlighting ───────────────────────────────────────────────── */
+
+/** Tokenize JSON with basic syntax highlighting */
+function highlightJSON(code: string): ReactNode[] {
+  const tokens: ReactNode[] = [];
+  // Match JSON tokens: strings, numbers, booleans, null, keys, punctuation
+  const regex = /("(?:[^"\\]|\\.)*")\s*:/g; // key
+  const strRegex = /"(?:[^"\\]|\\.)*"/g;
+  const numRegex = /\b(-?\d+\.?\d*(?:[eE][+-]?\d+)?)\b/g;
+  const boolRegex = /\b(true|false)\b/g;
+  const nullRegex = /\b(null)\b/g;
+
+  // Simple approach: split by lines and highlight each
+  const lines = code.split("\n");
+  lines.forEach((line, lineIdx) => {
+    if (lineIdx > 0) tokens.push(<span key={`nl-${lineIdx}`}>{"\n"}</span>);
+
+    // Highlight JSON key-value pairs
+    let remaining = line;
+    let pos = 0;
+    const lineTokens: ReactNode[] = [];
+
+    // Find all string positions
+    const allStrings: { start: number; end: number; text: string }[] = [];
+    const tempRegex = /"(?:[^"\\]|\\.)*"/g;
+    let m;
+    while ((m = tempRegex.exec(line)) !== null) {
+      allStrings.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+    }
+
+    allStrings.forEach((s, i) => {
+      // Text before this string
+      if (s.start > pos) {
+        lineTokens.push(<span key={`t-${lineIdx}-${i}`}>{line.slice(pos, s.start)}</span>);
+      }
+      // Is this string followed by a colon? Then it's a key
+      const afterStr = line.slice(s.end).trimStart();
+      if (afterStr.startsWith(":")) {
+        lineTokens.push(
+          <span key={`k-${lineIdx}-${i}`} className="text-acc">{s.text}</span>
+        );
+      } else {
+        // It's a string value
+        lineTokens.push(
+          <span key={`s-${lineIdx}-${i}`} className="text-green">{s.text}</span>
+        );
+      }
+      pos = s.end;
+    });
+
+    // Remaining text after last string
+    if (pos < line.length) {
+      let tail = line.slice(pos);
+      // Highlight numbers
+      tail = tail.replace(/\b(-?\d+\.?\d*)\b/g, (n) => `NUM:${n}:NUM`);
+      // Highlight booleans/null
+      tail = tail.replace(/\b(true|false|null)\b/g, (b) => `KW:${b}:KW`);
+
+      const parts = tail.split(/(NUM:[^:]+:[^:]+|KW:[^:]+:[^:]+)/);
+      parts.forEach((part, pi) => {
+        if (part.startsWith("NUM:")) {
+          const val = part.slice(4, -4);
+          lineTokens.push(<span key={`n-${lineIdx}-${pi}`} className="text-amber-400">{val}</span>);
+        } else if (part.startsWith("KW:")) {
+          const val = part.slice(3, -3);
+          lineTokens.push(<span key={`kw-${lineIdx}-${pi}`} className="text-purple-400">{val}</span>);
+        } else if (part) {
+          lineTokens.push(<span key={`x-${lineIdx}-${pi}`}>{part}</span>);
+        }
+      });
+    }
+
+    tokens.push(<>{lineTokens}</>);
+  });
+
+  return tokens;
+}
+
+/** Highlight JS/TS code with basic keyword coloring */
+function highlightJS(code: string): ReactNode[] {
+  const keywords = new Set(["import","export","from","const","let","var","function","return","if","else","for","while","class","extends","new","this","async","await","try","catch","throw","switch","case","break","default","typeof","instanceof","interface","type","enum","implements","readonly","private","public","static","super","yield","of","in","as","null","undefined","true","false"]);
+  const lines = code.split("\n");
+  const tokens: ReactNode[] = [];
+
+  lines.forEach((line, li) => {
+    if (li > 0) tokens.push(<span key={`nl-${li}`}>{"\n"}</span>);
+    // Simple word-boundary split
+    const parts = line.split(/([\s{}().,;:!?<>"'=+\-*/|[\]&%@^~]+)/);
+    parts.forEach((part, pi) => {
+      if (keywords.has(part)) {
+        tokens.push(<span key={`kw-${li}-${pi}`} className="text-purple-400">{part}</span>);
+      } else if (/^"|^'|^`/.test(part)) {
+        tokens.push(<span key={`s-${li}-${pi}`} className="text-green">{part}</span>);
+      } else if (/^\d/.test(part)) {
+        tokens.push(<span key={`n-${li}-${pi}`} className="text-amber-400">{part}</span>);
+      } else if (/^[A-Z]/.test(part)) {
+        tokens.push(<span key={`c-${li}-${pi}`} className="text-cyan-400">{part}</span>);
+      } else {
+        tokens.push(<span key={`t-${li}-${pi}`}>{part}</span>);
+      }
+    });
+  });
+  return tokens;
+}
+
+/** Highlight SQL keywords */
+function highlightSQL(code: string): ReactNode[] {
+  const keywords = new Set(["SELECT","FROM","WHERE","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE","ALTER","DROP","TABLE","INDEX","JOIN","LEFT","RIGHT","INNER","ON","AND","OR","NOT","NULL","IS","IN","LIKE","BETWEEN","AS","ORDER","BY","GROUP","HAVING","LIMIT","OFFSET","DISTINCT","COUNT","SUM","AVG","MAX","MIN","PRIMARY","KEY","FOREIGN","REFERENCES","DEFAULT","CHECK","UNIQUE","CONSTRAINT","ADD","COLUMN","IF","EXISTS","CASCADE","RESTRICT","TRIGGER","FUNCTION","RETURNS","LANGUAGE","BEGIN","END","DECLARE","EXECUTE","USING","WITH","RECURSIVE","UNION","ALL","EXCEPT","INTERSECT","CASE","WHEN","THEN","ELSE","END","TRUE","FALSE","INT","INTEGER","TEXT","BOOLEAN","UUID","TIMESTAMP","JSONB","ARRAY"]);
+  const lines = code.split("\n");
+  const tokens: ReactNode[] = [];
+
+  lines.forEach((line, li) => {
+    if (li > 0) tokens.push(<span key={`nl-${li}`}>{"\n"}</span>);
+    const parts = line.split(/([\s()=';,.*+<>!]+)/);
+    parts.forEach((part, pi) => {
+      if (keywords.has(part.toUpperCase())) {
+        tokens.push(<span key={`kw-${li}-${pi}`} className="text-purple-400 font-bold">{part}</span>);
+      } else if (/^'/.test(part)) {
+        tokens.push(<span key={`s-${li}-${pi}`} className="text-green">{part}</span>);
+      } else if (/^\d/.test(part)) {
+        tokens.push(<span key={`n-${li}-${pi}`} className="text-amber-400">{part}</span>);
+      } else if (/^--/.test(part)) {
+        tokens.push(<span key={`c-${li}-${pi}`} className="text-mut italic">{part}</span>);
+      } else {
+        tokens.push(<span key={`t-${li}-${pi}`}>{part}</span>);
+      }
+    });
+  });
+  return tokens;
+}
+
+/** Wrapper for code blocks with language label and copy button */
+function CodeBlock({ code, language }: { code: string; language?: string }) {
+  const [copied, setCopied] = useState(false);
+  const detected = language || detectLanguage(code.split("\n"));
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  }, [code]);
+
+  // Choose highlighter
+  let highlighted: ReactNode;
+  if (detected === "JSON") {
+    highlighted = <>{highlightJSON(code)}</>;
+  } else if (detected === "JS" || detected === "TS") {
+    highlighted = <>{highlightJS(code)}</>;
+  } else if (detected === "SQL") {
+    highlighted = <>{highlightSQL(code)}</>;
+  } else {
+    highlighted = code;
+  }
+
+  return (
+    <div className="my-4 rounded-xl border border-line/15 overflow-hidden">
+      {/* Header bar */}
+      <div className="flex items-center justify-between bg-panel3/60 px-4 py-1.5">
+        <span className="text-[11px] font-bold text-mut uppercase tracking-wide">
+          {detected || "Code"}
+        </span>
+        <button
+          onClick={handleCopy}
+          className="text-[11px] font-bold text-mut hover:text-acc transition"
+        >
+          {copied ? "✓ Copied" : "📋 Copy"}
+        </button>
+      </div>
+      {/* Code body */}
+      <pre className="overflow-x-auto bg-deep/40 p-4">
+        <code className="text-[12.5px] leading-relaxed font-mono text-ink/90">
+          {highlighted}
+        </code>
+      </pre>
+    </div>
+  );
 }
 
 /** Count code lines in a block */
@@ -226,13 +418,10 @@ function MarkdownContent({ text }: { text: string }) {
 
   const flushBuffer = () => {
     if (buffer.length === 0) return;
-    // Check if this buffer is mostly code
     if (buffer.length >= 2 && codeLineRatio(buffer) >= 0.5) {
-      // Render as code block
+      const codeText = buffer.join("\n");
       elements.push(
-        <pre key={`code-${elements.length}`} className="rounded-lg bg-panel2/80 p-3 my-3 overflow-x-auto">
-          <code className="text-[12px] text-ink/90 font-mono">{buffer.join("\n")}</code>
-        </pre>
+        <CodeBlock key={`code-${elements.length}`} code={codeText} />
       );
     } else {
       buffer.forEach((line, idx) => {
@@ -267,10 +456,9 @@ function MarkdownContent({ text }: { text: string }) {
     // Explicit ``` code fences
     if (line.trim().startsWith("```")) {
       if (inCodeBlock) {
+        const lang = codeLines.length > 0 ? undefined : undefined; // language detected by CodeBlock
         elements.push(
-          <pre key={`code-${elements.length}`} className="rounded-lg bg-panel2/80 p-3 my-3 overflow-x-auto">
-            <code className="text-[12px] text-ink/90 font-mono">{codeLines.join("\n")}</code>
-          </pre>
+          <CodeBlock key={`code-${elements.length}`} code={codeLines.join("\n")} />
         );
         inCodeBlock = false;
         codeLines = [];
