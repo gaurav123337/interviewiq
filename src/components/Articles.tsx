@@ -174,16 +174,26 @@ function inlineMarkdown(text: string): ReactNode {
 function isCodeLine(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
+  // JSON structure tokens
   if (/^[{\[]/.test(trimmed) && /[}\]],?$/.test(trimmed)) return true;
   if (/^"[^"]+"\s*[:=]/.test(trimmed)) return true;
+  // Bare string values (e.g. just "error" on a line)
+  if (/^"[^"]*"\s*$/.test(trimmed)) return true;
+  if (/^'[^']*'\s*$/.test(trimmed)) return true;
+  // JSON punctuation tokens (: , } ] [ {)
+  if (/^[,:;{}\[\]()\n]+$/i.test(trimmed)) return true;
+  // Single punctuation chars
+  if (trimmed.length === 1 && /[:,;{}\[\]().]/.test(trimmed)) return true;
+  // Programming keywords
   if (/^import\s/.test(trimmed) || /^export\s/.test(trimmed) || /^from\s/.test(trimmed)) return true;
   if (/^const\s|^let\s|^var\s|^function\s|^class\s|^interface\s|^type\s/.test(trimmed)) return true;
-  if (/^\s*(if|else|for|while|return|throw|try|catch|switch|case|break)\b/.test(line)) return true;
-  if (/^\s*}\s*$/.test(trimmed) || /^\s*\{\s*$/.test(trimmed)) return true;
-  if (/^\s*\)\s*;?\s*$/.test(trimmed)) return true;
+  if (/^(if|else|for|while|return|throw|try|catch|switch|case|break)\b/.test(trimmed)) return true;
+  // Braces and parens on their own line
+  if (/^[}\])\]>]+$/.test(trimmed)) return true;
+  if (/^[{\[(<]+$/.test(trimmed)) return true;
+  if (/^\)\s*;?$/.test(trimmed)) return true;
+  // Function call pattern
   if (/^[a-zA-Z_$]+\s*\(/.test(trimmed) && /[)]\s*$/.test(trimmed)) return true;
-  // JSON value tokens (colon, comma, bracket patterns)
-  if (/^[:},\]\[]+$/.test(trimmed)) return true;
   return false;
 }
 
@@ -419,7 +429,7 @@ function findCodeRegions(lines: string[]): Set<number> {
     } else if (lines[i].trim() === "") {
       // Blank line — check if there's code within the next 3 lines
       let foundNextCode = false;
-      for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+      for (let j = i + 1; j < Math.min(i + 7, lines.length); j++) {
         if (isCode[j]) { foundNextCode = true; break; }
       }
       if (foundNextCode && runStart !== -1) {
