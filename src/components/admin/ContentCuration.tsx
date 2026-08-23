@@ -167,6 +167,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
       // Try edge function first
       let res: Response;
+      let networkError = false;
       try {
         res = await fetch(edgeUrl, {
           method: "POST",
@@ -174,8 +175,14 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
           body: JSON.stringify({ sources: enabled.map(s => s.id) }),
         });
       } catch {
-        // Edge function not deployed — fall back to browser-side scraping
-        toast("Edge function not available, scraping from browser (may fail on CORS-blocked sites)...");
+        // Network error (CORS, DNS, etc.) — fall back to browser-side scraping
+        networkError = true;
+        res = new Response(JSON.stringify({ error: "network error" }), { status: 0 });
+      }
+
+      if (networkError) {
+        // Network error (CORS, DNS) — try browser-side scraping as fallback
+        toast("Edge function unreachable, trying browser-side scraping...");
         const results: { sourceId: string; url: string; title: string; success: boolean; error?: string }[] = [];
         let stored = 0;
         let errors = 0;
@@ -216,12 +223,19 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
         return;
       }
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Scrape failed");
+      // Edge function responded — check status
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errMsg = (data as { error?: string }).error || `HTTP ${res.status}`;
+        if (res.status === 401) {
+          throw new Error("Auth failed — make sure you are signed in. If the error persists, the edge function may need to be redeployed.");
+        }
+        throw new Error(`Edge function error: ${errMsg}`);
+      }
       setScrapeReport(data);
       toast(`🕷️ Scraped ${data.stored} items (${data.errors} errors)`);
       await load();
-    } catch (e) { toast("Scrape failed: " + ((e as Error).message || "Unknown error") + ". If this is a CORS error, deploy the edge function: supabase functions deploy content-scrape"); }
+    } catch (e) { toast("Scrape failed: " + ((e as Error).message || "Unknown error")); }
     finally { setScraping(false); }
   };
 
