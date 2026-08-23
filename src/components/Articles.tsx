@@ -375,11 +375,12 @@ function ArticleCard({ article }: { article: Article }) {
   const [expanded, setExpanded] = useState(false);
   const [difficulty, setDifficulty] = useState<DifficultyLevel>("beginner");
   const [showGlossary, setShowGlossary] = useState(false);
+  const [showFull, setShowFull] = useState(false);
 
   const refined = article.contentRefined;
   const hasRefined = Boolean(refined?.beginner);
 
-  const currentContent = hasRefined ? refined![difficulty] : article.content.slice(0, 5000);
+  const currentContent = hasRefined ? refined![difficulty] : (showFull ? article.content : article.content.slice(0, 3000));
 
   const preview = article.summary || (hasRefined
     ? refined!.beginner.replace(/[#*`[\]]/g, "").slice(0, 200) + "..."
@@ -452,14 +453,17 @@ function ArticleCard({ article }: { article: Article }) {
               <div className="rounded-lg border border-warn/20 bg-warn/5 p-3 text-[12px] text-ink">
                 <span className="font-bold">⏳ This article needs AI refinement.</span> Admins can click "✨ Refine" in Content Pipeline to generate progressive difficulty levels, key takeaways, and a glossary.
               </div>
-              <div className="max-h-[500px] overflow-y-auto rounded-lg bg-panel2/80 p-4">
-                <MarkdownContent text={article.content.slice(0, 5000)} />
-                {article.content.length > 5000 && (
-                  <div className="mt-2 text-[12px] text-mut">
-                    ... ({article.content.length.toLocaleString()} characters total)
-                  </div>
-                )}
+              <div className="rounded-lg bg-panel2/50 p-4">
+                <MarkdownContent text={showFull ? article.content : currentContent} />
               </div>
+              {article.content.length > 3000 && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowFull(!showFull); }}
+                  className="text-[12px] font-bold text-acc hover:underline"
+                >
+                  {showFull ? "▾ Show less" : "▸ Show full article"}
+                </button>
+              )}
             </div>
           )}
         </div>
