@@ -42,9 +42,9 @@ interface Article {
 type DifficultyLevel = "beginner" | "intermediate" | "advanced";
 
 const DIFFICULTY_CONFIG: Record<DifficultyLevel, { label: string; icon: string; color: string; desc: string }> = {
-  beginner: { label: "Beginner", icon: "🌱", color: "text-green", desc: "Simple explanation -- what it is and why it matters" },
-  intermediate: { label: "Intermediate", icon: "🔧", color: "text-acc", desc: "How it works -- patterns, code examples, common practices" },
-  advanced: { label: "Advanced", icon: "🚀", color: "text-purple-400", desc: "Deep dive -- internals, edge cases, interview angles" },
+  beginner: { label: "Beginner", icon: "🌱", color: "text-green", desc: "Simple explanation — what it is and why it matters" },
+  intermediate: { label: "Intermediate", icon: "🔧", color: "text-acc", desc: "How it works — patterns, code examples, common practices" },
+  advanced: { label: "Advanced", icon: "🚀", color: "text-purple-400", desc: "Deep dive — internals, edge cases, interview angles" },
 };
 
 /* ── Helpers ───────────────────────────────────────────────────────────── */
@@ -67,133 +67,63 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
-/* ── Safe Markdown Renderer ────────────────────────────────────────────── */
-
-/** Split markdown into blocks and render as safe React elements */
-function MarkdownContent({ text }: { text: string }) {
-  const lines = text.split("\n");
-  const elements: ReactNode[] = [];
-  let inCodeBlock = false;
-  let codeLines: string[] = [];
-  let codeLang = "";
-  let listItems: { text: string; ordered: boolean; num: number }[] = [];
-
-  const flushList = () => {
-    if (listItems.length > 0) {
-      const isOrdered = listItems[0].ordered;
-      elements.push(
-        isOrdered ? (
-          <ol key={`ol-${elements.length}`} className="ml-5 mb-3 list-decimal space-y-1">
-            {listItems.map((li, i) => <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>)}
-          </ol>
-        ) : (
-          <ul key={`ul-${elements.length}`} className="ml-5 mb-3 list-disc space-y-1">
-            {listItems.map((li, i) => <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>)}
-          </ul>
-        )
-      );
-      listItems = [];
-    }
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // Code blocks
-    if (line.startsWith("```")) {
-      if (inCodeBlock) {
-        elements.push(
-          <pre key={`code-${elements.length}`} className="rounded-lg bg-deep/80 p-3 my-3 overflow-x-auto">
-            <code className="text-[12px] text-fnt/90">{codeLines.join("\n")}</code>
-          </pre>
-        );
-        inCodeBlock = false;
-        codeLines = [];
-        codeLang = "";
-        continue;
-      }
-      flushList();
-      inCodeBlock = true;
-      codeLang = line.slice(3).trim();
-      continue;
-    }
-
-    if (inCodeBlock) {
-      codeLines.push(line);
-      continue;
-    }
-
-    // Empty line
-    if (line.trim() === "") {
-      flushList();
-      continue;
-    }
-
-    // Headings
-    if (line.startsWith("### ")) {
-      flushList();
-      elements.push(
-        <h3 key={`h3-${elements.length}`} className="mt-5 mb-2 text-[15px] font-extrabold text-fnt">
-          {inlineMarkdown(line.slice(4))}
-        </h3>
-      );
-      continue;
-    }
-    if (line.startsWith("## ")) {
-      flushList();
-      elements.push(
-        <h2 key={`h2-${elements.length}`} className="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/10 pb-1">
-          {inlineMarkdown(line.slice(3))}
-        </h2>
-      );
-      continue;
-    }
-
-    // Unordered list
-    if (line.startsWith("- ")) {
-      listItems.push({ text: line.slice(2), ordered: false, num: 0 });
-      continue;
-    }
-
-    // Ordered list
-    const orderedMatch = line.match(/^(\d+)\.\s+(.+)/);
-    if (orderedMatch) {
-      listItems.push({ text: orderedMatch[2], ordered: true, num: parseInt(orderedMatch[1]) });
-      continue;
-    }
-
-    // Regular paragraph
-    flushList();
-    elements.push(
-      <p key={`p-${elements.length}`} className="mb-3 text-[13px] text-fnt/85 leading-relaxed">
-        {inlineMarkdown(line)}
-      </p>
-    );
-  }
-
-  flushList();
-
-  return <>{elements}</>;
+/** Decode HTML entities and escaped characters from scraped content */
+function decodeText(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/&#x27;/g, "'")
+    .replace(/&#x2F;/g, "/")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/g, " ")
+    // Decode literal \n from JSON strings (AI responses)
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, "\t");
 }
+
+/** Parse content_refined JSONB from Supabase (may be string or object) */
+function parseRefined(raw: unknown): RefinedContent | null {
+  if (!raw) return null;
+  try {
+    const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!obj || typeof obj !== "object") return null;
+    if (!obj.beginner && !obj.intermediate && !obj.advanced) return null;
+    return {
+      beginner: decodeText(obj.beginner || ""),
+      intermediate: decodeText(obj.intermediate || ""),
+      advanced: decodeText(obj.advanced || ""),
+      tableOfContents: Array.isArray(obj.tableOfContents) ? obj.tableOfContents.map(String) : [],
+      keyTakeaways: Array.isArray(obj.keyTakeaways) ? obj.keyTakeaways.map(String) : [],
+      glossary: Array.isArray(obj.glossary)
+        ? obj.glossary.map((g: Record<string, unknown>) => ({
+            term: String(g.term || ""),
+            definition: String(g.definition || ""),
+          }))
+        : [],
+      estimatedReadMinutes: Number(obj.estimatedReadMinutes) || 5,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/* ── Safe Markdown Renderer ────────────────────────────────────────────── */
 
 /** Render inline markdown (bold, italic, code, links) as safe React elements */
 function inlineMarkdown(text: string): ReactNode {
-  // Split on patterns and render as React elements
   const parts: ReactNode[] = [];
   let remaining = text;
   let key = 0;
 
   while (remaining.length > 0) {
-    // Inline code (highest priority)
     const codeMatch = remaining.match(/`([^`]+)`/);
-    // Bold
     const boldMatch = remaining.match(/\*\*([^*]+)\*\*/);
-    // Italic
     const italicMatch = remaining.match(/(?<!\*)\*([^*]+)\*(?!\*)/);
-    // Link
     const linkMatch = remaining.match(/\[([^\]]+)\]\(([^)]+)\)/);
 
-    // Find earliest match
     const matches = [
       codeMatch && { type: "code" as const, match: codeMatch },
       boldMatch && { type: "bold" as const, match: boldMatch },
@@ -206,11 +136,9 @@ function inlineMarkdown(text: string): ReactNode {
       break;
     }
 
-    // Pick the one with the earliest index
     const earliest = matches.reduce((a, b) => (a.match.index! < b.match.index! ? a : b));
     const idx = earliest.match.index!;
 
-    // Text before the match
     if (idx > 0) parts.push(remaining.slice(0, idx));
 
     switch (earliest.type) {
@@ -222,14 +150,10 @@ function inlineMarkdown(text: string): ReactNode {
         );
         break;
       case "bold":
-        parts.push(
-          <strong key={key++} className="font-bold text-fnt">{earliest.match[1]}</strong>
-        );
+        parts.push(<strong key={key++} className="font-bold text-fnt">{earliest.match[1]}</strong>);
         break;
       case "italic":
-        parts.push(
-          <em key={key++} className="italic text-fnt/80">{earliest.match[1]}</em>
-        );
+        parts.push(<em key={key++} className="italic text-fnt/80">{earliest.match[1]}</em>);
         break;
       case "link":
         parts.push(
@@ -244,6 +168,109 @@ function inlineMarkdown(text: string): ReactNode {
   }
 
   return parts.length === 1 ? parts[0] : <>{parts}</>;
+}
+
+/** Split markdown into blocks and render as safe React elements */
+function MarkdownContent({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const elements: ReactNode[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+  let listItems: { text: string; ordered: boolean }[] = [];
+
+  const flushList = () => {
+    if (listItems.length > 0) {
+      const isOrdered = listItems[0].ordered;
+      elements.push(
+        isOrdered ? (
+          <ol key={`ol-${elements.length}`} className="ml-5 mb-3 list-decimal space-y-1">
+            {listItems.map((li, i) => (
+              <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
+            ))}
+          </ol>
+        ) : (
+          <ul key={`ul-${elements.length}`} className="ml-5 mb-3 list-disc space-y-1">
+            {listItems.map((li, i) => (
+              <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
+            ))}
+          </ul>
+        )
+      );
+      listItems = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith("```")) {
+      if (inCodeBlock) {
+        elements.push(
+          <pre key={`code-${elements.length}`} className="rounded-lg bg-deep/80 p-3 my-3 overflow-x-auto">
+            <code className="text-[12px] text-fnt/90">{codeLines.join("\n")}</code>
+          </pre>
+        );
+        inCodeBlock = false;
+        codeLines = [];
+        continue;
+      }
+      flushList();
+      inCodeBlock = true;
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (line.trim() === "") {
+      flushList();
+      continue;
+    }
+
+    if (line.startsWith("### ")) {
+      flushList();
+      elements.push(
+        <h3 key={`h3-${elements.length}`} className="mt-5 mb-2 text-[15px] font-extrabold text-fnt">
+          {inlineMarkdown(line.slice(4))}
+        </h3>
+      );
+      continue;
+    }
+
+    if (line.startsWith("## ")) {
+      flushList();
+      elements.push(
+        <h2 key={`h2-${elements.length}`} className="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/10 pb-1">
+          {inlineMarkdown(line.slice(3))}
+        </h2>
+      );
+      continue;
+    }
+
+    if (line.startsWith("- ")) {
+      listItems.push({ text: line.slice(2), ordered: false });
+      continue;
+    }
+
+    const orderedMatch = line.match(/^(\d+)\.\s+(.+)/);
+    if (orderedMatch) {
+      listItems.push({ text: orderedMatch[2], ordered: true });
+      continue;
+    }
+
+    flushList();
+    elements.push(
+      <p key={`p-${elements.length}`} className="mb-3 text-[13px] text-fnt/85 leading-relaxed">
+        {inlineMarkdown(line)}
+      </p>
+    );
+  }
+
+  flushList();
+
+  return <>{elements}</>;
 }
 
 /* ── Sub-components ────────────────────────────────────────────────────── */
@@ -350,13 +377,13 @@ function ArticleCard({ article }: { article: Article }) {
   const [showGlossary, setShowGlossary] = useState(false);
 
   const refined = article.contentRefined;
-  const hasRefined = refined && refined.beginner;
+  const hasRefined = Boolean(refined?.beginner);
 
-  const currentContent = hasRefined ? refined[difficulty] : article.content.slice(0, 5000);
+  const currentContent = hasRefined ? refined![difficulty] : article.content.slice(0, 5000);
 
   const preview = article.summary || (hasRefined
-    ? refined.beginner.replace(/[#*`\[\]]/g, "").slice(0, 200) + "..."
-    : article.content.replace(/[#*`\[\]]/g, "").slice(0, 200) + "...");
+    ? refined!.beginner.replace(/[#*`[\]]/g, "").slice(0, 200) + "..."
+    : article.content.replace(/[#*`[\]]/g, "").slice(0, 200) + "...");
 
   return (
     <div className={`${cardCls} overflow-hidden transition-all`}>
@@ -403,18 +430,18 @@ function ArticleCard({ article }: { article: Article }) {
             <>
               <DifficultySelector level={difficulty} onChange={setDifficulty} />
               <p className="text-[11px] text-mut italic">{DIFFICULTY_CONFIG[difficulty].desc}</p>
-              {refined.tableOfContents.length > 0 && <TableOfContents items={refined.tableOfContents} />}
+              {refined!.tableOfContents.length > 0 && <TableOfContents items={refined!.tableOfContents} />}
               <div className="rounded-lg bg-deep/40 p-4">
                 <MarkdownContent text={currentContent} />
               </div>
-              <KeyTakeaways takeaways={refined.keyTakeaways} />
-              {refined.glossary.length > 0 && (
+              <KeyTakeaways takeaways={refined!.keyTakeaways} />
+              {refined!.glossary.length > 0 && (
                 <div>
                   <button onClick={(e) => { e.stopPropagation(); setShowGlossary(!showGlossary); }}
                     className="text-[12px] font-bold text-acc hover:underline">
-                    {showGlossary ? "▾ Hide" : "▸ Show"} Glossary ({refined.glossary.length} terms)
+                    {showGlossary ? "▾ Hide" : "▸ Show"} Glossary ({refined!.glossary.length} terms)
                   </button>
-                  {showGlossary && <Glossary terms={refined.glossary} />}
+                  {showGlossary && <Glossary terms={refined!.glossary} />}
                 </div>
               )}
             </>
@@ -463,8 +490,8 @@ export function Articles() {
           id: String(r.id),
           title: String(r.title),
           summary: r.summary ?? null,
-          content: String(r.content),
-          contentRefined: r.content_refined as RefinedContent | null ?? null,
+          content: decodeText(String(r.content)),
+          contentRefined: parseRefined(r.content_refined),
           sourceName: String(r.source_name),
           sourceUrl: String(r.source_url),
           domain: String(r.domain),
@@ -512,9 +539,7 @@ export function Articles() {
         <div className={`${cardCls} p-10 text-center`}>
           <p className="text-[32px]">📰</p>
           <h2 className="mt-3 text-xl font-extrabold">No articles yet</h2>
-          <p className="mt-2 text-[14px] text-mut">
-            Curated content will appear here once approved by admins.
-          </p>
+          <p className="mt-2 text-[14px] text-mut">Curated content will appear here once approved by admins.</p>
         </div>
       </div>
     );
@@ -527,7 +552,7 @@ export function Articles() {
           📰 Curated <span className="grad-text">Articles</span>
         </h1>
         <p className="mt-2 text-[14px] text-mut">
-          Quality-checked content from trusted sources -- each article is refined into
+          Quality-checked content from trusted sources — each article is refined into
           progressive difficulty levels for effective learning.
         </p>
       </div>
@@ -559,7 +584,7 @@ export function Articles() {
 
       <div className="mb-4 flex flex-wrap gap-3 text-[11px] text-mut">
         {Object.entries(DIFFICULTY_CONFIG).map(([key, config]) => (
-          <span key={key}>{config.icon} <span className={config.color}>{config.label}</span> -- {config.desc}</span>
+          <span key={key}>{config.icon} <span className={config.color}>{config.label}</span> — {config.desc}</span>
         ))}
       </div>
 
