@@ -1,14 +1,14 @@
 /* Content Refiner — Transforms raw scraped content into well-structured,
    progressive-difficulty articles for InterviewIQ users.
 
-   Pipeline: Raw content -> LLM refinement -> 3 difficulty levels -> store.
-   Each level builds on the previous:
-     - Beginner:  What is it? Why does it matter? Simple analogies.
-     - Intermediate: How does it work? Code examples, common patterns.
-     - Advanced: Edge cases, deep internals, architecture decisions.
+   Uses the project's existing multi-provider AI infrastructure:
+   - BYOK (user's own API key) → direct call with fallback chain
+   - Cloud proxy (ai-chat edge function) → admin-configured provider
+   - Supports any OpenAI-compatible endpoint (OpenAI, Anthropic, Gemini, etc.)
 
-   Also extracts: table of contents, key takeaways, glossary terms. */
+   Pipeline: Raw content → LLM refinement → 3 difficulty levels → store. */
 
+import { chat, type ChatMessage } from "../ai";
 import { getSupabaseClient } from "./cloud";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
@@ -29,22 +29,9 @@ export interface ContentRefinementResult {
   error?: string;
 }
 
-/* ── AI Settings Resolution ────────────────────────────────────────────── */
+/* ── Prompt Building ───────────────────────────────────────────────────── */
 
-function getAiSettings(): { key: string; base: string } | null {
-  try {
-    const stored = localStorage.getItem("ai_settings");
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed.key) return { key: parsed.key, base: parsed.base || "https://api.openai.com/v1" };
-    }
-  } catch { /* ignore */ }
-  return null;
-}
-
-/* ── Refinement Prompt ─────────────────────────────────────────────────── */
-
-function buildRefinementPrompt(title: string, content: string, sourceName: string): { system: string; user: string } {
+function buildRefinementMessages(title: string, content: string, sourceName: string): ChatMessage[] {
   const truncated = content.slice(0, 8000);
 
   const systemLines = [
@@ -61,20 +48,19 @@ function buildRefinementPrompt(title: string, content: string, sourceName: strin
     "7. End key takeaways as a numbered list.",
     "8. The glossary should define any technical terms a junior developer might not know.",
     "",
-    "RESPOND IN EXACTLY THIS JSON FORMAT (the content strings should use \\n for newlines):",
-    '{',
-    '  "beginner": "## What is [Topic]?\\n\\n[Simple explanation with analogy]\\n\\n### Why does it matter?\\n\\n[Relevance]\\n\\n### Key concepts\\n\\n[Core ideas]",',
+    "RESPOND IN EXACTLY THIS JSON FORMAT:",
+    "{",
+    '  "beginner": "## What is [Topic]?\\n\\n[Simple explanation]\\n\\n### Why does it matter?\\n\\n[Relevance]\\n\\n### Key concepts\\n\\n[Core ideas]",',
     '  "intermediate": "## How it works\\n\\n[Technical explanation]\\n\\n### Code example\\n\\n[Runnable code]\\n\\n### Common patterns\\n\\n[Best practices]",',
     '  "advanced": "## Deep dive\\n\\n[Advanced internals]\\n\\n### Performance\\n\\n[Optimization]\\n\\n### Interview angles\\n\\n[Common questions]",',
     '  "tableOfContents": ["Section 1", "Section 2"],',
     '  "keyTakeaways": ["Takeaway 1", "Takeaway 2", "Takeaway 3"],',
     '  "glossary": [{"term": "Term", "definition": "Definition"}],',
     '  "estimatedReadMinutes": 5',
-    '}',
+    "}",
     "",
     "IMPORTANT:",
     "- Use Markdown formatting with ## and ### headings",
-    "- Code examples should use triple backticks with language tags",
     "- Keep each difficulty level to 300-600 words",
     "- The beginner level should be understandable by someone with 6 months of coding experience",
     "- The intermediate level assumes 1-2 years of experience",
@@ -91,7 +77,10 @@ function buildRefinementPrompt(title: string, content: string, sourceName: strin
     "Transform this into a progressive-difficulty interview prep article.",
   ];
 
-  return { system: systemLines.join("\n"), user: userLines.join("\n") };
+  return [
+    { role: "system", content: systemLines.join("\n") },
+    { role: "user", content: userLines.join("\n") },
+  ];
 }
 
 /* ── Parse LLM Response ────────────────────────────────────────────────── */
@@ -104,11 +93,10 @@ function parseRefinedContent(raw: string): RefinedContent | null {
       jsonStr = codeBlockMatch[1];
     } else {
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (jsonMatch) jsonMatch[0];
+      if (jsonMatch) jsonStr = jsonMatch[0];
     }
 
     const parsed = JSON.parse(jsonStr);
-
     if (!parsed.beginner || !parsed.intermediate || !parsed.advanced) return null;
 
     return {
@@ -118,7 +106,10 @@ function parseRefinedContent(raw: string): RefinedContent | null {
       tableOfContents: Array.isArray(parsed.tableOfContents) ? parsed.tableOfContents.map(String) : [],
       keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways.map(String) : [],
       glossary: Array.isArray(parsed.glossary)
-        ? parsed.glossary.map((g: any) => ({ term: String(g.term || ""), definition: String(g.definition || "") }))
+        ? parsed.glossary.map((g: Record<string, unknown>) => ({
+            term: String(g.term || ""),
+            definition: String(g.definition || ""),
+          }))
         : [],
       estimatedReadMinutes: Number(parsed.estimatedReadMinutes) || 5,
     };
@@ -129,46 +120,32 @@ function parseRefinedContent(raw: string): RefinedContent | null {
 
 /* ── Main Refinement Function ──────────────────────────────────────────── */
 
-/** Refine raw content into progressive-difficulty article using AI */
+/**
+ * Refine raw content into progressive-difficulty article using AI.
+ *
+ * Uses the project's existing multi-provider infrastructure:
+ * - If user has BYOK key → uses it with fallback chain
+ * - If user is signed in → routes through ai-chat proxy (admin-configured provider)
+ * - Supports OpenAI, Anthropic, Gemini, or any OpenAI-compatible endpoint
+ * - Falls back to cheaper models on 429/5xx errors
+ */
 export async function refineContent(params: {
   title: string;
   content: string;
   sourceName: string;
-  model?: string;
 }): Promise<ContentRefinementResult> {
-  const { title, content, sourceName, model = "gpt-4o-mini" } = params;
-
-  const settings = getAiSettings();
-  if (!settings) {
-    return { success: false, error: "No AI key configured -- add one in Settings > AI" };
-  }
+  const { title, content, sourceName } = params;
 
   try {
-    const { system, user } = buildRefinementPrompt(title, content, sourceName);
+    const messages = buildRefinementMessages(title, content, sourceName);
 
-    const res = await fetch(`${settings.base}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.key}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        temperature: 0.3,
-        max_tokens: 3000,
-      }),
+    // Use the project's multi-provider chat function
+    // This handles: BYOK fallback, cloud proxy, model fallback chain, caching
+    const rawText = await chat(messages, {
+      maxTokens: 3000,
+      temperature: 0.3,
+      module: "contentRefine",
     });
-
-    if (!res.ok) {
-      return { success: false, error: `AI API error (${res.status})` };
-    }
-
-    const body = await res.json();
-    const rawText = (body.choices?.[0]?.message?.content ?? "").trim();
 
     const refined = parseRefinedContent(rawText);
     if (!refined) {
@@ -245,6 +222,7 @@ export async function batchRefineContent(): Promise<{ refined: number; errors: n
     } catch {
       errors++;
     }
+    // Rate limit between AI calls
     await new Promise(r => setTimeout(r, 2000));
   }
 

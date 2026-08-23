@@ -25,7 +25,9 @@ export type ModuleId =
   | "feedback"      // Post-answer generative feedback
   | "hint"          // One-shot hints
   | "code"          // Code playground assistance
-  | "embeddings";   // RAG embedding generation
+  | "embeddings"    // RAG embedding generation
+  | "contentRefine" // Content refinement (raw → progressive difficulty)
+  | "contentQuality"; // Content quality scoring (LLM-as-Judge)
 
 /** Per-module model override — stored in localStorage. */
 export interface ModuleModelOverride {

@@ -20,7 +20,9 @@ export const AI_MODULES: Record<string, { label: string; hint: string }> = {
   rag: { label: "RAG tutor & knowledge answers", hint: "best at grounded retrieval answers" },
   feedback: { label: "Interview feedback", hint: "strict, concise graders" },
   hint: { label: "Hints", hint: "fast, cheap models" },
-  coach: { label: "AI coach chat", hint: "conversational" }
+  coach: { label: "AI coach chat", hint: "conversational" },
+  contentRefine: { label: "Content refinement", hint: "transforms raw content into structured articles" },
+  contentQuality: { label: "Content quality scoring", hint: "evaluates content accuracy and relevance" },
 };
 
 export type AiModuleId = keyof typeof AI_MODULES;

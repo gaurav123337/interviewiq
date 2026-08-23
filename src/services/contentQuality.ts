@@ -1,4 +1,9 @@
 /* Content Quality Scorer — LLM-as-Judge for content curation.
+   Uses the project's existing multi-provider AI infrastructure:
+   - BYOK (user's own API key) → direct call with fallback chain
+   - Cloud proxy (ai-chat edge function) → admin-configured provider
+   - Supports any OpenAI-compatible endpoint
+
    Evaluates scraped content on 5 dimensions:
      1. Accuracy     — factual correctness and verifiability
      2. Relevance    — usefulness for interview preparation
@@ -6,25 +11,25 @@
      4. Freshness    — how current the information is
      5. Credibility  — source authority and trustworthiness
 
-   Uses the existing AI settings (BYOK or cloud proxy) to call the LLM.
    Returns structured scores + reasoning for admin review. */
 
-import { getSupabaseClient, getCloudState } from "./cloud";
+import { chat, type ChatMessage } from "../ai";
+import { getSupabaseClient } from "./cloud";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
 export interface QualityScores {
-  overall: number;        // composite 0-100
-  accuracy: number;       // 0-100
-  relevance: number;      // 0-100
-  depth: number;          // 0-100
-  freshness: number;      // 0-100
-  credibility: number;    // 0-100
+  overall: number;
+  accuracy: number;
+  relevance: number;
+  depth: number;
+  freshness: number;
+  credibility: number;
 }
 
 export interface QualityVerdict {
   scores: QualityScores;
-  notes: string;          // AI reasoning
+  notes: string;
   model: string;
   passedThreshold: boolean;
   autoApproved: boolean;
@@ -34,10 +39,10 @@ export interface QualityVerdict {
 /* ── Thresholds (admin-configurable from content_quality_config) ───────── */
 
 interface QualityThresholds {
-  minOverall: number;       // default 60
-  minAccuracy: number;      // default 50
-  minCredibility: number;   // default 60
-  autoApproveAbove: number; // default 85
+  minOverall: number;
+  minAccuracy: number;
+  minCredibility: number;
+  autoApproveAbove: number;
 }
 
 const DEFAULT_THRESHOLDS: QualityThresholds = {
@@ -65,61 +70,69 @@ async function getThresholds(): Promise<QualityThresholds> {
 
 /* ── Quality scoring prompt ────────────────────────────────────────────── */
 
-function buildScoringPrompt(
+function buildScoringMessages(
   title: string,
   content: string,
   sourceName: string,
   domain: string,
   contentType: string,
-): { system: string; user: string } {
-  const truncated = content.slice(0, 4000); // cap for token budget
+): ChatMessage[] {
+  const truncated = content.slice(0, 4000);
 
-  const system = `You are a senior content quality reviewer for an interview preparation platform.
-Evaluate the following content on 5 dimensions. Be strict but fair.
-
-SCORING CRITERIA:
-- Accuracy (0-100): Are the facts verifiable? Any obvious errors or outdated info?
-- Relevance (0-100): How useful is this for someone preparing for tech interviews?
-- Depth (0-100): Is it thorough and well-explained, or superficial?
-- Freshness (0-100): Is the information current? Does it reference recent trends/versions?
-- Credibility (0-100): Does the source domain and writing quality suggest authority?
-
-RESPOND IN EXACTLY THIS JSON FORMAT:
-{
-  "accuracy": <number 0-100>,
-  "relevance": <number 0-100>,
-  "depth": <number 0-100>,
-  "freshness": <number 0-100>,
-  "credibility": <number 0-100>,
-  "notes": "<2-3 sentence reasoning>"
-}
-
-DO NOT include any text outside the JSON block.`;
-
-  const user = `SOURCE: ${sourceName} (${domain})
-TYPE: ${contentType}
-TITLE: ${title}
-
-CONTENT:
-${truncated}
-
-Evaluate this content's quality for an interview preparation platform.`;
-
-  return { system, user };
+  return [
+    {
+      role: "system",
+      content: [
+        "You are a senior content quality reviewer for an interview preparation platform.",
+        "Evaluate the following content on 5 dimensions. Be strict but fair.",
+        "",
+        "SCORING CRITERIA:",
+        "- Accuracy (0-100): Are the facts verifiable? Any obvious errors or outdated info?",
+        "- Relevance (0-100): How useful is this for someone preparing for tech interviews?",
+        "- Depth (0-100): Is it thorough and well-explained, or superficial?",
+        "- Freshness (0-100): Is the information current? Does it reference recent trends/versions?",
+        "- Credibility (0-100): Does the source domain and writing quality suggest authority?",
+        "",
+        "RESPOND IN EXACTLY THIS JSON FORMAT:",
+        "{",
+        '  "accuracy": <number 0-100>,',
+        '  "relevance": <number 0-100>,',
+        '  "depth": <number 0-100>,',
+        '  "freshness": <number 0-100>,',
+        '  "credibility": <number 0-100>,',
+        '  "notes": "<2-3 sentence reasoning>"',
+        "}",
+        "",
+        "DO NOT include any text outside the JSON block.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        "SOURCE: " + sourceName + " (" + domain + ")",
+        "TYPE: " + contentType,
+        "TITLE: " + title,
+        "",
+        "CONTENT:",
+        truncated,
+        "",
+        "Evaluate this content's quality for an interview preparation platform.",
+      ].join("\n"),
+    },
+  ];
 }
 
 /* ── Parse LLM response ────────────────────────────────────────────────── */
 
 function parseScores(raw: string): QualityScores | null {
   try {
-    // Extract JSON from response (may be wrapped in markdown code block)
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     const parsed = JSON.parse(jsonMatch[0]);
 
     const clamp = (v: unknown) => Math.max(0, Math.min(100, Number(v) || 0));
     return {
-      overall: 0, // computed below
+      overall: 0,
       accuracy: clamp(parsed.accuracy),
       relevance: clamp(parsed.relevance),
       depth: clamp(parsed.depth),
@@ -131,9 +144,7 @@ function parseScores(raw: string): QualityScores | null {
   }
 }
 
-/** Compute composite score: weighted average of dimensions. */
 function computeOverall(scores: Omit<QualityScores, "overall">): number {
-  // Weights: accuracy and credibility matter most for interview prep
   const weights = {
     accuracy: 0.30,
     relevance: 0.20,
@@ -141,61 +152,38 @@ function computeOverall(scores: Omit<QualityScores, "overall">): number {
     freshness: 0.15,
     credibility: 0.20,
   };
-  const total =
+  return Math.round(
     scores.accuracy * weights.accuracy +
     scores.relevance * weights.relevance +
     scores.depth * weights.depth +
     scores.freshness * weights.freshness +
-    scores.credibility * weights.credibility;
-  return Math.round(total);
+    scores.credibility * weights.credibility,
+  );
 }
 
 /* ── Main scoring function ─────────────────────────────────────────────── */
 
-/** Score a single content item using the LLM-as-Judge approach. */
+/**
+ * Score a single content item using LLM-as-Judge.
+ * Uses the project's multi-provider chat (BYOK or cloud proxy).
+ */
 export async function scoreContent(params: {
   title: string;
   content: string;
   sourceName: string;
   domain: string;
   contentType: string;
-  model?: string;
 }): Promise<QualityVerdict> {
-  const { title, content, sourceName, domain, contentType, model = "gpt-4o-mini" } = params;
+  const { title, content, sourceName, domain, contentType } = params;
 
-  const { system, user } = buildScoringPrompt(title, content, sourceName, domain, contentType);
+  const messages = buildScoringMessages(title, content, sourceName, domain, contentType);
 
-  // Call AI using the same pattern as the main ai module
-  const settings = getAiSettingsForScoring(model);
-  if (!settings) {
-    throw new Error("No AI key configured for quality scoring");
-  }
-
-  const start = Date.now();
-  const res = await fetch(settings.base + "/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.key}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0.1, // low temp for consistent scoring
-      max_tokens: 300,
-    }),
+  // Use multi-provider chat (handles BYOK, cloud proxy, fallback chain)
+  const rawText = await chat(messages, {
+    temperature: 0.1,
+    maxTokens: 300,
+    module: "contentQuality",
   });
-
-  if (!res.ok) {
-    throw new Error(`Quality scoring API failed (${res.status})`);
-  }
-
-  const body = await res.json();
-  const rawText = (body.choices?.[0]?.message?.content ?? "").trim();
-  const latencyMs = Date.now() - start;
 
   const scores = parseScores(rawText);
   if (!scores) {
@@ -217,7 +205,7 @@ export async function scoreContent(params: {
   return {
     scores: allScores,
     notes,
-    model,
+    model: "multi-provider",
     passedThreshold,
     autoApproved,
     checkedAt: new Date().toISOString(),
@@ -225,13 +213,10 @@ export async function scoreContent(params: {
 }
 
 /** Score a content item and update it in the database. */
-export async function scoreAndUpdateContent(
-  contentId: string,
-): Promise<QualityVerdict> {
+export async function scoreAndUpdateContent(contentId: string): Promise<QualityVerdict> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
 
-  // Fetch the content item
   const { data: item, error: fetchError } = await client
     .from("content_items")
     .select("title, content, source_name, domain, content_type")
@@ -240,31 +225,17 @@ export async function scoreAndUpdateContent(
 
   if (fetchError || !item) throw new Error("Content item not found");
 
-  // Get scoring model from config
-  let scoringModel = "gpt-4o-mini";
-  try {
-    const { data: config } = await client
-      .from("content_quality_config")
-      .select("value")
-      .eq("key", "scoring")
-      .maybeSingle();
-    if (config?.value?.model) scoringModel = config.value.model;
-  } catch { /* use default */ }
-
-  // Score it
   const verdict = await scoreContent({
     title: item.title,
     content: item.content,
     sourceName: item.source_name,
     domain: item.domain,
     contentType: item.content_type,
-    model: scoringModel,
   });
 
-  // Generate summary
-  const summary = await generateSummary(item.title, item.content, scoringModel).catch(() => null);
+  // Generate summary using the same multi-provider chat
+  const summary = await generateSummary(item.title, item.content).catch(() => null);
 
-  // Update the content item
   const { error: updateError } = await client
     .from("content_items")
     .update({
@@ -278,11 +249,7 @@ export async function scoreAndUpdateContent(
       quality_model: verdict.model,
       quality_checked_at: verdict.checkedAt,
       summary: summary,
-      status: verdict.autoApproved
-        ? "approved"
-        : verdict.passedThreshold
-          ? "pending"
-          : "pending", // still goes to review, but flagged
+      status: verdict.autoApproved ? "approved" : "pending",
       updated_at: new Date().toISOString(),
     })
     .eq("id", contentId);
@@ -293,65 +260,27 @@ export async function scoreAndUpdateContent(
 }
 
 /** Generate a 2-3 sentence summary of content. */
-async function generateSummary(
-  title: string,
-  content: string,
-  model: string,
-): Promise<string | null> {
-  const settings = getAiSettingsForScoring(model);
-  if (!settings) return null;
-
+async function generateSummary(title: string, content: string): Promise<string | null> {
   const truncated = content.slice(0, 3000);
-  const res = await fetch(settings.base + "/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${settings.key}`,
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
+
+  try {
+    const result = await chat(
+      [
         {
           role: "system",
           content: "Summarize the following article in 2-3 concise sentences. Focus on the key takeaway for interview preparation.",
         },
         {
           role: "user",
-          content: `TITLE: ${title}\n\nCONTENT:\n${truncated}`,
+          content: "TITLE: " + title + "\n\nCONTENT:\n" + truncated,
         },
       ],
-      temperature: 0.3,
-      max_tokens: 150,
-    }),
-  });
-
-  if (!res.ok) return null;
-  const body = await res.json();
-  return (body.choices?.[0]?.message?.content ?? "").trim() || null;
-}
-
-/* ── AI settings resolution ────────────────────────────────────────────── */
-
-function getAiSettingsForScoring(model: string): { key: string; base: string; model: string } | null {
-  // Try user's local settings first
-  try {
-    const stored = localStorage.getItem("ai_settings");
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed.key) return { key: parsed.key, base: parsed.base || "https://api.openai.com/v1", model };
-    }
-  } catch { /* ignore */ }
-
-  // Try cloud state (BYOK via settings)
-  try {
-    const cloud = getCloudState();
-    if (cloud.user) {
-      // Cloud users without their own key go through edge function
-      // For now, require BYOK for quality scoring
-    }
-  } catch { /* ignore */ }
-
-  return null;
+      { temperature: 0.3, maxTokens: 150, module: "contentQuality" },
+    );
+    return result || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Batch score all pending content items that haven't been scored yet */
@@ -359,7 +288,6 @@ export async function batchScoreContent(): Promise<{ scored: number; errors: num
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
 
-  // Fetch pending items without quality scores
   const { data: items, error: fetchError } = await client
     .from("content_items")
     .select("id, title, content, source_name, domain, content_type")
@@ -380,7 +308,6 @@ export async function batchScoreContent(): Promise<{ scored: number; errors: num
     } catch {
       errors++;
     }
-    // Rate limit between AI calls
     await new Promise(r => setTimeout(r, 2000));
   }
 
