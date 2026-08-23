@@ -1,9 +1,11 @@
 /* Articles — Public page showing approved curated content.
    Fetches approved items from content_items table and displays
-   them with progressive difficulty levels (Beginner → Intermediate → Advanced),
-   table of contents, key takeaways, and source attribution. */
+   them with progressive difficulty levels (Beginner -> Intermediate -> Advanced),
+   table of contents, key takeaways, and source attribution.
 
-import { useEffect, useState } from "react";
+   Uses safe React text rendering with proper escaping. */
+
+import { useEffect, useState, type ReactNode } from "react";
 import { getSupabaseClient } from "../services/cloud";
 import { cardCls, Chip } from "./ui";
 
@@ -40,9 +42,9 @@ interface Article {
 type DifficultyLevel = "beginner" | "intermediate" | "advanced";
 
 const DIFFICULTY_CONFIG: Record<DifficultyLevel, { label: string; icon: string; color: string; desc: string }> = {
-  beginner: { label: "Beginner", icon: "🌱", color: "text-green", desc: "Simple explanation — what it is and why it matters" },
-  intermediate: { label: "Intermediate", icon: "🔧", color: "text-acc", desc: "How it works — patterns, code examples, common practices" },
-  advanced: { label: "Advanced", icon: "🚀", color: "text-purple-400", desc: "Deep dive — internals, edge cases, interview angles" },
+  beginner: { label: "Beginner", icon: "🌱", color: "text-green", desc: "Simple explanation -- what it is and why it matters" },
+  intermediate: { label: "Intermediate", icon: "🔧", color: "text-acc", desc: "How it works -- patterns, code examples, common practices" },
+  advanced: { label: "Advanced", icon: "🚀", color: "text-purple-400", desc: "Deep dive -- internals, edge cases, interview angles" },
 };
 
 /* ── Helpers ───────────────────────────────────────────────────────────── */
@@ -65,33 +67,183 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
-/** Simple markdown to HTML converter (handles headings, code, lists, bold, links) */
-function renderMarkdown(md: string): string {
-  return md
-    // Code blocks (preserve first)
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="rounded-lg bg-deep/80 p-3 my-3 text-[12px] overflow-x-auto"><code class="text-fnt/90">$2</code></pre>')
-    // Inline code
-    .replace(/`([^`]+)`/g, '<code class="rounded bg-deep/60 px-1.5 py-0.5 text-[12px] text-acc">$1</code>')
+/* ── Safe Markdown Renderer ────────────────────────────────────────────── */
+
+/** Split markdown into blocks and render as safe React elements */
+function MarkdownContent({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const elements: ReactNode[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+  let codeLang = "";
+  let listItems: { text: string; ordered: boolean; num: number }[] = [];
+
+  const flushList = () => {
+    if (listItems.length > 0) {
+      const isOrdered = listItems[0].ordered;
+      elements.push(
+        isOrdered ? (
+          <ol key={`ol-${elements.length}`} className="ml-5 mb-3 list-decimal space-y-1">
+            {listItems.map((li, i) => <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>)}
+          </ol>
+        ) : (
+          <ul key={`ul-${elements.length}`} className="ml-5 mb-3 list-disc space-y-1">
+            {listItems.map((li, i) => <li key={i} className="text-[13px] text-fnt/85 leading-relaxed">{inlineMarkdown(li.text)}</li>)}
+          </ul>
+        )
+      );
+      listItems = [];
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Code blocks
+    if (line.startsWith("```")) {
+      if (inCodeBlock) {
+        elements.push(
+          <pre key={`code-${elements.length}`} className="rounded-lg bg-deep/80 p-3 my-3 overflow-x-auto">
+            <code className="text-[12px] text-fnt/90">{codeLines.join("\n")}</code>
+          </pre>
+        );
+        inCodeBlock = false;
+        codeLines = [];
+        codeLang = "";
+        continue;
+      }
+      flushList();
+      inCodeBlock = true;
+      codeLang = line.slice(3).trim();
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
+    // Empty line
+    if (line.trim() === "") {
+      flushList();
+      continue;
+    }
+
     // Headings
-    .replace(/^### (.+)$/gm, '<h3 class="mt-5 mb-2 text-[15px] font-extrabold text-fnt">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/10 pb-1">$1</h2>')
+    if (line.startsWith("### ")) {
+      flushList();
+      elements.push(
+        <h3 key={`h3-${elements.length}`} className="mt-5 mb-2 text-[15px] font-extrabold text-fnt">
+          {inlineMarkdown(line.slice(4))}
+        </h3>
+      );
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      flushList();
+      elements.push(
+        <h2 key={`h2-${elements.length}`} className="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/10 pb-1">
+          {inlineMarkdown(line.slice(3))}
+        </h2>
+      );
+      continue;
+    }
+
+    // Unordered list
+    if (line.startsWith("- ")) {
+      listItems.push({ text: line.slice(2), ordered: false, num: 0 });
+      continue;
+    }
+
+    // Ordered list
+    const orderedMatch = line.match(/^(\d+)\.\s+(.+)/);
+    if (orderedMatch) {
+      listItems.push({ text: orderedMatch[2], ordered: true, num: parseInt(orderedMatch[1]) });
+      continue;
+    }
+
+    // Regular paragraph
+    flushList();
+    elements.push(
+      <p key={`p-${elements.length}`} className="mb-3 text-[13px] text-fnt/85 leading-relaxed">
+        {inlineMarkdown(line)}
+      </p>
+    );
+  }
+
+  flushList();
+
+  return <>{elements}</>;
+}
+
+/** Render inline markdown (bold, italic, code, links) as safe React elements */
+function inlineMarkdown(text: string): ReactNode {
+  // Split on patterns and render as React elements
+  const parts: ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+
+  while (remaining.length > 0) {
+    // Inline code (highest priority)
+    const codeMatch = remaining.match(/`([^`]+)`/);
     // Bold
-    .replace(/\*\*([^*]+)\*\*/g, '<strong class="font-bold text-fnt">$1</strong>')
+    const boldMatch = remaining.match(/\*\*([^*]+)\*\*/);
     // Italic
-    .replace(/\*([^*]+)\*/g, '<em class="italic text-fnt/80">$1</em>')
-    // Unordered lists
-    .replace(/^- (.+)$/gm, '<li class="ml-4 mb-1 text-[13px] text-fnt/90 list-disc">$1</li>')
-    // Ordered lists
-    .replace(/^\d+\. (.+)$/gm, '<li class="ml-4 mb-1 text-[13px] text-fnt/90 list-decimal">$1</li>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-acc hover:underline">$1</a>')
-    // Paragraphs (double newlines)
-    .replace(/\n\n/g, '</p><p class="mb-3 text-[13px] text-fnt/85 leading-relaxed">')
-    // Single newlines within paragraphs
-    .replace(/\n/g, '<br/>')
-    // Wrap in paragraph
-    .replace(/^/, '<p class="mb-3 text-[13px] text-fnt/85 leading-relaxed">')
-    .replace(/$/, '</p>');
+    const italicMatch = remaining.match(/(?<!\*)\*([^*]+)\*(?!\*)/);
+    // Link
+    const linkMatch = remaining.match(/\[([^\]]+)\]\(([^)]+)\)/);
+
+    // Find earliest match
+    const matches = [
+      codeMatch && { type: "code" as const, match: codeMatch },
+      boldMatch && { type: "bold" as const, match: boldMatch },
+      italicMatch && { type: "italic" as const, match: italicMatch },
+      linkMatch && { type: "link" as const, match: linkMatch },
+    ].filter(Boolean) as { type: string; match: RegExpMatchArray }[];
+
+    if (matches.length === 0) {
+      parts.push(remaining);
+      break;
+    }
+
+    // Pick the one with the earliest index
+    const earliest = matches.reduce((a, b) => (a.match.index! < b.match.index! ? a : b));
+    const idx = earliest.match.index!;
+
+    // Text before the match
+    if (idx > 0) parts.push(remaining.slice(0, idx));
+
+    switch (earliest.type) {
+      case "code":
+        parts.push(
+          <code key={key++} className="rounded bg-deep/60 px-1.5 py-0.5 text-[12px] text-acc">
+            {earliest.match[1]}
+          </code>
+        );
+        break;
+      case "bold":
+        parts.push(
+          <strong key={key++} className="font-bold text-fnt">{earliest.match[1]}</strong>
+        );
+        break;
+      case "italic":
+        parts.push(
+          <em key={key++} className="italic text-fnt/80">{earliest.match[1]}</em>
+        );
+        break;
+      case "link":
+        parts.push(
+          <a key={key++} href={earliest.match[2]} target="_blank" rel="noopener" className="text-acc hover:underline">
+            {earliest.match[1]}
+          </a>
+        );
+        break;
+    }
+
+    remaining = remaining.slice(idx + earliest.match[0].length);
+  }
+
+  return parts.length === 1 ? parts[0] : <>{parts}</>;
 }
 
 /* ── Sub-components ────────────────────────────────────────────────────── */
@@ -101,12 +253,7 @@ function SourceBadge({ article }: { article: Article }) {
     <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-mut">
       <span className="font-bold text-acc">{article.sourceName}</span>
       <span>·</span>
-      <a
-        href={article.sourceUrl}
-        target="_blank"
-        rel="noopener"
-        className="hover:underline text-fnt/60"
-      >
+      <a href={article.sourceUrl} target="_blank" rel="noopener" className="hover:underline text-fnt/60">
         {article.domain}
       </a>
       {article.author && (
@@ -127,21 +274,14 @@ function SourceBadge({ article }: { article: Article }) {
   );
 }
 
-function TableOfContents({ items, onSelect }: { items: string[]; onSelect?: (idx: number) => void }) {
+function TableOfContents({ items }: { items: string[] }) {
   if (!items.length) return null;
   return (
     <div className="rounded-lg bg-deep/40 p-3">
       <h4 className="mb-2 text-[12px] font-extrabold text-fnt">📑 In this article</h4>
       <ul className="space-y-1">
         {items.map((item, i) => (
-          <li key={i}>
-            <button
-              onClick={() => onSelect?.(i)}
-              className="text-left text-[12px] text-acc hover:underline"
-            >
-              {i + 1}. {item}
-            </button>
-          </li>
+          <li key={i} className="text-[12px] text-acc">{i + 1}. {item}</li>
         ))}
       </ul>
     </div>
@@ -192,9 +332,7 @@ function DifficultySelector({ level, onChange }: { level: DifficultyLevel; onCha
             key={l}
             onClick={() => onChange(l)}
             className={`flex-1 rounded-md px-3 py-2 text-[12px] font-bold transition ${
-              level === l
-                ? "bg-acc text-white shadow-sm"
-                : "text-mut hover:bg-wht5 hover:text-fnt"
+              level === l ? "bg-acc text-white shadow-sm" : "text-mut hover:bg-wht5 hover:text-fnt"
             }`}
           >
             <span className="mr-1">{config.icon}</span>
@@ -214,9 +352,7 @@ function ArticleCard({ article }: { article: Article }) {
   const refined = article.contentRefined;
   const hasRefined = refined && refined.beginner;
 
-  const currentContent = hasRefined
-    ? refined[difficulty]
-    : article.content.slice(0, 5000);
+  const currentContent = hasRefined ? refined[difficulty] : article.content.slice(0, 5000);
 
   const preview = article.summary || (hasRefined
     ? refined.beginner.replace(/[#*`\[\]]/g, "").slice(0, 200) + "..."
@@ -224,11 +360,7 @@ function ArticleCard({ article }: { article: Article }) {
 
   return (
     <div className={`${cardCls} overflow-hidden transition-all`}>
-      {/* Card header — always visible */}
-      <div
-        className="cursor-pointer p-5"
-        onClick={() => setExpanded(!expanded)}
-      >
+      <div className="cursor-pointer p-5" onClick={() => setExpanded(!expanded)}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -246,66 +378,40 @@ function ArticleCard({ article }: { article: Article }) {
             <p className="mt-2 text-[13px] text-fnt/80 leading-relaxed line-clamp-2">{preview}</p>
             {article.tags.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
-                {article.tags.map(tag => (
-                  <Chip key={tag} tone="cat">{tag}</Chip>
-                ))}
+                {article.tags.map(tag => <Chip key={tag} tone="cat">{tag}</Chip>)}
               </div>
             )}
           </div>
-          <span className="text-[14px] text-mut shrink-0 mt-1">
-            {expanded ? "▾" : "▸"}
-          </span>
+          <span className="text-[14px] text-mut shrink-0 mt-1">{expanded ? "▾" : "▸"}</span>
         </div>
       </div>
 
-      {/* Expanded content */}
       {expanded && (
         <div className="border-t border-line/10 bg-deep/20 px-5 py-4 space-y-4">
-          {/* Action buttons */}
           <div className="flex flex-wrap gap-2">
-            <a
-              href={article.sourceUrl}
-              target="_blank"
-              rel="noopener"
-              className="rounded-lg bg-acc px-4 py-1.5 text-[12px] font-bold text-white hover:opacity-90 transition"
-            >
+            <a href={article.sourceUrl} target="_blank" rel="noopener"
+              className="rounded-lg bg-acc px-4 py-1.5 text-[12px] font-bold text-white hover:opacity-90 transition">
               🔗 Read original
             </a>
-            <button
-              onClick={() => navigator.clipboard.writeText(article.sourceUrl).catch(() => {})}
-              className="rounded-lg bg-wht5 px-4 py-1.5 text-[12px] font-bold text-mut hover:bg-wht8 transition"
-            >
+            <button onClick={() => navigator.clipboard.writeText(article.sourceUrl).catch(() => {})}
+              className="rounded-lg bg-wht5 px-4 py-1.5 text-[12px] font-bold text-mut hover:bg-wht8 transition">
               📋 Copy link
             </button>
           </div>
 
           {hasRefined ? (
             <>
-              {/* Difficulty selector */}
               <DifficultySelector level={difficulty} onChange={setDifficulty} />
               <p className="text-[11px] text-mut italic">{DIFFICULTY_CONFIG[difficulty].desc}</p>
-
-              {/* Table of contents */}
-              {refined.tableOfContents.length > 0 && (
-                <TableOfContents items={refined.tableOfContents} />
-              )}
-
-              {/* Main content — rendered markdown */}
-              <div
-                className="rounded-lg bg-deep/40 p-4"
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(currentContent) }}
-              />
-
-              {/* Key takeaways */}
+              {refined.tableOfContents.length > 0 && <TableOfContents items={refined.tableOfContents} />}
+              <div className="rounded-lg bg-deep/40 p-4">
+                <MarkdownContent text={currentContent} />
+              </div>
               <KeyTakeaways takeaways={refined.keyTakeaways} />
-
-              {/* Glossary toggle */}
               {refined.glossary.length > 0 && (
                 <div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setShowGlossary(!showGlossary); }}
-                    className="text-[12px] font-bold text-acc hover:underline"
-                  >
+                  <button onClick={(e) => { e.stopPropagation(); setShowGlossary(!showGlossary); }}
+                    className="text-[12px] font-bold text-acc hover:underline">
                     {showGlossary ? "▾ Hide" : "▸ Show"} Glossary ({refined.glossary.length} terms)
                   </button>
                   {showGlossary && <Glossary terms={refined.glossary} />}
@@ -313,9 +419,8 @@ function ArticleCard({ article }: { article: Article }) {
               )}
             </>
           ) : (
-            /* Fallback: raw content for unrefined articles */
-            <div className="max-h-[500px] overflow-y-auto rounded-lg bg-deep/50 p-4 text-[13px] text-fnt leading-relaxed whitespace-pre-wrap">
-              {article.content.slice(0, 5000)}
+            <div className="max-h-[500px] overflow-y-auto rounded-lg bg-deep/50 p-4">
+              <MarkdownContent text={article.content.slice(0, 5000)} />
               {article.content.length > 5000 && (
                 <div className="mt-2 text-[12px] text-mut">
                   ... ({article.content.length.toLocaleString()} characters total)
@@ -417,18 +522,16 @@ export function Articles() {
 
   return (
     <div className="mx-auto max-w-[900px] px-4 pt-6 pb-12">
-      {/* Header */}
       <div className="mb-6">
         <h1 className="text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
           📰 Curated <span className="grad-text">Articles</span>
         </h1>
         <p className="mt-2 text-[14px] text-mut">
-          Quality-checked content from trusted sources — each article is refined into
+          Quality-checked content from trusted sources -- each article is refined into
           progressive difficulty levels for effective learning.
         </p>
       </div>
 
-      {/* Search */}
       <div className="mb-4">
         <input
           type="text"
@@ -439,50 +542,34 @@ export function Articles() {
         />
       </div>
 
-      {/* Filters */}
       {fields.length > 1 && (
         <div className="mb-4 flex flex-wrap gap-1.5">
-          <button
-            onClick={() => setFilter("all")}
-            className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${
-              filter === "all" ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"
-            }`}
-          >
+          <button onClick={() => setFilter("all")}
+            className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${filter === "all" ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"}`}>
             All ({articles.length})
           </button>
           {fields.map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${
-                filter === f ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"
-              }`}
-            >
+            <button key={f} onClick={() => setFilter(f)}
+              className={`rounded-lg px-3 py-1 text-[12px] font-bold transition ${filter === f ? "bg-acc text-white" : "bg-wht5 text-mut hover:bg-wht8"}`}>
               {f} ({articles.filter(a => a.fieldId === f).length})
             </button>
           ))}
         </div>
       )}
 
-      {/* Difficulty legend */}
       <div className="mb-4 flex flex-wrap gap-3 text-[11px] text-mut">
         {Object.entries(DIFFICULTY_CONFIG).map(([key, config]) => (
-          <span key={key}>
-            {config.icon} <span className={config.color}>{config.label}</span> — {config.desc}
-          </span>
+          <span key={key}>{config.icon} <span className={config.color}>{config.label}</span> -- {config.desc}</span>
         ))}
       </div>
 
-      {/* Articles list */}
       <div className="space-y-3">
         {filtered.length === 0 ? (
           <div className={`${cardCls} p-8 text-center`}>
             <p className="text-[14px] text-mut">No articles match your search.</p>
           </div>
         ) : (
-          filtered.map(article => (
-            <ArticleCard key={article.id} article={article} />
-          ))
+          filtered.map(article => <ArticleCard key={article.id} article={article} />)
         )}
       </div>
     </div>
