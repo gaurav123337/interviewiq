@@ -264,6 +264,9 @@ export function AICostSection({ busy: _busy, setBusy: _setBusy }: { busy: boolea
         )}
       </div>
 
+      {/* Per-user usage report */}
+      <UserUsageReport days={days} />
+
       {/* Projection */}
       {summary && summary.totalCalls > 0 && (
         <div className={`${cardCls} p-4`}>
@@ -273,6 +276,189 @@ export function AICostSection({ busy: _busy, setBusy: _setBusy }: { busy: boolea
             <ProjectionCard label="30d projected" cost={(summary.totalCost / days) * 30} />
             <ProjectionCard label="1k users/mo" cost={(summary.totalCost / days) * 30 * 10} sub="10x multiplier" />
             <ProjectionCard label="10k users/mo" cost={(summary.totalCost / days) * 30 * 100} sub="100x multiplier" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Per-user Usage Report ───────────────────────────────────────────── */
+
+interface UserUsage {
+  userId: string;
+  email: string;
+  calls: number;
+  tokens: number;
+  cost: number;
+  cachedCalls: number;
+  errors: number;
+  quota?: { daily_limit: number; monthly_limit: number; enabled: boolean; note: string | null };
+}
+
+function UserUsageReport({ days }: { days: number }) {
+  const [users, setUsers] = useState<UserUsage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingUser, setEditingUser] = useState<string | null>(null);
+  const [quotaForm, setQuotaForm] = useState({ daily_limit: 50, monthly_limit: 1000, enabled: true, note: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const client = await getSupabaseClient();
+        if (!client) return;
+        const since = new Date(Date.now() - days * 86400_000).toISOString();
+        const [costRes, quotaRes, userRes] = await Promise.all([
+          client.from("ai_cost_log").select("user_id, input_tokens, output_tokens, estimated_cost, cached, error").gte("created_at", since).not("user_id", "is", null),
+          client.from("ai_user_quotas").select("*"),
+          client.from("users_view").select("id, email")
+        ]);
+        if (cancelled) return;
+
+        const costRows = (costRes.data ?? []) as Array<{ user_id: string; input_tokens: number; output_tokens: number; estimated_cost: number; cached: boolean; error: boolean }>;
+        const quotaRows = (quotaRes.data ?? []) as Array<{ user_id: string; daily_limit: number; monthly_limit: number; enabled: boolean; note: string | null }>;
+        const userRows = (userRes.data ?? []) as Array<{ id: string; email: string }>;
+
+        const emailMap = new Map(userRows.map(u => [u.id, u.email]));
+        const quotaMap = new Map(quotaRows.map(q => [q.user_id, q]));
+
+        const userMap = new Map<string, UserUsage>();
+        for (const r of costRows) {
+          const existing = userMap.get(r.user_id) ?? {
+            userId: r.user_id, email: emailMap.get(r.user_id) ?? r.user_id.slice(0, 8),
+            calls: 0, tokens: 0, cost: 0, cachedCalls: 0, errors: 0,
+            quota: quotaMap.get(r.user_id),
+          };
+          existing.calls++;
+          existing.tokens += (r.input_tokens || 0) + (r.output_tokens || 0);
+          existing.cost += r.estimated_cost || 0;
+          if (r.cached) existing.cachedCalls++;
+          if (r.error) existing.errors++;
+          existing.quota = quotaMap.get(r.user_id);
+          userMap.set(r.user_id, existing);
+        }
+        // Also include users with quotas but no usage
+        for (const q of quotaRows) {
+          if (!userMap.has(q.user_id)) {
+            userMap.set(q.user_id, {
+              userId: q.user_id, email: emailMap.get(q.user_id) ?? q.user_id.slice(0, 8),
+              calls: 0, tokens: 0, cost: 0, cachedCalls: 0, errors: 0, quota: q,
+            });
+          }
+        }
+        setUsers([...userMap.values()].sort((a, b) => b.cost - a.cost));
+      } catch { /* silent */ }
+      finally { if (!cancelled) setLoading(false); }
+    }
+    void load();
+    return () => { cancelled = true; };
+  }, [days]);
+
+  const saveQuota = async (userId: string) => {
+    try {
+      const client = await getSupabaseClient();
+      if (!client) return;
+      await client.from("ai_user_quotas").upsert({
+        user_id: userId,
+        daily_limit: quotaForm.daily_limit,
+        monthly_limit: quotaForm.monthly_limit,
+        enabled: quotaForm.enabled,
+        note: quotaForm.note || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+      setEditingUser(null);
+      // Reload
+      window.location.reload();
+    } catch { /* silent */ }
+  };
+
+  if (loading) return null;
+  if (users.length === 0) return null;
+
+  return (
+    <div className={`${cardCls} p-4`}>
+      <h3 className="mb-3 text-[14px] font-extrabold">👥 Per-User Usage ({days}d)</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[12px]">
+          <thead>
+            <tr className="border-b border-line/15 text-left text-mut">
+              <th className="pb-2 pr-3">User</th>
+              <th className="pb-2 pr-3 text-right">Calls</th>
+              <th className="pb-2 pr-3 text-right">Tokens</th>
+              <th className="pb-2 pr-3 text-right">Cost</th>
+              <th className="pb-2 pr-3 text-right">Cached</th>
+              <th className="pb-2 pr-3 text-right">Errors</th>
+              <th className="pb-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u => (
+              <tr key={u.userId} className={`border-b border-line/10 ${u.quota && !u.quota.enabled ? "opacity-50" : ""}`}>
+                <td className="py-2 pr-3">
+                  <div className="font-bold">{u.email}</div>
+                  {u.quota?.note && <div className="text-[10px] text-warn">{u.quota.note}</div>}
+                </td>
+                <td className="py-2 pr-3 text-right font-mono">
+                  {u.calls}
+                  {u.quota && u.quota.daily_limit > 0 && (
+                    <span className="text-[10px] text-mut"> /{u.quota.daily_limit}/d</span>
+                  )}
+                </td>
+                <td className="py-2 pr-3 text-right font-mono">{u.tokens.toLocaleString()}</td>
+                <td className="py-2 pr-3 text-right font-mono font-bold text-acc">${u.cost.toFixed(4)}</td>
+                <td className="py-2 pr-3 text-right font-mono text-green">{u.cachedCalls}</td>
+                <td className="py-2 pr-3 text-right font-mono text-warn">{u.errors}</td>
+                <td className="py-2 text-right">
+                  <button
+                    className="rounded bg-wht5 px-2 py-1 text-[10px] font-bold text-mut hover:bg-wht8"
+                    onClick={() => {
+                      setEditingUser(u.userId);
+                      setQuotaForm({
+                        daily_limit: u.quota?.daily_limit ?? 50,
+                        monthly_limit: u.quota?.monthly_limit ?? 1000,
+                        enabled: u.quota?.enabled ?? true,
+                        note: u.quota?.note ?? "",
+                      });
+                    }}
+                  >
+                    {u.quota ? "Edit" : "Set quota"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Quota editor modal */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className={`${cardCls} w-full max-w-[400px] p-6`}>
+            <h4 className="mb-4 text-[14px] font-extrabold">Set AI Quota</h4>
+            <div className="space-y-3">
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={quotaForm.enabled} onChange={e => setQuotaForm(f => ({ ...f, enabled: e.target.checked }))} className="accent-acc" />
+                <span className="text-[13px] font-bold">AI Enabled</span>
+              </label>
+              <div>
+                <label className="text-[11px] text-mut">Daily call limit (0 = unlimited)</label>
+                <input type="number" value={quotaForm.daily_limit} onChange={e => setQuotaForm(f => ({ ...f, daily_limit: Number(e.target.value) }))} className="inp mt-1 w-full" />
+              </div>
+              <div>
+                <label className="text-[11px] text-mut">Monthly call limit (0 = unlimited)</label>
+                <input type="number" value={quotaForm.monthly_limit} onChange={e => setQuotaForm(f => ({ ...f, monthly_limit: Number(e.target.value) }))} className="inp mt-1 w-full" />
+              </div>
+              <div>
+                <label className="text-[11px] text-mut">Admin note</label>
+                <input type="text" value={quotaForm.note} onChange={e => setQuotaForm(f => ({ ...f, note: e.target.value }))} placeholder="e.g. abuse warning" className="inp mt-1 w-full" />
+              </div>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <button className="btn-primary flex-1" onClick={() => void saveQuota(editingUser)}>Save</button>
+              <button className="btn-ghost flex-1" onClick={() => setEditingUser(null)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}

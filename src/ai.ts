@@ -10,7 +10,7 @@ import { getCloudState, getSupabaseClient } from "./services/cloud";
 import { CONFIG } from "./config";
 import type { AiModuleId } from "./services/aiProvider";
 import { resolveModuleModel, type ModuleId } from "./services/moduleModels";
-import { cacheLookup, cacheStore, logAiCost, checkRateLimit } from "./services/aiCache";
+import { cacheLookup, cacheStore, logAiCost, checkRateLimit, checkUserQuota } from "./services/aiCache";
 import { getTier } from "./services/entitlements";
 
 export interface AISettings {
@@ -120,9 +120,14 @@ async function chatWithSettings(
   );
   const temperature = opts.temperature ?? getAiDefaults().temperature ?? 0.6;
 
-  /* ── Step 0: Rate limit (BYOK users are exempt — they pay their own API) */
+  /* ── Step 0: Rate limit + quota (BYOK users are exempt — they pay their own API) */
   const cloudUser = getCloudState().user;
   if (cloudUser) {
+    // Check per-user quota (daily/monthly limits set by admin)
+    const quota = await checkUserQuota(cloudUser.id);
+    if (!quota.allowed) {
+      throw new Error(quota.reason ?? "AI quota exceeded.");
+    }
     const tier = getTier();
     const rl = await checkRateLimit(cloudUser.id, moduleId, tier);
     if (!rl.allowed) {

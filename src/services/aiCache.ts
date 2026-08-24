@@ -174,6 +174,52 @@ const RATE_LIMITS: Record<string, number> = {
   admin: 999,
 };
 
+/** Check per-user AI quota (daily + monthly limits from ai_user_quotas). */
+export async function checkUserQuota(userId: string): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    const client = await getSupabaseClient();
+    if (!client) return { allowed: true };
+
+    const { data: quota } = await client
+      .from("ai_user_quotas")
+      .select("daily_limit, monthly_limit, daily_tokens, monthly_tokens, enabled")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (quota && !(quota as any).enabled) return { allowed: false, reason: "AI access has been disabled for your account." };
+    if (!quota) return { allowed: true }; // no custom quota = unlimited
+
+    const q = quota as { daily_limit: number; monthly_limit: number; daily_tokens: number; monthly_tokens: number };
+
+    const today = new Date().toISOString().slice(0, 10);
+    const month = new Date().toISOString().slice(0, 7);
+
+    // Check daily call limit
+    if (q.daily_limit > 0) {
+      const { count } = await client
+        .from("ai_cost_log")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .gte("created_at", `${today}T00:00:00Z`);
+      if ((count ?? 0) >= q.daily_limit) return { allowed: false, reason: `Daily AI limit reached (${q.daily_limit}/day). Upgrade to Pro for more.` };
+    }
+
+    // Check monthly call limit
+    if (q.monthly_limit > 0) {
+      const { count } = await client
+        .from("ai_cost_log")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .gte("created_at", `${month}-01T00:00:00Z`);
+      if ((count ?? 0) >= q.monthly_limit) return { allowed: false, reason: `Monthly AI limit reached (${q.monthly_limit}/month). Upgrade to Pro for more.` };
+    }
+
+    return { allowed: true };
+  } catch {
+    return { allowed: true }; // fail open
+  }
+}
+
 export async function checkRateLimit(
   userId: string,
   module: string,
