@@ -62,6 +62,10 @@ CREATE POLICY "admin read cost logs" ON ai_cost_log
 CREATE POLICY "cost log write service" ON ai_cost_log
   FOR ALL USING (auth.role() = 'service_role');
 
+-- Allow authenticated users to insert their own cost logs
+CREATE POLICY "user insert own cost logs" ON ai_cost_log
+  FOR INSERT WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+
 
 -- AI Rate Limits — tracks per-user, per-minute request counts.
 -- Enforced in the ai-chat edge function.
