@@ -6,6 +6,7 @@ import { sourceLabel, trustOf } from "../../services/importJob";
 import { jdKeywords } from "../../services/applyKit";
 import { STATUS_META, STATUS_ORDER, type ApplyStatus, type ApplyTrack } from "../../services/applyTrack";
 import {Chip} from "../ui";
+import { decodeHtml } from "../../util";
 
 const verdictToneCls = (tone: string) =>
   tone === "ok" ? "text-ok" : tone === "co" ? "text-acctxt" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-mut";
@@ -45,7 +46,7 @@ export const MatchFeedCard = memo(function MatchFeedCard({
         >
           {locked ? "🔒 Match verdict" : `${m.score}% · ${VERDICT_META[m.verdict as MatchVerdict]?.label}`}
         </button>
-        <span className="text-[14px] font-extrabold">{j.title}</span>
+        <span className="text-[14px] font-extrabold">{decodeHtml(j.title)}</span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-mut">
         <span className="font-bold text-ink">{j.company}</span>

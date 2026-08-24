@@ -3,7 +3,8 @@
 import type { JobPosting } from "../../types";
 import type { ApplyTrack } from "../../services/applyTrack";
 import { sourceLabel } from "../../services/importJob";
-import { Chip, Modal } from "../ui"
+import { Chip, Modal } from "../ui";
+import { decodeHtml } from "../../util"
 
 interface Props {
   queue: JobPosting[];
@@ -18,8 +19,8 @@ export function ApplyQueueModal({ queue, tracks, onApply, onKit, onClose }: Prop
   return (
     <Modal
       onClose={onClose}
-      title="\U0001f4cb Apply queue"
-      desc="Work through the batch one at a time \u2014 each Apply opens the platform's own page in a new tab, where you complete the submission. InterviewIQ never applies for you; it just tracks progress. Use \U0001f4c4 Kit to review the tailored resume & cover letter first."
+      title={"\uD83D\uDCCB Apply queue"}
+      desc={"Work through the batch one at a time \u2014 each Apply opens the platform\u2019s own page in a new tab, where you complete the submission. InterviewIQ never applies for you; it just tracks progress. Use \uD83D\uDCC4 Kit to review the tailored resume & cover letter first."}
     >
       <div className="space-y-2">
         {queue.map((j, i) => {
@@ -32,7 +33,7 @@ export function ApplyQueueModal({ queue, tracks, onApply, onKit, onClose }: Prop
                   <Chip tone="co">{sourceLabel(j.source)}</Chip>
                   <span className="text-[11px] font-bold text-mut">{i + 1}/{queue.length}</span>
                 </div>
-                <div className="mt-1 truncate text-[13px] font-extrabold text-ink">{j.title}</div>
+                <div className="mt-1 truncate text-[13px] font-extrabold text-ink">{decodeHtml(j.title)}</div>
                 {j.company && <div className="text-[11.5px] font-bold text-fnt">{j.company}</div>}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -41,18 +42,18 @@ export function ApplyQueueModal({ queue, tracks, onApply, onKit, onClose }: Prop
                   onClick={() => onKit(j)}
                   title="Open the tailored resume & cover letter for this role"
                 >
-                  \U0001f4c4 Kit
+                  {"\uD83D\uDCC4"} Kit
                 </button>
                 {done ? (
                   <Chip tone="ok" title={tr.via ? `Applied via ${tr.via}` : "Marked applied"}>
-                    \u2713 {tr.via ? `Applied via ${tr.via}` : "Applied"}
+                    {"\u270D"} {tr.via ? `Applied via ${tr.via}` : "Applied"}
                   </Chip>
                 ) : (
                   <button
                     className="rounded-full border border-ok/30 bg-ok/10 px-2.5 py-1 text-[11.5px] font-bold text-ok transition-all hover:bg-ok/20"
                     onClick={() => onApply(j)}
                   >
-                    \U0001f517 Apply on {sourceLabel(j.source)} \u2197
+                    {"\uD83D\uDD17"} Apply on {sourceLabel(j.source)} {"\u2197"}
                   </button>
                 )}
               </div>
@@ -60,9 +61,9 @@ export function ApplyQueueModal({ queue, tracks, onApply, onKit, onClose }: Prop
           );
         })}
       </div>
-      <p className="mt-3 text-[11px] text-mut">Each apply is also tracked on its feed card \u2014 follow-ups land in the apply tracker.</p>
-      <button className="mt-3 w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
-        Done \u2014 close
+      <p className="mt-3 text-[11px] text-mut">{"Each apply is also tracked on its feed card \u2014 follow-ups land in the apply tracker."}</p>
+      <button className="mt-3 w-full rounded-xl bg-panel2 py-2.5 text-[13px] font-bold text-ink hover:bg-panel3" onClick={onClose}>
+        {"Done \u2014 close"}
       </button>
     </Modal>
   );

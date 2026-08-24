@@ -323,7 +323,6 @@ export function App() {
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("privacy")}>Privacy</button>
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("refunds")}>Refunds</button>
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("shipping")}>Shipping</button>
-              <a href="https://github.com/gaurav123337/interviewiq" target="blank" rel="noreferrer" className="inline-flex items-center gap-1 transition-colors hover:text-ink"><span aria-hidden>🐙</span> GitHub</a>
             </span>
           </div>
         </footer>

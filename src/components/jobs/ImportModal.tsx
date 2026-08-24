@@ -8,6 +8,7 @@ import { toast } from "../../toast";
 import { btnGhost, btnPrimary, btnSm, Chip, Modal } from "../ui";
 import { importFromUrlWithFallback, sourceLabel, splitJobUrls } from "../../services/importJob";
 import { addImportedJob, listJobs } from "../../services/jobs";
+import { decodeHtml } from "../../util";
 
 const SAMPLE_IMPORT_URLS = [
   "https://jobs.ashbyhq.com/notion/f1f9e19d-cbf3-49eb-9824-d04adf2e3d75",
@@ -105,7 +106,7 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
                         {r.job.remote && <Chip tone="ok">REMOTE</Chip>}
                         {r.job.level && <span className="text-[11px] font-bold uppercase tracking-wider text-mut">\u00b7 {r.job.level}</span>}
                       </div>
-                      <div className="mt-1.5 text-[13.5px] font-extrabold text-ink">{r.job.title}</div>
+                      <div className="mt-1.5 text-[13.5px] font-extrabold text-ink">{decodeHtml(r.job.title)}</div>
                       {r.job.company && <div className="text-[12px] font-bold text-fnt">{r.job.company}</div>}
                       {r.job.location && <div className="text-[11.5px] text-mut">\U0001f4cd {r.job.location}</div>}
                       {r.job.skills.length > 0 && (

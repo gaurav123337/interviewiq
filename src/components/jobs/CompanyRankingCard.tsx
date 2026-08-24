@@ -9,6 +9,7 @@ import {
   type CompanyRank,
 } from "../../services/jobs";
 import { currencySymbol } from "../../services/salaryBench";
+import { decodeHtml } from "../../util";
 
 
 /* verdict tone → text color (matches VERDICT_META tones) */
@@ -148,7 +149,7 @@ export function CompanyRankingCard({
             </div>
           </div>
           <p className="mt-1 text-[13px] leading-relaxed text-ink">
-            Start with <span className="font-extrabold text-ok">{topPicks[0].company}</span> — {proGated ? "your match % is locked" : `${topPicks[0].score}% match (${VERDICT_META[topPicks[0].verdict].label.toLowerCase()})`} across {topPicks[0].openings} open role{topPicks[0].openings === 1 ? "" : "s"}, best fit: <span className="font-semibold">{topPicks[0].best.title}</span>.{" "}
+            Start with <span className="font-extrabold text-ok">{topPicks[0].company}</span> — {proGated ? "your match % is locked" : `${topPicks[0].score}% match (${VERDICT_META[topPicks[0].verdict].label.toLowerCase()})`} across {topPicks[0].openings} open role{topPicks[0].openings === 1 ? "" : "s"}, best fit: <span className="font-semibold">{decodeHtml(topPicks[0].best.title)}</span>.{" "}
             {!proGated && topPicks[0].matched.length > 0 && <>You already cover <span className="font-semibold">{topPicks[0].matched.slice(0, 4).join(", ")}</span>.</>}{" "}
             {!proGated && gapImpact && (
               <>Learn <span className="font-bold text-bad">{gapImpact.skill}</span> and {topPicks[0].company} jumps from {gapImpact.from}% → <span className="font-extrabold text-ok">{gapImpact.to}%</span>.</>
@@ -165,7 +166,7 @@ export function CompanyRankingCard({
                 ) : (
                   <>
                     <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wide ${verdictToneCls(VERDICT_META[r.verdict].tone)} border-current/25 bg-current/10`}>{r.score}% · {VERDICT_META[r.verdict].label}</span>
-                    <span className="text-[12px] text-mut">{r.openings} role{r.openings === 1 ? "" : "s"} · {r.best.title}</span>
+                    <span className="text-[12px] text-mut">{r.openings} role{r.openings === 1 ? "" : "s"} · {decodeHtml(r.best.title)}</span>
                   </>
                 )}
                 {(() => { const s = salaryLabel(r.best, displayCurrency); return s ? <span className="text-[11.5px] font-bold text-ok">💰 {s}</span> : null; })()}
@@ -243,7 +244,7 @@ export function CompanyRankingCard({
                     <span className="text-[14px] font-extrabold">{r.company}</span>
                     {i === 0 && <Chip tone="ok">🏆 Best fit</Chip>}
                   </div>
-                  <div className="mt-0.5 text-[12px] text-mut">{r.openings} open role{r.openings === 1 ? "" : "s"} · best fit: {r.best.title}</div>
+                  <div className="mt-0.5 text-[12px] text-mut">{r.openings} open role{r.openings === 1 ? "" : "s"} · best fit: {decodeHtml(r.best.title)}</div>
                 </div>
                 <div className="w-[132px] flex-none">
                   {proGated ? (
