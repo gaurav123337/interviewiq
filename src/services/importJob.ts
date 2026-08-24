@@ -131,9 +131,19 @@ export function sourcePriority(location: string): Record<string, number> {
 
 /** Split a paste of multiple job links into clean, deduped URLs. */
 export function splitJobUrls(text: string): string[] {
-  return [...new Set(
-    text.split(/[\n,]/).map(s => s.trim()).filter(Boolean)
-  )];
+  /* First pass: split on newlines and commas */
+  const raw = text.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+  /* Second pass: rejoin broken URLs — if a line doesn't start with http,
+     append it to the previous line (textarea wrap artifact) */
+  const joined: string[] = [];
+  for (const part of raw) {
+    if (/^https?:\/\//i.test(part)) {
+      joined.push(part);
+    } else if (joined.length) {
+      joined[joined.length - 1] += part;
+    }
+  }
+  return [...new Set(joined)];
 }
 
 /* ------------------------------------------------------------------ */
