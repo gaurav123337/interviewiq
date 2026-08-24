@@ -5,7 +5,7 @@
    so the entire app — including the legal pages (Terms / Privacy / Refunds /
    Shipping) reachable from the footer on every view — works with no network. */
 
-const CACHE = "interviewiq-v9";
+const CACHE = "interviewiq-v10";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
@@ -41,18 +41,6 @@ self.addEventListener("message", e => {
   }
 });
 
-self.addEventListener("updatefound", () => {
-  const reg = self.registration;
-  if (!reg.installing) return;
-  reg.installing.addEventListener("statechange", () => {
-    if (reg.installing.state === "installed" && navigator.serviceWorker.controller) {
-      /* New SW installed but not yet active — notify clients */
-      self.clients.matchAll().then(clients => {
-        clients.forEach(c => c.postMessage({ type: "SW_UPDATE_READY" }));
-      });
-    }
-  });
-});
 
 /* notification click: focus the app (or open it) on the practice screen */
 self.addEventListener("notificationclick", e => {
@@ -77,19 +65,13 @@ self.addEventListener("fetch", e => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return; /* let browser handle external (e.g., AI API) */
 
-  /* navigations: network-first with SPA-aware fallback.
-     For clean URLs like /planner, GitHub Pages returns 404.
-     We intercept the 404 and serve index.html (the SPA shell),
-     keeping the original URL so the app can read the pathname. */
+  /* navigations: network-first, fallback to cached shell for offline */
   if (req.mode === "navigate") {
     e.respondWith(
       fetch(req).then(res => {
         if (res.ok) return res;
-        /* 404 — serve the SPA shell so the client-side router handles it */
-        return caches.match("./index.html").then(cached =>
-          cached || new Response('<!DOCTYPE html><html><body><script>location.replace("/")</script></body></html>',
-            { headers: { 'Content-Type': 'text/html' } })
-        );
+        /* 404 (SPA route) — serve cached shell, hash router handles the rest */
+        return caches.match("./index.html");
       }).catch(() => caches.match("./index.html"))
     );
     return;
