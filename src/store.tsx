@@ -59,12 +59,18 @@ const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
   Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
 );
 
-/** Read the initial view from the URL pathname (e.g. /practice → "onboard") */
+/** Read the initial view from the URL or redirect state */
 function viewFromHash(): string | null {
-  // Try clean URL first: /interviewiq/practice → "practice"
+  // 1. Check if 404.html redirect set __initialView
+  const w = window as unknown as Record<string, unknown>;
+  if (w.__initialView && typeof w.__initialView === "string") {
+    const v = HASH_TO_VIEW[w.__initialView];
+    if (v) return v;
+  }
+  // 2. Try clean URL: /interviewiq/practice → "practice"
   const pathname = window.location.pathname.replace(/^\/interviewiq\/?/, "").replace(/^\//, "");
   if (pathname && HASH_TO_VIEW[pathname]) return HASH_TO_VIEW[pathname];
-  // Fallback to hash: #/practice → "practice"
+  // 3. Fallback to hash: #/practice → "practice"
   const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
   return HASH_TO_VIEW[hash] ?? null;
 }

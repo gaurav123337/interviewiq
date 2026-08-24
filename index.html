@@ -102,18 +102,17 @@
 <body>
 <script>
 /* Clean URL redirect for GitHub Pages SPA routing.
-   When user visits /practice → 404.html → /?p=/practice → this script.
-   Sets hash for app boot, then shows clean URL via replaceState. */
+   /planner → 404.html → /?p=/planner → this script.
+   Shows clean URL and sets internal state for the app. */
 (function() {
   var params = new URLSearchParams(window.location.search);
   var p = params.get('p');
   if (p) {
     var clean = p.replace(/^\/interviewiq\/?/, '').replace(/^\//, '');
-    // Set hash so the app reads the correct view
-    if (clean) window.location.hash = '/' + clean;
-    // Show clean URL in address bar
-    var cleanUrl = '/interviewiq/' + (clean || '');
-    window.history.replaceState(null, '', cleanUrl + window.location.hash);
+    // Show clean URL immediately (before app loads)
+    window.history.replaceState(null, '', '/interviewiq/' + (clean || ''));
+    // Store the view for the app to read on boot
+    if (clean) window.__initialView = clean;
   }
 })();
 </script>
