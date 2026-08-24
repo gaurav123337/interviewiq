@@ -105,6 +105,19 @@
   <link rel="stylesheet" crossorigin href="./assets/index-n442wIBf.css">
 </head>
 <body>
+<script>
+/* Clean URL → hash redirect for GitHub Pages SPA routing.
+   404.html redirects /practice to /?p=/practice.
+   This script reads ?p= and sets the hash so the app boots on the right view. */
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var p = params.get('p');
+  if (p && !window.location.hash) {
+    var path = p.replace(/^\//, '');
+    window.location.replace('/interviewiq/#/' + path);
+  }
+})();
+</script>
 <div id="root"></div>
 </body>
 </html>
