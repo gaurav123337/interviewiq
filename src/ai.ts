@@ -243,7 +243,23 @@ async function cloudChat(messages: ChatMessage[], opts: ChatOptions): Promise<st
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string }).error ?? "AI request failed");
-  return (body as { text?: string }).text ?? "";
+  /* Log cost for cloud proxy calls */
+  const userId = getCloudState().user?.id;
+  const moduleId = opts.module ?? "coach";
+  const text = (body as { text?: string; usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string }).text ?? "";
+  const usage = (body as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
+  const model = (body as { model?: string }).model ?? "unknown";
+  if (userId) {
+    void logAiCost({
+      userId,
+      module: moduleId,
+      model,
+      inputTokens: usage?.prompt_tokens ?? 0,
+      outputTokens: usage?.completion_tokens ?? 0,
+      cached: false,
+    });
+  }
+  return text;
 }
 
 /** Module-aware chat — resolves the AI settings for the given module,

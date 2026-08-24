@@ -1,0 +1,114 @@
+/* ai-chat — Cloud proxy for AI requests. Uses the admin-configured provider
+   (from ai_provider_config table) so users don't need their own API key.
+   Requires authentication — the user's JWT proves they're signed in. */
+
+import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
+
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return preflightResponse(req);
+  const headers = { ...corsHeaders(req), "Content-Type": "application/json" };
+  if (!isAllowedOrigin(req)) {
+    return new Response(JSON.stringify({ error: "origin not allowed" }), { status: 403, headers });
+  }
+
+  try {
+    if (req.method !== "POST") {
+      return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers });
+    }
+
+    // Verify the user is authenticated
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const token = authHeader.replace("Bearer ", "");
+    if (!token || token === ANON_KEY) {
+      return new Response(JSON.stringify({ error: "Sign in to use AI." }), { status: 401, headers });
+    }
+
+    // Get the admin-configured AI provider from the database
+    const projectUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const providerRes = await fetch(`${projectUrl}/rest/v1/ai_provider_config?key=eq.provider&select=value`, {
+      headers: {
+        "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+        "apikey": SERVICE_ROLE_KEY,
+      },
+    });
+    const providerRows = await providerRes.json().catch(() => []);
+    if (!providerRows.length || !providerRows[0].value) {
+      return new Response(JSON.stringify({ error: "AI not configured — admin needs to set up the provider in Product Config." }), { status: 503, headers });
+    }
+
+    const config = typeof providerRows[0].value === "string"
+      ? JSON.parse(providerRows[0].value)
+      : providerRows[0].value;
+
+    const { apiKey, baseUrl, model } = config;
+    if (!apiKey || !baseUrl) {
+      return new Response(JSON.stringify({ error: "AI provider not fully configured — missing API key or base URL." }), { status: 503, headers });
+    }
+
+    // Parse the request body
+    const body = await req.json().catch(() => ({}));
+    const { messages, temperature = 0.6, maxTokens = 700, module: moduleId } = body;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return new Response(JSON.stringify({ error: "messages array is required" }), { status: 400, headers });
+    }
+
+    // Get per-module model override if set
+    let resolvedModel = model;
+    if (moduleId) {
+      const modRes = await fetch(`${projectUrl}/rest/v1/ai_provider_config?key=eq.module:${moduleId}&select=value`, {
+        headers: {
+          "Authorization": `Bearer ${SERVICE_ROLE_KEY}`,
+          "apikey": SERVICE_ROLE_KEY,
+        },
+      });
+      const modRows = await modRes.json().catch(() => []);
+      if (modRows.length && modRows[0].value) {
+        const modConfig = typeof modRows[0].value === "string" ? JSON.parse(modRows[0].value) : modRows[0].value;
+        if (modConfig.model) resolvedModel = modConfig.model;
+      }
+    }
+
+    // Call the AI provider
+    const apiBase = baseUrl.replace(/\/+$/, "");
+    const aiRes = await fetch(`${apiBase}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: resolvedModel,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (!aiRes.ok) {
+      const errText = await aiRes.text().catch(() => "");
+      return new Response(JSON.stringify({
+        error: `AI provider returned HTTP ${aiRes.status}: ${errText.slice(0, 200)}`
+      }), { status: 502, headers });
+    }
+
+    const aiBody = await aiRes.json().catch(() => ({}));
+    const text = aiBody.choices?.[0]?.message?.content ?? "";
+    const usage = aiBody.usage ?? {};
+
+    return new Response(JSON.stringify({
+      text,
+      model: resolvedModel,
+      usage: {
+        prompt_tokens: usage.prompt_tokens ?? 0,
+        completion_tokens: usage.completion_tokens ?? 0,
+      },
+    }), { status: 200, headers });
+
+  } catch (e) {
+    return new Response(JSON.stringify({ error: (e as Error).message ?? "ai-chat failed" }), { status: 500, headers });
+  }
+});
