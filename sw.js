@@ -5,7 +5,7 @@
    so the entire app — including the legal pages (Terms / Privacy / Refunds /
    Shipping) reachable from the footer on every view — works with no network. */
 
-const CACHE = "interviewiq-v5";
+const CACHE = "interviewiq-v6";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
