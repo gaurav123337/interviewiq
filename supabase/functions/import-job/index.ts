@@ -96,6 +96,58 @@ Deno.serve(async (req) => {
     /* Check if this is a listing/search page (multiple jobs) */
     const isListing = isListingPage(url);
     if (isListing) {
+      const u = new URL(url);
+      
+      /* ---- LinkedIn: use the public guest API ---- */
+      if (/linkedin\.com$/.test(u.hostname)) {
+        const keywords = u.searchParams.get("keywords") ?? u.searchParams.get("q") ?? "";
+        const location = u.searchParams.get("location") ?? "";
+        if (keywords || location) {
+          const apiUrl = new URL("https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search");
+          if (keywords) apiUrl.searchParams.set("keywords", keywords);
+          if (location) apiUrl.searchParams.set("location", location);
+          apiUrl.searchParams.set("start", "0");
+          try {
+            const apiRes = await safeFetch(apiUrl.toString(), { timeoutMs: 15_000 });
+            if (apiRes.ok) {
+              const apiHtml = await readBodyText(apiRes, 500_000);
+              // Parse job cards from the HTML fragment
+              const cardRe = /<li[^>]*>[\s\S]*?<\/li>/gi;
+              const titleRe = /class="[^"]*base-search-card__title[^"]*"[^>]*>([^<]+)/i;
+              const companyRe = /class="[^"]*base-search-card__subtitle[^"]*"[^>]*>\s*<a[^>]*>([^<]+)/i;
+              const locationRe = /class="[^"]*job-search-card__location[^"]*"[^>]*>([^<]+)/i;
+              const linkRe = /href=["']([^"']+linkedin\.com\/jobs\/view\/[^"']+)/i;
+              const cards = apiHtml.match(cardRe) ?? [];
+              const jobs: ImportedJob[] = [];
+              for (const card of cards.slice(0, 10)) {
+                const t = card.match(titleRe)?.[1]?.trim();
+                const c = card.match(companyRe)?.[1]?.trim();
+                const l = card.match(locationRe)?.[1]?.trim();
+                const link = card.match(linkRe)?.[1];
+                if (t) {
+                  jobs.push({
+                    title: t,
+                    company: c ?? undefined,
+                    location: l ?? undefined,
+                    description: `Imported from LinkedIn search: ${keywords || location}`,
+                    applyUrl: link ?? url,
+                    salary: null
+                  });
+                }
+              }
+              if (jobs.length > 0) {
+                return new Response(JSON.stringify({ ok: true, jobs, listing: true }), { status: 200, headers });
+              }
+            }
+          } catch { /* fall through */ }
+        }
+        return new Response(JSON.stringify({
+          ok: false,
+          error: "Couldn't extract jobs from this LinkedIn page. Try searching for specific skills (e.g. 'react developer India') and paste the search URL, or paste individual job posting URLs."
+        }), { status: 200, headers });
+      }
+
+      /* ---- Generic listing pages: try extract links then fetch each ---- */
       const links = extractListingLinks(html, url);
       if (links.length === 0) {
         return new Response(JSON.stringify({
@@ -103,7 +155,6 @@ Deno.serve(async (req) => {
           error: "This is a search/listing page — paste individual job posting URLs instead (click each job and copy its URL from the address bar)"
         }), { status: 200, headers });
       }
-      /* Fetch each individual job link (rate-limited, best-effort) */
       const jobs: ImportedJob[] = [];
       for (const link of links.slice(0, 8)) {
         try {
@@ -114,7 +165,7 @@ Deno.serve(async (req) => {
           const jmeta = parseMeta(jhtml);
           const jTitle = jld?.title ?? jmeta.get("og:title") ?? jhtml.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? "";
           const jDesc = jld?.description ?? jmeta.get("og:description") ?? jmeta.get("description") ?? stripHtml(jhtml).slice(0, 2000);
-          if (!jTitle || jTitle === title) continue; // skip if same as listing page title
+          if (!jTitle || jTitle === title) continue;
           jobs.push({
             title: jTitle,
             company: jld?.company ?? jmeta.get("og:site_name") ?? undefined,
@@ -123,12 +174,11 @@ Deno.serve(async (req) => {
             applyUrl: jld?.applyUrl ?? link,
             salary: extractSalary(jDesc ?? "")
           });
-        } catch { /* skip failed fetches */ }
+        } catch { /* skip */ }
       }
       if (jobs.length > 0) {
         return new Response(JSON.stringify({ ok: true, jobs, listing: true }), { status: 200, headers });
       }
-      // Fallback: return single job from listing page metadata
       return new Response(JSON.stringify({ ok: true, job, listing: false }), { status: 200, headers });
     }
 

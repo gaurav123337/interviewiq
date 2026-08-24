@@ -12,9 +12,9 @@ import { addImportedJob, listJobs } from "../../services/jobs";
 import { decodeHtml } from "../../util";
 
 const SAMPLE_IMPORT_URLS = [
+  "https://www.linkedin.com/jobs/search/?keywords=react%20developer&location=India",
   "https://jobs.ashbyhq.com/notion/f1f9e19d-cbf3-49eb-9824-d04adf2e3d75",
-  "https://jobs.ashbyhq.com/notion/72532ca0-eb7d-4d9e-b982-50f52614fca9",
-  "https://app.careerpuck.com/job-board/lyft/job/8603653002?gh_jid=8603653002"
+  "https://jobs.ashbyhq.com/notion/72532ca0-eb7d-4d9e-b982-50f52614fca9"
 ];
 
 interface Props {
@@ -73,12 +73,12 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
     <Modal
       onClose={onClose}
       title={"\u2795 Add jobs from platforms"}
-      desc="Paste one or more individual job posting links (one per line) from Naukri, LinkedIn, Indeed — or any company page. Each link should point to a specific job posting, not a search/listing page. We read the public postings and score them like any feed job."
+      desc="Paste job links from LinkedIn, Naukri, Indeed, or company career pages. For LinkedIn, paste a search URL with keywords (e.g. linkedin.com/jobs/search/?keywords=react+developer). For other sites, paste individual job posting URLs. One link per line."
     >
       <div className="flex items-start gap-2">
         <textarea
           className="inp h-24 w-full flex-1"
-          placeholder={"Paste individual job links, one per line:\nhttps://www.linkedin.com/jobs/view/...\nhttps://www.naukri.com/job/...\nhttps://in.indeed.com/viewjob?jk=..."}
+          placeholder={"Paste job links, one per line:\nhttps://www.linkedin.com/jobs/search/?keywords=react+developer\nhttps://www.naukri.com/job/123456\nhttps://jobs.ashbyhq.com/company/uuid"}
           value={url}
           onChange={e => { setUrl(e.target.value); setError(null); setResults([]); }}
           spellCheck={false}
