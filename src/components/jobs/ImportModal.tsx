@@ -6,7 +6,8 @@ import { getSupabaseClient } from "../../services/cloud";
 import { CONFIG } from "../../config";
 import { toast } from "../../toast";
 import { btnGhost, btnPrimary, btnSm, Chip, Modal } from "../ui";
-import { importFromUrlWithFallback, sourceLabel, splitJobUrls } from "../../services/importJob";
+import { importFromUrlWithFallback, sourceLabel, splitJobUrls, type ImportListOutcome } from "../../services/importJob";
+import { isListingPage } from "../../services/listingDetect";
 import { addImportedJob, listJobs } from "../../services/jobs";
 import { decodeHtml } from "../../util";
 
@@ -40,9 +41,18 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
       const token = session?.data?.session?.access_token ?? undefined;
       const out: { url: string; job: JobPosting | null; error: string | null }[] = [];
       for (const raw of urls) {
-        const res = await importFromUrlWithFallback(raw, { supabaseUrl: CONFIG.supabase.url, token });
-        out.push(res.ok ? { url: raw, job: res.job, error: null } : { url: raw, job: null, error: res.message });
+        const res: ImportListOutcome = await importFromUrlWithFallback(raw, { supabaseUrl: CONFIG.supabase.url, token });
+        if (!res.ok) {
+          out.push({ url: raw, job: null, error: res.message });
+        } else if ("listing" in res && res.listing && res.jobs.length > 0) {
+          for (const j of res.jobs) {
+            out.push({ url: j.url || raw, job: j, error: null });
+          }
+        } else if ("jobs" in res && res.jobs.length) {
+          out.push({ url: raw, job: res.jobs[0], error: null });
+        }
       }
+      if (!out.length) setError("Couldn't extract any jobs from that page — try pasting individual job posting URLs.");
       setResults(out);
     } finally {
       setBusy(false);

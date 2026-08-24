@@ -212,6 +212,10 @@ export type ImportOutcome =
   | { ok: true; job: JobPosting }
   | { ok: false; reason: "invalid-url" | "blocked" | "network" | "empty"; message: string };
 
+export type ImportListOutcome =
+  | { ok: true; jobs: JobPosting[]; listing: boolean }
+  | { ok: false; reason: "invalid-url" | "blocked" | "network" | "empty"; message: string };
+
 /** Fetch a public posting page (direct, browser-side). CORS-blocked
     sites fail gracefully — the edge function path handles those. */
 export async function importFromUrl(rawUrl: string, fetcher: (u: string) => Promise<Response> = (u) => fetch(u)): Promise<ImportOutcome> {
@@ -253,8 +257,9 @@ export async function importFromUrl(rawUrl: string, fetcher: (u: string) => Prom
 }
 
 /** Full import: try the import-job Edge Function first (server-side, no
-    CORS, robots-enforced), then fall back to the direct public fetch. */
-export async function importFromUrlWithFallback(rawUrl: string, ctx: { supabaseUrl?: string; token?: string; fetcher?: (u: string) => Promise<Response> } = {}): Promise<ImportOutcome> {
+    CORS, robots-enforced), then fall back to the direct public fetch.
+    Returns multiple jobs when the URL is a listing/search page. */
+export async function importFromUrlWithFallback(rawUrl: string, ctx: { supabaseUrl?: string; token?: string; fetcher?: (u: string) => Promise<Response> } = {}): Promise<ImportListOutcome> {
   const platform = platformFromUrl(rawUrl);
   if (!platform) return { ok: false, reason: "invalid-url", message: "Enter a valid job URL (https://…)" };
   if (ctx.supabaseUrl && ctx.token) {
@@ -266,10 +271,21 @@ export async function importFromUrlWithFallback(rawUrl: string, ctx: { supabaseU
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok && body?.ok) {
+        // Listing page: multiple jobs returned
+        if (body.listing && Array.isArray(body.jobs)) {
+          const jobs = body.jobs
+            .map((j: RawJobPage) => normalizeImportedJob(platform, j, rawUrl))
+            .filter((j: JobPosting) => j.title && j.title !== "Untitled role");
+          if (jobs.length > 0) return { ok: true, jobs, listing: true };
+        }
+        // Single job
         const job = normalizeImportedJob(platform, body.job as RawJobPage, rawUrl);
-        if (job.title && job.title !== "Untitled role") return { ok: true, job };
+        if (job.title && job.title !== "Untitled role") return { ok: true, jobs: [job], listing: false };
       }
     } catch { /* edge function unreachable — fall through to direct */ }
   }
-  return importFromUrl(rawUrl, ctx.fetcher);
+  // Client-side fallback: single job
+  const result = await importFromUrl(rawUrl, ctx.fetcher);
+  if (result.ok) return { ok: true, jobs: [result.job], listing: false };
+  return result;
 }

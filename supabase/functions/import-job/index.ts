@@ -22,7 +22,7 @@ import { safeFetch, readBodyText } from "../_shared/safeFetch.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
 import { extractSalary, type SalaryBand } from "../_shared/salary.ts";
-import { extractFromJsonLd, parseMeta, robotsAllows, stripHtml, type RawJobPage } from "../_shared/importPage.ts";
+import { extractFromJsonLd, parseMeta, robotsAllows, stripHtml, type RawJobPage, isListingPage, extractListingLinks } from "../_shared/importPage.ts";
 
 /* best-effort per-client cap: 15 imports/min */
 const limitImport = makeLimiter(15, 60_000);
@@ -93,7 +93,48 @@ Deno.serve(async (req) => {
       applyUrl: ld?.applyUrl,
       salary: extractSalary(description ?? "")
     };
-    return new Response(JSON.stringify({ ok: true, job }), { status: 200, headers });
+    /* Check if this is a listing/search page (multiple jobs) */
+    const isListing = isListingPage(url);
+    if (isListing) {
+      const links = extractListingLinks(html, url);
+      if (links.length === 0) {
+        return new Response(JSON.stringify({
+          ok: true,
+          job: { title, company: job.company, location: job.location, description, applyUrl: job.applyUrl, salary: job.salary },
+          listing: false,
+          note: "This looks like a listing page but no individual job links were found — paste a specific job posting URL instead"
+        }), { status: 200, headers });
+      }
+      /* Fetch each individual job link (rate-limited, best-effort) */
+      const jobs: ImportedJob[] = [];
+      for (const link of links.slice(0, 8)) {
+        try {
+          const jr = await safeFetch(link, { timeoutMs: 10_000 });
+          if (!jr.ok) continue;
+          const jhtml = await readBodyText(jr, 500_000);
+          const jld = extractFromJsonLd(jhtml);
+          const jmeta = parseMeta(jhtml);
+          const jTitle = jld?.title ?? jmeta.get("og:title") ?? jhtml.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? "";
+          const jDesc = jld?.description ?? jmeta.get("og:description") ?? jmeta.get("description") ?? stripHtml(jhtml).slice(0, 2000);
+          if (!jTitle || jTitle === title) continue; // skip if same as listing page title
+          jobs.push({
+            title: jTitle,
+            company: jld?.company ?? jmeta.get("og:site_name") ?? undefined,
+            location: jld?.location,
+            description: jDesc,
+            applyUrl: jld?.applyUrl ?? link,
+            salary: extractSalary(jDesc ?? "")
+          });
+        } catch { /* skip failed fetches */ }
+      }
+      if (jobs.length > 0) {
+        return new Response(JSON.stringify({ ok: true, jobs, listing: true }), { status: 200, headers });
+      }
+      // Fallback: return single job from listing page metadata
+      return new Response(JSON.stringify({ ok: true, job, listing: false }), { status: 200, headers });
+    }
+
+    return new Response(JSON.stringify({ ok: true, job, listing: false }), { status: 200, headers });
   } catch (e) {
     return new Response(JSON.stringify({ ok: false, error: (e as Error).message ?? "import-job failed" }), { status: 500, headers });
   }
