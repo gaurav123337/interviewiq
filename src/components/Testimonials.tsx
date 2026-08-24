@@ -125,9 +125,9 @@ export const TestimonialsSection = memo(function TestimonialsSection() {
         Join developers who landed offers at Google, Amazon, Meta, Microsoft and more.
       </p>
 
-      <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center justify-items-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mx-auto mt-8 flex max-w-[900px] flex-wrap justify-center gap-4">
         {visible.map(t => (
-          <div key={t.name} className={`${cardCls} p-5 transition-transform hover:-translate-y-0.5`}>
+          <div key={t.name} className={`${cardCls} w-full p-5 transition-transform hover:-translate-y-0.5 sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]`}>
             <div className="flex items-center gap-3">
               <span className="grid h-11 w-11 place-items-center rounded-full bg-acc1/15 text-[22px]">{t.avatar}</span>
               <div>
@@ -270,7 +270,7 @@ export function RecommendedResources() {
         Some links are affiliate links — we earn a small commission at no extra cost to you.
       </p>
 
-      <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center justify-items-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mx-auto mt-8 flex max-w-[900px] flex-wrap justify-center gap-4">
         {resources.map((r, i) => (
           <a
             key={r.title + i}
@@ -278,7 +278,7 @@ export function RecommendedResources() {
             target="_blank"
             rel="noopener noreferrer nofollow"
             onClick={() => { void trackClick("resource", String(i)); }}
-            className={`${cardCls} group block p-5 transition-all hover:-translate-y-0.5 hover:border-acc1/40 hover:shadow-[0_8px_24px_rgba(99,102,241,.15)]`}
+            className={`${cardCls} group block w-full p-5 transition-all hover:-translate-y-0.5 hover:border-acc1/40 hover:shadow-[0_8px_24px_rgba(99,102,241,.15)] sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]`}
           >
             <div className="flex items-start justify-between">
               <span className="grid h-11 w-11 place-items-center rounded-xl bg-acc1/10 text-[20px]">{r.icon}</span>
