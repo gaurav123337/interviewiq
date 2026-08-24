@@ -65,13 +65,20 @@ function viewFromHash(): string | null {
   return HASH_TO_VIEW[hash] ?? null;
 }
 
-/** Push the view name into the URL hash */
+/** Push the view name into the URL — show clean URL via replaceState */
 function pushViewToHash(view: string) {
   const path = VIEW_TO_HASH[view];
   if (path === undefined) return;
   const hash = path ? `#/${path}` : "";
+  // Set hash for the app to read
   if (window.location.hash !== hash) {
-    window.history.pushState(null, "", hash || "/");
+    window.location.hash = hash;
+  }
+  // Show clean URL in address bar (no hash, no ?p= param)
+  const cleanUrl = `/interviewiq/${path || ""}`;
+  if (window.location.pathname + window.location.search !== cleanUrl && 
+      window.location.pathname + window.location.search !== cleanUrl + "/") {
+    window.history.replaceState(null, "", cleanUrl);
   }
 }
 

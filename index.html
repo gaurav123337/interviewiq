@@ -101,15 +101,19 @@
 </head>
 <body>
 <script>
-/* Clean URL → hash redirect for GitHub Pages SPA routing.
-   404.html redirects /practice to /?p=/practice.
-   This script reads ?p= and sets the hash so the app boots on the right view. */
+/* Clean URL redirect for GitHub Pages SPA routing.
+   When user visits /practice → 404.html → /?p=/practice → this script.
+   Sets hash for app boot, then shows clean URL via replaceState. */
 (function() {
   var params = new URLSearchParams(window.location.search);
   var p = params.get('p');
-  if (p && !window.location.hash) {
-    var path = p.replace(/^\//, '');
-    window.location.replace('/interviewiq/#/' + path);
+  if (p) {
+    var clean = p.replace(/^\/interviewiq\/?/, '').replace(/^\//, '');
+    // Set hash so the app reads the correct view
+    if (clean) window.location.hash = '/' + clean;
+    // Show clean URL in address bar
+    var cleanUrl = '/interviewiq/' + (clean || '');
+    window.history.replaceState(null, '', cleanUrl + window.location.hash);
   }
 })();
 </script>
