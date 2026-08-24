@@ -4,10 +4,11 @@
 <meta charset="utf-8">
 <title>Redirecting...</title>
 <script>
-  // SPA fallback: redirect to root. The service worker handles real SPA routing.
-  // This only fires for browsers without service worker support.
+  // SPA fallback for GitHub Pages (only fires when service worker is NOT installed).
+  // Stores the original path in sessionStorage so index.html can recover it.
+  try { sessionStorage.setItem('__redirect', location.pathname); } catch(e) {}
   var repo = location.pathname.match(/^\/[^/]+\//);
-  location.replace((repo ? repo[0] : '/') + '?' + Date.now());
+  location.replace((repo ? repo[0] : '/') + '?r=' + Date.now());
 </script>
 </head>
 <body>Redirecting...</body>
