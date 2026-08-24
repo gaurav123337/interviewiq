@@ -172,13 +172,33 @@ export function App() {
       window.removeEventListener("online", up);
       window.removeEventListener("offline", down);
     };
-  }, []);
-
-  const install = async () => {
+  }, []);  const install = async () => {
     if (!installEvt) return;
     await installEvt.prompt();
     setInstallEvt(null);
   };
+
+  /* Handle browser back/forward buttons via hashchange */
+  useEffect(() => {
+    const HASH_TO_VIEW: Record<string, View> = {
+      "": "landing", practice: "onboard", interview: "interview", results: "results",
+      drill: "drill", bank: "bank", history: "history", settings: "settings",
+      planner: "planner", roadmap: "roadmap", playground: "playground", admin: "admin",
+      progress: "progress", team: "team", account: "account", legal: "legal",
+      jobs: "jobs", articles: "articles", resources: "resources", counselor: "counselor",
+      "system-design": "systemDesign", learn: "learn",
+    };
+    const onHashChange = () => {
+      const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
+      const targetView = HASH_TO_VIEW[hash];
+      if (targetView && targetView !== state.view) {
+        nav(targetView);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [state.view, nav]);
+
 
   const view = state.view;
   const go = (id: View) => { setMenuOpen(false); nav(id); };

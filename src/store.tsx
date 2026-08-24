@@ -45,12 +45,44 @@ const DEFAULT_CONFIG: Config = { count: 8, mode: "standard", timing: "relaxed", 
 const initialOb = (): Ob => ({ level: null, field: null, company: null, ...storageGet(STORAGE_KEYS.onboard, {}) });
 const initialStep = (ob: Ob): number => (ob.level ? (ob.field ? (ob.company ? 4 : 3) : 2) : 1);
 
+/* ── URL ↔ View sync ──────────────────────────────────────────────── */
+/** Map View names to URL path segments */
+const VIEW_TO_HASH: Record<string, string> = {
+  landing: "", onboard: "practice", interview: "interview", results: "results",
+  drill: "drill", bank: "bank", history: "history", settings: "settings",
+  planner: "planner", roadmap: "roadmap", playground: "playground", admin: "admin",
+  progress: "progress", team: "team", account: "account", legal: "legal",
+  jobs: "jobs", articles: "articles", resources: "resources", counselor: "counselor",
+  systemDesign: "system-design", learn: "learn", "learn-detail": "learn",
+};
+const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
+  Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
+);
+
+/** Read the initial view from the URL hash (e.g. #/practice → "onboard") */
+function viewFromHash(): string | null {
+  const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
+  return HASH_TO_VIEW[hash] ?? null;
+}
+
+/** Push the view name into the URL hash */
+function pushViewToHash(view: string) {
+  const path = VIEW_TO_HASH[view];
+  if (path === undefined) return;
+  const hash = path ? `#/${path}` : "";
+  if (window.location.hash !== hash) {
+    window.history.pushState(null, "", hash || "/");
+  }
+}
+
 function initialState(): AppState {
   const ob = initialOb();
-  /* first-time visitors land on the marketing page; returning users go straight to practice */
   const onboarded = !!ob.level;
+  /* Check URL hash first — enables bookmarking/sharing */
+  const urlView = viewFromHash();
+  const defaultView = onboarded ? "onboard" : "landing";
   return {
-    view: onboarded ? "onboard" : "landing",
+    view: (urlView ?? defaultView) as View,
     prevView: onboarded ? "onboard" : "landing",
     ob,
     step: initialStep(ob),
@@ -190,7 +222,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return {
       state,
-      nav: view => { window.scrollTo({ top: 0 }); dispatch({ type: "NAV", view }); },
+      nav: view => { window.scrollTo({ top: 0 }); pushViewToHash(view); dispatch({ type: "NAV", view }); },
       selectLevel: id => dispatch({ type: "SET_OB", patch: { level: id, jd: undefined }, step: 2 }),
       selectField: id => dispatch({ type: "SET_OB", patch: { field: id, jd: undefined }, step: 3 }),
       selectCompany: id => dispatch({ type: "SET_OB", patch: { company: id, jd: undefined }, step: 4 }),
