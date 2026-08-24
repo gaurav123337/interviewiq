@@ -95,7 +95,7 @@ export function Landing() {
           Everything you need to <span className="grad-text">walk in ready</span>
         </h2>
         <p className="mx-auto mt-2 max-w-[520px] text-center text-[14px] text-mut">One coach for the whole ladder — from your first coding question to the CTO room.</p>
-        <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center justify-items-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map(f => (
             <div key={f.title} className={`${cardCls} p-5 transition-transform hover:-translate-y-0.5`}>
               <span className="grid h-11 w-11 place-items-center rounded-xl grad-bg-soft text-[20px]">{f.icon}</span>
@@ -133,7 +133,7 @@ export function Landing() {
           Simple, honest <span className="grad-text">pricing</span>
         </h2>
         <p className="mx-auto mt-2 max-w-[480px] text-center text-[14px] text-mut">Start free. Upgrade only when you want unlimited everything.</p>
-        <div className="mx-auto mt-8 grid max-w-[860px] grid-cols-1 justify-center gap-4 sm:grid-cols-2">
+        <div className="mx-auto mt-8 grid max-w-[860px] grid-cols-1 justify-center justify-items-center gap-4 sm:grid-cols-2">
           <div className={`${cardCls} p-6`}>
             <div className="flex items-center justify-between">
               <h3 className="text-[16px] font-extrabold">Free</h3>
