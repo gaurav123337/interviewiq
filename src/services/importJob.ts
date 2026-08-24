@@ -250,6 +250,11 @@ export async function importFromUrl(rawUrl: string, fetcher: (u: string) => Prom
     if (!job.title || job.title === "Untitled role") {
       return { ok: false, reason: "empty", message: "Couldn't read the posting from that page — open it manually instead." };
     }
+    /* Detect listing/search pages that only return generic metadata */
+    const LISTING_TITLES = /^(linkedin|naukri|indeed|glassdoor|monster|shake job|job search|jobs near|all jobs|browse|find jobs|search)/i;
+    if (LISTING_TITLES.test(job.title) && !job.description?.slice(0, 200).includes("Responsibilities") && !job.description?.slice(0, 200).includes("Requirements")) {
+      return { ok: false, reason: "empty", message: "This looks like a listing/search page. Click on an individual job posting and paste that URL instead." };
+    }
     return { ok: true, job };
   } catch {
     return { ok: false, reason: "network", message: "Couldn't fetch this page from the app (the site blocks cross-origin reads) — open it manually and paste the details." };

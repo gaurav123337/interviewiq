@@ -73,12 +73,12 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
     <Modal
       onClose={onClose}
       title={"\u2795 Add jobs from platforms"}
-      desc="Paste one or more job links (one per line) from Naukri, LinkedIn, Indeed — or any company page. We read the public postings and score them like any feed job. Applying always happens on the platform's own page; InterviewIQ never applies for you."
+      desc="Paste one or more individual job posting links (one per line) from Naukri, LinkedIn, Indeed — or any company page. Each link should point to a specific job posting, not a search/listing page. We read the public postings and score them like any feed job."
     >
       <div className="flex items-start gap-2">
         <textarea
           className="inp h-24 w-full flex-1"
-          placeholder={"https://www.naukri.com/job/\u2026\nhttps://www.linkedin.com/jobs/view/\u2026\nhttps://in.indeed.com/viewjob?jk=\u2026"}
+          placeholder={"Paste individual job links, one per line:\nhttps://www.linkedin.com/jobs/view/...\nhttps://www.naukri.com/job/...\nhttps://in.indeed.com/viewjob?jk=..."}
           value={url}
           onChange={e => { setUrl(e.target.value); setError(null); setResults([]); }}
           spellCheck={false}

@@ -99,10 +99,8 @@ Deno.serve(async (req) => {
       const links = extractListingLinks(html, url);
       if (links.length === 0) {
         return new Response(JSON.stringify({
-          ok: true,
-          job: { title, company: job.company, location: job.location, description, applyUrl: job.applyUrl, salary: job.salary },
-          listing: false,
-          note: "This looks like a listing page but no individual job links were found — paste a specific job posting URL instead"
+          ok: false,
+          error: "This is a search/listing page — paste individual job posting URLs instead (click each job and copy its URL from the address bar)"
         }), { status: 200, headers });
       }
       /* Fetch each individual job link (rate-limited, best-effort) */
