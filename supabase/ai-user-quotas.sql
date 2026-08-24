@@ -40,11 +40,6 @@ GROUP BY user_id, DATE(created_at);
 CREATE OR REPLACE VIEW users_view AS
 SELECT id, email FROM auth.users;
 
-ALTER VIEW users_view ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "admin read users" ON users_view
-  FOR SELECT USING (public.is_admin());
-
 -- Monthly usage view
 CREATE OR REPLACE VIEW ai_user_usage_monthly AS
 SELECT
