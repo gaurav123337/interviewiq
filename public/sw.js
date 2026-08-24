@@ -5,7 +5,7 @@
    so the entire app — including the legal pages (Terms / Privacy / Refunds /
    Shipping) reachable from the footer on every view — works with no network. */
 
-const CACHE = "interviewiq-v8";
+const CACHE = "interviewiq-v9";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
@@ -77,10 +77,20 @@ self.addEventListener("fetch", e => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return; /* let browser handle external (e.g., AI API) */
 
-  /* navigations: always network-first (needed for SPA routing redirects) */
+  /* navigations: network-first with SPA-aware fallback.
+     For clean URLs like /planner, GitHub Pages returns 404.
+     We intercept the 404 and serve index.html (the SPA shell),
+     keeping the original URL so the app can read the pathname. */
   if (req.mode === "navigate") {
     e.respondWith(
-      fetch(req).catch(() => caches.match("./index.html"))
+      fetch(req).then(res => {
+        if (res.ok) return res;
+        /* 404 — serve the SPA shell so the client-side router handles it */
+        return caches.match("./index.html").then(cached =>
+          cached || new Response('<!DOCTYPE html><html><body><script>location.replace("/")</script></body></html>',
+            { headers: { 'Content-Type': 'text/html' } })
+        );
+      }).catch(() => caches.match("./index.html"))
     );
     return;
   }
