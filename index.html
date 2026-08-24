@@ -99,28 +99,13 @@
   ]
 }
 </script>
-  <script type="module" crossorigin src="./assets/index-7A4PHhGe.js"></script>
+  <script type="module" crossorigin src="./assets/index-CjbW-Xj1.js"></script>
   <link rel="modulepreload" crossorigin href="./assets/vendor-redux-_mUL87Rl.js">
   <link rel="modulepreload" crossorigin href="./assets/vendor-react-D2Xel5Cr.js">
   <link rel="stylesheet" crossorigin href="./assets/index-n442wIBf.css">
 </head>
 <body>
-<script>
-/* Clean URL redirect for GitHub Pages SPA routing.
-   /planner → 404.html → /?p=/planner → this script.
-   Shows clean URL and sets internal state for the app. */
-(function() {
-  var params = new URLSearchParams(window.location.search);
-  var p = params.get('p');
-  if (p) {
-    var clean = p.replace(/^\/interviewiq\/?/, '').replace(/^\//, '');
-    // Show clean URL immediately (before app loads)
-    window.history.replaceState(null, '', '/interviewiq/' + (clean || ''));
-    // Store the view for the app to read on boot
-    if (clean) window.__initialView = clean;
-  }
-})();
-</script>
+<!-- SPA routing handled by service worker + store.tsx viewFromHash() -->
 <div id="root"></div>
 </body>
 </html>
