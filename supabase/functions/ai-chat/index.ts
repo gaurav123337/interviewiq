@@ -43,7 +43,9 @@ Deno.serve(async (req) => {
       ? JSON.parse(providerRows[0].value)
       : providerRows[0].value;
 
-    const { apiKey, baseUrl, model } = config;
+    const apiKey = config.key ?? config.apiKey ?? "";
+    const baseUrl = config.base ?? config.baseUrl ?? "";
+    const model = config.model ?? "gpt-4o-mini";
     if (!apiKey || !baseUrl) {
       return new Response(JSON.stringify({ error: "AI provider not fully configured — missing API key or base URL." }), { status: 503, headers });
     }
@@ -72,6 +74,9 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Resolve model (may have been overridden above)
+    const finalModel = resolvedModel || model;
+
     // Call the AI provider
     const apiBase = baseUrl.replace(/\/+$/, "");
     const aiRes = await fetch(`${apiBase}/chat/completions`, {
@@ -81,7 +86,7 @@ Deno.serve(async (req) => {
         "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: resolvedModel,
+        model: finalModel,
         messages,
         temperature,
         max_tokens: maxTokens,
@@ -101,7 +106,7 @@ Deno.serve(async (req) => {
 
     return new Response(JSON.stringify({
       text,
-      model: resolvedModel,
+      model: finalModel,
       usage: {
         prompt_tokens: usage.prompt_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? 0,
