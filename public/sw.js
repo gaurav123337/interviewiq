@@ -5,7 +5,7 @@
    so the entire app — including the legal pages (Terms / Privacy / Refunds /
    Shipping) reachable from the footer on every view — works with no network. */
 
-const CACHE = "interviewiq-v6";
+const CACHE = "interviewiq-v7";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
@@ -77,16 +77,10 @@ self.addEventListener("fetch", e => {
   const url = new URL(req.url);
   if (url.origin !== location.origin) return; /* let browser handle external (e.g., AI API) */
 
-  /* navigations: network-first, fall back to cached shell */
+  /* navigations: always network-first (needed for SPA routing redirects) */
   if (req.mode === "navigate") {
     e.respondWith(
-      fetch(req)
-        .then(res => {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put("./index.html", copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match("./index.html"))
+      fetch(req).catch(() => caches.match("./index.html"))
     );
     return;
   }

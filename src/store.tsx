@@ -59,18 +59,15 @@ const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
   Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
 );
 
-/** Read the initial view from the URL or redirect state */
+/** Read the initial view from the URL path or hash.
+    Service worker serves index.html for all SPA routes (network-first + offline fallback),
+    so the browser URL is already the clean path (e.g. /interviewiq/planner).
+    We read directly from pathname — no redirect scripts needed. */
 function viewFromHash(): string | null {
-  // 1. Check if 404.html redirect set __initialView
-  const w = window as unknown as Record<string, unknown>;
-  if (w.__initialView && typeof w.__initialView === "string") {
-    const v = HASH_TO_VIEW[w.__initialView];
-    if (v) return v;
-  }
-  // 2. Try clean URL: /interviewiq/practice → "practice"
+  // 1. Try clean URL: /interviewiq/planner → "planner"
   const pathname = window.location.pathname.replace(/^\/interviewiq\/?/, "").replace(/^\//, "");
   if (pathname && HASH_TO_VIEW[pathname]) return HASH_TO_VIEW[pathname];
-  // 3. Fallback to hash: #/practice → "practice"
+  // 2. Fallback to hash: #/planner → "planner"
   const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
   return HASH_TO_VIEW[hash] ?? null;
 }
