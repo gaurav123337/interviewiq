@@ -95,7 +95,7 @@ export function Landing() {
           Everything you need to <span className="grad-text">walk in ready</span>
         </h2>
         <p className="mx-auto mt-2 max-w-[520px] text-center text-[14px] text-mut">One coach for the whole ladder — from your first coding question to the CTO room.</p>
-        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map(f => (
             <div key={f.title} className={`${cardCls} p-5 transition-transform hover:-translate-y-0.5`}>
               <span className="grid h-11 w-11 place-items-center rounded-xl grad-bg-soft text-[20px]">{f.icon}</span>
@@ -108,7 +108,7 @@ export function Landing() {
 
       {/* how it works */}
       <section id="how" className="pb-14">
-        <div className={`${cardCls} grid grid-cols-1 gap-6 p-6 sm:grid-cols-3 sm:p-8`}>
+        <div className={`${cardCls} mx-auto grid max-w-[900px] grid-cols-1 gap-6 p-6 sm:grid-cols-3 sm:p-8`}>
           {STEPS.map(s => (
             <div key={s.n} className="flex gap-3.5">
               <span className="grid h-9 w-9 flex-none place-items-center rounded-xl grad-bg text-[15px] font-extrabold text-white">{s.n}</span>
