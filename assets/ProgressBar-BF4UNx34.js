@@ -1,1 +1,0 @@
-import{j as r}from"./index-7A4PHhGe.js";function i({widthPct:t,label:a,className:l="",height:s="h-2.5"}){return r.jsx("div",{className:`${s} overflow-hidden rounded-full bg-wht/10 ${l}`,title:a,children:r.jsx("div",{className:"h-full rounded-full grad-bg transition-all duration-500",style:{width:`${Math.min(100,Math.max(3,t))}%`}})})}export{i as P};
