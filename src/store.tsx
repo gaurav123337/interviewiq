@@ -59,32 +59,28 @@ const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
   Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
 );
 
-/** Read the initial view from the URL path, redirect state, or hash.
-    Service worker serves index.html for all SPA routes (network-first + offline fallback).
-    For first-time visitors (no SW),404.html stores the path in sessionStorage
-    and index.html reads it into window.__initialView. */
+/** Read the initial view from the URL.
+    Hash is primary (#/planner). Clean URL (/planner) is a fallback
+    for when the service worker serves index.html for unknown paths. */
 function viewFromHash(): string | null {
-  // 1. Check if404.html redirect set __initialView (first-time visitors)
-  const w = window as unknown as Record<string, unknown>;
-  if (w.__initialView && typeof w.__initialView === "string") {
-    const v = HASH_TO_VIEW[w.__initialView];
-    if (v) return v;
-  }
-  // 2. Try clean URL: /interviewiq/planner → "planner"
+  // 1. Hash (primary): #/planner → "planner"
+  const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
+  if (hash && HASH_TO_VIEW[hash]) return HASH_TO_VIEW[hash];
+  // 2. Clean URL fallback: /interviewiq/planner → "planner"
   const pathname = window.location.pathname.replace(/^\/interviewiq\/?/, "").replace(/^\//, "");
   if (pathname && HASH_TO_VIEW[pathname]) return HASH_TO_VIEW[pathname];
-  // 3. Fallback to hash: #/planner → "planner"
-  const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
-  return HASH_TO_VIEW[hash] ?? null;
+  return null;
 }
 
-/** Push the view name into the URL — show clean URL via replaceState */
+/** Set the URL hash AND show a clean URL via replaceState.
+    Hash is the source of truth for routing; replaceState is cosmetic. */
 function pushViewToHash(view: string) {
   const path = VIEW_TO_HASH[view];
   if (path === undefined) return;
-  const cleanUrl = `/interviewiq/${path || ""}`;
-  // Use replaceState to show clean URL without hash
-  window.history.replaceState(null, "", cleanUrl);
+  // Set hash (source of truth for routing)
+  window.location.hash = path ? "/" + path : "";
+  // Show clean URL (cosmetic)
+  window.history.replaceState(null, "", "/interviewiq/" + (path || ""));
 }
 
 function initialState(): AppState {

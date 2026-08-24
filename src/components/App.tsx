@@ -178,7 +178,7 @@ export function App() {
     setInstallEvt(null);
   };
 
-  /* Handle browser back/forward buttons via popstate */
+  /* Handle browser back/forward buttons via hashchange */
   useEffect(() => {
     const PATH_TO_VIEW: Record<string, View> = {
       "": "landing", practice: "onboard", interview: "interview", results: "results",
@@ -188,15 +188,15 @@ export function App() {
       jobs: "jobs", articles: "articles", resources: "resources", counselor: "counselor",
       "system-design": "systemDesign", learn: "learn",
     };
-    const onPopState = () => {
-      const pathname = window.location.pathname.replace(/^\/interviewiq\/?/, "").replace(/^\//, "");
-      const targetView = PATH_TO_VIEW[pathname];
+    const onHashChange = () => {
+      const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
+      const targetView = PATH_TO_VIEW[hash];
       if (targetView && targetView !== state.view) {
         nav(targetView);
       }
     };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, [state.view, nav]);
 
 

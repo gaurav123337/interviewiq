@@ -100,22 +100,7 @@
 </script>
 </head>
 <body>
-<script>
-/* SPA routing: service worker handles this for installed users.
-   For first-time visitors (no SW),404.html stores the path in sessionStorage
-   before redirecting. We read it here and show a clean URL. */
-(function() {
-  try {
-    var saved = sessionStorage.getItem('__redirect');
-    if (saved) {
-      sessionStorage.removeItem('__redirect');
-      var clean = saved.replace(/^\/interviewiq\/?/, '').replace(/^\//, '');
-      window.history.replaceState(null, '', '/interviewiq/' + (clean || ''));
-      if (clean) window.__initialView = clean;
-    }
-  } catch(e) {}
-})();
-</script>
+
 <div id="root"></div>
 <script type="module" src="/src/main.tsx"></script>
 </body>
