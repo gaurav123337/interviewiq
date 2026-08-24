@@ -212,9 +212,13 @@ async function chatWithSettings(
 
 export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Promise<string> {
   const s = getSettings();
-  if (!s.key && opts.module) return cloudChat(messages, opts);
-  if (!s.key) throw new Error("No API key configured");
-  return chatWithSettings(s, messages, opts);
+  /* BYOK (user's own key) always wins */
+  if (s.key) return chatWithSettings(s, messages, opts);
+  /* No local key — try the admin's cloud proxy (requires sign-in) */
+  const user = getCloudState().user;
+  if (user) return cloudChat(messages, opts);
+  /* Neither BYOK nor signed in */
+  throw new Error("Sign in to use AI, or add your own API key in Settings → AI.");
 }
 
 /** Server-side module-routed chat: the ai-chat edge function resolves the

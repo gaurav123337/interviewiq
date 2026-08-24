@@ -321,7 +321,7 @@ export function FloatingCoach() {
           ? "You are a friendly, senior technical interviewer and system design coach. Keep replies under 180 words. Use → arrows for diagrams. Be encouraging but precise. Never hallucinate." + (topic.title ? `\nThe user is studying: ${topic.icon} ${topic.title} — ${topic.blurb}` : "")
           : "You are a helpful, knowledgeable AI assistant — like ChatGPT. Be friendly, clear, and thorough. Use markdown for readability. Keep replies under 200 words unless asked for more. Discuss any topic: tech, career, life, hobbies, etc.";
         const history: ChatMessage[] = [{ role: "system", content: sys }, ...msgs.map(m => ({ role: m.role, content: m.text })), { role: "user", content: text }];
-        const reply = await chat(history, { maxTokens: coachType === "system-design" ? 450 : 600 });
+        const reply = await chat(history, { maxTokens: coachType === "system-design" ? 450 : 600, module: coachType === "system-design" ? "deepdive" : "coach" });
         setMsgs(p => [...p, { role: "assistant", text: reply }]);
       } else {
         const rag = await searchRag(text);
