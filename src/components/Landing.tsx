@@ -95,9 +95,9 @@ export function Landing() {
           Everything you need to <span className="grad-text">walk in ready</span>
         </h2>
         <p className="mx-auto mt-2 max-w-[520px] text-center text-[14px] text-mut">One coach for the whole ladder — from your first coding question to the CTO room.</p>
-        <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center justify-items-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mx-auto mt-8 flex max-w-[900px] flex-wrap justify-center gap-4">
           {FEATURES.map(f => (
-            <div key={f.title} className={`${cardCls} p-5 transition-transform hover:-translate-y-0.5`}>
+            <div key={f.title} className={`${cardCls} w-full p-5 transition-transform hover:-translate-y-0.5 sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]`}>
               <span className="grid h-11 w-11 place-items-center rounded-xl grad-bg-soft text-[20px]">{f.icon}</span>
               <h3 className="mt-3 text-[15.5px] font-extrabold">{f.title}</h3>
               <p className="mt-1.5 text-[13px] leading-relaxed text-mut">{f.body}</p>
@@ -133,8 +133,8 @@ export function Landing() {
           Simple, honest <span className="grad-text">pricing</span>
         </h2>
         <p className="mx-auto mt-2 max-w-[480px] text-center text-[14px] text-mut">Start free. Upgrade only when you want unlimited everything.</p>
-        <div className="mx-auto mt-8 grid max-w-[860px] grid-cols-1 justify-center justify-items-center gap-4 sm:grid-cols-2">
-          <div className={`${cardCls} p-6`}>
+        <div className="mx-auto mt-8 flex max-w-[860px] flex-wrap justify-center gap-4">
+          <div className={`${cardCls} w-full p-6 sm:w-[calc(50%-8px)]`}>
             <div className="flex items-center justify-between">
               <h3 className="text-[16px] font-extrabold">Free</h3>
               <Chip tone="ok">FOREVER</Chip>
@@ -150,7 +150,7 @@ export function Landing() {
             </ul>
             <button className={btnGhost + " mt-6 w-full py-3"} onClick={() => nav("onboard")}>Start free</button>
           </div>
-          <div className="grad-bg-soft relative overflow-hidden rounded-2xl border border-acc1/40 p-6 shadow-[0_18px_50px_rgba(99,102,241,.25)]">
+          <div className="grad-bg-soft relative w-full overflow-hidden rounded-2xl border border-acc1/40 p-6 shadow-[0_18px_50px_rgba(99,102,241,.25)] sm:w-[calc(50%-8px)]">
             <span className="absolute right-4 top-4"><Chip tone="co">POPULAR</Chip></span>
             <h3 className="text-[16px] font-extrabold">Pro</h3>
             <div className="mt-3 text-[13px] text-mut">Unlimited practice, AI coaching and voice rounds.</div>
