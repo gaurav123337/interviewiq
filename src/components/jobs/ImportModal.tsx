@@ -54,7 +54,7 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
     if (!jobs.length) return;
     for (const j of jobs) addImportedJob(j);
     onImported(listJobs());
-    toast(`➕ Imported ${jobs.length} job${jobs.length === 1 ? "" : "s"} — now in your match feed`);
+    toast(`\u2795 Imported ${jobs.length} job${jobs.length === 1 ? "" : "s"} \u2014 now in your match feed`);
     if (jobs.length) onApplyQueue(jobs);
     onClose();
   };
@@ -62,7 +62,7 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
   return (
     <Modal
       onClose={onClose}
-      title="➕ Add jobs from platforms"
+      title={"\u2795 Add jobs from platforms"}
       desc="Paste one or more job links (one per line) from Naukri, LinkedIn, Indeed — or any company page. We read the public postings and score them like any feed job. Applying always happens on the platform's own page; InterviewIQ never applies for you."
     >
       <div className="flex items-start gap-2">
@@ -74,7 +74,7 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
           spellCheck={false}
         />
         <button className={btnPrimary + btnSm} onClick={() => void preview()} disabled={busy || !url.trim()}>
-          {busy ? "\u23f3 Reading\u2026" : "\U0001f50e Preview"}
+          {busy ? "\u23F3 Reading\u2026" : "\uD83D\uDD0D Preview"}
         </button>
       </div>
       <button
@@ -82,14 +82,14 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
         onClick={() => setUrl(SAMPLE_IMPORT_URLS.join("\n"))}
         title="Fill the box with a few real public postings to try the flow"
       >
-        \u2728 Try sample links
+        {"\u2728"} Try sample links
       </button>
 
-      {busy && <p className="mt-3 text-[12px] text-mut">\u23f3 Reading postings\u2026 (public fetch, rate-limited per site)</p>}
+      {busy && <p className="mt-3 text-[12px] text-mut">{"\u23F3"} Reading postings{"\u2026"} (public fetch, rate-limited per site)</p>}
 
       {error && !busy && (
         <div className="mt-3 rounded-xl border border-warn/30 bg-warn/10 p-3.5">
-          <p className="text-[12.5px] text-fnt">\u2717 {error}</p>
+          <p className="text-[12.5px] text-fnt">{"\u2717"} {error}</p>
         </div>
       )}
 
@@ -104,11 +104,11 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
                       <div className="flex flex-wrap items-center gap-2">
                         <Chip tone="co">{sourceLabel(r.job.source)}</Chip>
                         {r.job.remote && <Chip tone="ok">REMOTE</Chip>}
-                        {r.job.level && <span className="text-[11px] font-bold uppercase tracking-wider text-mut">\u00b7 {r.job.level}</span>}
+                        {r.job.level && <span className="text-[11px] font-bold uppercase tracking-wider text-mut">{"\u00B7"} {r.job.level}</span>}
                       </div>
                       <div className="mt-1.5 text-[13.5px] font-extrabold text-ink">{decodeHtml(r.job.title)}</div>
                       {r.job.company && <div className="text-[12px] font-bold text-fnt">{r.job.company}</div>}
-                      {r.job.location && <div className="text-[11.5px] text-mut">\U0001f4cd {r.job.location}</div>}
+                      {r.job.location && <div className="text-[11.5px] text-mut">{"\uD83D\uDCCD"} {r.job.location}</div>}
                       {r.job.skills.length > 0 && (
                         <div className="mt-1.5 flex flex-wrap gap-1">
                           {r.job.skills.slice(0, 6).map(s => <Chip key={s} tone="default">{s}</Chip>)}
@@ -117,10 +117,10 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
                     </>
                   ) : (
                     <>
-                      <p className="text-[12.5px] font-bold text-warn">\u2717 Couldn't read this link</p>
+                      <p className="text-[12.5px] font-bold text-warn">{"\u2717"} Couldn't read this link</p>
                       <p className="mt-0.5 break-all text-[11.5px] text-fnt">{r.error}</p>
                       <a href={r.url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-[12px] font-bold text-acctxt underline">
-                        Open the job page manually \u2197
+                        Open the job page manually {"\u2197"}
                       </a>
                     </>
                   )}
@@ -131,7 +131,7 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
                     onClick={() => setResults(list => list.filter((_, x) => x !== i))}
                     title="Remove from this import"
                   >
-                    \u2715
+                    {"\u2715"}
                   </button>
                 )}
               </div>
@@ -143,13 +143,13 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
               onClick={confirm}
               disabled={!results.some(r => r.job)}
             >
-              \u2795 Add {results.filter(r => r.job).length} to feed
+              {"\u2795"} Add {results.filter(r => r.job).length} to feed
             </button>
             <button className={btnGhost + btnSm} onClick={() => { setResults([]); setUrl(""); setError(null); }}>
-              \u21ba Start over
+              {"\u21BA"} Start over
             </button>
           </div>
-          <p className="mt-1 text-[11px] text-mut">The apply button on each job opens its page on the platform \u2014 you complete it there.</p>
+          <p className="mt-1 text-[11px] text-mut">{"The apply button on each job opens its page on the platform \u2014 you complete it there."}</p>
         </div>
       )}
     </Modal>

@@ -93,11 +93,16 @@ export function App() {
   const [sharePayload] = useState<string | null>(() => new URLSearchParams(window.location.search).get("share"));
   const [swUpdateReady, setSwUpdateReady] = useState(false);
 
-  /* listen for service worker updates */
+  /* listen for service worker updates — auto-reload after a short delay
+     so the user always sees the latest version without manual action */
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const onMsg = (e: MessageEvent) => {
-      if (e.data?.type === "SW_UPDATE_READY") setSwUpdateReady(true);
+      if (e.data?.type === "SW_UPDATE_READY") {
+        setSwUpdateReady(true);
+        navigator.serviceWorker?.controller?.postMessage({ type: "SKIP_WAITING" });
+        setTimeout(() => window.location.reload(), 800);
+      }
     };
     navigator.serviceWorker.addEventListener("message", onMsg);
     return () => navigator.serviceWorker.removeEventListener("message", onMsg);
