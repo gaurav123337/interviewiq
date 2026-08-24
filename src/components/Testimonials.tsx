@@ -125,7 +125,7 @@ export const TestimonialsSection = memo(function TestimonialsSection() {
         Join developers who landed offers at Google, Amazon, Meta, Microsoft and more.
       </p>
 
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map(t => (
           <div key={t.name} className={`${cardCls} p-5 transition-transform hover:-translate-y-0.5`}>
             <div className="flex items-center gap-3">
@@ -270,7 +270,7 @@ export function RecommendedResources() {
         Some links are affiliate links — we earn a small commission at no extra cost to you.
       </p>
 
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mx-auto mt-8 grid max-w-[900px] grid-cols-1 justify-center gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {resources.map((r, i) => (
           <a
             key={r.title + i}

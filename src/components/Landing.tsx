@@ -133,7 +133,7 @@ export function Landing() {
           Simple, honest <span className="grad-text">pricing</span>
         </h2>
         <p className="mx-auto mt-2 max-w-[480px] text-center text-[14px] text-mut">Start free. Upgrade only when you want unlimited everything.</p>
-        <div className="mx-auto mt-8 grid max-w-[860px] grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="mx-auto mt-8 grid max-w-[860px] grid-cols-1 justify-center gap-4 sm:grid-cols-2">
           <div className={`${cardCls} p-6`}>
             <div className="flex items-center justify-between">
               <h3 className="text-[16px] font-extrabold">Free</h3>
