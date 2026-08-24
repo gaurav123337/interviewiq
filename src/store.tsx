@@ -59,8 +59,12 @@ const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
   Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
 );
 
-/** Read the initial view from the URL hash (e.g. #/practice → "onboard") */
+/** Read the initial view from the URL pathname (e.g. /practice → "onboard") */
 function viewFromHash(): string | null {
+  // Try clean URL first: /interviewiq/practice → "practice"
+  const pathname = window.location.pathname.replace(/^\/interviewiq\/?/, "").replace(/^\//, "");
+  if (pathname && HASH_TO_VIEW[pathname]) return HASH_TO_VIEW[pathname];
+  // Fallback to hash: #/practice → "practice"
   const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
   return HASH_TO_VIEW[hash] ?? null;
 }
@@ -69,17 +73,9 @@ function viewFromHash(): string | null {
 function pushViewToHash(view: string) {
   const path = VIEW_TO_HASH[view];
   if (path === undefined) return;
-  const hash = path ? `#/${path}` : "";
-  // Set hash for the app to read
-  if (window.location.hash !== hash) {
-    window.location.hash = hash;
-  }
-  // Show clean URL in address bar (no hash, no ?p= param)
   const cleanUrl = `/interviewiq/${path || ""}`;
-  if (window.location.pathname + window.location.search !== cleanUrl && 
-      window.location.pathname + window.location.search !== cleanUrl + "/") {
-    window.history.replaceState(null, "", cleanUrl);
-  }
+  // Use replaceState to show clean URL without hash
+  window.history.replaceState(null, "", cleanUrl);
 }
 
 function initialState(): AppState {
