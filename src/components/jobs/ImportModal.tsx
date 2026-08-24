@@ -41,7 +41,7 @@ export function ImportModal({ onClose, onImported, onApplyQueue }: Props) {
       const token = session?.data?.session?.access_token ?? undefined;
       const out: { url: string; job: JobPosting | null; error: string | null }[] = [];
       for (const raw of urls) {
-        const res: ImportListOutcome = await importFromUrlWithFallback(raw, { supabaseUrl: CONFIG.supabase.url, token });
+        const res: ImportListOutcome = await importFromUrlWithFallback(raw, { supabaseUrl: CONFIG.supabase.url, token, anonKey: CONFIG.supabase.anonKey });
         if (!res.ok) {
           out.push({ url: raw, job: null, error: res.message });
         } else if ("listing" in res && res.listing && res.jobs.length > 0) {

@@ -258,15 +258,18 @@ export async function importFromUrl(rawUrl: string, fetcher: (u: string) => Prom
 
 /** Full import: try the import-job Edge Function first (server-side, no
     CORS, robots-enforced), then fall back to the direct public fetch.
-    Returns multiple jobs when the URL is a listing/search page. */
-export async function importFromUrlWithFallback(rawUrl: string, ctx: { supabaseUrl?: string; token?: string; fetcher?: (u: string) => Promise<Response> } = {}): Promise<ImportListOutcome> {
+    Returns multiple jobs when the URL is a listing/search page.
+    Works without sign-in by using the Supabase anon key. */
+export async function importFromUrlWithFallback(rawUrl: string, ctx: { supabaseUrl?: string; token?: string; anonKey?: string; fetcher?: (u: string) => Promise<Response> } = {}): Promise<ImportListOutcome> {
   const platform = platformFromUrl(rawUrl);
   if (!platform) return { ok: false, reason: "invalid-url", message: "Enter a valid job URL (https://…)" };
-  if (ctx.supabaseUrl && ctx.token) {
+  /* Try the edge function: prefer user token, fall back to anon key */
+  const auth = ctx.token || ctx.anonKey;
+  if (ctx.supabaseUrl && auth) {
     try {
       const res = await fetch(`${ctx.supabaseUrl}/functions/v1/import-job`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${ctx.token}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${auth}`, "Content-Type": "application/json" },
         body: JSON.stringify({ url: rawUrl })
       });
       const body = await res.json().catch(() => ({}));
