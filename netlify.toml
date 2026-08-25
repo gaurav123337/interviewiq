@@ -1,5 +1,6 @@
 [build]
-  command = "npm run build"
+  # Install all deps (including dev for TypeScript) then build
+  command = "npm ci --include=dev && npm run build"
   publish = "dist"
   base = ""
 
