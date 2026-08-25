@@ -60,6 +60,7 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
       if (row.key === "coach_vocab" && row.value) merged.coachVocab = row.value as RemoteConfig["coachVocab"];
       if (row.key === "rag" && row.value) merged.rag = { ...merged.rag, ...(row.value as object) };
       if (row.key === "policies" && row.value) merged.policies = { ...(merged.policies ?? {}), ...(row.value as object) };
+      if (row.key === "menuVisibility" && row.value) merged.menuVisibility = row.value as Record<string, boolean>;
     }
     setRemoteConfig(merged);
   }
