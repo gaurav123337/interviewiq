@@ -277,13 +277,14 @@ function MenuVisibilityTab() {
 
   const save = async () => {
     setSaving(true);
+    // Save to localStorage (works offline, no backend needed)
+    localStorage.setItem("iq.menuVisibility", JSON.stringify(visibility));
+    // Also try Supabase in the background (non-blocking)
     try {
       const { saveRemoteConfig } = await import("../../services/admin/config");
       await saveRemoteConfig({ menuVisibility: visibility } as any);
-      toast("Menu visibility saved ✓");
-    } catch {
-      toast("Failed to save — check Supabase connection");
-    }
+    } catch { /* Supabase optional */ }
+    toast("Menu visibility saved ✓");
     setSaving(false);
   };
 

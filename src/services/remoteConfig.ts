@@ -135,10 +135,20 @@ export function featureOn(f: keyof RemoteConfig["features"]): boolean {
   return getRemoteConfig().features[f] !== false;
 }
 
-/** Menu item visible unless the admin explicitly turned it off. */
+/** Menu item visible unless the admin explicitly turned it off. Checks Supabase config first, then localStorage. */
 export function menuVisible(id: string): boolean {
+  // 1. Check Supabase remote config
   const mv = getRemoteConfig().menuVisibility;
-  return !mv || mv[id] !== false;
+  if (mv && id in mv) return mv[id] !== false;
+  // 2. Check localStorage (admin panel saves here)
+  try {
+    const stored = localStorage.getItem("iq.menuVisibility");
+    if (stored) {
+      const map = JSON.parse(stored) as Record<string, boolean>;
+      if (id in map) return map[id] !== false;
+    }
+  } catch { /* ignore */ }
+  return true; // default: visible
 }
 
 /** The paywall is the local master switch AND the remote flag. */
