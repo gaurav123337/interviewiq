@@ -2,10 +2,27 @@
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="0;url=/">
-<title>Redirecting...</title>
+<title>Redirecting…</title>
+<script>
+  // GitHub Pages serves this file for any path that doesn't match a real file.
+  // Convert clean URLs to hash-based ones so the SPA can handle them.
+  // e.g. /interviewiq/practice → /interviewiq/#/practice
+  // e.g. /interviewiq/interview?q=1 → /interviewiq/#/interview?q=1
+  (function() {
+    var path = window.location.pathname;
+    // Strip the base path (/interviewiq/) to get the view segment
+    var base = path.replace(/\/+$/, '');
+    var parts = base.split('/');
+    // The last segment is the view; anything before is the base
+    var view = parts.pop() || '';
+    var basePath = parts.join('/') + '/';
+    // Preserve query string
+    var hash = view ? '#/' + view + window.location.search : '';
+    window.location.replace(basePath + hash);
+  })();
+</script>
 </head>
 <body>
-<p>Redirecting to <a href="/">home</a>...</p>
+<p>Redirecting…</p>
 </body>
 </html>

@@ -59,9 +59,9 @@ const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
   Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
 );
 
-/** Read the initial view from the URL.
-    Hash is primary (#/planner). Clean URL (/planner) is a fallback
-    for when the service worker serves index.html for unknown paths. */
+/** Read the initial view from the URL hash (#/planner → "planner").
+    Also falls back to clean URL paths (/interviewiq/planner) for backward
+    compatibility with any existing links. */
 function viewFromHash(): string | null {
   // 1. Hash (primary): #/planner → "planner"
   const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
@@ -72,15 +72,17 @@ function viewFromHash(): string | null {
   return null;
 }
 
-/** Set the URL hash AND show a clean URL via replaceState.
-    Hash is the source of truth for routing; replaceState is cosmetic. */
+/** Set the URL hash for hash-based routing.
+    Hash is the sole source of truth — works on GitHub Pages without
+    server-side rewrite rules. */
 function pushViewToHash(view: string) {
   const path = VIEW_TO_HASH[view];
   if (path === undefined) return;
-  // Set hash (source of truth for routing)
-  window.location.hash = path ? "/" + path : "";
-  // Show clean URL (cosmetic)
-  window.history.replaceState(null, "", "/interviewiq/" + (path || ""));
+  const nextHash = path ? "/" + path : "";
+  // Avoid triggering a redundant hashchange when the hash is already correct
+  if (window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "") !== path) {
+    window.location.hash = nextHash;
+  }
 }
 
 function initialState(): AppState {
