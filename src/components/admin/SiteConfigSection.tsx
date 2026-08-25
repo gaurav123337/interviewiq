@@ -279,29 +279,15 @@ function MenuVisibilityTab() {
     setSaving(true);
     // Save to localStorage (works offline, always succeeds)
     localStorage.setItem("iq.menuVisibility", JSON.stringify(visibility));
-    // Save to Supabase app_config table (shared across all users)
+    // Save to Supabase via the same saveRemoteConfig that Product Config uses
     try {
-      const { getSupabaseClient } = await import("../../services/cloud");
-      const client = await getSupabaseClient();
-      if (client) {
-        const { error } = await client.from("app_config").upsert(
-          { key: "menuVisibility", value: visibility, updated_at: Date.now() },
-          { onConflict: "key" }
-        );
-        if (error) {
-          console.error("Supabase menuVisibility save error:", error);
-          toast("Saved locally. DB write failed: " + error.message);
-          setSaving(false);
-          return;
-        }
-      }
-    } catch (e) {
-      console.error("Supabase connection error:", e);
-      toast("Saved locally. Could not reach database.");
-      setSaving(false);
-      return;
+      const { saveRemoteConfig } = await import("../../services/admin");
+      await saveRemoteConfig({ menuVisibility: visibility });
+      toast("Menu visibility saved ✓ (local + database)");
+    } catch (e: any) {
+      console.error("Supabase menuVisibility error:", e);
+      toast("Saved locally. DB: " + (e?.message ?? "unknown error"));
     }
-    toast("Menu visibility saved ✓ (local + database)");
     setSaving(false);
   };
 
