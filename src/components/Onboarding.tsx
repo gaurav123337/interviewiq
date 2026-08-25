@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ReactNode } from "react";
 import { COMPANIES, FIELDS, GENERAL_COMPANY, LEVELS, companyById, levelById } from "../data";
 import type { Config } from "../types";
@@ -9,6 +10,7 @@ import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnLg, btnPrimary, cardCls, Difficulty, Modal, Seg, Switch } from "./ui";
 
 export function Onboarding() {
+  const { t } = useTranslation();
   const { state, selectLevel, selectField, selectCompany, setStep, startSession } = useApp();
   const { ob, step } = state;
   const [showConfig, setShowConfig] = useState(false);
@@ -24,7 +26,7 @@ export function Onboarding() {
     startSession(cfg);
   };
 
-  const steps = ["Level", "Field", "Company", "Confirm"];
+  const steps = [t("onboarding.steps.0"), t("onboarding.steps.1"), t("onboarding.steps.2"), t("onboarding.steps.3")];
   const maxStep = ob.level ? (ob.field ? (ob.company ? 4 : 3) : 2) : 1;
 
   return (

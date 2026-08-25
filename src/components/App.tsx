@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { View } from "../types";
 import { useApp } from "../store";
 import { ToastHost } from "../toast";
@@ -13,6 +14,7 @@ import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcem
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { refreshEntitlement } from "../services/entitlement";
 import { ErrorBoundary } from "./ErrorBoundary";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Chip } from "./ui";
 
 /* ------------------------------------------------------------------ */
@@ -82,6 +84,7 @@ function RouteSpinner() {
 interface BIP extends Event { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
 
 export function App() {
+  const { t } = useTranslation();
   const { state, nav } = useApp();
   const [installEvt, setInstallEvt] = useState<BIP | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
@@ -287,6 +290,7 @@ export function App() {
             <span className="hidden sm:inline">{cloud.user ? (cloud.user.email ?? "Account").split("@")[0] : "Sign in"}</span>
             {cloud.user && <span className="absolute right-1 top-1 h-2 w-2 rounded-full border border-deep bg-ok" />}
           </button>
+          <LanguageSwitcher />
           <button
             onClick={toggleTheme}
             title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}

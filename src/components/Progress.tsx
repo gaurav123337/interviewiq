@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { useApp } from "../store";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
 import { computeStats, xpLevel, generateLeaderboard, ACHIEVEMENTS } from "../services/xp";
@@ -12,6 +13,7 @@ const dayOf = (t: number) => {
 };
 
 export function Progress() {
+  const { t } = useTranslation();
   const { state, nav } = useApp();
   const sessions = state.sessions;
   const [showPrintView, setShowPrintView] = useState(false);
@@ -38,12 +40,12 @@ export function Progress() {
     return (
       <div className="anim-view mx-auto max-w-[860px] pt-14 text-center">
         <div className="mb-3 text-[44px]">📈</div>
-        <h1 className="text-2xl font-extrabold">No progress yet</h1>
+        <h1 className="text-2xl font-extrabold">{t("progress.empty")}</h1>
         <p className="mx-auto mt-2 max-w-[420px] text-[14.5px] text-mut">
-          Complete an interview and your stats — skill radar, score trend and streak — show up here.
+          {t("progress.emptyDesc")}
         </p>
         <button className="mt-5 rounded-xl grad-bg px-6 py-3 text-[15px] font-extrabold text-white" onClick={() => nav("onboard")}>
-          🎯 Take an interview
+          {t("progress.takeInterview")}
         </button>
       </div>
     );

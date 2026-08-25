@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
@@ -6,6 +7,7 @@ import { getCoachDiscussions } from "./CoachChat";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip, EmptyState, Modal, ProgressBar } from "./ui";
 
 export function History() {
+  const { t } = useTranslation();
   const { state, openHistory, deleteHistory, clearHistory } = useApp();
   const { sessions } = state;
   const coach = getCoachDiscussions();
@@ -15,8 +17,8 @@ export function History() {
   if (!sessions.length && !coach.length) {
     return (
       <div className="anim-view">
-        <EmptyState icon="🗂️" title="No sessions yet">
-          <p className="text-sm text-mut">Complete an interview and your results will show up here.</p>
+        <EmptyState icon="🗂️" title={t("history.empty")}>
+          <p className="text-sm text-mut">{t("history.emptyDesc")}</p>
         </EmptyState>
       </div>
     );
@@ -25,9 +27,9 @@ export function History() {
   return (
     <div className="anim-view">
       <div className="pt-4 text-center">
-        <span className="eyebrow text-[12.5px] font-bold uppercase tracking-[.14em] text-acc3">🗂️ History</span>
-        <h1 className="mt-1 text-[clamp(26px,4vw,38px)] font-extrabold tracking-tight">Your interview <span className="grad-text">track record</span>.</h1>
-        <p className="mx-auto mt-2 max-w-[560px] text-[14.5px] text-mut">Review past sessions, spot patterns, and watch your scores climb.</p>
+        <span className="eyebrow text-[12.5px] font-bold uppercase tracking-[.14em] text-acc3">🗂️ {t("history.title", { "1": "" })}</span>
+        <h1 className="mt-1 text-[clamp(26px,4vw,38px)] font-extrabold tracking-tight"><Trans i18nKey="history.title" components={{ 1: <span className="grad-text" /> }} /></h1>
+        <p className="mx-auto mt-2 max-w-[560px] text-[14.5px] text-mut">{t("history.desc")}</p>
       </div>
 
       <Dashboard sessions={sessions} />

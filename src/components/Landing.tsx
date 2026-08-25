@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { useWebVitals, PerfOverlay } from "./PerformanceMonitor";
 import { useApp } from "../store";
 import { UpgradeModal } from "./Upgrade";
@@ -6,29 +7,30 @@ import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
 import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners, PopupBanners } from "./Testimonials";
 
 const FEATURES = [
-  { icon: "🎯", title: "Tailored sessions", body: "Pick your level (junior → CEO), field and target company — or paste a job description — and get questions written for that exact role, with model answers and scoring key points." },
-  { icon: "🎤", title: "Mock interviews", body: "Full interview-mode rounds with per-question scoring, hints, category breakdowns and a study-next plan. Voice mode lets the interviewer speak while you answer aloud." },
-  { icon: "🧭", title: "Career roadmap", body: "Tell it where you want to be and by when. InterviewIQ builds a week-by-week plan, runs an optional skill-gap diagnostic, and reschedules as your real results come in." },
-  { icon: "🧠", title: "AI tutor with citations", body: "Ask anything about a topic. The tutor answers from your own knowledge base (PDFs, docs) with visible source citations — no hallucinated answers." },
-  { icon: "💻", title: "Code playground", body: "Write and run code in multiple languages right in the browser, with hidden test cases that judge your solution the way a real interviewer would." },
-  { icon: "📚", title: "Self-improving bank", body: "A curated question bank, spaced-repetition drill, deep-dive knowledge base — and a content engine that keeps adding fresh questions from real sources and your own misses." }
+  { icon: "🎯", titleKey: "landing.features.tailored.title", bodyKey: "landing.features.tailored.body" },
+  { icon: "🎤", titleKey: "landing.features.mock.title", bodyKey: "landing.features.mock.body" },
+  { icon: "🧭", titleKey: "landing.features.roadmap.title", bodyKey: "landing.features.roadmap.body" },
+  { icon: "🧠", titleKey: "landing.features.tutor.title", bodyKey: "landing.features.tutor.body" },
+  { icon: "💻", titleKey: "landing.features.playground.title", bodyKey: "landing.features.playground.body" },
+  { icon: "📚", titleKey: "landing.features.bank.title", bodyKey: "landing.features.bank.body" }
 ];
 
 const STEPS = [
-  { n: "1", title: "Pick your target", body: "Level, field, company — or paste the job description you're interviewing for." },
-  { n: "2", title: "Get interviewed", body: "Answer tailored questions, get scored on key points, review model answers and AI feedback." },
-  { n: "3", title: "Follow the roadmap", body: "Drill weak topics, track streaks and progress, and watch the roadmap adapt to your results." }
+  { n: "1", titleKey: "landing.howItWorks.step1.title", bodyKey: "landing.howItWorks.step1.body" },
+  { n: "2", titleKey: "landing.howItWorks.step2.title", bodyKey: "landing.howItWorks.step2.body" },
+  { n: "3", titleKey: "landing.howItWorks.step3.title", bodyKey: "landing.howItWorks.step3.body" }
 ];
 
 const FAQS = [
-  { q: "Is InterviewIQ really free?", a: "Yes. The core experience — tailored questions, model answers, mock interviews, roadmap, drill and question bank — is free and works fully offline, with no account and no API key. Pro adds unlimited sessions, all company sets, voice mode and unlimited AI coaching." },
-  { q: "Does it cover every level, from junior to CTO and CEO?", a: "Yes. Choose junior, mid, senior, staff, principal, CTO or CEO — combined with your field and target company — and the session is built for that exact combination." },
-  { q: "Can I tailor questions to a specific company or job description?", a: "Yes. Pick from ~20 companies (or 'general'), or paste any job description and InterviewIQ generates questions around the role's actual requirements and keywords." },
-  { q: "Does it work offline?", a: "Yes. InterviewIQ is an installable PWA. After the first load, everything works offline — sessions, history, streaks, drill and the question bank — and progress syncs to the cloud when you sign in." },
-  { q: "Do I need an API key for AI feedback?", a: "No. The built-in scoring engine works with zero setup. Add an OpenAI-compatible key in Settings when you want generative AI feedback, hints and the tutor." }
+  { qKey: "landing.faqs.q1", aKey: "landing.faqs.a1" },
+  { qKey: "landing.faqs.q2", aKey: "landing.faqs.a2" },
+  { qKey: "landing.faqs.q3", aKey: "landing.faqs.a3" },
+  { qKey: "landing.faqs.q4", aKey: "landing.faqs.a4" },
+  { qKey: "landing.faqs.q5", aKey: "landing.faqs.a5" }
 ];
 
 export function Landing() {
+  const { t } = useTranslation();
   const { nav } = useApp();
   const vitals = useWebVitals();
   const [upgrade, setUpgrade] = useState(false);
@@ -63,44 +65,43 @@ export function Landing() {
       {/* hero */}
       <section className="pt-10 pb-14 text-center sm:pt-16">
         <span className="mx-auto inline-flex items-center gap-2 rounded-full border border-acc1/40 bg-acc1/10 px-4 py-1.5 text-[12.5px] font-bold text-acctxt">
-          ⚡ Free · Offline-first · No account needed
+          {t("landing.badge")}
         </span>
         <h1 className="mx-auto mt-5 max-w-[820px] text-[clamp(32px,6vw,58px)] font-extrabold leading-[1.05] tracking-tight">
-          From <span className="grad-text">junior developer</span> to <span className="grad-text">CTO & CEO</span> — interview prep that knows your target.
+          <Trans i18nKey="landing.heroTitle" components={{ 1: <span className="grad-text" />, 3: <span className="grad-text" /> }} />
         </h1>
         <p className="mx-auto mt-5 max-w-[640px] text-[15.5px] leading-relaxed text-mut">
-          InterviewIQ is the AI interviewer that tailors every question to your field, level and target company —
-          or your pasted job description. Answer, get scored, follow the roadmap, and walk in ready.
+          {t("landing.heroDesc")}
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <button className={btnPrimary + " px-8 py-3.5 text-[15.5px]"} onClick={() => nav("onboard")}>
-            Start practicing free →
+            {t("landing.startFree")}
           </button>
           <button className={btnGhost + " px-6 py-3.5 text-[15px]"} onClick={() => scrollTo("pricing")}>
-            See pricing
+            {t("landing.seePricing")}
           </button>
         </div>
         <div className="mx-auto mt-9 flex max-w-[560px] flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12.5px] font-bold text-mut">
-          <span>8 fields</span><span className="text-wht/20">•</span>
-          <span>7 levels</span><span className="text-wht/20">•</span>
-          <span>20+ companies</span><span className="text-wht/20">•</span>
-          <span>JD tailoring</span><span className="text-wht/20">•</span>
-          <span>Works offline</span>
+          <span>{t("landing.stats.fields")}</span><span className="text-wht/20">•</span>
+          <span>{t("landing.stats.levels")}</span><span className="text-wht/20">•</span>
+          <span>{t("landing.stats.companies")}</span><span className="text-wht/20">•</span>
+          <span>{t("landing.stats.jd")}</span><span className="text-wht/20">•</span>
+          <span>{t("landing.stats.offline")}</span>
         </div>
       </section>
 
       {/* features */}
       <section id="features" className="pb-14">
         <h2 className="text-center text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
-          Everything you need to <span className="grad-text">walk in ready</span>
+          <Trans i18nKey="landing.featuresTitle" components={{ 1: <span className="grad-text" /> }} />
         </h2>
-        <p className="mx-auto mt-2 max-w-[520px] text-center text-[14px] text-mut">One coach for the whole ladder — from your first coding question to the CTO room.</p>
+        <p className="mx-auto mt-2 max-w-[520px] text-center text-[14px] text-mut">{t("landing.featuresDesc")}</p>
         <div className="mx-auto mt-8 flex max-w-[900px] flex-wrap justify-center gap-4">
           {FEATURES.map(f => (
-            <div key={f.title} className={`${cardCls} w-full p-5 transition-transform hover:-translate-y-0.5 sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]`}>
+            <div key={f.titleKey} className={`${cardCls} w-full p-5 transition-transform hover:-translate-y-0.5 sm:w-[calc(50%-8px)] lg:w-[calc(33.333%-11px)]`}>
               <span className="grid h-11 w-11 place-items-center rounded-xl grad-bg-soft text-[20px]">{f.icon}</span>
-              <h3 className="mt-3 text-[15.5px] font-extrabold">{f.title}</h3>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-mut">{f.body}</p>
+              <h3 className="mt-3 text-[15.5px] font-extrabold">{t(f.titleKey)}</h3>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-mut">{t(f.bodyKey)}</p>
             </div>
           ))}
         </div>
@@ -113,8 +114,8 @@ export function Landing() {
             <div key={s.n} className="flex gap-3.5">
               <span className="grid h-9 w-9 flex-none place-items-center rounded-xl grad-bg text-[15px] font-extrabold text-white">{s.n}</span>
               <div>
-                <h3 className="text-[14.5px] font-extrabold">{s.title}</h3>
-                <p className="mt-1 text-[13px] leading-relaxed text-mut">{s.body}</p>
+                <h3 className="text-[14.5px] font-extrabold">{t(s.titleKey)}</h3>
+                <p className="mt-1 text-[13px] leading-relaxed text-mut">{t(s.bodyKey)}</p>
               </div>
             </div>
           ))}
@@ -130,37 +131,33 @@ export function Landing() {
       {/* pricing */}
       <section id="pricing" className="pb-14">
         <h2 className="text-center text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
-          Simple, honest <span className="grad-text">pricing</span>
+          <Trans i18nKey="landing.pricingTitle" components={{ 1: <span className="grad-text" /> }} />
         </h2>
-        <p className="mx-auto mt-2 max-w-[480px] text-center text-[14px] text-mut">Start free. Upgrade only when you want unlimited everything.</p>
+        <p className="mx-auto mt-2 max-w-[480px] text-center text-[14px] text-mut">{t("landing.pricingDesc")}</p>
         <div className="mx-auto mt-8 flex max-w-[860px] flex-wrap justify-center gap-4">
           <div className={`${cardCls} w-full p-6 sm:w-[calc(50%-8px)]`}>
             <div className="flex items-center justify-between">
-              <h3 className="text-[16px] font-extrabold">Free</h3>
-              <Chip tone="ok">FOREVER</Chip>
+              <h3 className="text-[16px] font-extrabold">{t("landing.free")}</h3>
+              <Chip tone="ok">{t("landing.forever")}</Chip>
             </div>
-            <div className="mt-3 text-[13px] text-mut">Everything you need to start today.</div>
-            <div className="mt-4 text-[34px] font-extrabold tracking-tight">{freePrice}<span className="text-[14px] font-bold text-mut">/mo</span></div>
+            <div className="mt-3 text-[13px] text-mut">{t("landing.freeDesc")}</div>
+            <div className="mt-4 text-[34px] font-extrabold tracking-tight">{freePrice}<span className="text-[14px] font-bold text-mut">{t("landing.perMonth")}</span></div>
             <ul className="mt-5 space-y-2 text-[13.5px] text-ink">
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">8 tailored sessions / month</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">All fields, levels & companies</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Mock interviews + scoring</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Career roadmap & drill</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Offline-first PWA</li>
+              {(t("landing.freeFeatures", { returnObjects: true }) as string[]).map((f: string, i: number) => (
+                <li key={i} className="before:content-['✓'] before:mr-2 before:text-ok">{f}</li>
+              ))}
             </ul>
-            <button className={btnGhost + " mt-6 w-full py-3"} onClick={() => nav("onboard")}>Start free</button>
+            <button className={btnGhost + " mt-6 w-full py-3"} onClick={() => nav("onboard")}>{t("landing.startFreeBtn")}</button>
           </div>
           <div className="grad-bg-soft relative w-full overflow-hidden rounded-2xl border border-acc1/40 p-6 shadow-[0_18px_50px_rgba(99,102,241,.25)] sm:w-[calc(50%-8px)]">
-            <span className="absolute right-4 top-4"><Chip tone="co">POPULAR</Chip></span>
-            <h3 className="text-[16px] font-extrabold">Pro</h3>
-            <div className="mt-3 text-[13px] text-mut">Unlimited practice, AI coaching and voice rounds.</div>
-            <div className="mt-4 text-[34px] font-extrabold tracking-tight">{proPrice}<span className="text-[14px] font-bold text-mut">/mo</span></div>
+            <span className="absolute right-4 top-4"><Chip tone="co">{t("landing.popular")}</Chip></span>
+            <h3 className="text-[16px] font-extrabold">{t("landing.pro")}</h3>
+            <div className="mt-3 text-[13px] text-mut">{t("landing.proDesc")}</div>
+            <div className="mt-4 text-[34px] font-extrabold tracking-tight">{proPrice}<span className="text-[14px] font-bold text-mut">{t("landing.perMonth")}</span></div>
             <ul className="mt-5 space-y-2 text-[13.5px] text-ink">
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Unlimited interview sessions</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Unlimited AI feedback & hints</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Voice mode — speak your answers</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Journey & full mock modes</li>
-              <li className="before:content-['✓'] before:mr-2 before:text-ok">Progress analytics & full history</li>
+              {(t("landing.proFeatures", { returnObjects: true }) as string[]).map((f: string, i: number) => (
+                <li key={i} className="before:content-['✓'] before:mr-2 before:text-ok">{f}</li>
+              ))}
             </ul>
             <button className={btnPrimary + " mt-6 w-full py-3"} onClick={() => setUpgrade(true)}>Go Pro</button>
           </div>
@@ -176,16 +173,16 @@ export function Landing() {
       {/* FAQ */}
       <section id="faq" className="pb-14">
         <h2 className="text-center text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
-          Frequently asked <span className="grad-text">questions</span>
+          <Trans i18nKey="landing.faqTitle" components={{ 1: <span className="grad-text" /> }} />
         </h2>
         <div className="mx-auto mt-7 max-w-[680px] space-y-2.5">
           {FAQS.map(f => (
-            <details key={f.q} className={`${cardCls} group p-4`}>
+            <details key={f.qKey} className={`${cardCls} group p-4`}>
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-[14.5px] font-bold [&::-webkit-details-marker]:hidden">
-                {f.q}
+                {t(f.qKey)}
                 <span className="text-acc3 transition-transform group-open:rotate-45">＋</span>
               </summary>
-              <p className="mt-2.5 text-[13.5px] leading-relaxed text-mut">{f.a}</p>
+              <p className="mt-2.5 text-[13.5px] leading-relaxed text-mut">{t(f.aKey)}</p>
             </details>
           ))}
         </div>
@@ -197,25 +194,25 @@ export function Landing() {
       {/* final CTA */}
       <section className="pb-10 text-center">
         <div className={`${cardCls} grad-bg-soft p-8 sm:p-10`}>
-          <h2 className="text-[clamp(22px,3.6vw,32px)] font-extrabold tracking-tight">Your next interview is the one you'll <span className="grad-text">ace</span>.</h2>
-          <p className="mx-auto mt-2 max-w-[440px] text-[14px] text-mut">No account. No credit card. Just pick a target and start.</p>
+          <h2 className="text-[clamp(22px,3.6vw,32px)] font-extrabold tracking-tight"><Trans i18nKey="landing.ctaTitle" components={{ 1: <span className="grad-text" /> }} /></h2>
+          <p className="mx-auto mt-2 max-w-[440px] text-[14px] text-mut">{t("landing.ctaDesc")}</p>
           <button className={btnPrimary + " mt-6 px-8 py-3.5 text-[15.5px]"} onClick={() => nav("onboard")}>
-            Start practicing free →
+            {t("landing.startFree")}
           </button>
         </div>
       </section>
 
       {/* footer */}
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-line/10 py-6 text-[12.5px] text-mut">
-        <span className="font-extrabold">Interview<span className="grad-text">IQ</span> — AI Interview Coach</span>
+        <span className="font-extrabold">{t("landing.footer.brand")}</span>
         <span className="flex flex-wrap gap-4">
-          <button className="hover:text-ink" onClick={() => nav("onboard")}>Practice</button>
-          <button className="hover:text-ink" onClick={() => scrollTo("pricing")}>Pricing</button>
-          <button className="hover:text-ink" onClick={() => scrollTo("faq")}>FAQ</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "terms"; nav("legal"); }}>Terms</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "privacy"; nav("legal"); }}>Privacy</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "refunds"; nav("legal"); }}>Refunds</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "shipping"; nav("legal"); }}>Shipping</button>
+          <button className="hover:text-ink" onClick={() => nav("onboard")}>{t("landing.footer.practice")}</button>
+          <button className="hover:text-ink" onClick={() => scrollTo("pricing")}>{t("landing.footer.pricing")}</button>
+          <button className="hover:text-ink" onClick={() => scrollTo("faq")}>{t("landing.footer.faq")}</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "terms"; nav("legal"); }}>{t("landing.footer.terms")}</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "privacy"; nav("legal"); }}>{t("landing.footer.privacy")}</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "refunds"; nav("legal"); }}>{t("landing.footer.refunds")}</button>
+          <button className="hover:text-ink" onClick={() => { window.location.hash = "shipping"; nav("legal"); }}>{t("landing.footer.shipping")}</button>
         </span>
       </footer>
 

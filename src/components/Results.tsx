@@ -1,5 +1,6 @@
 import type { CatStat } from "../types";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { aggregate, topicSuggestions, verdict } from "../engine";
 import { levelById } from "../data";
 import { useApp } from "../store";
@@ -13,6 +14,7 @@ import { DiagnosticResults } from "./DiagnosticResults";
 import { CertificateView } from "./Certificate";
 
 export function Results() {
+  const { t } = useTranslation();
   const { state, retry, newSession, practiceWeakTopics } = useApp();
   const { session, answers } = state;
   const [showCert, setShowCert] = useState(false);
@@ -25,14 +27,13 @@ export function Results() {
       <div className="anim-view mx-auto max-w-[560px]">
         <div className={`${cardCls} flex flex-col items-center px-6 py-14 text-center`}>
           <div className="mb-3 text-[40px]">🗒️</div>
-          <h2 className="mb-2 text-lg font-extrabold">Nothing to show yet</h2>
+          <h2 className="mb-2 text-lg font-extrabold">{t("results.nothingYet")}</h2>
           <p className="mb-5 max-w-[360px] text-sm text-mut">
-            No answers were recorded for this session. Answer at least one question, then end the
-            interview to see your score, breakdown and feedback.
+            {t("results.nothingDesc")}
           </p>
           <div className="flex flex-wrap justify-center gap-2">
-            {session && <button className={btnPrimary + btnSm} onClick={retry}>Continue interview</button>}
-            <button className={btnGhost + btnSm} onClick={newSession}>New session</button>
+            {session && <button className={btnPrimary + btnSm} onClick={retry}>{t("results.continueInterview")}</button>}
+            <button className={btnGhost + btnSm} onClick={newSession}>{t("results.newSession")}</button>
           </div>
         </div>
       </div>
