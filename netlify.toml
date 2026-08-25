@@ -1,8 +1,9 @@
 [build]
   command = "npm run build"
   publish = "dist"
-  # Deploy preview for PRs, production for main
   base = ""
+  # Use Node 20
+  environment = { NODE_VERSION = "20" }
 
 # SPA fallback - redirect all routes to index.html
 [[redirects]]
