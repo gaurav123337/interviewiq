@@ -29,9 +29,10 @@ const AdminSkillRoadmaps = lazy(() => import("./AdminSkillRoadmaps").then(m => (
 const BillingSection = lazy(() => import("./admin/BillingSection").then(m => ({ default: m.BillingSection })));
 const AICostSection = lazy(() => import("./admin/AICostSection").then(m => ({ default: m.AICostSection })));
 const ContentCuration = lazy(() => import("./admin/ContentCuration").then(m => ({ default: m.ContentCuration })));
+const SiteConfigSection = lazy(() => import("./admin/SiteConfigSection").then(m => ({ default: m.SiteConfigSection })));
 
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts" | "contentCuration";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "siteConfig" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts" | "contentCuration";
 
 interface NavItem { id: Section; label: string; icon: string; }
 interface NavGroup { label: string; icon: string; items: NavItem[]; }
@@ -60,6 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
   ]},
   { label: "System", icon: "\u2699\uFE0F", items: [
     { id: "config", label: "Product Config", icon: "\u{1F39B}\uFE0F" },
+    { id: "siteConfig", label: "Site Config", icon: "\u{1F3A8}" },
     { id: "quality", label: "Quality", icon: "\u{1F50E}" },
     { id: "billing", label: "Billing", icon: "\u{1F4B0}" },
     { id: "security", label: "Security", icon: "\u{1F510}" },
@@ -245,6 +247,7 @@ export function Admin() {
         )}
         {section === "scraper" && <ScraperSection busy={busy} setBusy={setBusy} />}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
+        {section === "siteConfig" && <SiteConfigSection />}
         {section === "activity" && <ActivitySection busy={busy} setBusy={setBusy} />}
         {section === "billing" && <BillingSection />}
         {section === "quality" && (
