@@ -15,7 +15,7 @@ export async function saveRemoteConfig(patch: Partial<RemoteConfig>): Promise<vo
   if (!rows.length) return;
   const { error } = await client.from("app_config").upsert(rows, { onConflict: "key" });
   if (error) throw new Error(error.message);
-  await refreshAdminData();
+  await refreshAdminData().catch(() => {});
 }
 
 /** Job salary enrichment — separate app_config row so jobs-fetch can read it. */

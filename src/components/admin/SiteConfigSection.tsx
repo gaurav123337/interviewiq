@@ -279,9 +279,7 @@ function MenuVisibilityTab() {
     setSaving(true);
     try {
       const { saveRemoteConfig } = await import("../../services/admin/config");
-      const { getRemoteConfig } = await import("../../services/remoteConfig");
-      const current = getRemoteConfig();
-      await saveRemoteConfig({ ...current, menuVisibility: visibility } as any);
+      await saveRemoteConfig({ menuVisibility: visibility } as any);
       toast("Menu visibility saved ✓");
     } catch {
       toast("Failed to save — check Supabase connection");
