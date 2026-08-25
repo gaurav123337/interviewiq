@@ -25,6 +25,8 @@ export interface RemoteConfig {
     drill?: boolean;
     jobs?: boolean;
   };
+  /** Per-menu-item visibility. Key = menu id, value = false to hide. Absent/true = visible. */
+  menuVisibility?: Record<string, boolean>;
   /** AI coaching overrides (server-side defaults the product team can tune). */
   ai: {
     enabled?: boolean;
@@ -110,6 +112,7 @@ export function getRemoteConfig(): RemoteConfig {
   const c = storageGet<RemoteConfig>(STORAGE_KEYS.remoteConfig, REMOTE_CONFIG_DEFAULTS);
   return {
     features: { ...REMOTE_CONFIG_DEFAULTS.features, ...(c?.features ?? {}) },
+    menuVisibility: c?.menuVisibility,
     ai: { ...REMOTE_CONFIG_DEFAULTS.ai, ...(c?.ai ?? {}) },
     limits: { ...REMOTE_CONFIG_DEFAULTS.limits, ...(c?.limits ?? {}) },
     companyFreq: { ...(c?.companyFreq ?? {}) },
@@ -130,6 +133,12 @@ export function setRemoteConfig(c: Partial<RemoteConfig>): void {
 /** Feature on unless the admin explicitly turned it off. */
 export function featureOn(f: keyof RemoteConfig["features"]): boolean {
   return getRemoteConfig().features[f] !== false;
+}
+
+/** Menu item visible unless the admin explicitly turned it off. */
+export function menuVisible(id: string): boolean {
+  const mv = getRemoteConfig().menuVisibility;
+  return !mv || mv[id] !== false;
 }
 
 /** The paywall is the local master switch AND the remote flag. */

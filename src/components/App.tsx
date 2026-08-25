@@ -10,7 +10,7 @@ import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { getAdminState, refreshAdminData, subscribeAdmin, type AdminState } from "../services/admin";
 import { setAdminUnlocked } from "../services/entitlements";
-import { featureOn, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
+import { featureOn, menuVisible, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { refreshEntitlement } from "../services/entitlement";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -223,9 +223,13 @@ export function App() {
   /* feature flags + admin role shape the nav */
   const flagForTab = (id: string): "roadmap" | "playground" | null =>
     id === "roadmap" ? "roadmap" : id === "playground" ? "playground" : null;
-  const primaryTabs = PRIMARY_TABS.filter(t => { const f = flagForTab(t.id); return f ? featureOn(f) : true; });
+  const primaryTabs = PRIMARY_TABS.filter(t => {
+    if (!menuVisible(t.id)) return false;
+    const f = flagForTab(t.id);
+    return f ? featureOn(f) : true;
+  });
   const moreTabs = [
-    ...MORE_TABS.filter(t => (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs"))),
+    ...MORE_TABS.filter(t => menuVisible(t.id) && (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs"))),
     ...(isCloudConfigured() ? [{ id: "team" as View, label: "Team", icon: "🏢" }] : []),
     ...(admin.isAdmin ? [{ id: "admin" as View, label: "Admin", icon: "🛡️" }] : [])
   ];

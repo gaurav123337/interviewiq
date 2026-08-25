@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   loadSiteConfig,
   saveSiteConfig,
@@ -11,7 +12,7 @@ import { btnPrimary, btnGhost, cardCls } from "../ui";
 export function SiteConfigSection() {
   const [config, setConfig] = useState<SiteConfig | null>(null);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"branding" | "header" | "footer" | "menus" | "hero" | "meta">("branding");
+  const [activeTab, setActiveTab] = useState<"branding" | "visibility" | "header" | "footer" | "menus" | "hero" | "meta">("branding");
 
   useEffect(() => {
     void loadSiteConfig().then(setConfig);
@@ -41,6 +42,7 @@ export function SiteConfigSection() {
 
   const tabs = [
     { id: "branding" as const, label: "Branding", icon: "🎨" },
+    { id: "visibility" as const, label: "Visibility", icon: "👁️" },
     { id: "header" as const, label: "Header", icon: "🔝" },
     { id: "footer" as const, label: "Footer", icon: "🔻" },
     { id: "menus" as const, label: "Menus", icon: "☰" },
@@ -71,6 +73,11 @@ export function SiteConfigSection() {
           </button>
         ))}
       </div>
+
+      {/* Visibility tab — enable/disable menu items for all users */}
+      {activeTab === "visibility" && (
+        <MenuVisibilityTab />
+      )}
 
       {/* Branding tab */}
       {activeTab === "branding" && (
@@ -230,5 +237,101 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
       <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} className="accent-acc1" />
       <span className="text-fnt">{label}</span>
     </label>
+  );
+}
+
+/* ── Menu Visibility Tab ─────────────────────────────────────────── */
+
+const ALL_MENU_ITEMS = [
+  { id: "onboard", label: "Practice", icon: "🎯", section: "Primary" },
+  { id: "planner", label: "Planner", icon: "🗓️", section: "Primary" },
+  { id: "roadmap", label: "Roadmap", icon: "🧭", section: "Primary" },
+  { id: "systemDesign", label: "System Design", icon: "🏗️", section: "Primary" },
+  { id: "playground", label: "Code", icon: "💻", section: "Primary" },
+  { id: "drill", label: "Drill", icon: "🎴", section: "More Menu" },
+  { id: "bank", label: "Bank", icon: "📚", section: "More Menu" },
+  { id: "jobs", label: "Jobs", icon: "💼", section: "More Menu" },
+  { id: "learn", label: "Learn a Skill", icon: "🔍", section: "More Menu" },
+  { id: "counselor", label: "Skill Counselor", icon: "🧑‍🏫", section: "More Menu" },
+  { id: "articles", label: "Articles", icon: "📰", section: "More Menu" },
+  { id: "resources", label: "Resources", icon: "🔗", section: "More Menu" },
+  { id: "progress", label: "Progress", icon: "📈", section: "More Menu" },
+  { id: "history", label: "History", icon: "🗂️", section: "More Menu" },
+  { id: "settings", label: "Settings", icon: "⚙️", section: "More Menu" },
+  { id: "account", label: "Account", icon: "👤", section: "More Menu" },
+];
+
+function MenuVisibilityTab() {
+  const { t } = useTranslation();
+  const [visibility, setVisibility] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = localStorage.getItem("iq.menuVisibility");
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  });
+  const [saving, setSaving] = useState(false);
+
+  const toggle = (id: string, visible: boolean) => {
+    setVisibility(prev => ({ ...prev, [id]: visible }));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { saveRemoteConfig } = await import("../../services/admin/config");
+      const { getRemoteConfig } = await import("../../services/remoteConfig");
+      const current = getRemoteConfig();
+      await saveRemoteConfig({ ...current, menuVisibility: visibility } as any);
+      toast("Menu visibility saved ✓");
+    } catch {
+      toast("Failed to save — check Supabase connection");
+    }
+    setSaving(false);
+  };
+
+  const sections = [...new Set(ALL_MENU_ITEMS.map(m => m.section))];
+
+  return (
+    <div className={`${cardCls} space-y-4 p-5`}>
+      <h3 className="text-[14px] font-extrabold">👁️ Menu Visibility</h3>
+      <p className="text-[12px] text-mut">
+        Enable or disable menu items for all users. Hidden items won't appear in the navigation.
+        Changes apply immediately after saving.
+      </p>
+      {sections.map(section => (
+        <div key={section}>
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-mut">{section}</p>
+          <div className="space-y-1.5">
+            {ALL_MENU_ITEMS.filter(m => m.section === section).map(item => {
+              const visible = visibility[item.id] !== false; // default: visible
+              return (
+                <label key={item.id} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 transition-all ${
+                  visible ? "bg-wht/5" : "bg-red-500/5 opacity-50"
+                }`}>
+                  <span className="text-[16px] w-6 text-center">{item.icon}</span>
+                  <span className="flex-1 text-[13px] font-bold text-ink">{item.label}</span>
+                  <span className="text-[11px] text-mut">{item.id}</span>
+                  <button
+                    onClick={() => toggle(item.id, !visible)}
+                    className={`relative h-6 w-11 rounded-full transition-colors ${
+                      visible ? "bg-ok" : "bg-wht/20"
+                    }`}
+                  >
+                    <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      visible ? "left-[22px]" : "left-0.5"
+                    }`} />
+                  </button>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <div className="flex justify-end pt-2">
+        <button className={btnPrimary} onClick={() => void save()} disabled={saving}>
+          {saving ? "Saving…" : "Save visibility"}
+        </button>
+      </div>
+    </div>
   );
 }
