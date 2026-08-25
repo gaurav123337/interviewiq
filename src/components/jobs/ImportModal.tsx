@@ -12,7 +12,7 @@ import { addImportedJob, listJobs } from "../../services/jobs";
 import { decodeHtml } from "../../util";
 
 const SAMPLE_IMPORT_URLS = [
-  "https://www.linkedin.com/jobs/search/?keywords=react%20developer&location=India",
+  "https://www.linkedin.com/jobs/search/?keywords=react+developer&location=India",
   "https://jobs.ashbyhq.com/notion/f1f9e19d-cbf3-49eb-9824-d04adf2e3d75",
   "https://jobs.ashbyhq.com/notion/72532ca0-eb7d-4d9e-b982-50f52614fca9"
 ];
