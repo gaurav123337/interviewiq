@@ -1,6 +1,5 @@
 [build]
-  # Custom install to skip husky prepare script
-  command = "npm install --ignore-scripts && npm run build"
+  command = "npm run build"
   publish = "dist"
   base = ""
 
