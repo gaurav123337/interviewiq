@@ -165,7 +165,7 @@ export async function saveSiteConfig(config: SiteConfig): Promise<boolean> {
     
     const { error } = await client
       .from("app_config")
-      .upsert({ key: "site_config", value: JSON.stringify(config) }, { onConflict: "key" });
+      .upsert({ key: "site_config", value: JSON.stringify(config), updated_at: Date.now() }, { onConflict: "key" });
     
     if (error) throw error;
     
