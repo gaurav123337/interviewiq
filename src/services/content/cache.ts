@@ -48,6 +48,9 @@ export const DEFAULT_TIPS: TipConfig = {
   descriptions: ["Buy me a coffee", "Buy me lunch", "Celebrating a new offer?"],
   stripe_link: "",
   buymeacoffee_link: "",
+  razorpay_key_id: "",
+  razorpay_name: "InterviewIQ",
+  currency: "INR",
   enabled: true,
 };
 
