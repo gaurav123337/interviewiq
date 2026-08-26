@@ -8,7 +8,7 @@ import { markAppliedVia } from "../services/applyTrack";
 import { sourceLabel } from "../services/importJob";
 import { getDisplayCurrency } from "../services/currency";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
-import { openResumePrint } from "../services/resumeHtml";
+import { openResumePrint, buildResumeHtml } from "../services/resumeHtml";
 import { downloadResumePdf } from "../services/resumePdf";
 import { downloadResumeDocx } from "../services/docx";
 import { atsParsePreview } from "../services/atsPreview";
@@ -100,6 +100,7 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
   const [tab, setTab] = useState<"resume" | "cover">("resume");
   const [aiBusy, setAiBusy] = useState(false);
   const [atsOpen, setAtsOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [compareBase, setCompareBase] = useState<null | "prev" | "template" | "ai">(() => {
     const stored = storageGet<null | "prev" | "template" | "ai">(STORAGE_KEYS.lastCompare, null);
     if (stored === "prev") {
@@ -339,6 +340,12 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
               🔍 ATS Check
             </button>
             <button
+              className="rounded-xl border border-acc1/30 bg-acc1/10 px-3 py-2 text-[12px] font-bold text-acctxt transition-all hover:bg-acc1/20"
+              onClick={() => setPreviewOpen(true)}
+            >
+              👁️ Preview
+            </button>
+            <button
               className="rounded-xl bg-acc1/15 px-3 py-2 text-[12px] font-bold text-acctxt transition-all hover:bg-acc1/25"
               onClick={async () => {
                 try {
@@ -520,6 +527,54 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
           Done
         </button>
       </div>
+
+      {/* ─── PDF Preview Overlay ─────────────────────────────────────────── */}
+      {previewOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setPreviewOpen(false)}>
+          <div
+            className="relative mx-4 max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-2xl border border-line/20 bg-white shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Preview header */}
+            <div className="flex items-center justify-between border-b border-line/20 bg-gradient-to-r from-acc1/5 to-transparent px-6 py-4">
+              <div>
+                <h3 className="text-[15px] font-bold text-ink">📄 Resume Preview</h3>
+                <p className="text-[12px] text-mut">Tailored for {job.title} at {job.company}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-xl bg-acc1 px-4 py-2 text-[12px] font-bold text-white transition-all hover:bg-acc1/90"
+                  onClick={async () => {
+                    try {
+                      await downloadResumePdf(profile, job, match, resumeBrandFor(job.company), kit?.resume);
+                      toast("⬇️ PDF downloaded");
+                    } catch (e) {
+                      toast("✗ PDF failed — " + ((e as Error).message || "unknown error"));
+                    }
+                  }}
+                >
+                  📥 Download PDF
+                </button>
+                <button
+                  className="rounded-xl border border-line/15 bg-deep/40 px-4 py-2 text-[12px] font-bold text-mut transition-all hover:text-ink"
+                  onClick={() => setPreviewOpen(false)}
+                >
+                  ✕ Close
+                </button>
+              </div>
+            </div>
+            {/* Preview content */}
+            <div className="overflow-y-auto bg-gray-100 p-6" style={{ maxHeight: 'calc(90vh - 80px)' }}>
+              <iframe
+                srcDoc={buildResumeHtml(profile, job, match, resumeBrandFor(job.company), kit?.resume)}
+                title="Resume Preview"
+                className="mx-auto w-full border-0 bg-white shadow-lg"
+                style={{ height: '800px', maxWidth: '720px' }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
       </>
     </Modal>
   );
