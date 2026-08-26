@@ -1,0 +1,1 @@
+import{v as a}from"./index-BuuEu7xU.js";function i({level:s}){return a.jsx("span",{className:"inline-flex items-center gap-1",title:`Difficulty ${s}/5`,children:[1,2,3,4,5].map(t=>a.jsx("span",{className:`h-1 w-3 rounded-[2px] ${t<=s?"grad-bg":"bg-wht/20"}`},t))})}export{i as D};
