@@ -196,25 +196,14 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
     try {
       if (tab === "resume") {
         const resume = await aiTailorResume(profile, job, match);
-        // Validate AI output — keep original if result is too short or empty
-        const template = buildResume(profile, job, match);
-        if (!resume || resume.trim().length < template.length * 0.3) {
-          toast("⚠️ AI output too short — keeping original resume");
-          refresh(template, kit?.coverLetter ?? buildCoverLetter(profile, job, match, displayCurrency), false);
-        } else {
-          refresh(resume, kit?.coverLetter ?? buildCoverLetter(profile, job, match, displayCurrency), true, { aiResume: resume });
-          toast("✨ AI-tailored — reviewed for accuracy before sending");
-        }
+        // aiTailorResume already validates output; if it returned, it's good
+        refresh(resume, kit?.coverLetter ?? buildCoverLetter(profile, job, match, displayCurrency), true, { aiResume: resume });
+        toast("✨ AI-tailored — reviewed for accuracy before sending");
       } else {
         const cover = await aiTailorCoverLetter(profile, job, match);
-        const template = buildCoverLetter(profile, job, match, displayCurrency);
-        if (!cover || cover.trim().length < template.length * 0.3) {
-          toast("⚠️ AI output too short — keeping original cover letter");
-          refresh(kit?.resume ?? buildResume(profile, job, match), template, false);
-        } else {
-          refresh(kit?.resume ?? buildResume(profile, job, match), cover, true, { aiCover: cover });
-          toast("✨ AI-tailored — reviewed for accuracy before sending");
-        }
+        // aiTailorCoverLetter already validates output; if it returned, it's good
+        refresh(kit?.resume ?? buildResume(profile, job, match), cover, true, { aiCover: cover });
+        toast("✨ AI-tailored — reviewed for accuracy before sending");
       }
       // Clear compare mode so user sees the actual content
       pickCompareBase(null);

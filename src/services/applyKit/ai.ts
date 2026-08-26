@@ -20,8 +20,13 @@ export async function aiTailorResume(profile: CareerProfile, job: JobPosting, ma
     `Key requirements from the posting: ${job.skills.join(", ") || "general engineering"}.\n\n` +
     `Current resume:\n${template}\n\nRewrite it tailored to this job.`;
   const { sys: sysGrounded } = await withGrounding(sys, `${job.title} ${job.skills.join(" ")}`);
-  const out = await chat([{ role: "system", content: sysGrounded }, { role: "user", content: usr }], { maxTokens: 800 });
+  const out = await chat([{ role: "system", content: sysGrounded }, { role: "user", content: usr }], { maxTokens: 800, module: "coach" });
   recordAiCall();
+  // Validate output - must have meaningful content
+  if (!out || out.trim().length < 50) {
+    console.warn("AI resume polish returned too short output:", out?.substring(0, 100));
+    return template; // Fall back to template
+  }
   return out;
 }
 
@@ -38,7 +43,12 @@ export async function aiTailorCoverLetter(profile: CareerProfile, job: JobPostin
     `Job location: ${job.location || "remote"}.\n\n` +
     `Current cover letter:\n${template}\n\nRewrite it tailored to this job.`;
   const { sys: sysGrounded } = await withGrounding(sys, `${job.title} ${job.company}`);
-  const out = await chat([{ role: "system", content: sysGrounded }, { role: "user", content: usr }], { maxTokens: 600 });
+  const out = await chat([{ role: "system", content: sysGrounded }, { role: "user", content: usr }], { maxTokens: 600, module: "coach" });
   recordAiCall();
+  // Validate output - must have meaningful content
+  if (!out || out.trim().length < 30) {
+    console.warn("AI cover letter polish returned too short output:", out?.substring(0, 100));
+    return template; // Fall back to template
+  }
   return out;
 }
