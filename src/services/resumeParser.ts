@@ -315,31 +315,86 @@ function extractSkills(lines: string[]): string[] {
 
 /* ── Experience Extraction ─────────────────────────────────────────── */
 
+/** Split a continuous experience block into individual job entries.
+    Looks for patterns like "Title | Company | Location | Dates" or
+    "Title – Company, Location | Dates". */
 function extractExperience(lines: string[]): ResumeExperience[] {
   const experiences: ResumeExperience[] = [];
   let current: ResumeExperience | null = null;
 
-  for (const line of lines) {
-    const hasDate = DATE_RANGE_RE.test(line) || SIMPLE_DATE_RE.test(line);
+  // First pass: join all lines and split on pipe-separated date patterns
+  const fullText = lines.join(' ');
 
-    if (hasDate && line.length < 120) {
-      if (current) experiences.push(current);
-      current = parseExperienceLine(line);
-    } else if (current) {
-      if (/^[•·\-*▪▸]\s/.test(line)) {
-        current.bullets.push(line.replace(/^[•·\-*▪▸]\s*/, ''));
-      } else if (line.length > 0) {
-        current.bullets.push(line);
+  // Split on patterns like "| Jan 2022 - Present" or "| Jun 2017 – Apr 2019"
+  // These mark the end of one job's description and the start of the next job's header
+  const jobEntryRe = /([^|]+?\|[^|]*?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\.?\s+\d{4}\s*[-–—to]+\s*(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\.?\s+\d{4}|present|current|now))/gi;
+
+  const matches = fullText.match(jobEntryRe);
+  
+  if (matches && matches.length > 0) {
+    for (const match of matches) {
+      const exp = parseExperienceEntry(match);
+      if (exp) experiences.push(exp);
+    }
+  } else {
+    // Fallback: try line-by-line extraction
+    for (const line of lines) {
+      const hasDate = DATE_RANGE_RE.test(line) || SIMPLE_DATE_RE.test(line);
+      if (hasDate && line.length < 120) {
+        if (current) experiences.push(current);
+        current = parseExperienceLine(line);
+      } else if (current) {
+        if (/^[•·\-*▪▸]\s/.test(line)) {
+          current.bullets.push(line.replace(/^[•·\-*▪▸]\s*/, ''));
+        } else if (line.length > 0) {
+          current.bullets.push(line);
+        }
       }
     }
+    if (current) experiences.push(current);
   }
-  if (current) experiences.push(current);
 
   if (experiences.length === 0 && lines.length > 0) {
     experiences.push({ title: '', company: '', location: '', dates: '', bullets: lines.filter(l => l.length > 0) });
   }
 
   return experiences;
+}
+
+/** Parse a single experience entry like "Title | Company, Location | Jan 2022 - Present Description..." */
+function parseExperienceEntry(entry: string): ResumeExperience | null {
+  const dateMatch = entry.match(DATE_RANGE_RE);
+  const dates = dateMatch ? dateMatch[0] : '';
+  
+  // Split on pipe to get [header_part, rest_with_date_and_description]
+  const pipeParts = entry.split(/\s*\|\s*/);
+  
+  if (pipeParts.length >= 2) {
+    // header_part = "Title" or "Title Company"
+    // last pipe part contains "Location | Dates Description..."
+    const headerPart = pipeParts[0].trim();
+    const datePart = pipeParts[pipeParts.length - 1].trim();
+    
+    // Extract title and company from header
+    const titleCompany = headerPart.split(/\s*[–—-]\s*/);
+    const title = (titleCompany[0] || '').trim();
+    const company = (titleCompany[1] || pipeParts[1] || '').trim();
+    const location = pipeParts.length > 2 ? pipeParts[pipeParts.length - 2].trim() : '';
+    
+    // Extract description after the date
+    const descMatch = datePart.match(/(?:present|current|now|\d{4})\s*(.*)/i);
+    const description = descMatch ? descMatch[1].trim() : '';
+    
+    // Split description into bullets
+    const bullets = description
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 10);
+    
+    return { title, company, location, dates, bullets };
+  }
+  
+  return parseExperienceLine(entry);
 }
 
 function parseExperienceLine(line: string): ResumeExperience {

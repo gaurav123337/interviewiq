@@ -528,14 +528,14 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
             onClick={e => e.stopPropagation()}
           >
             {/* Preview header */}
-            <div className="flex items-center justify-between border-b border-line/20 bg-gradient-to-r from-acc1/5 to-transparent px-6 py-4">
+            <div className="flex items-center justify-between border-b border-line/30 bg-gradient-to-r from-acc1/10 to-acc1/5 px-6 py-4">
               <div>
-                <h3 className="text-[15px] font-bold text-ink">📄 Resume Preview</h3>
-                <p className="text-[12px] text-mut">Tailored for {job.title} at {job.company}</p>
+                <h3 className="text-[15px] font-extrabold text-ink">📄 Resume Preview</h3>
+                <p className="mt-0.5 text-[12px] font-medium text-ink/70">Tailored for {job.title} at {job.company}</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  className="rounded-xl bg-acc1 px-4 py-2 text-[12px] font-bold text-white transition-all hover:bg-acc1/90"
+                  className="rounded-xl bg-acc1 px-4 py-2 text-[12px] font-bold text-white shadow-md shadow-acc1/25 transition-all hover:bg-acc1/90"
                   onClick={async () => {
                     try {
                       await downloadResumePdf(profile, job, match, resumeBrandFor(job.company), kit?.resume);
@@ -548,7 +548,7 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
                   📥 Download PDF
                 </button>
                 <button
-                  className="rounded-xl border border-line/15 bg-deep/40 px-4 py-2 text-[12px] font-bold text-mut transition-all hover:text-ink"
+                  className="rounded-xl border border-line/30 bg-deep/60 px-4 py-2 text-[12px] font-bold text-ink transition-all hover:bg-deep/80"
                   onClick={() => setPreviewOpen(false)}
                 >
                   ✕ Close
