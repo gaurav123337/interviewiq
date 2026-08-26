@@ -25,7 +25,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # supply-chain gate (docs/app-security.md §9): no high/critical vulns in
       # production deps, or the deploy stops
       - run: npm audit --omit=dev --audit-level=high
