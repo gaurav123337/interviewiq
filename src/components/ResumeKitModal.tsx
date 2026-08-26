@@ -27,6 +27,67 @@ function downloadText(name: string, text: string, job: JobPosting) {
   URL.revokeObjectURL(url);
 }
 
+/* ─── Content Area (extracted for TypeScript clarity) ───────────────── */
+function ContentArea({ compareBase, prevKit, tab, kit, profile, job, match, displayCurrency, editing, editText, setEditText, text }: {
+  compareBase: null | "prev" | "template" | "ai";
+  prevKit: { jobId: string; company: string; resume: string; coverLetter: string } | null;
+  tab: "resume" | "cover";
+  kit: ApplyKit | null;
+  profile: CareerProfile;
+  job: JobPosting;
+  match: JobMatch | null;
+  displayCurrency: string;
+  editing: boolean;
+  editText: string;
+  setEditText: (s: string) => void;
+  text: string;
+}) {
+  const baseline =
+    compareBase === "prev" && prevKit
+      ? prevKit[tab === "resume" ? "resume" : "coverLetter"]
+      : compareBase === "template"
+        ? (tab === "resume" ? buildResume(profile, job, match) : buildCoverLetter(profile, job, match, displayCurrency))
+        : compareBase === "ai"
+          ? (tab === "resume" ? kit?.aiResume : kit?.aiCover)
+          : null;
+  const showDiff = compareBase !== null && baseline !== undefined && baseline !== null && kit;
+
+  if (showDiff) {
+    return (
+      <div className="max-h-[50vh] overflow-y-auto rounded-2xl border border-line/10 bg-deep/30 p-4">
+        <div className="space-y-0.5 font-mono text-[12px] leading-relaxed">
+          {diffLines(baseline!, kit[tab === "resume" ? "resume" : "coverLetter"]).map((l, i) => (
+            <div key={i} className={`whitespace-pre-wrap rounded-lg px-2 py-0.5 ${
+              l.type === "add" ? "bg-ok/10 text-ok" : l.type === "del" ? "bg-bad/10 text-bad line-through" : "text-fnt"
+            }`}>
+              {l.type === "add" ? "+ " : l.type === "del" ? "− " : "  "}{l.text || " "}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (editing) {
+    return (
+      <textarea
+        className="max-h-[50vh] min-h-[300px] w-full resize-y rounded-2xl border-2 border-acc1/30 bg-deep/50 p-5 font-sans text-[13px] leading-relaxed text-ink outline-none transition-colors focus:border-acc1/60"
+        value={editText}
+        onChange={e => setEditText(e.target.value)}
+        spellCheck={false}
+      />
+    );
+  }
+
+  return (
+    <div className="max-h-[50vh] overflow-y-auto rounded-2xl border border-line/10 bg-white/5 p-5">
+      <pre className="whitespace-pre-wrap font-sans text-[13px] leading-[1.8] text-fnt">
+        {text}
+      </pre>
+    </div>
+  );
+}
+
 export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
   job: JobPosting;
   profile: CareerProfile;
@@ -344,52 +405,20 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
       )}
 
       {/* ─── Content area ──────────────────────────────────────────────── */}
-      {(() => {
-        const baseline =
-          compareBase === "prev" && prevKit
-            ? prevKit[tab === "resume" ? "resume" : "coverLetter"]
-            : compareBase === "template"
-              ? (tab === "resume" ? buildResume(profile, job, match) : buildCoverLetter(profile, job, match, displayCurrency))
-              : compareBase === "ai"
-                ? (tab === "resume" ? kit?.aiResume : kit?.aiCover)
-                : null;
-        const showDiff = compareBase !== null && baseline !== undefined && baseline !== null && kit;
-
-        if (showDiff) {
-          return (
-            <div className="max-h-[50vh] overflow-y-auto rounded-2xl border border-line/10 bg-deep/30 p-4">
-              <div className="space-y-0.5 font-mono text-[12px] leading-relaxed">
-                {diffLines(baseline!, kit![tab === "resume" ? "resume" : "coverLetter"]).map((l, i) => (
-                  <div key={i} className={`whitespace-pre-wrap rounded-lg px-2 py-0.5 ${
-                    l.type === "add" ? "bg-ok/10 text-ok" : l.type === "del" ? "bg-bad/10 text-bad line-through" : "text-fnt"
-                  }`}>
-                    {l.type === "add" ? "+ " : l.type === "del" ? "− " : "  "}{l.text || " "}
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        }
-
-        if (editing) {
-          return (
-            <textarea
-              className="max-h-[50vh] min-h-[300px] w-full resize-y rounded-2xl border-2 border-acc1/30 bg-deep/50 p-5 font-sans text-[13px] leading-relaxed text-ink outline-none transition-colors focus:border-acc1/60"
-              value={editText}
-              onChange={e => setEditText(e.target.value)}
-              spellCheck={false}
-            />
-          );
-        }
-
-        return (
-          <div className="max-h-[50vh] overflow-y-auto rounded-2xl border border-line/10 bg-white/5 p-5">
-            <pre className="whitespace-pre-wrap font-sans text-[13px] leading-[1.8] text-fnt">
-              {text}
-            </pre>
-          </div>
-        );
-      })()}
+      <ContentArea
+        compareBase={compareBase}
+        prevKit={prevKit}
+        tab={tab}
+        kit={kit}
+        profile={profile}
+        job={job}
+        match={match}
+        displayCurrency={displayCurrency}
+        editing={editing}
+        editText={editText}
+        setEditText={setEditText}
+        text={text}
+      />
 
       {/* ─── Smart tips ────────────────────────────────────────────────── */}
       {tab === "resume" && !editing && !compareBase && (() => {
