@@ -403,7 +403,6 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
           ) : null}
         </div>
       ) : null}
-      )}
 
       {/* ─── Content area ──────────────────────────────────────────────── */}
       <ContentArea
