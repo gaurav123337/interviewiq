@@ -122,10 +122,55 @@ function classifySectionHeader(line: string): string | null {
 const DATE_RANGE_RE = /(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s+\d{4})\s*[-–—to]+\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s+\d{4}|present|current|now)/i;
 const SIMPLE_DATE_RE = /\b(?:19|20)\d{2}\b/;
 
+/* ── Preprocessing ─────────────────────────────────────────────────── */
+
+/** Split continuous text at section boundaries when there are no line breaks */
+function preprocessResumeText(text: string): string {
+  // If text already has line breaks, use it as-is
+  if (text.split('\n').length > 5) return text;
+
+  // Section header patterns that might be embedded in continuous text
+  const sectionPatterns = [
+    'Professional Summary', 'Professional Profile', 'Career Summary', 'Career Objective',
+    'Summary', 'Profile', 'About Me', 'Objective',
+    'Core Competencies', 'Technical Skills', 'Key Skills', 'Skills', 'Competencies',
+    'Technologies', 'Tech Stack', 'Proficiencies',
+    'Work Experience', 'Employment History', 'Professional Experience', 'Experience', 'Employment',
+    'Education', 'Educational Background', 'Academic Background',
+    'Certifications', 'Licenses', 'Credentials',
+    'Projects', 'Key Projects', 'Notable Projects',
+    'Awards', 'Achievements', 'Honors', 'Recognition',
+    'Languages', 'Spoken Languages',
+    'Publications', 'Papers', 'Articles',
+    'References',
+  ];
+
+  let result = text;
+
+  // Insert newlines before section headers
+  for (const section of sectionPatterns) {
+    // Case-insensitive match, insert newline before
+    const regex = new RegExp(`(?<!\n)(${section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    result = result.replace(regex, '\n$1');
+  }
+
+  // Also split on ALL CAPS headers followed by content
+  result = result.replace(/(?<!\n)([A-Z][A-Z0-9 &]{2,30})\s+(?=[A-Z][a-z])/g, '\n$1 ');
+
+  // Split on email/phone/LinkedIn lines (contact info)
+  result = result.replace(/(?<!\n)([\w.+-]+@[\w-]+\.[\w.]+)/g, '\n$1');
+  result = result.replace(/(?<!\n)(LinkedIn:\s*linkedin\.com\/in\/[\w-]+)/gi, '\n$1');
+  result = result.replace(/(?<!\n)(Mobile:\s*\+?[\d\s()-]+)/gi, '\n$1');
+
+  return result;
+}
+
 /* ── Main Parser ───────────────────────────────────────────────────── */
 
 export function parseResume(rawText: string): ResumeDocument {
-  const lines = rawText.split('\n').map(l => l.trim());
+  // Preprocess: split continuous text at section boundaries
+  const preprocessed = preprocessResumeText(rawText);
+  const lines = preprocessed.split('\n').map(l => l.trim());
   const nonEmpty = lines.filter(l => l.length > 0);
 
   // Step 1: Extract contact info from the first ~5 lines
