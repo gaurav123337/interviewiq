@@ -220,6 +220,7 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
 
   return (
     <Modal onClose={close} title="" desc="">
+      <>
       {/* ─── Header with job info ─────────────────────────────────────── */}
       <div className="mb-5 rounded-2xl border border-line/10 bg-gradient-to-br from-acc1/5 to-transparent p-5">
         <div className="flex items-start justify-between gap-4">
@@ -503,6 +504,7 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
           Done
         </button>
       </div>
+      </>
     </Modal>
   );
 });
