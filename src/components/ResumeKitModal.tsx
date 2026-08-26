@@ -88,10 +88,11 @@ function ContentArea({ compareBase, prevKit, tab, kit, profile, job, match, disp
   );
 }
 
-export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match, onAddSkill, onClose }: {
+export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match, originalResumeText, onAddSkill, onClose }: {
   job: JobPosting;
   profile: CareerProfile;
   match: JobMatch | null;
+  originalResumeText?: string;
   onAddSkill?: (skill: string) => void;
   onClose: () => void;
 }) {
@@ -133,11 +134,13 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
   };
 
   if (!kit) {
+    // Use original uploaded resume if available, otherwise generate from profile
+    const baseResume = originalResumeText || buildResume(profile, job, match);
     const built: ApplyKit = {
       jobId: job.id,
       jobTitle: job.title,
       company: job.company,
-      resume: buildResume(profile, job, match),
+      resume: baseResume,
       coverLetter: buildCoverLetter(profile, job, match, displayCurrency),
       ai: false,
       createdAt: Date.now()
@@ -195,7 +198,7 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
     setAiBusy(true);
     try {
       if (tab === "resume") {
-        const resume = await aiTailorResume(profile, job, match);
+        const resume = await aiTailorResume(profile, job, match, originalResumeText);
         // aiTailorResume already validates output; if it returned, it's good
         refresh(resume, kit?.coverLetter ?? buildCoverLetter(profile, job, match, displayCurrency), true, { aiResume: resume });
         toast("✨ AI-tailored — reviewed for accuracy before sending");
@@ -553,13 +556,15 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
               </div>
             </div>
             {/* Preview content */}
-            <div className="overflow-y-auto bg-gray-100 p-6" style={{ maxHeight: 'calc(90vh - 80px)' }}>
-              <iframe
-                srcDoc={buildResumeHtml(profile, job, match, resumeBrandFor(job.company), kit?.resume)}
-                title="Resume Preview"
-                className="mx-auto w-full border-0 bg-white shadow-lg"
-                style={{ height: '800px', maxWidth: '720px' }}
-              />
+            <div className="overflow-y-auto p-6" style={{ maxHeight: 'calc(90vh - 80px)', background: 'linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%)' }}>
+              <div className="mx-auto max-w-3xl">
+                <iframe
+                  srcDoc={buildResumeHtml(profile, job, match, resumeBrandFor(job.company), kit?.resume)}
+                  title="Resume Preview"
+                  className="w-full border-0 bg-white"
+                  style={{ height: '900px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}
+                />
+              </div>
             </div>
           </div>
         </div>

@@ -77,24 +77,28 @@ export function buildResumeHtml(
 
   return `<!doctype html>
 <html><head><meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>${esc(profile.headline || job.title)} — ${esc(job.company)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: ${font}; color: ${INK}; background: #fff; line-height: 1.5; }
-  .page { max-width: 720px; margin: 0 auto; padding: 48px 56px; }
-  .header { border-bottom: 3px solid ${accent}; padding-bottom: 16px; margin-bottom: 22px; }
-  .name { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
-  .sub { margin-top: 4px; font-size: 13px; color: ${MUT}; }
-  section { margin-bottom: 20px; }
-  h2 { font-size: 12px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
-       color: ${accent}; border-bottom: 1px solid ${LINE}; padding-bottom: 4px; margin-bottom: 8px; }
+  body { font-family: ${font}; color: ${INK}; background: #fff; line-height: 1.6; font-size: 14px; }
+  .page { max-width: 800px; margin: 0 auto; padding: 48px 64px; }
+  .header { border-bottom: 3px solid ${accent}; padding-bottom: 20px; margin-bottom: 28px; }
+  .name { font-size: 32px; font-weight: 800; letter-spacing: -0.02em; color: ${INK}; line-height: 1.2; }
+  .sub { margin-top: 8px; font-size: 15px; color: ${MUT}; line-height: 1.4; }
+  section { margin-bottom: 28px; }
+  h2 { font-size: 13px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+       color: ${accent}; border-bottom: 2px solid ${LINE}; padding-bottom: 6px; margin-bottom: 12px; }
   ul { list-style: none; }
-  li { font-size: 13px; color: ${INK}; margin-bottom: 5px; padding-left: 14px; position: relative; }
-  li::before { content: "▸"; position: absolute; left: 0; color: ${accent}; font-size: 11px; top: 1px; }
-  .meta { font-size: 12px; color: ${MUT}; margin-top: 2px; }
+  li { font-size: 14px; color: ${INK}; margin-bottom: 8px; padding-left: 18px; position: relative; line-height: 1.6; }
+  li::before { content: "▸"; position: absolute; left: 0; color: ${accent}; font-size: 12px; top: 2px; }
+  .meta { font-size: 13px; color: ${MUT}; margin-top: 16px; padding-top: 16px; border-top: 1px solid ${LINE}; }
   @media print {
-    body { padding: 0; }
-    .page { padding: 24px 40px; }
+    body { padding: 0; font-size: 11pt; }
+    .page { padding: 24px 48px; max-width: 100%; }
+    .name { font-size: 24pt; }
+    h2 { font-size: 10pt; }
+    li { font-size: 10pt; }
   }
 </style></head>
 <body><div class="page">

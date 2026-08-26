@@ -550,7 +550,7 @@ export function Jobs() {
 
       {upgrade && <UpgradeModal onClose={() => setUpgrade(null)} reason={upgrade} />}
       {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
-      {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} onAddSkill={addSkillToProfile} onClose={() => setKitJob(null)} />}
+      {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} originalResumeText={resume?.text} onAddSkill={addSkillToProfile} onClose={() => setKitJob(null)} />}
       {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
       {importOpen && (
         <ImportModal

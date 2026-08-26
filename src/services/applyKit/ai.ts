@@ -8,8 +8,9 @@ import { yearLabel, buildResume, buildCoverLetter } from "./builders";
 
 /** Rewrites the template resume with generative polish. Falls back to the
     template when no key is configured. */
-export async function aiTailorResume(profile: CareerProfile, job: JobPosting, match: JobMatch | null): Promise<string> {
-  const template = buildResume(profile, job, match);
+export async function aiTailorResume(profile: CareerProfile, job: JobPosting, match: JobMatch | null, originalResume?: string): Promise<string> {
+  // Use original uploaded resume if available, otherwise generate from profile
+  const template = originalResume || buildResume(profile, job, match);
   const sys =
     "You are an expert resume writer for tech roles. Rewrite the given resume to be sharper, more concrete, " +
     "and tailored to the target job. Keep the same sections and facts — never invent experience, companies, " +
