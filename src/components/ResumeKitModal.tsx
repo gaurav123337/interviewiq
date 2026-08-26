@@ -360,12 +360,12 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
       </div>
 
       {/* ─── ATS Preview Modal ─────────────────────────────────────────── */}
-      {tab === "resume" && atsOpen && (
+      {tab === "resume" && atsOpen ? (
         <AtsPreviewModal text={kit?.resume ?? ""} job={job} onAddSkill={handleAddSkill} onClose={() => setAtsOpen(false)} />
-      )}
+      ) : null}
 
       {/* ─── Compare bar ───────────────────────────────────────────────── */}
-      {(canCompare || kit?.[tab === "resume" ? "aiResume" : "aiCover"]) && (
+      {(canCompare || kit?.[tab === "resume" ? "aiResume" : "aiCover"]) ? (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/30 px-3 py-2">
           <span className="text-[11px] font-bold uppercase tracking-wider text-mut">⚖️ Compare with:</span>
           {canCompare && prevKit && (
@@ -386,7 +386,7 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
           >
             vs Template
           </button>
-          {kit?.[tab === "resume" ? "aiResume" : "aiCover"] && (
+          {kit?.[tab === "resume" ? "aiResume" : "aiCover"] ? (
             <button
               className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all ${
                 compareBase === "ai" ? "bg-acc1/20 text-acctxt" : "text-mut hover:bg-deep/50 hover:text-ink"
@@ -395,13 +395,14 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
             >
               vs AI Version
             </button>
-          )}
-          {compareBase && (
+          ) : null}
+          {compareBase ? (
             <button className="ml-auto text-[11px] font-bold text-mut hover:text-ink" onClick={() => pickCompareBase(null)}>
               ✕ Clear
             </button>
-          )}
+          ) : null}
         </div>
+      ) : null}
       )}
 
       {/* ─── Content area ──────────────────────────────────────────────── */}
