@@ -302,10 +302,8 @@ export function resumeToProfile(text: string): CareerProfile {
   
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   
-  // Merge skills from both extractors for comprehensive coverage
-  const tokenSkills = extractSkillNames(text);
-  const normalizedSkills = normalized.skills;
-  const allSkills = [...new Set([...normalizedSkills, ...tokenSkills])];
+  // Use ONLY normalized skills (individual tech keywords, not composite labels)
+  const allSkills = normalized.skills;
   
   const years = normalized.years > 0 ? normalized.years : extractYears(text, levelId);
   const headline = normalized.titles.length > 0 
