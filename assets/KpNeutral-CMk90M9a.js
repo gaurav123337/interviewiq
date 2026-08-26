@@ -1,0 +1,1 @@
+import{v as e}from"./index-BMmqa4_n.js";function o({children:t}){return e.jsx("span",{className:"rounded-lg border border-line/10 bg-wht/10 px-2.5 py-1 text-[12.5px] font-semibold text-mut",children:t})}export{o as K};
