@@ -230,19 +230,62 @@ function splitIntoSections(lines: string[]): { title: string; content: string[] 
   let current: { title: string; content: string[] } | null = null;
 
   for (const line of lines) {
-    const sectionType = classifySectionHeader(line);
-    if (sectionType) {
-      // Start new section
+    // Try to find a section header embedded in the line
+    const embedded = findEmbeddedSectionHeader(line);
+    if (embedded) {
+      // Line has header + content (e.g., "Professional Summary Results-driven...")
       if (current) sections.push(current);
-      current = { title: line, content: [] };
-    } else if (current) {
-      current.content.push(line);
+      current = { title: embedded.header, content: embedded.rest ? [embedded.rest] : [] };
+    } else {
+      const sectionType = classifySectionHeader(line);
+      if (sectionType) {
+        // Header on its own line
+        if (current) sections.push(current);
+        current = { title: line, content: [] };
+      } else if (current) {
+        current.content.push(line);
+      }
     }
-    // Lines before first section header are ignored (contact info already extracted)
   }
   if (current) sections.push(current);
 
   return sections;
+}
+
+/** Find a section header embedded at the start of a line.
+    E.g., "Professional Summary Results-driven..." → { header: "Professional Summary", rest: "Results-driven..." } */
+function findEmbeddedSectionHeader(line: string): { header: string; rest: string } | null {
+  // Check common section headers that might be followed by content on the same line
+  const patterns = [
+    /^(Professional Summary|Professional Profile|Career Summary|Career Objective|Objective|Summary|Profile|About Me)\s+(.+)/i,
+    /^(Core Competencies|Technical Skills|Key Skills|Skills|Competencies|Technologies|Tech Stack)\s*[:\-]?\s*(.+)/i,
+    /^(Work Experience|Employment History|Professional Experience|Experience|Employment)\s*$/i,
+    /^(Education|Educational Background|Academic Background)\s*$/i,
+    /^(Certifications?|Licenses?|Credentials?)\s*[:\-]?\s*(.+)/i,
+    /^(Projects?|Key Projects?|Notable Projects?)\s*[:\-]?\s*(.+)/i,
+    /^(Awards?|Achievements?|Honors?|Recognition)\s*[:\-]?\s*(.+)/i,
+    /^(Languages?|Spoken Languages?)\s*[:\-]?\s*(.+)/i,
+    /^(Publications?|Papers?|Articles?)\s*[:\-]?\s*(.+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (match) {
+      return { header: match[1], rest: match[2]?.trim() || '' };
+    }
+  }
+
+  // Also check ALL CAPS headers followed by content (e.g., "SUMMARY Results-driven...")
+  const allCapsMatch = line.match(/^([A-Z][A-Z0-9 &]{2,30})\s+(.+)/);
+  if (allCapsMatch) {
+    const header = allCapsMatch[1];
+    const sectionType = classifySectionHeader(header);
+    if (sectionType) {
+      return { header, rest: allCapsMatch[2] };
+    }
+  }
+
+  return null;
 }
 
 /* ── Skills Extraction ─────────────────────────────────────────────── */
