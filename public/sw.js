@@ -1,19 +1,16 @@
-/* InterviewIQ — service worker (Vite build): offline-first caching.
-   Hashed build assets are immutable, so cache-first is safe for them;
-   navigations are network-first so app updates land, with cached shell offline.
-   The shell precaches index.html AND the hashed JS/CSS bundle it references,
-   so the entire app — including the legal pages (Terms / Privacy / Refunds /
-   Shipping) reachable from the footer on every view — works with no network. */
+/* InterviewIQ — service worker (Vite build): stale-while-revalidate.
+   Hashed build assets get stale-while-revalidate (serve cached instantly,
+   update in background); navigations are network-first so app updates land,
+   with cached shell offline fallback. This means users always see the
+   latest version after a page reload, without waiting for network. */
 
-const CACHE = "interviewiq-v10";
+const CACHE = "interviewiq-v11";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
     caches.open(CACHE)
       .then(c => c.addAll(SHELL))
-      /* precache the hashed JS/CSS the current index.html references, so a
-         fresh install is fully self-contained offline (legal views included) */
       .then(c =>
         fetch("./index.html", { cache: "no-cache" })
           .then(res => res.text())
@@ -40,7 +37,6 @@ self.addEventListener("message", e => {
     self.skipWaiting();
   }
 });
-
 
 /* notification click: focus the app (or open it) on the practice screen */
 self.addEventListener("notificationclick", e => {
@@ -70,24 +66,30 @@ self.addEventListener("fetch", e => {
     e.respondWith(
       fetch(req).then(res => {
         if (res.ok) return res;
-        /* 404 (SPA route) — serve cached shell, hash router handles the rest */
         return caches.match("./index.html");
       }).catch(() => caches.match("./index.html"))
     );
     return;
   }
 
-  /* static assets: cache-first with runtime fill */
-  e.respondWith(
-    caches.match(req).then(hit =>
-      hit ||
-      fetch(req).then(res => {
-        if (res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
-        }
-        return res;
+  /* static assets (hashed JS/CSS): stale-while-revalidate
+     Serve from cache instantly, fetch update in background for next load. */
+  if (req.url.match(/\.(?:js|css|woff2?|png|jpg|svg|ico)$/)) {
+    e.respondWith(
+      caches.open(CACHE).then(async cache => {
+        const cached = await cache.match(req);
+        const fetchPromise = fetch(req).then(res => {
+          if (res.ok) cache.put(req, res.clone());
+          return res;
+        }).catch(() => cached);
+        return cached || fetchPromise;
       })
-    )
+    );
+    return;
+  }
+
+  /* other same-origin requests: network-first */
+  e.respondWith(
+    fetch(req).catch(() => caches.match(req))
   );
 });
