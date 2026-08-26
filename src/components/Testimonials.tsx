@@ -319,14 +319,25 @@ export function SupportSection() {
     void fetchTips().then(t => { setTipConfig(t); setLoading(false); }).catch(() => setLoading(false));
   }, []);
 
-  const handlePayment = (amount: number, label: string) => {
+  const loadRazorpay = (): Promise<boolean> => {
+    return new Promise((resolve) => {
+      // @ts-ignore
+      if (window.Razorpay) { resolve(true); return; }
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+  };
+
+  const handlePayment = async (amount: number, label: string) => {
     if (!tipConfig) return;
 
     // Try Razorpay first
     if (tipConfig.razorpay_key_id) {
-      const symbol = tipConfig.currency === 'INR' ? '₹' : tipConfig.currency === 'USD' ? '$' : tipConfig.currency === 'EUR' ? '€' : '£';
-      // @ts-ignore - Razorpay is loaded via script tag
-      if (window.Razorpay) {
+      const loaded = await loadRazorpay();
+      if (loaded) {
         // @ts-ignore
         const rzp = new window.Razorpay({
           key: tipConfig.razorpay_key_id,
