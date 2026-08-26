@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import type { CareerProfile, JobMatch, JobPosting } from "../types";
-import { aiAvailable } from "../ai";
+import { aiReachable } from "../ai";
 import { aiTailorCoverLetter, aiTailorResume, atsCoverage, atsKeywordDrilldown, buildCoverLetter, buildResume, getApplyKit, jdKeywords, quantifiedClaims, saveApplyKit, type ApplyKit, type AtsKeywordRow } from "../services/applyKit";
 import { diffLines } from "../services/diff";
 import { matchJob } from "../services/jobs";
@@ -134,8 +134,8 @@ export const ResumeKitModal = memo(function ResumeKitModal({ job, profile, match
   };
 
   const aiRegenerate = async () => {
-    if (!aiAvailable()) {
-      toast("🔑 Add an API key in Settings to use AI tailoring — the template is ready to use as-is.");
+    if (!aiReachable()) {
+      toast("🔑 Add an API key in Settings or sign in to use AI tailoring — the template is ready to use as-is.");
       return;
     }
     setAiBusy(true);

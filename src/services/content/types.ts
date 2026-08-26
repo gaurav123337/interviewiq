@@ -68,6 +68,9 @@ export interface TipConfig {
   descriptions: string[];
   stripe_link: string;
   buymeacoffee_link: string;
+  razorpay_key_id: string;
+  razorpay_name: string;
+  currency: string;
   enabled: boolean;
 }
 

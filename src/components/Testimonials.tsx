@@ -11,7 +11,8 @@
 import { memo, useState, useEffect, useCallback } from "react";
 import { cardCls } from "./ui";
 import { toast } from "../toast";
-import { fetchTestimonials, fetchResources, fetchBannersForPosition, trackClick, trackImpression, getVisitorVariant } from "../services/contentService";
+import { fetchTestimonials, fetchResources, fetchBannersForPosition, trackClick, trackImpression, getVisitorVariant, fetchTips } from "../services/contentService";
+import type { TipConfig } from "../services/content/types";
 
 /* ------------------------------------------------------------------ */
 /* Testimonials                                                        */
@@ -311,11 +312,58 @@ export function RecommendedResources() {
 /* ------------------------------------------------------------------ */
 
 export function SupportSection() {
-  const tips = [
-    { amount: 5, label: "☕ Coffee", desc: "Buy me a coffee" },
-    { amount: 15, label: "🍕 Lunch", desc: "Buy me lunch" },
-    { amount: 30, label: "🎉 Celebration", desc: "Celebrating a new offer?" },
-  ];
+  const [tipConfig, setTipConfig] = useState<TipConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    void fetchTips().then(t => { setTipConfig(t); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+
+  const handlePayment = (amount: number, label: string) => {
+    if (!tipConfig) return;
+
+    // Try Razorpay first
+    if (tipConfig.razorpay_key_id) {
+      const symbol = tipConfig.currency === 'INR' ? '₹' : tipConfig.currency === 'USD' ? '$' : tipConfig.currency === 'EUR' ? '€' : '£';
+      // @ts-ignore - Razorpay is loaded via script tag
+      if (window.Razorpay) {
+        // @ts-ignore
+        const rzp = new window.Razorpay({
+          key: tipConfig.razorpay_key_id,
+          amount: amount * 100, // Razorpay expects paise/cents
+          currency: tipConfig.currency,
+          name: tipConfig.razorpay_name || 'InterviewIQ',
+          description: label,
+          handler: (response: { razorpay_payment_id: string }) => {
+            toast(`✅ Payment successful! ID: ${response.razorpay_payment_id}`);
+          },
+          prefill: { name: '', email: '' },
+          theme: { color: '#6366f1' }
+        });
+        rzp.open();
+        return;
+      }
+    }
+
+    // Fallback to Stripe link
+    if (tipConfig.stripe_link) {
+      window.open(tipConfig.stripe_link, '_blank', 'noopener');
+      return;
+    }
+
+    // Fallback to Buy Me a Coffee
+    if (tipConfig.buymeacoffee_link) {
+      window.open(tipConfig.buymeacoffee_link, '_blank', 'noopener');
+      return;
+    }
+
+    toast(`${label} — Thank you for your support!`);
+  };
+
+  if (loading) return null;
+  if (!tipConfig?.enabled) return null;
+
+  const symbol = tipConfig.currency === 'INR' ? '₹' : tipConfig.currency === 'USD' ? '$' : tipConfig.currency === 'EUR' ? '€' : '£';
 
   return (
     <section id="support" className="pb-14">
@@ -329,18 +377,15 @@ export function SupportSection() {
           Every contribution keeps it free and ad-free for everyone.
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-          {tips.map(t => (
+          {tipConfig.amounts.map((amt, i) => (
             <button
-              key={t.amount}
-              onClick={() => {
-                // In production, replace with Stripe/payment link
-                toast(`${t.label} — Thank you! Payment integration coming soon.`);
-              }}
+              key={amt}
+              onClick={() => handlePayment(amt, tipConfig.labels[i] || 'Support')}
               className="rounded-xl border border-line/20 bg-wht/10 px-5 py-3 text-center transition-all hover:border-acc1/40 hover:bg-wht/15 hover:shadow-[0_4px_12px_rgba(99,102,241,.15)]"
             >
-              <div className="text-[20px]">{t.label}</div>
-              <div className="mt-1 text-[13px] font-extrabold">${t.amount}</div>
-              <div className="text-[11px] text-mut">{t.desc}</div>
+              <div className="text-[20px]">{tipConfig.labels[i]?.split(' ')[0] || '💰'}</div>
+              <div className="mt-1 text-[13px] font-extrabold">{symbol}{amt}</div>
+              <div className="text-[11px] text-mut">{tipConfig.descriptions[i] || 'Support the project'}</div>
             </button>
           ))}
         </div>

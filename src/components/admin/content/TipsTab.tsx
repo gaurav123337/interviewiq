@@ -4,7 +4,7 @@ import { toast } from '../../../toast';
 import {btnDanger, btnOk, btnPrimary, btnSm, cardCls} from '../../ui';
 
 export function TipsTab() {
-  const [config, setConfig] = useState<TipConfig>({ id: "default", amounts: [5, 15, 30], labels: ["☕ Coffee", "🍕 Lunch", "🎉 Celebration"], descriptions: ["Buy me a coffee", "Buy me lunch", "Celebrating a new offer?"], stripe_link: "", buymeacoffee_link: "", enabled: true });
+  const [config, setConfig] = useState<TipConfig>({ id: "default", amounts: [5, 15, 30], labels: ["☕ Coffee", "🍕 Lunch", "🎉 Celebration"], descriptions: ["Buy me a coffee", "Buy me lunch", "Celebrating a new offer?"], stripe_link: "", buymeacoffee_link: "", razorpay_key_id: "", razorpay_name: "InterviewIQ", currency: "INR", enabled: true });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -85,6 +85,25 @@ export function TipsTab() {
           <label className="block">
             <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Buy Me a Coffee link</span>
             <input className="inp" value={config.buymeacoffee_link} onChange={e => setConfig({ ...config, buymeacoffee_link: e.target.value })} placeholder="https://buymeacoffee.com/..." />
+          </label>
+        </div>
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Razorpay Key ID</span>
+            <input className="inp" value={config.razorpay_key_id} onChange={e => setConfig({ ...config, razorpay_key_id: e.target.value })} placeholder="rzp_live_..." />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Razorpay Name</span>
+            <input className="inp" value={config.razorpay_name} onChange={e => setConfig({ ...config, razorpay_name: e.target.value })} placeholder="InterviewIQ" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-mut">Currency</span>
+            <select className="inp" value={config.currency} onChange={e => setConfig({ ...config, currency: e.target.value })}>
+              <option value="INR">INR (₹)</option>
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+            </select>
           </label>
         </div>
         <div className="mt-4">
