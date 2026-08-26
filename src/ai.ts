@@ -77,7 +77,7 @@ export interface ChatOptions {
 const MODULE_MAX_TOKENS: Record<string, number> = {
   hint: 120,
   feedback: 500,
-  coach: 400,
+  coach: 1200,
   deepdive: 600,
   rag: 500,
 };

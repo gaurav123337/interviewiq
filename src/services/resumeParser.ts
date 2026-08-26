@@ -257,7 +257,11 @@ function extractContact(lines: string[]): ResumeContact {
       const hasContact = emailMatch || phoneMatch || linkedinMatch || githubMatch;
       const isSection = classifySectionHeader(line) !== null;
       if (!hasContact && !isSection && line.length > 1 && line.length < 60) {
-        const nameOnly = line.split(/\s*[|·,]\s*/)[0].trim();
+        let nameOnly = line.split(/\s*[|·,]\s*/)[0].trim();
+        // Also stop before common job title keywords
+        const titleKeywords = /^(.+?)\s+(?:Senior|Junior|Lead|Principal|Staff|Director|Manager|Architect|Engineer|Developer|Specialist|Consultant|Analyst|Frontend|Backend|Full.?Stack|DevOps|SRE|QA|UI|UX|Product|Data|ML|AI|Cloud|Software|IT|Technical|Systems|Network|Security|Solutions|Staff|VP|Head|Chief|Officer)/i;
+        const titleMatch = nameOnly.match(titleKeywords);
+        if (titleMatch) nameOnly = titleMatch[1];
         if (nameOnly.length > 1) contact.name = nameOnly;
       }
     }
