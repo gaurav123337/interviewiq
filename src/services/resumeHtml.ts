@@ -23,21 +23,28 @@ export interface ResumeSections {
   sections: { title: string; items: string[] }[];
 }
 
-/** Parse the plain-text resume template into sections for styled rendering.
-    Shared by the HTML one-pager and the pdf-lib renderer. */
+/** Detect section headers in real-world resume formats. */
+const SECTION_HEADER_RE = /^(?:[A-Z0-9 .•·+&#-]{3,}|(?:Professional |Core |Technical |Key |Work |Education|Experience|Summary|Skills|Competencies|Qualifications|Certifications|Projects|Achievements|Highlights|Responsibilities|Awards|Publications|Languages|Interests)[\w &/-]*)$/i;
+
+/** Parse the plain-text resume template into sections for styled rendering. */
 export function parseResumeSections(text: string): ResumeSections {
   const lines = text.split("\n");
   const header: string[] = [];
   const sections: { title: string; items: string[] }[] = [];
   let cur: { title: string; items: string[] } | null = null;
+  
   for (const raw of lines) {
     const t = raw.trim();
-    if (t && t === t.toUpperCase() && t.length > 2 && /^[A-Z0-9 .•·+&#-]+$/.test(t)) {
+    if (!t) continue;
+    
+    if (SECTION_HEADER_RE.test(t) && t.length < 60) {
       cur = { title: t, items: [] };
       sections.push(cur);
-    } else if (cur && t) {
+    } else if (cur) {
       cur.items.push(t);
-    } else if (!cur && t) {
+    } else if (header.length < 4) {
+      header.push(t);
+    } else {
       header.push(t);
     }
   }
@@ -58,20 +65,50 @@ export function buildResumeHtml(
 
   const esc = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  const headerBlock = header.length
-    ? `
-        <div class="header">
-          <div class="name">${esc(header[0] || profile.headline || job.title)}</div>
-          <div class="sub">${esc(header.slice(1).join(" · "))}</div>
-        </div>`
-    : "";
-  const body = headerBlock + sections.map(sec => {
-    return `
-      <section>
-        <h2>${esc(sec.title)}</h2>
-        <ul>${sec.items.map(i => `<li>${esc(i.replace(/^•\s*/, ""))}</li>`).join("")}</ul>
-      </section>`;
-  }).join("");
+  // Check if parser found meaningful sections
+  const hasRealSections = sections.length > 0 && sections.some(s => s.items.length > 0);
+
+  let body: string;
+  
+  if (hasRealSections) {
+    // Structured rendering — parsed sections with headers and items
+    const nameLine = header[0] || profile.headline || job.title;
+    const contactLines = header.slice(1).join(" · ");
+    const headerBlock = `
+      <div class="header">
+        <div class="name">${esc(nameLine)}</div>
+        ${contactLines ? `<div class="sub">${esc(contactLines)}</div>` : ""}
+      </div>`;
+    body = headerBlock + sections.map(sec => {
+      const items = sec.items.map(i => {
+        const cleaned = i.replace(/^[•·\-*]\s*/, "");
+        if (cleaned.length > 80 && !cleaned.includes("•")) {
+          return `<p class="para">${esc(cleaned)}</p>`;
+        }
+        return `<li>${esc(cleaned)}</li>`;
+      });
+      const hasBullets = sec.items.some(i => /^[•·\-*]\s/.test(i));
+      return `
+        <section>
+          <h2>${esc(sec.title)}</h2>
+          ${hasBullets ? `<ul>${items.join("")}</ul>` : items.join("")}
+        </section>`;
+    }).join("");
+  } else {
+    // Fallback: render raw text as styled paragraphs (handles real-world resumes)
+    const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+    body = lines.map(line => {
+      const isSectionLike = line.length < 60 && (
+        line === line.toUpperCase() ||
+        /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$/.test(line) ||
+        /^(?:Professional|Core|Technical|Key|Work|Education|Experience|Summary|Skills|Competencies|Qualifications|Certifications|Projects|Achievements|Highlights)/i.test(line)
+      );
+      if (isSectionLike) {
+        return `<h2>${esc(line)}</h2>`;
+      }
+      return `<p class="para">${esc(line)}</p>`;
+    }).join("\n");
+  }
 
   const meta = `${esc([profile.location, profile.workAuth].filter(Boolean).join(" · "))}`;
 
@@ -84,21 +121,22 @@ export function buildResumeHtml(
   body { font-family: ${font}; color: ${INK}; background: #fff; line-height: 1.6; font-size: 14px; }
   .page { max-width: 800px; margin: 0 auto; padding: 48px 64px; }
   .header { border-bottom: 3px solid ${accent}; padding-bottom: 20px; margin-bottom: 28px; }
-  .name { font-size: 32px; font-weight: 800; letter-spacing: -0.02em; color: ${INK}; line-height: 1.2; }
-  .sub { margin-top: 8px; font-size: 15px; color: ${MUT}; line-height: 1.4; }
-  section { margin-bottom: 28px; }
-  h2 { font-size: 13px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
-       color: ${accent}; border-bottom: 2px solid ${LINE}; padding-bottom: 6px; margin-bottom: 12px; }
+  .name { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; color: ${INK}; line-height: 1.2; }
+  .sub { margin-top: 8px; font-size: 13px; color: ${MUT}; line-height: 1.4; }
+  section { margin-bottom: 24px; }
+  h2 { font-size: 13px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+       color: ${accent}; border-bottom: 2px solid ${LINE}; padding-bottom: 6px; margin-bottom: 10px; }
   ul { list-style: none; }
-  li { font-size: 14px; color: ${INK}; margin-bottom: 8px; padding-left: 18px; position: relative; line-height: 1.6; }
-  li::before { content: "▸"; position: absolute; left: 0; color: ${accent}; font-size: 12px; top: 2px; }
-  .meta { font-size: 13px; color: ${MUT}; margin-top: 16px; padding-top: 16px; border-top: 1px solid ${LINE}; }
+  li { font-size: 13px; color: ${INK}; margin-bottom: 6px; padding-left: 16px; position: relative; line-height: 1.5; }
+  li::before { content: "▸"; position: absolute; left: 0; color: ${accent}; font-size: 11px; top: 1px; }
+  .para { font-size: 13px; color: ${INK}; margin-bottom: 6px; line-height: 1.5; }
+  .meta { font-size: 12px; color: ${MUT}; margin-top: 16px; padding-top: 12px; border-top: 1px solid ${LINE}; }
   @media print {
-    body { padding: 0; font-size: 11pt; }
+    body { padding: 0; font-size: 10pt; }
     .page { padding: 24px 48px; max-width: 100%; }
-    .name { font-size: 24pt; }
-    h2 { font-size: 10pt; }
-    li { font-size: 10pt; }
+    .name { font-size: 20pt; }
+    h2 { font-size: 9pt; }
+    li, .para { font-size: 10pt; }
   }
 </style></head>
 <body><div class="page">
@@ -106,9 +144,6 @@ export function buildResumeHtml(
   <div class="meta">Generated by InterviewIQ · tailored to ${esc(job.company)} · ${meta}</div>
 </div>
 </body></html>`;
-  /* NOTE: no inline <script> here — the print window inherits the opener's
-     strict CSP, which blocks inline scripts. openResumePrint() calls
-     w.print() directly from the opener instead. */
 }
 
 /** Opens the designed resume in a new window and triggers the print dialog
@@ -120,8 +155,6 @@ export function openResumePrint(profile: CareerProfile, job: JobPosting, match: 
   w.document.open();
   w.document.write(html);
   w.document.close();
-  /* trigger print from the opener — the blank window inherits the opener's
-     strict CSP, so an inline onload script would be blocked */
-  setTimeout(() => { try { w.focus(); w.print(); } catch { /* popup closed — nothing to print */ } }, 350);
+  setTimeout(() => { try { w.focus(); w.print(); } catch { /* popup closed */ } }, 350);
   return true;
 }
