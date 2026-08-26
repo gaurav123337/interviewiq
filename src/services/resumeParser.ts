@@ -322,22 +322,34 @@ function extractExperience(lines: string[]): ResumeExperience[] {
   const experiences: ResumeExperience[] = [];
   let current: ResumeExperience | null = null;
 
-  // First pass: join all lines and split on pipe-separated date patterns
+  // First pass: join all lines and find pipe-separated job entries
   const fullText = lines.join(' ');
 
-  // Split on patterns like "| Jan 2022 - Present" or "| Jun 2017 – Apr 2019"
-  // These mark the end of one job's description and the start of the next job's header
-  const jobEntryRe = /([^|]+?\|[^|]*?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\.?\s+\d{4}\s*[-–—to]+\s*(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\.?\s+\d{4}|present|current|now))/gi;
-
-  const matches = fullText.match(jobEntryRe);
+  // Split on pipes that are followed by a date pattern — these mark job boundaries
+  // e.g. "TCS Digital | Bangalore, India | Jan 2022 - Present"
+  const parts = fullText.split(/\|\s*(?=(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\.?\s+\d{4})/gi);
   
-  if (matches && matches.length > 0) {
-    for (const match of matches) {
-      const exp = parseExperienceEntry(match);
-      if (exp) experiences.push(exp);
+  // Group parts into job entries: each entry ends with a date range
+  const entries: string[] = [];
+  let currentEntry = '';
+  
+  for (const part of parts) {
+    currentEntry += (currentEntry ? ' | ' : '') + part.trim();
+    if (DATE_RANGE_RE.test(part)) {
+      entries.push(currentEntry.trim());
+      currentEntry = '';
     }
-  } else {
-    // Fallback: try line-by-line extraction
+  }
+  if (currentEntry.trim()) entries.push(currentEntry.trim());
+  
+  // Parse each entry
+  for (const entry of entries) {
+    const exp = parseExperienceEntry(entry);
+    if (exp && (exp.title || exp.dates)) experiences.push(exp);
+  }
+  
+  // Fallback: try line-by-line extraction
+  if (experiences.length === 0) {
     for (const line of lines) {
       const hasDate = DATE_RANGE_RE.test(line) || SIMPLE_DATE_RE.test(line);
       if (hasDate && line.length < 120) {
@@ -361,28 +373,23 @@ function extractExperience(lines: string[]): ResumeExperience[] {
   return experiences;
 }
 
-/** Parse a single experience entry like "Title | Company, Location | Jan 2022 - Present Description..." */
+/** Parse a single experience entry like "Title | Company | Location | Dates Description..." */
 function parseExperienceEntry(entry: string): ResumeExperience | null {
   const dateMatch = entry.match(DATE_RANGE_RE);
   const dates = dateMatch ? dateMatch[0] : '';
   
-  // Split on pipe to get [header_part, rest_with_date_and_description]
+  // Split on pipe to get parts
   const pipeParts = entry.split(/\s*\|\s*/);
   
-  if (pipeParts.length >= 2) {
-    // header_part = "Title" or "Title Company"
-    // last pipe part contains "Location | Dates Description..."
-    const headerPart = pipeParts[0].trim();
-    const datePart = pipeParts[pipeParts.length - 1].trim();
-    
-    // Extract title and company from header
-    const titleCompany = headerPart.split(/\s*[–—-]\s*/);
-    const title = (titleCompany[0] || '').trim();
-    const company = (titleCompany[1] || pipeParts[1] || '').trim();
-    const location = pipeParts.length > 2 ? pipeParts[pipeParts.length - 2].trim() : '';
+  if (pipeParts.length >= 3) {
+    // Format: Title | Company | Location | Dates Description...
+    const title = pipeParts[0].trim();
+    const company = pipeParts[1].trim();
+    const location = pipeParts[2].trim();
     
     // Extract description after the date
-    const descMatch = datePart.match(/(?:present|current|now|\d{4})\s*(.*)/i);
+    const datePart = pipeParts[pipeParts.length - 1].trim();
+    const descMatch = datePart.match(/(?:present|current|now|\d{4})\s+(.*)/i);
     const description = descMatch ? descMatch[1].trim() : '';
     
     // Split description into bullets
@@ -392,6 +399,27 @@ function parseExperienceEntry(entry: string): ResumeExperience | null {
       .filter(s => s.length > 10);
     
     return { title, company, location, dates, bullets };
+  }
+  
+  if (pipeParts.length === 2) {
+    // Format: Title | Company Dates Description...
+    const title = pipeParts[0].trim();
+    const rest = pipeParts[1].trim();
+    
+    // Try to extract company from the beginning of rest
+    const companyMatch = rest.match(/^(.+?)\s*\|/);
+    const company = companyMatch ? companyMatch[1].trim() : '';
+    
+    // Extract description after the date
+    const descMatch = rest.match(/(?:present|current|now|\d{4})\s+(.*)/i);
+    const description = descMatch ? descMatch[1].trim() : '';
+    
+    const bullets = description
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 10);
+    
+    return { title, company, location: '', dates, bullets };
   }
   
   return parseExperienceLine(entry);
@@ -435,6 +463,221 @@ function extractEducation(lines: string[]): ResumeEducation[] {
   }
 
   return educations;
+}
+
+/* ── Normalized Resume Output ──────────────────────────────────────── */
+
+/** Normalized resume data for job matching. Extracts clean, individual
+    skills, experience titles/companies, education degrees, and years. */
+export interface NormalizedResume {
+  /** Individual skill names (e.g. ["React", "TypeScript", "Node.js"]) */
+  skills: string[];
+  /** Job titles held (e.g. ["Frontend Architect", "Senior Frontend Developer"]) */
+  titles: string[];
+  /** Companies worked at (e.g. ["TCS Digital", "Infosys"]) */
+  companies: string[];
+  /** Degrees earned (e.g. ["Master of Computer Applications"]) */
+  degrees: string[];
+  /** Estimated years of experience */
+  years: number;
+  /** Primary field: frontend, backend, fullstack, data, devops, etc. */
+  field: string;
+  /** Seniority level: junior, mid, senior, staff, principal */
+  level: string;
+  /** Full name */
+  name: string;
+  /** Email */
+  email: string;
+  /** Phone */
+  phone: string;
+  /** LinkedIn */
+  linkedin: string;
+}
+
+/** Known skill keywords to extract from resume text */
+const SKILL_KEYWORDS: Record<string, string[]> = {
+  // Frontend
+  'React': ['react', 'reactjs', 'react.js'],
+  'Vue': ['vue', 'vuejs', 'vue.js', 'vue3'],
+  'Angular': ['angular', 'angularjs', 'angular.js'],
+  'Next.js': ['next.js', 'nextjs', 'next js'],
+  'TypeScript': ['typescript', 'ts '],
+  'JavaScript': ['javascript', 'es6', 'es2015', 'es2020'],
+  'HTML': ['html', 'html5'],
+  'CSS': ['css', 'css3', 'sass', 'scss', 'less', 'tailwind'],
+  'Redux': ['redux', 'mobx', 'zustand', 'recoil'],
+  'GraphQL': ['graphql', 'gql'],
+  'REST APIs': ['rest', 'restful', 'rest api', 'rest apis'],
+  'Webpack': ['webpack', 'vite', 'rollup', 'esbuild'],
+  'Testing': ['jest', 'cypress', 'playwright', 'testing library', 'mocha', 'vitest'],
+  'Accessibility': ['accessibility', 'a11y', 'wcag', 'aria'],
+  'Performance': ['performance', 'lighthouse', 'web vitals', 'core web vitals'],
+  'Responsive Design': ['responsive', 'mobile-first', 'fluid'],
+  'Design Systems': ['design system', 'storybook', 'figma'],
+  // Backend
+  'Node.js': ['node.js', 'nodejs', 'node js', 'express', 'expressjs'],
+  'Python': ['python', 'django', 'flask', 'fastapi'],
+  'Java': ['java ', 'spring', 'springboot', 'spring boot'],
+  'Go': ['golang', 'go '],
+  'Rust': ['rust'],
+  'PHP': ['php', 'laravel'],
+  'Ruby': ['ruby', 'rails', 'ruby on rails'],
+  // Database
+  'PostgreSQL': ['postgresql', 'postgres'],
+  'MySQL': ['mysql'],
+  'MongoDB': ['mongodb', 'mongo'],
+  'Redis': ['redis'],
+  'Elasticsearch': ['elasticsearch', 'elastic'],
+  'SQL': ['sql', 'database', 'databases'],
+  // Cloud & DevOps
+  'AWS': ['aws', 'amazon web services', 'ec2', 's3', 'lambda', 'cloudfront'],
+  'GCP': ['gcp', 'google cloud'],
+  'Azure': ['azure', 'microsoft cloud'],
+  'Docker': ['docker', 'containerization', 'containers'],
+  'Kubernetes': ['kubernetes', 'k8s'],
+  'CI/CD': ['ci/cd', 'cicd', 'jenkins', 'github actions', 'gitlab ci', 'circleci'],
+  'Terraform': ['terraform', 'infrastructure as code', 'iac'],
+  'Linux': ['linux', 'bash', 'shell'],
+  // Data & ML
+  'TensorFlow': ['tensorflow', 'tf '],
+  'PyTorch': ['pytorch'],
+  'Pandas': ['pandas', 'numpy'],
+  'Spark': ['spark', 'pyspark'],
+  'Airflow': ['airflow'],
+  // Mobile
+  'React Native': ['react native'],
+  'Flutter': ['flutter', 'dart'],
+  'Swift': ['swift', 'ios'],
+  'Kotlin': ['kotlin', 'android'],
+  // Practices
+  'Agile': ['agile', 'scrum', 'kanban', 'sprint'],
+  'Git': ['git', 'github', 'gitlab', 'bitbucket'],
+  'Microservices': ['microservice', 'microservices'],
+  'Serverless': ['serverless', 'lambda', 'faas'],
+  'SSR': ['ssr', 'server-side rendering', 'server side rendering'],
+  'SSG': ['ssg', 'static site generation', 'static site'],
+  'State Management': ['state management', 'context api', 'redux', 'mobx'],
+};
+
+/** Extract individual skills from resume text by matching known keywords. */
+function extractNormalizedSkills(text: string): string[] {
+  const lower = text.toLowerCase();
+  const found = new Set<string>();
+  
+  for (const [skill, keywords] of Object.entries(SKILL_KEYWORDS)) {
+    for (const kw of keywords) {
+      if (lower.includes(kw)) {
+        found.add(skill);
+        break;
+      }
+    }
+  }
+  
+  return [...found];
+}
+
+/** Classify resume into a primary field based on skill distribution. */
+function classifyField(skills: string[]): string {
+  const frontend = ['React', 'Vue', 'Angular', 'Next.js', 'TypeScript', 'JavaScript', 'HTML', 'CSS', 'Redux', 'Webpack', 'Responsive Design', 'Design Systems', 'Accessibility', 'Performance'];
+  const backend = ['Node.js', 'Python', 'Java', 'Go', 'Rust', 'PHP', 'Ruby', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'Elasticsearch', 'SQL'];
+  const devops = ['Docker', 'Kubernetes', 'CI/CD', 'Terraform', 'AWS', 'GCP', 'Azure', 'Linux'];
+  const data = ['TensorFlow', 'PyTorch', 'Pandas', 'Spark', 'Airflow', 'Python'];
+  const mobile = ['React Native', 'Flutter', 'Swift', 'Kotlin'];
+  
+  const score = (list: string[]) => skills.filter(s => list.includes(s)).length;
+  
+  const scores = [
+    { field: 'frontend', score: score(frontend) },
+    { field: 'backend', score: score(backend) },
+    { field: 'devops', score: score(devops) },
+    { field: 'data', score: score(data) },
+    { field: 'mobile', score: score(mobile) },
+  ];
+  
+  // If frontend + backend both high, it's fullstack
+  const fe = scores.find(s => s.field === 'frontend')?.score ?? 0;
+  const be = scores.find(s => s.field === 'backend')?.score ?? 0;
+  if (fe >= 3 && be >= 3) return 'fullstack';
+  
+  return scores.sort((a, b) => b.score - a.score)[0]?.field ?? 'other';
+}
+
+/** Detect seniority from resume text. */
+function detectLevel(text: string): string {
+  const lower = text.toLowerCase();
+  if (/\b(?:principal|distinguished|fellow|chief architect)\b/.test(lower)) return 'principal';
+  if (/\b(?:staff|lead|tech lead|architect)\b/.test(lower)) return 'staff';
+  if (/\b(?:senior|sr\.?)\b/.test(lower)) return 'senior';
+  if (/\b(?:mid.?level|midlevel)\b/.test(lower)) return 'mid';
+  if (/\b(?:junior|jr\.?|entry.level|intern)\b/.test(lower)) return 'junior';
+  return 'mid';
+}
+
+/** Extract years of experience from resume text. */
+function extractYearsFromText(text: string): number {
+  const lower = text.toLowerCase();
+  const matches = [...lower.matchAll(/(\d{1,2})\s*\+?\s*(?:years|yrs)\b/g)].map(m => Number(m[1]));
+  if (matches.length) return Math.max(...matches);
+  const since = lower.match(/since\s+(19|20)\d{2}/);
+  if (since) return Math.max(0, new Date().getFullYear() - Number(since[0].match(/\d{4}/)));
+  return 3;
+}
+
+/** Normalize any resume text into a structured format for job matching.
+    This is the single source of truth for resume → matching pipeline. */
+export function normalizeResume(rawText: string): NormalizedResume {
+  const doc = parseResume(rawText);
+  
+  // Extract skills from the full text (not just the skills section)
+  const skills = extractNormalizedSkills(rawText);
+  
+  // Extract titles and companies from experience
+  const titles = doc.experience
+    .map(e => e.title)
+    .filter(t => t.length > 3 && t.length < 60 && !/^(?:in|at|for|the|and|of|with)\b/i.test(t) && /[a-z]/i.test(t))
+    .slice(0, 5);
+  
+  const companies = doc.experience
+    .map(e => e.company)
+    .filter(c => c.length > 2 && c.length < 60 && !/^(?:in|at|for|the|and|of|with)\b/i.test(c))
+    .slice(0, 5);
+  
+  // Extract degrees
+  const degrees = doc.education
+    .map(e => e.degree)
+    .filter(d => d.length > 2)
+    .slice(0, 3);
+  
+  // If no titles from experience, try to extract from the raw text
+  if (titles.length === 0) {
+    const titlePatterns = [
+      /(?:senior|lead|principal|staff|junior|mid)\s+(?:frontend|backend|full.?stack|software|mobile|data|devops|cloud|security|platform|infrastructure|site reliability)\s+(?:engineer|developer|architect|scientist|analyst)/gi,
+      /(?:frontend|backend|full.?stack|software|mobile|data|devops|cloud|security|platform|infrastructure|site reliability)\s+(?:engineer|developer|architect|scientist|analyst)/gi,
+    ];
+    for (const pattern of titlePatterns) {
+      const matches = rawText.match(pattern);
+      if (matches) {
+        for (const m of matches) {
+          const cleaned = m.trim();
+          if (!titles.includes(cleaned)) titles.push(cleaned);
+        }
+      }
+    }
+  }
+  
+  return {
+    skills,
+    titles,
+    companies,
+    degrees,
+    years: extractYearsFromText(rawText),
+    field: classifyField(skills),
+    level: detectLevel(rawText),
+    name: doc.contact.name,
+    email: doc.contact.email,
+    phone: doc.contact.phone,
+    linkedin: doc.contact.linkedin,
+  };
 }
 
 /* ── ResumeDocument → Plain Text ───────────────────────────────────── */

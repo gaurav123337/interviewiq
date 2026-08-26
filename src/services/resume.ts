@@ -10,6 +10,7 @@ import { FIELDS, LEVELS } from "../data";
 import type { CareerProfile, LevelId, SkillRating, UploadedResume } from "../types";
 import { getCloudState, getSupabaseClient } from "./cloud";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./storage";
+import { normalizeResume } from "./resumeParser";
 
 export interface ResumeResult {
   fieldId: string;
@@ -290,22 +291,38 @@ export function profileHasStaleSkills(profile: CareerProfile, resumeText: string
 
 /** Builds a CareerProfile from resume text — the matcher's input. */
 export function resumeToProfile(text: string): CareerProfile {
+  // Use the robust resume parser for structured extraction
+  const normalized = normalizeResume(text);
+  
+  // Also run the existing analysis for field/level detection
   const r = analyzeResume(text);
-  const fieldName = FIELDS.find(f => f.id === r.fieldId)?.name ?? "";
-  const levelName = LEVELS.find(l => l.id === r.levelId)?.name ?? "";
+  const fieldName = FIELDS.find(f => f.id === (normalized.field !== 'other' ? normalized.field : r.fieldId))?.name ?? "";
+  const levelId = normalized.level !== 'mid' ? normalized.level as LevelId : r.levelId;
+  const levelName = LEVELS.find(l => l.id === levelId)?.name ?? "";
+  
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-  const skills = extractSkillNames(text);
-  const years = extractYears(text, r.levelId);
-  const headline = extractHeadline(lines, fieldName, levelName);
-  const targetTitles = extractTitles(lines);
+  
+  // Merge skills from both extractors for comprehensive coverage
+  const tokenSkills = extractSkillNames(text);
+  const normalizedSkills = normalized.skills;
+  const allSkills = [...new Set([...normalizedSkills, ...tokenSkills])];
+  
+  const years = normalized.years > 0 ? normalized.years : extractYears(text, levelId);
+  const headline = normalized.titles.length > 0 
+    ? normalized.titles[0] 
+    : extractHeadline(lines, fieldName, levelName);
+  const targetTitles = normalized.titles.length > 0 
+    ? normalized.titles 
+    : extractTitles(lines);
+  
   return {
     headline: headline || `${levelName} ${fieldName}`.trim(),
     years,
-    location: "",
+    location: normalized.name ? "" : "",
     remote: true,
     workAuth: "",
     targetTitles: targetTitles.length ? targetTitles : (fieldName ? [fieldName] : []),
-    skills,
+    skills: allSkills.slice(0, 35),
     summary: extractSummary(text),
     updatedAt: Date.now()
   };
