@@ -33,13 +33,16 @@ export interface DuplicateMatch {
 /** Pre-computed token set for efficient batch similarity checks. */
 interface BankEntry { text: string; tokens: Set<string> }
 
-let _bankCache: { key: string; entries: BankEntry[] } | null = null;
+let _bankCache: { size: number; ref: string[]; entries: BankEntry[] } | null = null;
 
 function getBankEntries(bank: string[]): BankEntry[] {
-  const key = bank.join("\x00");
-  if (_bankCache?.key === key) return _bankCache.entries;
+  // Fast identity check: same array ref or same length + first/last match
+  if (_bankCache && _bankCache.ref === bank && _bankCache.size === bank.length) {
+    return _bankCache.entries;
+  }
+  // Build new cache — token computation is the expensive part
   const entries = bank.map(text => ({ text, tokens: tokens(text) }));
-  _bankCache = { key, entries };
+  _bankCache = { size: bank.length, ref: bank, entries };
   return entries;
 }
 
