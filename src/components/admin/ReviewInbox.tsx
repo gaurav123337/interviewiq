@@ -7,7 +7,6 @@ import { batchDeleteQuestions, batchSetQuestionsPublished, createQuestion, delet
 import { getPublishedQuestions } from "../../services/remoteConfig";
 import { toast } from "../../toast";
 import { cardCls, btnPrimary, btnGhost, btnDanger, btnSm, btnSoft, Chip } from "../ui";
-import { VirtualList } from "../ui/VirtualList";
 
 /* ------------------------------------------------------------------ */
 /* Review inbox — batch review of scraped/imported drafts              */
@@ -426,51 +425,22 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
         </div>
       )}
 
-      {drafts.length === 0 ? null : (
-        sortedDrafts.length > 50 ? (
-          /* Virtualized rendering for large lists */
-          <VirtualList
-            items={sortedDrafts}
-            estimateHeight={260}
-            overscan={3}
-            className="max-h-[70vh] space-y-3 pr-1"
-            renderItem={(d) => {
-              const e = edits[d.id];
-              if (!e) return null;
-              const idx = sortedDrafts.indexOf(d);
-              return (
-                <DraftCard
-                  d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]}
-                  expanded={expandedDrafts.has(d.id)} busy={busy} focused={focusedIdx === idx}
-                  onToggle={() => toggle(d.id)} onExpand={() => toggleExpand(d.id)}
-                  onEdit={(patch) => edit(d.id, patch)}
-                  onSave={() => saveOne(d.id)} onPublish={() => publishOne(d.id)} onDelete={() => deleteOne(d.id)}
-                  onDragStart={onDragStart(idx)} onDragOver={onDragOver(idx)}
-                  onDrop={onDrop(idx)} onDragEnd={onDragEnd}
-                />
-              );
-            }}
+      {sortedDrafts.map((d, idx) => {
+        const e = edits[d.id];
+        if (!e) return null;
+        return (
+          <DraftCard
+            key={d.id}
+            d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]}
+            expanded={expandedDrafts.has(d.id)} busy={busy} focused={focusedIdx === idx}
+            onToggle={() => toggle(d.id)} onExpand={() => toggleExpand(d.id)}
+            onEdit={(patch) => edit(d.id, patch)}
+            onSave={() => saveOne(d.id)} onPublish={() => publishOne(d.id)} onDelete={() => deleteOne(d.id)}
+            onDragStart={onDragStart(idx)} onDragOver={onDragOver(idx)}
+            onDrop={onDrop(idx)} onDragEnd={onDragEnd}
           />
-        ) : (
-          /* Normal rendering for smaller lists */
-          sortedDrafts.map((d, idx) => {
-            const e = edits[d.id];
-            if (!e) return null;
-            return (
-              <DraftCard
-                key={d.id}
-                d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]}
-                expanded={expandedDrafts.has(d.id)} busy={busy} focused={focusedIdx === idx}
-                onToggle={() => toggle(d.id)} onExpand={() => toggleExpand(d.id)}
-                onEdit={(patch) => edit(d.id, patch)}
-                onSave={() => saveOne(d.id)} onPublish={() => publishOne(d.id)} onDelete={() => deleteOne(d.id)}
-                onDragStart={onDragStart(idx)} onDragOver={onDragOver(idx)}
-                onDrop={onDrop(idx)} onDragEnd={onDragEnd}
-              />
-            );
-          })
-        )
-      )}
+        );
+      })}
     </div>
   );
 }
