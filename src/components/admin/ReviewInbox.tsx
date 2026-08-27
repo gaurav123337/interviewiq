@@ -74,10 +74,17 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
 
     return () => { abortRef.current = true; };
   }, [list, drafts]);
-  const sortedDrafts = [...drafts].sort((a, b) => {
-    const p = { "review-first": 0, "needs-work": 1, ready: 2 };
-    return (p[triage[a.id]?.level ?? "ready"] - p[triage[b.id]?.level ?? "ready"]) || a.id - b.id;
-  });
+  const [sortedDrafts, setSortedDrafts] = useState<typeof drafts>([]);
+  // Initialize + re-sort when triage or drafts change (but preserve manual reorder)
+  const [manualOrder, setManualOrder] = useState(false);
+  useEffect(() => {
+    if (manualOrder) return;
+    const sorted = [...drafts].sort((a, b) => {
+      const p = { "review-first": 0, "needs-work": 1, ready: 2 };
+      return (p[triage[a.id]?.level ?? "ready"] - p[triage[b.id]?.level ?? "ready"]) || a.id - b.id;
+    });
+    setSortedDrafts(sorted);
+  }, [drafts, triage, manualOrder]);
   const [aiTriage, setAiTriage] = useState<Record<number, { score: number; note: string }>>({});
   const [aiBusy, setAiBusy] = useState(false);
   const [edits, setEdits] = useState<Record<number, DraftEdit>>({});
@@ -86,6 +93,91 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [candLoading, setCandLoading] = useState(false);
   const [addedQ, setAddedQ] = useState<Set<string>>(new Set());
   const [expandedDrafts, setExpandedDrafts] = useState<Set<number>>(new Set());
+  const [focusedIdx, setFocusedIdx] = useState(-1);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
+  /* ── Keyboard shortcuts ── */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Ignore when typing in an input/textarea/select
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (sortedDrafts.length === 0) return;
+
+      const idx = focusedIdx;
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          setFocusedIdx(i => Math.min(i + 1, sortedDrafts.length - 1));
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          setFocusedIdx(i => Math.max(i - 1, 0));
+          break;
+        case "Enter": {
+          // Publish focused draft
+          e.preventDefault();
+          if (idx >= 0 && idx < sortedDrafts.length) {
+            publishOne(sortedDrafts[idx].id);
+            setFocusedIdx(i => Math.min(i, sortedDrafts.length - 2));
+          }
+          break;
+        }
+        case "Delete":
+        case "Backspace": {
+          // Delete focused draft
+          e.preventDefault();
+          if (idx >= 0 && idx < sortedDrafts.length) {
+            deleteOne(sortedDrafts[idx].id);
+            setFocusedIdx(i => Math.min(i, sortedDrafts.length - 2));
+          }
+          break;
+        }
+        case " ": {
+          // Toggle select
+          e.preventDefault();
+          if (idx >= 0 && idx < sortedDrafts.length) {
+            toggle(sortedDrafts[idx].id);
+          }
+          break;
+        }
+        case "e":
+        case "E": {
+          // Toggle expand
+          e.preventDefault();
+          if (idx >= 0 && idx < sortedDrafts.length) {
+            toggleExpand(sortedDrafts[idx].id);
+          }
+          break;
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [sortedDrafts, focusedIdx]);
+
+  /* ── Drag-and-drop reorder ── */
+  const onDragStart = (idx: number) => (e: React.DragEvent) => {
+    setDragIdx(idx);
+    e.dataTransfer.effectAllowed = "move";
+  };
+  const onDragOver = (idx: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+  const onDrop = (idx: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (dragIdx === null || dragIdx === idx) return;
+    // Reorder sortedDrafts by moving item from dragIdx to idx
+    const item = sortedDrafts[dragIdx];
+    const newDrafts = [...sortedDrafts];
+    newDrafts.splice(dragIdx, 1);
+    newDrafts.splice(idx, 0, item);
+    setSortedDrafts(newDrafts);
+    setManualOrder(true);
+    setDragIdx(null);
+  };
+  const onDragEnd = () => setDragIdx(null);
 
   const toggleExpand = (id: number) => {
     setExpandedDrafts(prev => {
@@ -345,30 +437,35 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
             renderItem={(d) => {
               const e = edits[d.id];
               if (!e) return null;
+              const idx = sortedDrafts.indexOf(d);
               return (
                 <DraftCard
                   d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]}
-                  expanded={expandedDrafts.has(d.id)} busy={busy}
+                  expanded={expandedDrafts.has(d.id)} busy={busy} focused={focusedIdx === idx}
                   onToggle={() => toggle(d.id)} onExpand={() => toggleExpand(d.id)}
                   onEdit={(patch) => edit(d.id, patch)}
                   onSave={() => saveOne(d.id)} onPublish={() => publishOne(d.id)} onDelete={() => deleteOne(d.id)}
+                  onDragStart={onDragStart(idx)} onDragOver={onDragOver(idx)}
+                  onDrop={onDrop(idx)} onDragEnd={onDragEnd}
                 />
               );
             }}
           />
         ) : (
           /* Normal rendering for smaller lists */
-          sortedDrafts.map(d => {
+          sortedDrafts.map((d, idx) => {
             const e = edits[d.id];
             if (!e) return null;
             return (
               <DraftCard
                 key={d.id}
                 d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]}
-                expanded={expandedDrafts.has(d.id)} busy={busy}
+                expanded={expandedDrafts.has(d.id)} busy={busy} focused={focusedIdx === idx}
                 onToggle={() => toggle(d.id)} onExpand={() => toggleExpand(d.id)}
                 onEdit={(patch) => edit(d.id, patch)}
                 onSave={() => saveOne(d.id)} onPublish={() => publishOne(d.id)} onDelete={() => deleteOne(d.id)}
+                onDragStart={onDragStart(idx)} onDragOver={onDragOver(idx)}
+                onDrop={onDrop(idx)} onDragEnd={onDragEnd}
               />
             );
           })
@@ -379,22 +476,54 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
 }
 
 /* ── Draft card component (shared by virtualized and normal rendering) ── */
-function DraftCard({ d, e, sel, t, ai, expanded, busy, onToggle, onExpand, onEdit, onSave, onPublish, onDelete }: {
+function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, onToggle, onExpand, onEdit, onSave, onPublish, onDelete, onDragStart, onDragOver, onDrop, onDragEnd }: {
   d: { id: number; fieldId: string; level: string; question: string; answer: string; keyPoints: string[] };
   e: { fieldId: string; level: string; question: string; answer: string; keyPoints: string[] };
   sel: boolean; t?: { issues: string[]; level: string; dups: { text: string; sim: number }[] };
-  ai?: { score: number; note: string }; expanded: boolean; busy: boolean;
+  ai?: { score: number; note: string }; expanded: boolean; busy: boolean; focused?: boolean;
   onToggle: () => void; onExpand: () => void; onEdit: (patch: Record<string, unknown>) => void;
   onSave: () => void; onPublish: () => void; onDelete: () => void;
+  onDragStart?: (e: React.DragEvent) => void; onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void; onDragEnd?: () => void;
 }) {
+  const currentLevel = LEVELS.find(l => l.id === e.level);
+  const currentField = FIELDS.find(f => f.id === e.fieldId);
   return (
-    <div className={`${cardCls} p-5 ${sel ? "ring-2 ring-acc1/60" : ""}`}>
+    <div
+      className={`${cardCls} p-5 ${sel ? "ring-2 ring-acc1/60" : ""} ${focused ? "ring-2 ring-acc1" : ""} transition-shadow`}
+      draggable={!!onDragStart}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+    >
       <div className="mb-3 flex items-start gap-3">
         <input type="checkbox" checked={sel} onChange={onToggle} className="mt-1 h-4 w-4 accent-acc1" />
+        {/* Drag handle */}
+        {onDragStart && (
+          <div className="mt-1 cursor-grab text-mut hover:text-ink text-[14px] select-none" title="Drag to reorder">⠿</div>
+        )}
         <div className="flex-1 space-y-2.5">
+          {/* ── Inline-editable tags ── */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <Chip tone="lvl">{LEVELS.find(l => l.id === d.level)?.icon} {LEVELS.find(l => l.id === d.level)?.name}</Chip>
-            <Chip tone="cat">{FIELDS.find(f => f.id === d.fieldId)?.icon} {FIELDS.find(f => f.id === d.fieldId)?.name ?? d.fieldId}</Chip>
+            {/* Level chip — click to cycle or select */}
+            <select
+              value={e.level}
+              onChange={ev => onEdit({ level: ev.target.value })}
+              className="rounded-lg border border-line/20 bg-panel3 px-2 py-0.5 text-[11.5px] font-bold text-ink appearance-none cursor-pointer hover:border-acc1/50 transition-colors"
+              title="Click to change level"
+            >
+              {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
+            </select>
+            {/* Field chip — click to select */}
+            <select
+              value={e.fieldId}
+              onChange={ev => onEdit({ fieldId: ev.target.value })}
+              className="rounded-lg border border-line/20 bg-panel3 px-2 py-0.5 text-[11.5px] font-bold text-ink appearance-none cursor-pointer hover:border-acc1/50 transition-colors"
+              title="Click to change field"
+            >
+              {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
+            </select>
             {t && (
               <Chip tone={t.level === "ready" ? "ok" : t.level === "needs-work" ? "warn" : "bad"}>
                 {t.level === "ready" ? "🟢 ready" : t.level === "needs-work" ? "🟡 needs work" : "🔴 review first"}
@@ -406,6 +535,10 @@ function DraftCard({ d, e, sel, t, ai, expanded, busy, onToggle, onExpand, onEdi
             ))}
             {ai && (
               <Chip tone={ai.score >= 7 ? "ok" : ai.score >= 4 ? "warn" : "bad"}>✨ {ai.score}/10</Chip>
+            )}
+            {/* Tag change indicator */}
+            {(e.level !== d.level || e.fieldId !== d.fieldId) && (
+              <span className="text-[10px] font-bold text-warn">modified</span>
             )}
           </div>
           {ai?.note && ai.note !== "AI unavailable" && <p className="text-[11.5px] text-fnt">✨ {ai.note}</p>}
@@ -451,10 +584,21 @@ function DraftCard({ d, e, sel, t, ai, expanded, busy, onToggle, onExpand, onEdi
           )}
         </div>
       </div>
-      <div className="flex flex-wrap justify-end gap-2">
-        <button className={btnGhost + btnSm} onClick={onSave} disabled={busy}>💾 Save</button>
-        <button className={btnPrimary + btnSm} onClick={onPublish} disabled={busy}>🚀 Publish</button>
-        <button className={btnDanger + btnSm} onClick={onDelete} disabled={busy}>Delete</button>
+      <div className="flex flex-wrap justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-[10px] text-mut">
+          <span>Enter=publish</span>
+          <span>·</span>
+          <span>Del=delete</span>
+          <span>·</span>
+          <span>↑↓=navigate</span>
+          <span>·</span>
+          <span>Space=select</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className={btnGhost + btnSm} onClick={onSave} disabled={busy}>💾 Save</button>
+          <button className={btnPrimary + btnSm} onClick={onPublish} disabled={busy}>🚀 Publish</button>
+          <button className={btnDanger + btnSm} onClick={onDelete} disabled={busy}>Delete</button>
+        </div>
       </div>
     </div>
   );
