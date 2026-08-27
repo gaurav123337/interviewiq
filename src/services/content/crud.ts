@@ -172,6 +172,9 @@ export async function saveTips(t: TipConfig): Promise<TipConfig> {
     descriptions: t.descriptions,
     stripe_link: t.stripe_link,
     buymeacoffee_link: t.buymeacoffee_link,
+    razorpay_key_id: t.razorpay_key_id,
+    razorpay_name: t.razorpay_name,
+    currency: t.currency,
     enabled: t.enabled,
   };
 
