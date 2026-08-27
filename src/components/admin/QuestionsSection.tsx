@@ -1,6 +1,6 @@
 /* QuestionsSection — extracted from Admin.tsx */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { createQuestion, deleteQuestion, setQuestionPublished } from "../../services/admin";
@@ -22,6 +22,9 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
   const [answer, setAnswer] = useState("");
   const [keyPoints, setKeyPoints] = useState("");
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 50;
+  useEffect(() => { setPage(0); }, [list.length]);
 
   const publish = async () => {
     if (!question.trim()) { toast("Question is required"); return; }
@@ -61,9 +64,16 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">📚 Published questions ({list.length})</h2>
+        {list.length > PAGE_SIZE && (
+          <div className="flex items-center justify-center gap-2 py-2">
+            <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</button>
+            <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(list.length / PAGE_SIZE)}</span>
+            <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.min(Math.ceil(list.length / PAGE_SIZE) - 1, p + 1))} disabled={(page + 1) * PAGE_SIZE >= list.length}>Next →</button>
+          </div>
+        )}
         <div className="mt-3 space-y-2.5">
           {list.length === 0 && <p className="text-[13px] text-mut">Nothing published yet.</p>}
-          {list.map(q => (
+          {list.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map(q => (
             <div key={q.id} className="flex items-start gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
