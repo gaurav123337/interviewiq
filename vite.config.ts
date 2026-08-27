@@ -18,13 +18,13 @@ import tailwindcss from "@tailwindcss/vite";
    travels with the cached shell. */
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-eval'",
+  "script-src 'self' 'unsafe-eval' https://checkout.razorpay.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' https:",
   "worker-src 'self' blob: https:",
-  "frame-src 'self'",
+  "frame-src 'self' https://checkout.razorpay.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'"
