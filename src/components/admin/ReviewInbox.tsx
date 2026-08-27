@@ -29,17 +29,27 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
 }) {
   const drafts = list.filter(q => !q.published);
-  /* auto-triage: heuristic issues + near-duplicate detection against the whole bank */
-  const triage = useMemo(() => {
-    const bank = list.map(q => q.question);
-    const map: Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }> = {};
-    for (const d of drafts) {
-      const issues = draftIssues(d);
-      const dups = findDuplicates(d.question, bank.filter(q => q !== d.question));
-      map[d.id] = { issues, level: triageLevel(issues), dups };
-    }
-    return map;
-  }, [list, drafts]);
+  /* auto-triage: heuristic issues + near-duplicate detection (lazy — only runs once) */
+  const [triage, setTriage] = useState<Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }>>({});
+  const [triageDone, setTriageDone] = useState(false);
+
+  useEffect(() => {
+    if (triageDone || drafts.length === 0) return;
+    setTriageDone(true);
+    // Defer heavy duplicate detection to next frame so UI renders first
+    requestAnimationFrame(() => {
+      const bank = list.map(q => q.question);
+      // Limit bank to last 500 questions for performance
+      const limitedBank = bank.slice(-500);
+      const map: Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }> = {};
+      for (const d of drafts) {
+        const issues = draftIssues(d);
+        const dups = findDuplicates(d.question, limitedBank.filter(q => q !== d.question));
+        map[d.id] = { issues, level: triageLevel(issues), dups };
+      }
+      setTriage(map);
+    });
+  }, [list, drafts, triageDone]);
   const sortedDrafts = [...drafts].sort((a, b) => {
     const p = { "review-first": 0, "needs-work": 1, ready: 2 };
     return (p[triage[a.id]?.level ?? "ready"] - p[triage[b.id]?.level ?? "ready"]) || a.id - b.id;
