@@ -1,4 +1,4 @@
-/* pay-tip — Razorpay Standard Checkout for tip donations.
+/* pay-tip — Razorpay Standard Checkout for tip donations. (v2)
    Two modes:
    - POST { mode: "order", amount, currency, label } → creates a Razorpay order
    - POST { mode: "verify", paymentId, orderId, signature, label } → verifies + records
