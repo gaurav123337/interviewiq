@@ -95,7 +95,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [focusedIdx, setFocusedIdx] = useState(-1);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [page, setPage] = useState(0);
-  const PAGE_SIZE = 50;
+  const [pageSize, setPageSize] = useState(50);
   // Reset page when drafts change
   useEffect(() => { setPage(0); }, [drafts.length]);
 
@@ -430,18 +430,25 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       )}
 
       {/* Pagination */}
-      {sortedDrafts.length > PAGE_SIZE && (
-        <div className="flex items-center justify-center gap-2 py-3">
+      {sortedDrafts.length > 0 && (
+        <div className="flex items-center justify-between gap-2 py-3">
           <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</button>
-          <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(sortedDrafts.length / PAGE_SIZE)} ({sortedDrafts.length} total)</span>
-          <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.min(Math.ceil(sortedDrafts.length / PAGE_SIZE) - 1, p + 1))} disabled={(page + 1) * PAGE_SIZE >= sortedDrafts.length}>Next →</button>
+          <div className="flex items-center gap-2">
+            <select value={pageSize} onChange={ev => { setPageSize(Number(ev.target.value)); setPage(0); }} className="rounded-lg border border-line/20 bg-panel3 px-2 py-1 text-[11px] font-bold">
+              <option value={25}>25 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
+            </select>
+            <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(sortedDrafts.length / pageSize)} ({sortedDrafts.length} total)</span>
+          </div>
+          <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.min(Math.ceil(sortedDrafts.length / pageSize) - 1, p + 1))} disabled={(page + 1) * pageSize >= sortedDrafts.length}>Next →</button>
         </div>
       )}
 
-      {sortedDrafts.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((d, i) => {
+      {sortedDrafts.slice(page * pageSize, (page + 1) * pageSize).map((d, i) => {
         const e = edits[d.id];
         if (!e) return null;
-        const idx = page * PAGE_SIZE + i;
+        const idx = page * pageSize + i;
         return (
           <DraftCard
             key={d.id}
@@ -457,11 +464,11 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       })}
 
       {/* Bottom pagination */}
-      {sortedDrafts.length > PAGE_SIZE && (
+      {sortedDrafts.length > pageSize && (
         <div className="flex items-center justify-center gap-2 py-3">
           <button className={btnGhost + btnSm} onClick={() => { setPage(p => Math.max(0, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }} disabled={page === 0}>← Prev</button>
-          <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(sortedDrafts.length / PAGE_SIZE)}</span>
-          <button className={btnGhost + btnSm} onClick={() => { setPage(p => Math.min(Math.ceil(sortedDrafts.length / PAGE_SIZE) - 1, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }} disabled={(page + 1) * PAGE_SIZE >= sortedDrafts.length}>Next →</button>
+          <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(sortedDrafts.length / pageSize)}</span>
+          <button className={btnGhost + btnSm} onClick={() => { setPage(p => Math.min(Math.ceil(sortedDrafts.length / pageSize) - 1, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }} disabled={(page + 1) * pageSize >= sortedDrafts.length}>Next →</button>
         </div>
       )}
     </div>
