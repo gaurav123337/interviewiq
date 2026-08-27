@@ -21,13 +21,19 @@ CREATE INDEX IF NOT EXISTS idx_tip_payments_created ON public.tip_payments(creat
 -- RLS: users can read their own tips, admins can read all
 ALTER TABLE public.tip_payments ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Users can view own tips"
-  ON public.tip_payments FOR SELECT
-  USING (auth.uid() = user_id);
+DO $$ BEGIN
+  CREATE POLICY "Users can view own tips"
+    ON public.tip_payments FOR SELECT
+    USING (auth.uid() = user_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
-CREATE POLICY "Service role can insert tips"
-  ON public.tip_payments FOR INSERT
-  WITH CHECK (true);
+DO $$ BEGIN
+  CREATE POLICY "Service role can insert tips"
+    ON public.tip_payments FOR INSERT
+    WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Admin summary view
 CREATE OR REPLACE VIEW public.admin_tip_summary AS
