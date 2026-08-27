@@ -7,57 +7,64 @@
  */
 
 let warned = false;
-let bannerEl: HTMLDivElement | null = null;
+let bannerEl: HTMLElement | null = null;
 
 const EXTENSION_URL_RE = /chrome-extension:\/\/|moz-extension:\/\/|safari-web-extension:\/\//i;
+
+function el(tag: string, attrs: Record<string, string>, ...children: (Node | string)[]): HTMLElement {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'style') e.setAttribute('style', v);
+    else if (k.startsWith('data-')) e.setAttribute(k, v);
+    else e.setAttribute(k, v);
+  }
+  for (const c of children) {
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return e;
+}
 
 function showBanner(details: string) {
   if (warned || bannerEl) return;
   warned = true;
 
-  const div = document.createElement('div');
-  div.id = 'ext-guard-banner';
-  div.innerHTML = `
-    <div style="
-      position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
-      z-index:99999; max-width:600px; width:calc(100% - 32px);
-      background:#1e1b4b; color:#e0e7ff; border:1px solid #6366f1;
-      border-radius:12px; padding:16px 20px; font-family:system-ui,sans-serif;
-      box-shadow:0 8px 32px rgba(0,0,0,0.4); line-height:1.5;
-    ">
-      <div style="display:flex; align-items:flex-start; gap:12px;">
-        <span style="font-size:24px; flex-shrink:0;">⚠️</span>
-        <div style="flex:1;">
-          <strong style="font-size:14px; color:#a5b4fc;">Browser Extension Interference Detected</strong>
-          <p style="margin:6px 0 0; font-size:13px; opacity:0.9;">
-            A browser extension is modifying this page's scripts, which may cause errors
-            or a blank screen. Try one of these fixes:
-          </p>
-          <ul style="margin:8px 0 0; padding-left:18px; font-size:13px; opacity:0.85;">
-            <li>Open this site in <strong>Incognito mode</strong> (Ctrl+Shift+N)</li>
-            <li>Temporarily disable your ad-blocker, coupon, or shopping extensions</li>
-            <li>Whitelist <strong>gaurav123337.github.io</strong> in your extension settings</li>
-          </ul>
-          <details style="margin-top:8px; font-size:12px; opacity:0.7;">
-            <summary style="cursor:pointer;">Technical details</summary>
-            <code style="display:block; margin-top:4px; word-break:break-all; font-size:11px;">${details}</code>
-          </details>
-        </div>
-        <button id="ext-guard-close" style="
-          background:none; border:none; color:#a5b4fc; font-size:20px;
-          cursor:pointer; padding:0 4px; flex-shrink:0; line-height:1;
-        ">&times;</button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(div);
-  bannerEl = div;
-
-  div.querySelector('#ext-guard-close')?.addEventListener('click', () => {
-    div.remove();
-    bannerEl = null;
+  const banner = el('div', {
+    style: 'position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:99999;max-width:600px;width:calc(100% - 32px);background:#1e1b4b;color:#e0e7ff;border:1px solid #6366f1;border-radius:12px;padding:16px 20px;font-family:system-ui,sans-serif;box-shadow:0 8px 32px rgba(0,0,0,0.4);line-height:1.5;'
   });
+
+  const row = el('div', { style: 'display:flex;align-items:flex-start;gap:12px;' });
+
+  const icon = el('span', { style: 'font-size:24px;flex-shrink:0;' }, '⚠️');
+
+  const body = el('div', { style: 'flex:1;' });
+  body.appendChild(el('strong', { style: 'font-size:14px;color:#a5b4fc;' }, 'Browser Extension Interference Detected'));
+  body.appendChild(el('p', { style: 'margin:6px 0 0;font-size:13px;opacity:0.9;' },
+    'A browser extension is modifying this page\'s scripts, which may cause errors or a blank screen. Try one of these fixes:'
+  ));
+
+  const list = el('ul', { style: 'margin:8px 0 0;padding-left:18px;font-size:13px;opacity:0.85;' });
+  list.appendChild(el('li', {}, 'Open this site in ', el('strong', {}, 'Incognito mode'), ' (Ctrl+Shift+N)'));
+  list.appendChild(el('li', {}, 'Temporarily disable your ad-blocker, coupon, or shopping extensions'));
+  list.appendChild(el('li', {}, 'Whitelist this site in your extension settings'));
+  body.appendChild(list);
+
+  const detailsEl = el('details', { style: 'margin-top:8px;font-size:12px;opacity:0.7;' });
+  detailsEl.appendChild(el('summary', { style: 'cursor:pointer;' }, 'Technical details'));
+  detailsEl.appendChild(el('code', { style: 'display:block;margin-top:4px;word-break:break-all;font-size:11px;' }, details));
+  body.appendChild(detailsEl);
+
+  const closeBtn = el('button', {
+    style: 'background:none;border:none;color:#a5b4fc;font-size:20px;cursor:pointer;padding:0 4px;flex-shrink:0;line-height:1;'
+  }, '×');
+  closeBtn.addEventListener('click', () => { banner.remove(); bannerEl = null; });
+
+  row.appendChild(icon);
+  row.appendChild(body);
+  row.appendChild(closeBtn);
+  banner.appendChild(row);
+
+  document.body.appendChild(banner);
+  bannerEl = banner;
 }
 
 /**
@@ -92,7 +99,6 @@ export function initExtensionGuard() {
       const url = String(specifier);
       if (EXTENSION_URL_RE.test(url)) {
         showBanner(`Extension rewrote dynamic import to: ${url}`);
-        // Still call original so the app doesn't crash harder
       }
       return originalImport.call(this, specifier, ...args);
     };
