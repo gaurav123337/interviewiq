@@ -16,6 +16,7 @@ import { refreshEntitlement } from "../services/entitlement";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Chip } from "./ui";
+import { initExtensionGuard } from "../services/extensionGuard";
 
 /* ------------------------------------------------------------------ */
 /* Lazy-loaded page components — split into separate chunks so the     */
@@ -116,6 +117,9 @@ export function App() {
     setSwUpdateReady(false);
     window.location.reload();
   };
+
+  /* detect browser extensions that hijack module imports */
+  useEffect(() => { initExtensionGuard(); }, []);
 
   /* keep the header avatar in sync with sign-in state */
   useEffect(() => subscribeCloud(setCloud), []);
