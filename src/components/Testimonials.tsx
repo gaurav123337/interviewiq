@@ -331,28 +331,86 @@ export function SupportSection() {
     });
   };
 
-  const handlePayment = async (amount: number, label: string) => {
-    if (!tipConfig) return;
+  const [tipBusy, setTipBusy] = useState<number | null>(null);
 
-    // Try Razorpay first
+  const handlePayment = async (amount: number, label: string, tierIdx: number) => {
+    if (!tipConfig || tipBusy !== null) return;
+
+    // Try Razorpay first — server-side order + verification
     if (tipConfig.razorpay_key_id) {
-      const loaded = await loadRazorpay();
-      if (loaded) {
-        // @ts-ignore
+      try {
+        setTipBusy(tierIdx);
+        const { CONFIG } = await import('../config');
+        const { getSupabaseClient, getCloudState } = await import('../services/cloud');
+        const client = await getSupabaseClient();
+        if (!client || !getCloudState().user) {
+          toast('Sign in to leave a tip — your contribution is tied to your account.');
+          setTipBusy(null);
+          return;
+        }
+        const { data: session } = await client.auth.getSession();
+        const token = session?.session?.access_token;
+        if (!token) { toast('Sign in again to leave a tip.'); setTipBusy(null); return; }
+
+        // 1 — Create server-side order
+        const orderRes = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-tip`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ mode: 'order', amount, currency: tipConfig.currency, label })
+        });
+        const orderBody = await orderRes.json().catch(() => ({}));
+        if (!orderRes.ok || !orderBody.ok) {
+          toast(orderBody.error ?? 'Failed to create payment order');
+          setTipBusy(null);
+          return;
+        }
+
+        // 2 — Load Razorpay and open modal with server order
+        const loaded = await loadRazorpay();
+        if (!loaded) { toast('Razorpay failed to load — try again.'); setTipBusy(null); return; }
+
+        // @ts-ignore — Razorpay is loaded dynamically from checkout.js
         const rzp = new window.Razorpay({
-          key: tipConfig.razorpay_key_id,
-          amount: amount * 100, // Razorpay expects paise/cents
-          currency: tipConfig.currency,
+          key: orderBody.keyId,
+          amount: orderBody.amountMinor,
+          currency: orderBody.currency,
           name: tipConfig.razorpay_name || 'InterviewIQ',
           description: label,
-          handler: (response: { razorpay_payment_id: string }) => {
-            toast(`✅ Payment successful! ID: ${response.razorpay_payment_id}`);
+          order_id: orderBody.orderId,
+          handler: async (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => {
+            // 3 — Verify payment server-side
+            try {
+              const verifyRes = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-tip`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                  mode: 'verify',
+                  paymentId: response.razorpay_payment_id,
+                  orderId: response.razorpay_order_id,
+                  signature: response.razorpay_signature,
+                  label
+                })
+              });
+              const verifyBody = await verifyRes.json().catch(() => ({}));
+              if (verifyRes.ok && verifyBody.ok) {
+                toast(`✅ Thank you! ${label} recorded.`);
+              } else {
+                toast(verifyBody.error ?? 'Payment verified but recording failed — contact support.');
+              }
+            } catch {
+              toast('Payment sent — verification is processing.');
+            }
+            setTipBusy(null);
           },
           prefill: { name: '', email: '' },
-          theme: { color: '#6366f1' }
+          theme: { color: '#6366f1' },
+          modal: { ondismiss: () => setTipBusy(null) }
         });
         rzp.open();
         return;
+      } catch (e) {
+        toast((e as Error).message ?? 'Tip payment failed');
+        setTipBusy(null);
       }
     }
 
@@ -391,12 +449,19 @@ export function SupportSection() {
           {tipConfig.amounts.map((amt, i) => (
             <button
               key={amt}
-              onClick={() => handlePayment(amt, tipConfig.labels[i] || 'Support')}
+              onClick={() => handlePayment(amt, tipConfig.labels[i] || 'Support', i)}
+              disabled={tipBusy !== null}
               className="rounded-xl border border-line/20 bg-wht/10 px-5 py-3 text-center transition-all hover:border-acc1/40 hover:bg-wht/15 hover:shadow-[0_4px_12px_rgba(99,102,241,.15)]"
             >
-              <div className="text-[20px]">{tipConfig.labels[i]?.split(' ')[0] || '💰'}</div>
-              <div className="mt-1 text-[13px] font-extrabold">{symbol}{amt}</div>
-              <div className="text-[11px] text-mut">{tipConfig.descriptions[i] || 'Support the project'}</div>
+              {tipBusy === i ? (
+                <><span className="spinner inline-block" /> <span className="text-[11px]">Processing…</span></>
+              ) : (
+                <>
+                  <div className="text-[20px]">{tipConfig.labels[i]?.split(' ')[0] || '💰'}</div>
+                  <div className="mt-1 text-[13px] font-extrabold">{symbol}{amt}</div>
+                  <div className="text-[11px] text-mut">{tipConfig.descriptions[i] || 'Support the project'}</div>
+                </>
+              )}
             </button>
           ))}
         </div>
