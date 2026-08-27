@@ -51,6 +51,15 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [candidates, setCandidates] = useState<MissCandidate[]>([]);
   const [candLoading, setCandLoading] = useState(false);
   const [addedQ, setAddedQ] = useState<Set<string>>(new Set());
+  const [expandedDrafts, setExpandedDrafts] = useState<Set<number>>(new Set());
+
+  const toggleExpand = (id: number) => {
+    setExpandedDrafts(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     setCandLoading(true);
@@ -279,12 +288,16 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
         const sel = selected.has(d.id);
         const t = triage[d.id];
         const ai = aiTriage[d.id];
+        const expanded = expandedDrafts.has(d.id);
         return (
           <div key={d.id} className={`${cardCls} p-5 ${sel ? "ring-2 ring-acc1/60" : ""}`}>
             <div className="mb-3 flex items-start gap-3">
               <input type="checkbox" checked={sel} onChange={() => toggle(d.id)} className="mt-1 h-4 w-4 accent-acc1" />
               <div className="flex-1 space-y-2.5">
+                {/* ── Summary chips ── */}
                 <div className="flex flex-wrap items-center gap-1.5">
+                  <Chip tone="lvl">{LEVELS.find(l => l.id === d.level)?.icon} {LEVELS.find(l => l.id === d.level)?.name}</Chip>
+                  <Chip tone="cat">{FIELDS.find(f => f.id === d.fieldId)?.icon} {FIELDS.find(f => f.id === d.fieldId)?.name ?? d.fieldId}</Chip>
                   {t && (
                     <Chip tone={t.level === "ready" ? "ok" : t.level === "needs-work" ? "warn" : "bad"}>
                       {t.level === "ready" ? "🟢 ready" : t.level === "needs-work" ? "🟡 needs work" : "🔴 review first"}
@@ -306,22 +319,65 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
                     Matches existing: {t.dups[0].text.slice(0, 90)}{t.dups[0].text.length > 90 ? "…" : ""}
                   </p>
                 )}
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                  <select value={e.fieldId} onChange={ev => edit(d.id, { fieldId: ev.target.value })} className="inp">
-                    {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
-                  </select>
-                  <select value={e.level} onChange={ev => edit(d.id, { level: ev.target.value as LevelId })} className="inp">
-                    {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
-                  </select>
-                </div>
-                <textarea value={e.question} onChange={ev => edit(d.id, { question: ev.target.value })} rows={2} className="inp w-full resize-y text-[13.5px] font-bold" />
-                <textarea value={e.answer} onChange={ev => edit(d.id, { answer: ev.target.value })} rows={3} placeholder="Model answer…" className="inp w-full resize-y" />
-                <input
-                  value={e.keyPoints.join(", ")}
-                  onChange={ev => edit(d.id, { keyPoints: ev.target.value.split(",").map(k => k.trim()).filter(Boolean) })}
-                  placeholder="Key points, comma-separated"
-                  className="inp w-full"
-                />
+
+                {/* ── Question (always visible) ── */}
+                <div className="text-[14px] font-bold leading-snug">{d.question}</div>
+
+                {/* ── Answer preview (always visible, collapsed) ── */}
+                {d.answer && (
+                  <div className="rounded-lg bg-panel2/50 px-3 py-2">
+                    <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-mut">Model Answer</div>
+                    <p className={`text-[12.5px] text-ink leading-relaxed ${expanded ? "" : "line-clamp-3"}`}>{d.answer}</p>
+                    {d.answer.length > 200 && !expanded && (
+                      <button onClick={() => toggleExpand(d.id)} className="mt-1 text-[11px] font-bold text-acc hover:underline">Show full answer…</button>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Key points (always visible) ── */}
+                {d.keyPoints.length > 0 && (
+                  <div>
+                    <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-mut">Key Points ({d.keyPoints.length})</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {d.keyPoints.map((kp, i) => <Chip key={i}>{kp}</Chip>)}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Empty state ── */}
+                {!d.answer && d.keyPoints.length === 0 && (
+                  <p className="text-[11.5px] text-warn italic">⚠️ No answer or key points — needs review</p>
+                )}
+
+                {/* ── Expand toggle ── */}
+                <button
+                  onClick={() => toggleExpand(d.id)}
+                  className="text-[11.5px] font-bold text-acc hover:underline"
+                >
+                  {expanded ? "▼ Collapse editor" : "▶ Expand to edit"}
+                </button>
+
+                {/* ── Full edit form (collapsed by default) ── */}
+                {expanded && (
+                  <div className="space-y-2.5 border-t border-line/10 pt-3">
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      <select value={e.fieldId} onChange={ev => edit(d.id, { fieldId: ev.target.value })} className="inp">
+                        {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
+                      </select>
+                      <select value={e.level} onChange={ev => edit(d.id, { level: ev.target.value as LevelId })} className="inp">
+                        {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
+                      </select>
+                    </div>
+                    <textarea value={e.question} onChange={ev => edit(d.id, { question: ev.target.value })} rows={2} className="inp w-full resize-y text-[13.5px] font-bold" />
+                    <textarea value={e.answer} onChange={ev => edit(d.id, { answer: ev.target.value })} rows={3} placeholder="Model answer…" className="inp w-full resize-y" />
+                    <input
+                      value={e.keyPoints.join(", ")}
+                      onChange={ev => edit(d.id, { keyPoints: ev.target.value.split(",").map(k => k.trim()).filter(Boolean) })}
+                      placeholder="Key points, comma-separated"
+                      className="inp w-full"
+                    />
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap justify-end gap-2">
