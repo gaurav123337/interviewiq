@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { chat, aiAvailable } from "../../ai";
@@ -32,25 +32,48 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const drafts = list.filter(q => !q.published);
   /* auto-triage: heuristic issues + near-duplicate detection (lazy — only runs once) */
   const [triage, setTriage] = useState<Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }>>({});
-  const [triageDone, setTriageDone] = useState(false);
+  const [triageProgress, setTriageProgress] = useState(0); // 0-100
+  const triageBatchSize = 10;
+  const triageBatchRef = useRef(0);
+  const abortRef = useRef(false);
 
+  /* Paginated triage: process 10 drafts at a time with UI updates between batches */
   useEffect(() => {
-    if (triageDone || drafts.length === 0) return;
-    setTriageDone(true);
-    // Defer heavy duplicate detection to next frame so UI renders first
-    requestAnimationFrame(() => {
-      const bank = list.map(q => q.question);
-      // Limit bank to last 500 questions for performance
-      const limitedBank = bank.slice(-500);
-      const map: Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }> = {};
-      for (const d of drafts) {
+    if (drafts.length === 0) return;
+    abortRef.current = false;
+    triageBatchRef.current = 0;
+    setTriageProgress(0);
+
+    const bank = list.map(q => q.question).slice(-500);
+    const map: Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }> = {};
+
+    const processBatch = () => {
+      if (abortRef.current) return;
+      const start = triageBatchRef.current;
+      const end = Math.min(start + triageBatchSize, drafts.length);
+
+      for (let i = start; i < end; i++) {
+        const d = drafts[i];
         const issues = draftIssues(d);
-        const dups = findDuplicates(d.question, limitedBank.filter(q => q !== d.question));
+        const dups = findDuplicates(d.question, bank.filter(q => q !== d.question));
         map[d.id] = { issues, level: triageLevel(issues), dups };
       }
-      setTriage(map);
-    });
-  }, [list, drafts, triageDone]);
+
+      triageBatchRef.current = end;
+      setTriage({ ...map });
+      setTriageProgress(Math.round((end / drafts.length) * 100));
+
+      if (end < drafts.length) {
+        // Yield to browser for rendering, then process next batch
+        setTimeout(processBatch, 0);
+      }
+    };
+
+    // Start after first paint
+    requestAnimationFrame(() => processBatch());
+
+    return () => { abortRef.current = true; };
+  }, [list, drafts]);
   const sortedDrafts = [...drafts].sort((a, b) => {
     const p = { "review-first": 0, "needs-work": 1, ready: 2 };
     return (p[triage[a.id]?.level ?? "ready"] - p[triage[b.id]?.level ?? "ready"]) || a.id - b.id;
@@ -281,6 +304,24 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
             </div>
           )}
         </div>
+        {/* Triage progress bar */}
+        {triageProgress > 0 && triageProgress < 100 && (
+          <div className="mt-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] text-mut font-bold">🔍 Analyzing drafts…</span>
+              <span className="text-[11px] text-acc font-bold">{triageProgress}% ({triageBatchRef.current}/{drafts.length})</span>
+            </div>
+            <div className="h-1.5 rounded-full bg-panel2 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-acc transition-all duration-200"
+                style={{ width: `${triageProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
+        {triageProgress === 100 && drafts.length > 20 && (
+          <p className="mt-2 text-[11px] text-ok font-bold">✅ Triage complete — {Object.keys(triage).length} drafts analyzed</p>
+        )}
       </div>
 
       {drafts.length === 0 && (
