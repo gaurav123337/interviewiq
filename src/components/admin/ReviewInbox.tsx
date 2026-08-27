@@ -31,48 +31,10 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const drafts = list.filter(q => !q.published);
   /* auto-triage: heuristic issues + near-duplicate detection (lazy — only runs once) */
   const [triage, setTriage] = useState<Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }>>({});
-  const [triageProgress, setTriageProgress] = useState(0); // 0-100
-  const triageBatchSize = 10;
-  const triageBatchRef = useRef(0);
+  const [triageProgress, setTriageProgress] = useState(0);
   const abortRef = useRef(false);
 
-  /* Paginated triage: process 10 drafts at a time with UI updates between batches */
-  useEffect(() => {
-    if (drafts.length === 0) return;
-    abortRef.current = false;
-    triageBatchRef.current = 0;
-    setTriageProgress(0);
-
-    const bank = list.map(q => q.question).slice(-500);
-    const map: Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }> = {};
-
-    const processBatch = () => {
-      if (abortRef.current) return;
-      const start = triageBatchRef.current;
-      const end = Math.min(start + triageBatchSize, drafts.length);
-
-      for (let i = start; i < end; i++) {
-        const d = drafts[i];
-        const issues = draftIssues(d);
-        const dups = findDuplicates(d.question, bank.filter(q => q !== d.question));
-        map[d.id] = { issues, level: triageLevel(issues), dups };
-      }
-
-      triageBatchRef.current = end;
-      setTriage({ ...map });
-      setTriageProgress(Math.round((end / drafts.length) * 100));
-
-      if (end < drafts.length) {
-        // Yield to browser for rendering, then process next batch
-        setTimeout(processBatch, 0);
-      }
-    };
-
-    // Start after first paint
-    requestAnimationFrame(() => processBatch());
-
-    return () => { abortRef.current = true; };
-  }, [list, drafts]);
+  /* Page-aware triage: only compute for visible drafts, not all 400+ */
   const [sortedDrafts, setSortedDrafts] = useState<typeof drafts>([]);
   // Initialize + re-sort when triage or drafts change (but preserve manual reorder)
   const [manualOrder, setManualOrder] = useState(false);
@@ -98,6 +60,46 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [pageSize, setPageSize] = useState(50);
   // Reset page when drafts change
   useEffect(() => { setPage(0); }, [drafts.length]);
+
+  /* Page-aware triage: only compute for visible drafts, not all 400+ */
+  useEffect(() => {
+    if (drafts.length === 0) return;
+    abortRef.current = false;
+    setTriageProgress(0);
+
+    const visibleDrafts = sortedDrafts.slice(page * pageSize, (page + 1) * pageSize);
+    if (visibleDrafts.length === 0) return;
+
+    const bank = list.map(q => q.question).slice(-500);
+    const map = { ...triage };
+    let processed = 0;
+
+    const processBatch = () => {
+      if (abortRef.current) return;
+      const batchSize = 10;
+      const start = processed;
+      const end = Math.min(start + batchSize, visibleDrafts.length);
+
+      for (let i = start; i < end; i++) {
+        const d = visibleDrafts[i];
+        if (map[d.id]) continue;
+        const issues = draftIssues(d);
+        const dups = findDuplicates(d.question, bank.filter(q => q !== d.question));
+        map[d.id] = { issues, level: triageLevel(issues), dups };
+      }
+
+      processed = end;
+      setTriage({ ...map });
+      setTriageProgress(Math.round((processed / visibleDrafts.length) * 100));
+
+      if (processed < visibleDrafts.length) {
+        setTimeout(processBatch, 0);
+      }
+    };
+
+    requestAnimationFrame(() => processBatch());
+    return () => { abortRef.current = true; };
+  }, [page, pageSize, sortedDrafts]);
 
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
@@ -404,7 +406,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
           <div className="mt-3">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[11px] text-mut font-bold">🔍 Analyzing drafts…</span>
-              <span className="text-[11px] text-acc font-bold">{triageProgress}% ({triageBatchRef.current}/{drafts.length})</span>
+              <span className="text-[11px] text-acc font-bold">{triageProgress}% — page {page + 1}</span>
             </div>
             <div className="h-1.5 rounded-full bg-panel2 overflow-hidden">
               <div
