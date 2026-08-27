@@ -336,70 +336,24 @@ export function SupportSection() {
   const handlePayment = async (amount: number, label: string, tierIdx: number) => {
     if (!tipConfig || tipBusy !== null) return;
 
-    // Try Razorpay first — server-side order + verification
+    // Try Razorpay — client-side checkout (no server order needed for tips)
     if (tipConfig.razorpay_key_id) {
       try {
         setTipBusy(tierIdx);
-        const { CONFIG } = await import('../config');
-        const { getSupabaseClient, getCloudState } = await import('../services/cloud');
-        const client = await getSupabaseClient();
-        if (!client || !getCloudState().user) {
-          toast('Sign in to leave a tip — your contribution is tied to your account.');
-          setTipBusy(null);
-          return;
-        }
-        const { data: session } = await client.auth.getSession();
-        const token = session?.session?.access_token;
-        if (!token) { toast('Sign in again to leave a tip.'); setTipBusy(null); return; }
+        const amountMinor = amount * 100; // Razorpay uses paise/cents
 
-        // 1 — Create server-side order
-        const orderRes = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-tip`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ mode: 'order', amount, currency: tipConfig.currency, label })
-        });
-        const orderBody = await orderRes.json().catch(() => ({}));
-        if (!orderRes.ok || !orderBody.ok) {
-          toast(orderBody.error ?? 'Failed to create payment order');
-          setTipBusy(null);
-          return;
-        }
-
-        // 2 — Load Razorpay and open modal with server order
         const loaded = await loadRazorpay();
         if (!loaded) { toast('Razorpay failed to load — try again.'); setTipBusy(null); return; }
 
         // @ts-ignore — Razorpay is loaded dynamically from checkout.js
         const rzp = new window.Razorpay({
-          key: orderBody.keyId,
-          amount: orderBody.amountMinor,
-          currency: orderBody.currency,
+          key: tipConfig.razorpay_key_id,
+          amount: amountMinor,
+          currency: tipConfig.currency || 'INR',
           name: tipConfig.razorpay_name || 'InterviewIQ',
           description: label,
-          order_id: orderBody.orderId,
-          handler: async (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) => {
-            // 3 — Verify payment server-side
-            try {
-              const verifyRes = await fetch(`${CONFIG.supabase.url}/functions/v1/pay-tip`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({
-                  mode: 'verify',
-                  paymentId: response.razorpay_payment_id,
-                  orderId: response.razorpay_order_id,
-                  signature: response.razorpay_signature,
-                  label
-                })
-              });
-              const verifyBody = await verifyRes.json().catch(() => ({}));
-              if (verifyRes.ok && verifyBody.ok) {
-                toast(`✅ Thank you! ${label} recorded.`);
-              } else {
-                toast(verifyBody.error ?? 'Payment verified but recording failed — contact support.');
-              }
-            } catch {
-              toast('Payment sent — verification is processing.');
-            }
+          handler: async (response: { razorpay_payment_id: string }) => {
+            toast(`✅ Thank you! ${label} — Payment ID: ${response.razorpay_payment_id}`);
             setTipBusy(null);
           },
           prefill: { name: '', email: '' },
