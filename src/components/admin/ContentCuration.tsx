@@ -540,19 +540,22 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                       {item.status === "approved" && (
                         <button
                           className={`${btnPrimary} ${btnSm}`}
-                          onClick={() => refineSingle(item.id)}
+                          disabled={busy}
+                          onClick={(e) => { e.stopPropagation(); refineSingle(item.id); }}
                         >✨ Refine</button>
                       )}
                       {item.status === "approved" && (
                         <button
                           className={`${btnPrimary} ${btnSm}`}
-                          onClick={() => normalizeSingle(item.id)}
+                          disabled={busy}
+                          onClick={(e) => { e.stopPropagation(); normalizeSingle(item.id); }}
                         >🧠 Normalize</button>
                       )}
                       {item.status === "approved" && !(item as any).ragDocumentId && (
                         <button
                           className={`${btnPrimary} ${btnSm}`}
-                          onClick={() => indexContentToRAG(item.id)}
+                          disabled={busy}
+                          onClick={(e) => { e.stopPropagation(); indexContentToRAG(item.id); }}
                         >🧠 Index</button>
                       )}
                       {item.status === "approved" && (item as any).ragDocumentId && (
