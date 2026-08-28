@@ -383,7 +383,19 @@ export async function normalizeAndUpdateContent(contentId: string): Promise<Norm
         read_time_intermediate: n.readTimeIntermediate,
         read_time_advanced: n.readTimeAdvanced,
       },
-      summary: n.summary || item.title,
+      summary: (() => {
+        const raw = n.summary || item.title;
+        // If it looks like JSON with a summary field, extract just the text
+        if (raw.startsWith("{") && raw.includes('"summary"')) {
+          const match = raw.match(/"summary"\s*:\s*"([^"]+)"/);
+          if (match) return match[1];
+        }
+        // If it's a JSON object, strip it
+        if (raw.startsWith("{") && raw.endsWith("}")) {
+          try { return item.title; } catch { /* use as-is */ }
+        }
+        return raw;
+      })(),
       updated_at: new Date().toISOString(),
     })
     .eq("id", contentId);

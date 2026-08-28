@@ -534,9 +534,17 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                         <span>·</span>
                         <span>{item.content.split(/\s+/).length} words</span>
                       </div>
-                      {item.summary && (
-                        <p className="mt-1.5 text-[12.5px] text-ink leading-relaxed line-clamp-2">{item.summary}</p>
-                      )}
+                      {item.summary && (() => {
+                        // Clean JSON-wrapped summaries
+                        let displaySummary = item.summary;
+                        if (displaySummary.startsWith("{") && displaySummary.includes('"summary"')) {
+                          const match = displaySummary.match(/"summary"\s*:\s*"([^"]+)"/);
+                          if (match) displaySummary = match[1];
+                        }
+                        return (
+                          <p className="mt-1.5 text-[12.5px] text-ink leading-relaxed line-clamp-2">{displaySummary}</p>
+                        );
+                      })()}
                     </div>
 
                     {/* Quick review buttons */}
