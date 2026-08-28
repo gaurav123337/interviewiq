@@ -8,32 +8,21 @@ const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
-    (async () => {
-      const cache = await caches.open(CACHE);
-      // Cache shell files — tolerate individual failures
-      for (const url of SHELL) {
-        try { await cache.add(url); } catch { /* skip missing */ }
-      }
-      // Pre-cache all linked JS/CSS from index.html
-      try {
-        const res = await fetch("./index.html", { cache: "no-cache" });
-        const html = await res.text();
-        const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(m => m[1]);
-        await Promise.all(assets.map(a => cache.add(a).catch(() => {})));
-      } catch { /* fetch failed, will work offline from cache */ }
-      await self.skipWaiting();
-    })()
+    caches.open(CACHE)
+      .then(c => c.addAll(SHELL))
+      .then(() => caches.open(CACHE))
+      .then(c =>
+        fetch("./index.html", { cache: "no-cache" })
+          .then(res => res.text())
+          .then(html => {
+            const assets = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(m => m[1]);
+            return Promise.all(assets.map(a => c.add(a).catch(() => {})));
+          })
+      )
+      .then(() => self.skipWaiting())
   );
 });
 
-/* Notify all clients when a new version is waiting */
-self.addEventListener("message", e => {
-  if (e.data && e.data.type === "SKIP_WAITING") {
-    self.skipWaiting();
-  }
-});
-
-/* Auto-reload clients when a new SW takes over */
 self.addEventListener("activate", e => {
   e.waitUntil(
     caches.keys()
@@ -42,6 +31,13 @@ self.addEventListener("activate", e => {
       .then(() => self.clients.matchAll({ type: "window" }))
       .then(clients => clients.forEach(c => c.navigate(c.url)))
   );
+});
+
+/* Notify all clients when a new version is waiting */
+self.addEventListener("message", e => {
+  if (e.data && e.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 /* notification click: focus the app (or open it) on the practice screen */
@@ -65,7 +61,7 @@ self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  if (url.origin !== location.origin) return; /* let browser handle external */
+  if (url.origin !== location.origin) return;
 
   /* navigations: network-first, fallback to cached shell for offline */
   if (req.mode === "navigate") {
