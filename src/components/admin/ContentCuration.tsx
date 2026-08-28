@@ -211,15 +211,20 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
   /** Refine a single content item */
   const refineSingle = async (contentId: string) => {
+    console.log("[ContentCuration] refineSingle called for", contentId);
     setBusy(true);
     try {
       const { refineAndUpdateContent } = await import("../../services/contentRefiner");
+      console.log("[ContentCuration] contentRefiner loaded");
       const result = await refineAndUpdateContent(contentId);
+      console.log("[ContentCuration] refine result:", result.success, result.error);
       if (result.success) toast("✨ Content refined into progressive difficulty levels");
       else toast("Refinement failed: " + (result.error || "Unknown"));
       await load();
-    } catch (e) { toast("Refinement failed: " + ((e as Error).message || "Unknown")); }
-    finally { setBusy(false); }
+    } catch (e) {
+      console.error("[ContentCuration] refineSingle error:", e);
+      toast("Refinement failed: " + ((e as Error).message || "Unknown"));
+    } finally { setBusy(false); }
   };
 
   /* ── Batch article normalization (keywords + code + summary) ── */
@@ -244,15 +249,20 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
   /** Normalize a single content item */
   const normalizeSingle = async (contentId: string) => {
+    console.log("[ContentCuration] normalizeSingle called for", contentId);
     setBusy(true);
     try {
       const { normalizeAndUpdateContent } = await import("../../services/articleNormalizer");
+      console.log("[ContentCuration] articleNormalizer loaded");
       const result = await normalizeAndUpdateContent(contentId);
+      console.log("[ContentCuration] normalize result:", result.success, result.error);
       if (result.success) toast("🧠 Article normalized with keywords, code sections, and summary");
       else toast("Normalization failed: " + (result.error || "Unknown"));
       await load();
-    } catch (e) { toast("Normalization failed: " + ((e as Error).message || "Unknown")); }
-    finally { setBusy(false); }
+    } catch (e) {
+      console.error("[ContentCuration] normalizeSingle error:", e);
+      toast("Normalization failed: " + ((e as Error).message || "Unknown"));
+    } finally { setBusy(false); }
   };
 
   const bulkAction = async (status: "approved" | "rejected") => {
@@ -541,14 +551,14 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                         <button
                           className={`${btnPrimary} ${btnSm}`}
                           disabled={busy}
-                          onClick={(e) => { e.stopPropagation(); refineSingle(item.id); }}
+                          onClick={(e) => { e.stopPropagation(); console.log("[ContentCuration] Refine button clicked for", item.id); refineSingle(item.id); }}
                         >✨ Refine</button>
                       )}
                       {item.status === "approved" && (
                         <button
                           className={`${btnPrimary} ${btnSm}`}
                           disabled={busy}
-                          onClick={(e) => { e.stopPropagation(); normalizeSingle(item.id); }}
+                          onClick={(e) => { e.stopPropagation(); console.log("[ContentCuration] Normalize button clicked for", item.id); normalizeSingle(item.id); }}
                         >🧠 Normalize</button>
                       )}
                       {item.status === "approved" && !(item as any).ragDocumentId && (
