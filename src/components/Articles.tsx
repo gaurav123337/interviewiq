@@ -813,7 +813,25 @@ function ArticleCard({ article }: { article: Article }) {
   const currentContent = hasRefined ? refined![difficulty] : article.content;
 
   // Use AI summary if available, then DB summary, then auto-generated preview
-  const preview = refined?.summary_ai || article.summary || (hasRefined
+  // Clean up any JSON-wrapped summaries that slipped through
+  const cleanSummary = (s: string | null | undefined): string => {
+    if (!s) return "";
+    const trimmed = s.trim();
+    // If it looks like JSON with a summary field, extract just the summary text
+    if (trimmed.startsWith("{") && trimmed.includes('"summary"')) {
+      const match = trimmed.match(/"summary"\s*:\s*"([^"]+)"/);
+      if (match) return match[1];
+    }
+    // If it starts with a JSON brace but no summary field, strip the JSON wrapper
+    if (trimmed.startsWith("{") && trimmed.length < 500) {
+      try {
+        const obj = JSON.parse(trimmed);
+        if (typeof obj === "object") return ""; // Don't show JSON objects as preview
+      } catch { /* not valid JSON, use as-is */ }
+    }
+    return trimmed;
+  };
+  const preview = cleanSummary(refined?.summary_ai) || cleanSummary(article.summary) || (hasRefined
     ? refined!.beginner.replace(/[#*`[\]]/g, "").slice(0, 200) + "..."
     : article.content.replace(/[#*`[\]]/g, "").slice(0, 200) + "...");
 

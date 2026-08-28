@@ -309,7 +309,17 @@ export async function normalizeArticle(params: {
       module: "articleNormalize",
     });
 
-    const normalized = parseNormalized(rawText);
+    // Clean up the response — strip preamble, markdown wrappers, etc.
+    let cleaned = rawText.trim();
+    // Remove ```json ... ``` wrappers
+    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+    // If there's text before the first {, strip it (AI sometimes adds "Here's the JSON:")
+    const firstBrace = cleaned.indexOf('{');
+    if (firstBrace > 0 && firstBrace < 200) {
+      cleaned = cleaned.slice(firstBrace);
+    }
+
+    const normalized = parseNormalized(cleaned);
     if (!normalized) {
       return { success: false, error: "Failed to parse AI response — the article may be too short or the AI response was malformed" };
     }
