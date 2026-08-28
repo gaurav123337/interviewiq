@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { chat, aiAvailable } from "../../ai";
-import { draftIssues, findDuplicates, triageLevel, type DuplicateMatch } from "../../services/duplicates";
+import type { DuplicateMatch } from "../../services/duplicates";
 import { batchDeleteQuestions, batchSetQuestionsPublished, createQuestion, deleteQuestion, setQuestionPublished, updateQuestion, adminMissCandidates, type MissCandidate } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
 import { toast } from "../../toast";
@@ -29,10 +29,10 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
 }) {
   const drafts = list.filter(q => !q.published);
-  /* auto-triage: heuristic issues + near-duplicate detection (lazy — only runs once) */
+  /* auto-triage: heuristic issues + near-duplicate detection — runs in Web Worker */
   const [triage, setTriage] = useState<Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }>>({});
   const [triageProgress, setTriageProgress] = useState(0);
-  const abortRef = useRef(false);
+  const workerRef = useRef<Worker | null>(null);
 
   /* Page-aware triage: only compute for visible drafts, not all 400+ */
   const [sortedDrafts, setSortedDrafts] = useState<typeof drafts>([]);
@@ -61,45 +61,42 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   // Reset page when drafts change
   useEffect(() => { setPage(0); }, [drafts.length]);
 
-  /* Page-aware triage: only compute for visible drafts, not all 400+ */
+  /* Web Worker triage: all duplicate detection runs off main thread */
   useEffect(() => {
     if (drafts.length === 0) return;
-    abortRef.current = false;
     setTriageProgress(0);
 
+    // Only triage drafts not yet computed
     const visibleDrafts = sortedDrafts.slice(page * pageSize, (page + 1) * pageSize);
-    if (visibleDrafts.length === 0) return;
+    const toTriage = visibleDrafts.filter(d => !triage[d.id]);
+    if (toTriage.length === 0) return;
 
     const bank = list.map(q => q.question).slice(-500);
-    const map = { ...triage };
-    let processed = 0;
 
-    const processBatch = () => {
-      if (abortRef.current) return;
-      const batchSize = 10;
-      const start = processed;
-      const end = Math.min(start + batchSize, visibleDrafts.length);
+    // Use Vite-compatible worker creation — runs off main thread, no blocking
+    const w = new Worker(
+      new URL("../../services/triageWorker.ts", import.meta.url),
+      { type: "module" }
+    );
+    workerRef.current = w;
 
-      for (let i = start; i < end; i++) {
-        const d = visibleDrafts[i];
-        if (map[d.id]) continue;
-        const issues = draftIssues(d);
-        const dups = findDuplicates(d.question, bank.filter(q => q !== d.question));
-        map[d.id] = { issues, level: triageLevel(issues), dups };
-      }
-
-      processed = end;
-      setTriage({ ...map });
-      setTriageProgress(Math.round((processed / visibleDrafts.length) * 100));
-
-      if (processed < visibleDrafts.length) {
-        setTimeout(processBatch, 0);
+    w.onmessage = (ev: MessageEvent) => {
+      const msg = ev.data;
+      if (msg.type === "progress") {
+        setTriageProgress(Math.round((msg.done / msg.total) * 100));
+      } else if (msg.type === "result") {
+        setTriage(prev => ({ ...prev, ...msg.triage }));
+        setTriageProgress(100);
       }
     };
 
-    requestAnimationFrame(() => processBatch());
-    return () => { abortRef.current = true; };
-  }, [page, pageSize, sortedDrafts]);
+    w.postMessage({ type: "triage", drafts: toTriage, bank });
+
+    return () => {
+      w.terminate();
+      workerRef.current = null;
+    };
+  }, [page, pageSize]);
 
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
