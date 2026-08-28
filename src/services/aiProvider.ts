@@ -23,6 +23,7 @@ export const AI_MODULES: Record<string, { label: string; hint: string }> = {
   coach: { label: "AI coach chat", hint: "conversational" },
   contentRefine: { label: "Content refinement", hint: "transforms raw content into structured articles" },
   contentQuality: { label: "Content quality scoring", hint: "evaluates content accuracy and relevance" },
+  articleNormalize: { label: "Article normalization", hint: "transforms any article into multi-level structured content" },
 };
 
 export type AiModuleId = keyof typeof AI_MODULES;

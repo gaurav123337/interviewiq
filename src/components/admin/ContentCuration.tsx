@@ -222,6 +222,39 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
     finally { setBusy(false); }
   };
 
+  /* ── Batch article normalization (keywords + code + summary) ── */
+  const [normalizing, setNormalizing] = useState(false);
+
+  const batchNormalize = async () => {
+    setNormalizing(true);
+    try {
+      const { batchNormalizeContent } = await import("../../services/articleNormalizer");
+      const result = await batchNormalizeContent();
+      if (result.normalized > 0) {
+        toast(`🧠 Normalized ${result.normalized} article(s) with keywords, code sections, and summaries`);
+      } else if (result.firstError) {
+        toast(`⚠️ Normalization failed: ${result.firstError}`);
+      } else {
+        toast("All approved articles are already normalized");
+      }
+      await load();
+    } catch (e) { toast("Normalization failed: " + ((e as Error).message || "Unknown")); }
+    finally { setNormalizing(false); }
+  };
+
+  /** Normalize a single content item */
+  const normalizeSingle = async (contentId: string) => {
+    setBusy(true);
+    try {
+      const { normalizeAndUpdateContent } = await import("../../services/articleNormalizer");
+      const result = await normalizeAndUpdateContent(contentId);
+      if (result.success) toast("🧠 Article normalized with keywords, code sections, and summary");
+      else toast("Normalization failed: " + (result.error || "Unknown"));
+      await load();
+    } catch (e) { toast("Normalization failed: " + ((e as Error).message || "Unknown")); }
+    finally { setBusy(false); }
+  };
+
   const bulkAction = async (status: "approved" | "rejected") => {
     if (selectedIds.size === 0) { toast("Select items first"); return; }
     setBusy(true);
@@ -428,6 +461,11 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                   {refining ? "✨ Refining..." : "✨ Refine All Content"}
                 </button>
               )}
+              {(statusFilter === "approved" || statusFilter === "all") && (
+                <button className={`${btnPrimary} ${btnSm}`} onClick={batchNormalize} disabled={normalizing}>
+                  {normalizing ? "🧠 Normalizing..." : "🧠 Normalize All (keywords + code)"}
+                </button>
+              )}
               {statusFilter === "approved" && (
                 <button className={`${btnPrimary} ${btnSm}`} onClick={indexAllUnindexed} disabled={indexing}>
                   {indexing ? "🧠 Indexing..." : "🧠 Index All to AI"}
@@ -504,6 +542,12 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                           className={`${btnPrimary} ${btnSm}`}
                           onClick={() => refineSingle(item.id)}
                         >✨ Refine</button>
+                      )}
+                      {item.status === "approved" && (
+                        <button
+                          className={`${btnPrimary} ${btnSm}`}
+                          onClick={() => normalizeSingle(item.id)}
+                        >🧠 Normalize</button>
                       )}
                       {item.status === "approved" && !(item as any).ragDocumentId && (
                         <button

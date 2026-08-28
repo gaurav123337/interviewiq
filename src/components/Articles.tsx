@@ -5,11 +5,19 @@
 
    Uses safe React text rendering with proper escaping. */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { getSupabaseClient } from "../services/cloud";
+import { normalizeUserArticle, listUserArticles, deleteUserArticle, estimateTokenCost, type NormalizedArticle } from "../services/articleNormalizer";
+import { fire } from "../services/notifications";
 import { cardCls, Chip } from "./ui";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
+
+interface CodeSection {
+  language: string;
+  code: string;
+  description: string;
+}
 
 interface RefinedContent {
   beginner: string;
@@ -19,6 +27,12 @@ interface RefinedContent {
   keyTakeaways: string[];
   glossary: { term: string; definition: string }[];
   estimatedReadMinutes: number;
+  summary_ai?: string;
+  keywords?: string[];
+  code_sections?: CodeSection[];
+  read_time_beginner?: number;
+  read_time_intermediate?: number;
+  read_time_advanced?: number;
 }
 
 interface Article {
@@ -104,6 +118,18 @@ function parseRefined(raw: unknown): RefinedContent | null {
           }))
         : [],
       estimatedReadMinutes: Number(obj.estimatedReadMinutes) || 5,
+      summary_ai: obj.summary_ai ? String(obj.summary_ai) : undefined,
+      keywords: Array.isArray(obj.keywords) ? obj.keywords.map(String).filter(Boolean) : [],
+      code_sections: Array.isArray(obj.code_sections)
+        ? obj.code_sections.map((s: Record<string, unknown>) => ({
+            language: String(s.language || "text"),
+            code: String(s.code || ""),
+            description: String(s.description || ""),
+          }))
+        : [],
+      read_time_beginner: Number(obj.read_time_beginner) || undefined,
+      read_time_intermediate: Number(obj.read_time_intermediate) || undefined,
+      read_time_advanced: Number(obj.read_time_advanced) || undefined,
     };
   } catch {
     return null;
@@ -726,10 +752,13 @@ function ArticleCard({ article }: { article: Article }) {
 
   const refined = article.contentRefined;
   const hasRefined = Boolean(refined?.beginner);
+  const keywords = refined?.keywords || [];
+  const codeSections = refined?.code_sections || [];
 
   const currentContent = hasRefined ? refined![difficulty] : article.content;
 
-  const preview = article.summary || (hasRefined
+  // Use AI summary if available, then DB summary, then auto-generated preview
+  const preview = refined?.summary_ai || article.summary || (hasRefined
     ? refined!.beginner.replace(/[#*`[\]]/g, "").slice(0, 200) + "..."
     : article.content.replace(/[#*`[\]]/g, "").slice(0, 200) + "...");
 
@@ -753,11 +782,46 @@ function ArticleCard({ article }: { article: Article }) {
             </div>
             <SourceBadge article={article} />
             <p className="mt-2 text-[13px] text-ink/80 leading-relaxed line-clamp-2">{preview}</p>
-            {article.tags.length > 0 && (
+            {/* Keywords from normalization */}
+            {keywords.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
+                {keywords.slice(0, 8).map(kw => (
+                  <span key={kw} className="rounded-md bg-acc/10 px-2 py-0.5 text-[10px] font-bold text-acc">{kw}</span>
+                ))}
+                {keywords.length > 8 && (
+                  <span className="text-[10px] text-mut">+{keywords.length - 8} more</span>
+                )}
+              </div>
+            )}
+            {/* Source tags */}
+            {article.tags.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
                 {article.tags.map(tag => <Chip key={tag} tone="cat">{tag}</Chip>)}
               </div>
             )}
+            {/* Code sections + read time badges */}
+            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-mut">
+              {codeSections.length > 0 && (
+                <span className="rounded-md bg-purple-400/10 px-1.5 py-0.5 font-bold text-purple-400">
+                  💻 {codeSections.length} code example{codeSections.length !== 1 ? 's' : ''}
+                </span>
+              )}
+              {refined?.read_time_beginner != null && (
+                <span className="text-green">
+                  🌱 {refined.read_time_beginner} min
+                </span>
+              )}
+              {refined?.read_time_intermediate != null && (
+                <span className="text-acc">
+                  🔧 {refined.read_time_intermediate} min
+                </span>
+              )}
+              {refined?.read_time_advanced != null && (
+                <span className="text-purple-400">
+                  🚀 {refined.read_time_advanced} min
+                </span>
+              )}
+            </div>
           </div>
           <span className="text-[14px] text-mut shrink-0 mt-1">{expanded ? "▾" : "▸"}</span>
         </div>
@@ -775,6 +839,16 @@ function ArticleCard({ article }: { article: Article }) {
               📋 Copy link
             </button>
           </div>
+
+          {/* Code Sections from normalization */}
+          {codeSections.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-[12px] font-extrabold text-ink">💻 Code Examples ({codeSections.length})</h4>
+              {codeSections.map((cs, i) => (
+                <CodeBlock key={i} code={cs.code} language={cs.language} />
+              ))}
+            </div>
+          )}
 
           {hasRefined ? (
             <>
@@ -814,6 +888,268 @@ function ArticleCard({ article }: { article: Article }) {
   );
 }
 
+/* ── User Article Understand Modal ─────────────────────────────────── */
+
+interface UnderstandModalProps {
+  open: boolean;
+  onClose: () => void;
+  onResult: (normalized: NormalizedArticle, title: string) => void;
+}
+
+function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
+  const [mode, setMode] = useState<"url" | "text">("url");
+  const [url, setUrl] = useState("");
+  const [text, setText] = useState("");
+  const [title, setTitle] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [progress, setProgress] = useState("");
+  const textRef = useRef<HTMLTextAreaElement>(null);
+
+  const contentLength = mode === "url" ? 0 : text.length;
+  const tokenEst = estimateTokenCost(contentLength);
+
+  const canSubmit = mode === "url" ? url.trim().length > 10 : text.trim().length > 100;
+
+  const handleSubmit = async () => {
+    if (!canSubmit || processing) return;
+    setProcessing(true);
+    setProgress("Fetching article...");
+
+    try {
+      let articleText = text;
+      let articleTitle = title || url;
+
+      // If URL, try to fetch content
+      if (mode === "url") {
+        setProgress("Fetching article from URL...");
+        // For now, use the URL as a reference — user can paste text if fetch fails
+        articleText = text || url;
+        if (!title) articleTitle = new URL(url).hostname;
+      }
+
+      setProgress("🤖 AI is analyzing and normalizing the article...");
+      const result = await normalizeUserArticle({
+        url: mode === "url" ? url : undefined,
+        text: articleText,
+        title: articleTitle,
+      });
+
+      if (result.success && result.normalized) {
+        onResult(result.normalized, articleTitle);
+        fire("✅ Article normalized", "Your article has been normalized with AI levels, keywords, and code sections.");
+        setUrl("");
+        setText("");
+        setTitle("");
+        onClose();
+      } else {
+        fire("❌ Normalization failed", result.error || "Unknown error");
+      }
+    } catch (e) {
+      fire("❌ Error", (e as Error).message || "Something went wrong");
+    } finally {
+      setProcessing(false);
+      setProgress("");
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="relative mx-4 flex max-h-[90vh] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl border border-line/20 bg-surface shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-line/10 px-6 py-4">
+          <div>
+            <h2 className="text-[16px] font-extrabold text-ink">🧠 Understand this article</h2>
+            <p className="text-[11px] text-mut">AI will analyze and create structured learning levels</p>
+          </div>
+          <button onClick={onClose} className="text-[20px] text-mut hover:text-ink transition">✕</button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+          {/* Mode toggle */}
+          <div className="flex gap-1 rounded-lg bg-panel2/50 p-1">
+            <button
+              onClick={() => setMode("url")}
+              className={`flex-1 rounded-md px-3 py-2 text-[12px] font-bold transition ${
+                mode === "url" ? "bg-acc text-white" : "text-ink hover:bg-panel3"
+              }`}
+            >
+              🔗 Paste URL
+            </button>
+            <button
+              onClick={() => setMode("text")}
+              className={`flex-1 rounded-md px-3 py-2 text-[12px] font-bold transition ${
+                mode === "text" ? "bg-acc text-white" : "text-ink hover:bg-panel3"
+              }`}
+            >
+              📄 Paste text
+            </button>
+          </div>
+
+          {/* Title (optional) */}
+          <input
+            type="text"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="Article title (optional)"
+            className="w-full rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+          />
+
+          {/* URL input */}
+          {mode === "url" && (
+            <div className="space-y-2">
+              <input
+                type="url"
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+                placeholder="https://example.com/article..."
+                className="w-full rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+              />
+              <p className="text-[10px] text-mut">Paste the article text below if the URL can't be auto-fetched</p>
+              <textarea
+                ref={textRef}
+                value={text}
+                onChange={e => setText(e.target.value)}
+                placeholder="Optional: paste the article text here for better results..."
+                className="h-32 w-full resize-none rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[12px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+              />
+            </div>
+          )}
+
+          {/* Text input */}
+          {mode === "text" && (
+            <textarea
+              ref={textRef}
+              value={text}
+              onChange={e => setText(e.target.value)}
+              placeholder="Paste the full article text here..."
+              className="h-48 w-full resize-none rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[12px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+            />
+          )}
+
+          {/* Token cost estimate */}
+          {contentLength > 0 && (
+            <div className="rounded-lg bg-panel2/50 p-3">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-mut">📊 Estimated token usage:</span>
+                <span className="font-bold text-acc">{tokenEst.estimatedCost}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[10px] text-mut">
+                <span>Input: ~{tokenEst.inputTokens} tokens</span>
+                <span>Output: ~{tokenEst.outputTokens} tokens</span>
+              </div>
+            </div>
+          )}
+
+          {/* Warning */}
+          <div className="rounded-lg border border-warn/20 bg-warn/5 p-3 text-[11px] text-ink">
+            <span className="font-bold">⚠️ This will use AI tokens.</span> The normalized article will be saved to your personal collection (private, not shared with other users).
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-line/10 px-6 py-3">
+          <span className="text-[11px] text-mut">{contentLength > 0 ? `${(contentLength / 1000).toFixed(1)}K chars` : ""}</span>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="rounded-lg bg-panel3 px-4 py-2 text-[12px] font-bold text-ink hover:bg-panel2 transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={!canSubmit || processing}
+              className={`rounded-lg px-5 py-2 text-[12px] font-bold transition ${
+                canSubmit && !processing
+                  ? "bg-acc text-white hover:opacity-90"
+                  : "cursor-not-allowed bg-panel3 text-mut"
+              }`}
+            >
+              {processing ? progress || "⏳ Processing..." : "🧠 Normalize with AI"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── User Article Card ──────────────────────────────────────────────── */
+
+function UserArticleCard({ article, onDelete }: { article: { id: string; title: string; url: string | null; normalized: NormalizedArticle; createdAt: string }; onDelete: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>("beginner");
+  const [showGlossary, setShowGlossary] = useState(false);
+  const n = article.normalized;
+
+  const currentContent = n[difficulty];
+
+  return (
+    <div className={`${cardCls} overflow-hidden border-acc/20`}>
+      <div className="cursor-pointer p-4" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-[14px] font-extrabold leading-tight">🧠 {article.title}</h3>
+              <span className="rounded bg-green/15 px-1.5 py-0.5 text-[10px] font-bold text-green">✅ Normalized</span>
+            </div>
+            <p className="mt-1 text-[12px] text-ink/80 line-clamp-1">{n.summary}</p>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {n.keywords.slice(0, 6).map(kw => (
+                <span key={kw} className="rounded bg-acc/10 px-1.5 py-0.5 text-[9px] font-bold text-acc">{kw}</span>
+              ))}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={e => { e.stopPropagation(); onDelete(article.id); }}
+              className="text-[12px] text-mut hover:text-err transition"
+              title="Delete"
+            >
+              🗑
+            </button>
+            <span className="text-[12px] text-mut">{expanded ? "▾" : "▸"}</span>
+          </div>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-line/10 bg-panel2/50 px-4 py-3 space-y-3">
+          <DifficultySelector level={difficulty} onChange={setDifficulty} />
+          <p className="text-[10px] text-mut italic">{DIFFICULTY_CONFIG[difficulty].desc}</p>
+          {n.keyTakeaways.length > 0 && <KeyTakeaways takeaways={n.keyTakeaways} />}
+          {n.codeSections.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-[11px] font-extrabold text-ink">💻 Code Examples ({n.codeSections.length})</h4>
+              {n.codeSections.map((cs, i) => (
+                <CodeBlock key={i} code={cs.code} language={cs.language} />
+              ))}
+            </div>
+          )}
+          <div className="rounded-lg bg-panel2/50 p-3">
+            <MarkdownContent text={currentContent} />
+          </div>
+          {n.glossary.length > 0 && (
+            <div>
+              <button onClick={e => { e.stopPropagation(); setShowGlossary(!showGlossary); }}
+                className="text-[11px] font-bold text-acc hover:underline">
+                {showGlossary ? "▾ Hide" : "▸ Show"} Glossary ({n.glossary.length} terms)
+              </button>
+              {showGlossary && <Glossary terms={n.glossary} />}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Main Component ────────────────────────────────────────────────────── */
 
 export function Articles() {
@@ -821,6 +1157,10 @@ export function Articles() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [keywordFilter, setKeywordFilter] = useState("");
+  const [understandOpen, setUnderstandOpen] = useState(false);
+  const [userArticles, setUserArticles] = useState<{ id: string; title: string; url: string | null; normalized: NormalizedArticle; createdAt: string }[]>([]);
+  const [userArticlesLoading, setUserArticlesLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -863,14 +1203,34 @@ export function Articles() {
     return () => { cancelled = true; };
   }, []);
 
+  // Load user-normalized articles
+  useEffect(() => {
+    let cancelled = false;
+    async function loadUser() {
+      try {
+        const items = await listUserArticles();
+        if (!cancelled) setUserArticles(items);
+      } catch { /* silent */ }
+      finally { if (!cancelled) setUserArticlesLoading(false); }
+    }
+    void loadUser();
+    return () => { cancelled = true; };
+  }, []);
+
   const fields = [...new Set(articles.map(a => a.fieldId))];
+
+  // Collect all keywords for filter buttons
+  const allKeywords = [...new Set(articles.flatMap(a => a.contentRefined?.keywords || []))];
+
   const filtered = articles.filter(a => {
     const matchesFilter = filter === "all" || a.fieldId === filter;
     const matchesSearch = !searchQuery ||
       a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (a.summary?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
       a.sourceName.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesFilter && matchesSearch;
+    const matchesKeyword = !keywordFilter ||
+      (a.contentRefined?.keywords || []).some(k => k.toLowerCase().includes(keywordFilter.toLowerCase()));
+    return matchesFilter && matchesSearch && matchesKeyword;
   });
 
   if (loading) {
@@ -898,16 +1258,47 @@ export function Articles() {
     );
   }
 
+  const handleDeleteUserArticle = async (id: string) => {
+    try {
+      await deleteUserArticle(id);
+      setUserArticles(prev => prev.filter(a => a.id !== id));
+      fire("🗑 Removed", "Article removed from your collection");
+    } catch { /* silent */ }
+  };
+
   return (
     <div className="mx-auto max-w-[900px] px-4 pt-6 pb-12">
-      <div className="mb-6">
-        <h1 className="text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
-          📰 Curated <span className="grad-text">Articles</span>
-        </h1>
-        <p className="mt-2 text-[14px] text-mut">
-          Quality-checked content from trusted sources — each article is refined into
-          progressive difficulty levels for effective learning.
-        </p>
+      {/* Understand Modal */}
+      <UnderstandModal
+        open={understandOpen}
+        onClose={() => setUnderstandOpen(false)}
+        onResult={(normalized, title) => {
+          setUserArticles(prev => [{
+            id: `temp-${Date.now()}`,
+            title,
+            url: null,
+            normalized,
+            createdAt: new Date().toISOString(),
+          }, ...prev]);
+        }}
+      />
+
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-[clamp(24px,4vw,34px)] font-extrabold tracking-tight">
+            📰 Curated <span className="grad-text">Articles</span>
+          </h1>
+          <p className="mt-2 text-[14px] text-mut">
+            Quality-checked content from trusted sources — each article is refined into
+            progressive difficulty levels for effective learning.
+          </p>
+        </div>
+        <button
+          onClick={() => setUnderstandOpen(true)}
+          className="shrink-0 rounded-xl bg-acc/15 px-4 py-2.5 text-[13px] font-bold text-acc hover:bg-acc/25 transition"
+        >
+          🧠 Understand any article
+        </button>
       </div>
 
       <div className="mb-4">
@@ -941,6 +1332,51 @@ export function Articles() {
         ))}
       </div>
 
+      {/* Keyword filter */}
+      {allKeywords.length > 0 && (
+        <div className="mb-4">
+          <div className="mb-1.5 text-[10px] font-bold text-mut uppercase tracking-wide">Filter by keyword</div>
+          <div className="flex flex-wrap gap-1">
+            {keywordFilter && (
+              <button
+                onClick={() => setKeywordFilter("")}
+                className="rounded-md bg-err/15 px-2 py-0.5 text-[10px] font-bold text-err hover:bg-err/25 transition"
+              >
+                ✕ Clear
+              </button>
+            )}
+            {allKeywords.slice(0, 15).map(kw => (
+              <button
+                key={kw}
+                onClick={() => setKeywordFilter(kw === keywordFilter ? "" : kw)}
+                className={`rounded-md px-2 py-0.5 text-[10px] font-bold transition ${
+                  kw === keywordFilter
+                    ? "bg-acc text-white"
+                    : "bg-panel3 text-ink hover:bg-panel2"
+                }`}
+              >
+                {kw}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* User's personal articles */}
+      {!userArticlesLoading && userArticles.length > 0 && (
+        <div className="mb-6">
+          <h2 className="mb-3 text-[14px] font-extrabold text-ink">🧠 Your Personal Articles ({userArticles.length})</h2>
+          <p className="mb-3 text-[11px] text-mut">These are articles you've normalized — private to you.</p>
+          <div className="space-y-2">
+            {userArticles.map(ua => (
+              <UserArticleCard key={ua.id} article={ua} onDelete={handleDeleteUserArticle} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Admin curated articles */}
+      <div className="mb-2 text-[14px] font-extrabold text-ink">📰 Curated Articles ({filtered.length})</div>
       <div className="space-y-3">
         {filtered.length === 0 ? (
           <div className={`${cardCls} p-8 text-center`}>
