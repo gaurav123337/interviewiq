@@ -4,7 +4,7 @@
    with cached shell offline fallback. This means users always see the
    latest version after a page reload, without waiting for network. */
 
-const CACHE = "interviewiq-v15";
+const CACHE = "interviewiq-v16";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
