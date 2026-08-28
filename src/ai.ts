@@ -75,22 +75,27 @@ export interface ChatOptions {
 
 /** Module-specific token caps — prevents runaway output costs. */
 /**
- * Dynamic output-token estimation — replaces the old hardcoded MODULE_MAX_TOKENS.
+ * Dynamic output-token estimation — replaces hardcoded MODULE_MAX_TOKENS.
  *
- * Strategy: input-size × heuristic multiplier, clamped to sane bounds.
- * 1. Estimate input tokens from character count (~4 chars per token).
- * 2. Detect whether the prompt asks for structured/JSON output (needs ~2× more).
- * 3. Apply a small per-module multiplier for known heavy/light modules.
- * 4. Clamp between a floor (128) and a global ceiling (8192).
+ * How it works:
+ * 1. Count input tokens (chars / 4).
+ * 2. Detect structured/JSON output from prompt heuristics.
+ * 3. Pick the HIGHER of: base estimate OR module-specific multiplier.
+ *    (Never compound — that over-allocates.)
+ * 4. Clamp to [TOKEN_FLOOR, TOKEN_CEILING].
+ * 5. In chatWithSettings, validate against caller's maxTokens:
+ *    - If caller's maxTokens >= estimate → use caller's (they need more)
+ *    - If caller's maxTokens < estimate → use estimate + log warning
+ *      (caller is under-requesting, would truncate)
  */
 const MODULE_OUTPUT_MULTIPLIER: Record<string, number> = {
-  hint: 0.3,
-  feedback: 0.8,
-  coach: 1.0,
-  deepdive: 0.8,
-  rag: 0.7,
-  contentRefine: 2.0,   // JSON + 3 difficulty levels
-  articleNormalize: 2.5, // JSON + keywords + code sections + summary
+  hint: 128,        // very short
+  feedback: 600,    // short paragraph
+  coach: 1200,      // structured feedback
+  deepdive: 800,    // focused explanation
+  rag: 500,         // retrieval response
+  contentRefine: 4000,   // JSON + 3 difficulty levels + glossary
+  articleNormalize: 6000, // JSON + keywords + code sections + summary
 };
 const TOKEN_FLOOR = 128;
 const TOKEN_CEILING = 8192;
@@ -102,41 +107,41 @@ function expectsStructuredOutput(messages: ChatMessage[]): boolean {
     allText.includes("json") ||
     allText.includes("respond in exactly this") ||
     allText.includes("respond with a json") ||
-    allText.includes("\" begin") || // "beginner": pattern in prompt
-    allText.match(/\{[\s\S]{0,50}"[a-z]+"\s*:/) !== null // JSON-like structure in instructions
+    allText.includes('" begin') || // "beginner": pattern in prompt
+    allText.match(/\{[\s\S]{0,50}"[a-z]+"\s*:/) !== null // JSON-like in instructions
   );
 }
 
 /**
  * Estimate the ideal output token limit for a request.
+ * Uses the HIGHER of input-based estimate or module-specific hint.
  * 
  * @param messages - The chat messages being sent
  * @param moduleId - The module identifier (e.g. "contentRefine")
- * @param requestedMax - The explicit maxTokens from the caller (if any)
  * @returns Estimated token count, clamped to sane bounds
  */
 function estimateOutputTokens(
   messages: ChatMessage[],
   moduleId: string,
-  requestedMax?: number,
 ): number {
-  // 1. Estimate input tokens (English ≈ 4 chars per token)
+  // 1. Estimate input tokens (English ~ 4 chars per token)
   const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
   const inputTokens = Math.ceil(totalChars / 4);
 
-  // 2. Base multiplier: structured output needs ~2× input; prose needs ~0.5×
+  // 2. Base estimate: structured output needs ~1.5x input; prose needs ~0.4x
   const isStructured = expectsStructuredOutput(messages);
-  const baseMultiplier = isStructured ? 2.0 : 0.5;
+  const baseEstimate = isStructured
+    ? Math.ceil(inputTokens * 1.5)
+    : Math.ceil(inputTokens * 0.4);
 
-  // 3. Per-module adjustment (tune these sparingly)
-  const moduleMultiplier = MODULE_OUTPUT_MULTIPLIER[moduleId] ?? 1.0;
+  // 3. Module-specific hint (absolute token count, not a multiplier)
+  const moduleHint = MODULE_OUTPUT_MULTIPLIER[moduleId] ?? 0;
 
-  // 4. Final estimate: inputTokens × base × module
-  const estimated = Math.ceil(inputTokens * baseMultiplier * moduleMultiplier);
+  // 4. Take the HIGHER of base estimate or module hint — never compound
+  const estimated = Math.max(baseEstimate, moduleHint);
 
-  // 5. Clamp: never below floor, never above ceiling or caller's explicit request
-  const ceiling = requestedMax ?? TOKEN_CEILING;
-  return Math.max(TOKEN_FLOOR, Math.min(estimated, ceiling));
+  // 5. Clamp to sane bounds
+  return Math.max(TOKEN_FLOOR, Math.min(estimated, TOKEN_CEILING));
 }
 
 /** Fallback chains per provider — only models the provider actually serves. */
@@ -171,13 +176,31 @@ async function chatWithSettings(
   const moduleId = opts.module ?? "general";
   const sysPrompt = messages.find((m) => m.role === "system")?.content ?? "";
   const usrPrompt = messages.find((m) => m.role === "user")?.content ?? "";
-  // Dynamic token estimation: scales with input size + prompt heuristics.
-  // When caller explicitly requests maxTokens, honor it but use estimate as
-  // a floor so responses aren't truncated by an overly conservative guess.
+  // Smart hybrid token estimation:
+  // 1. Always estimate from input size + prompt heuristics
+  // 2. Validate against caller's explicit maxTokens
+  // 3. If caller requests LESS than estimated → use estimate + warn
+  //    (caller is under-requesting, response would be truncated)
+  // 4. If caller requests MORE than estimated → use caller's
+  //    (caller knows they need more, e.g. long structured output)
   const estimated = estimateOutputTokens(messages, moduleId);
-  const maxTokens = opts.maxTokens
-    ? Math.max(estimated, opts.maxTokens) // never truncate below what caller needs
-    : estimated;
+  let maxTokens: number;
+  if (opts.maxTokens) {
+    if (opts.maxTokens < estimated) {
+      // Caller is under-requesting — use estimate to prevent truncation
+      console.warn(
+        `[ai] Token estimate ${estimated} > caller's maxTokens ${opts.maxTokens} for module "${moduleId}". Using estimate to prevent truncation.`
+      );
+      maxTokens = estimated;
+    } else {
+      // Caller needs more than estimate — honor their request
+      maxTokens = opts.maxTokens;
+    }
+  } else {
+    // No explicit request — use dynamic estimate
+    maxTokens = estimated;
+  }
+  console.log(`[ai] module="${moduleId}" inputChars=${sysPrompt.length + usrPrompt.length} estimated=${estimated} callerMax=${opts.maxTokens ?? 'none'} final=${maxTokens}`);
   const temperature = opts.temperature ?? getAiDefaults().temperature ?? 0.6;
 
   /* ── Step 0: Rate limit + quota (BYOK users are exempt — they pay their own API) */
