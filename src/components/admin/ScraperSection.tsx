@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { FIELDS, LEVELS } from "../../data";
-import { listScraperSources, getScraperSchedule, saveScraperSchedule, saveScraperSource, setScraperSourceEnabled, deleteScraperSource, runScraperNow, type ScraperSourceRow, type ScraperSchedule, type RunResult } from "../../services/scraper";
+import { listScraperSources, getScraperSchedule, saveScraperSchedule, saveScraperSource, setScraperSourceEnabled, deleteScraperSource, saveScraperSourceSchedule, runScraperNow, type ScraperSourceRow, type ScraperSchedule, type RunResult } from "../../services/scraper";
 import { toast } from "../../toast";
-import { btnPrimary, btnSm, btnOk, btnDanger, cardCls, Chip, Switch } from "../ui";
+import { btnPrimary, btnSm, btnOk, btnDanger, btnGhost, cardCls, Chip, Switch } from "../ui";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -23,6 +23,7 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
   const [fField, setFField] = useState(FIELDS[0]?.id ?? "frontend");
   const [fLevel, setFLevel] = useState("mid");
   const [fMax, setFMax] = useState(20);
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -159,7 +160,7 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
         {loading && <p className="text-[12.5px] text-fnt"><span className="spinner" /> Loading…</p>}
         {!loading && sources.length === 0 && <p className="text-[13px] text-mut">No sources yet — add your first one below.</p>}
         <div className="space-y-2">
-          {sources.map(s => (
+          {sources.map(s => (<>
             <div key={s.id} className="flex items-start gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -173,11 +174,48 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
                 {s.note && <div className="text-[11.5px] text-mut">{s.note}</div>}
               </div>
               <div className="flex flex-none items-center gap-2">
+                <button className={btnGhost + btnSm} onClick={() => setExpandedSource(expandedSource === s.id ? null : s.id)}>
+                  🗓 {expandedSource === s.id ? "Hide" : "Schedule"}
+                </button>
                 <Switch checked={s.enabled} onChange={v => toggleSource(s, v)} />
                 <button className={btnDanger + btnSm} onClick={() => removeSource(s.id)} disabled={busy}>Delete</button>
               </div>
             </div>
-          ))}
+            {/* Per-source schedule override */}
+            {expandedSource === s.id && (
+              <div className="ml-10 mt-2 rounded-lg border border-line/10 bg-deep/40 p-3">
+                <div className="mb-2 text-[12px] font-bold text-mut">🗓 Schedule Override</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex gap-1">
+                    {DAY_NAMES.map((name, i) => {
+                      const iso = i + 1;
+                      const currentDays = s.scheduleOverride?.days ?? [];
+                      const on = currentDays.includes(iso);
+                      const cls = on ? "grad-bg text-white" : "border border-line/15 bg-wht/5 text-mut";
+                      const toggleDay = () => {
+                        const current = s.scheduleOverride?.days ?? [];
+                        const next = on ? current.filter(d => d !== iso) : [...current, iso].sort();
+                        void saveScraperSourceSchedule(s.id, { days: next, hour: s.scheduleOverride?.hour ?? 3, minute: 0 }).then(() => load());
+                      };
+                      return (
+                        <button key={name} onClick={toggleDay} className={`rounded px-2 py-1 text-[10.5px] font-bold transition-colors ${cls}`}>{name}</button>
+                      );
+                    })}
+                  </div>
+                  <span className="text-[10px] text-mut">at</span>
+                  <select value={s.scheduleOverride?.hour ?? 3} onChange={ev => {
+                    const override = { days: s.scheduleOverride?.days ?? [1], hour: Number(ev.target.value), minute: 0 };
+                    void saveScraperSourceSchedule(s.id, override).then(() => load());
+                  }} className="inp text-[10px] w-[60px]">
+                    {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>)}
+                  </select>
+                  <span className="text-[10px] text-mut">UTC</span>
+                  <button className={btnGhost + btnSm} onClick={() => { void saveScraperSourceSchedule(s.id, null).then(() => { toast("Using global schedule"); load(); }); }}>Reset to global</button>
+                </div>
+                <p className="mt-1.5 text-[10.5px] text-mut">Leave all days unchecked to use the global schedule.</p>
+              </div>
+            )}
+          </>))}
         </div>
 
         <div className="mt-4 rounded-xl border border-line/10 bg-deep/40 p-4">

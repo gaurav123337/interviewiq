@@ -100,7 +100,8 @@ self.onmessage = (ev: MessageEvent) => {
   const bankEntries = getBankEntries(bank);
   const result: Record<number, TriageResult> = {};
   const total = drafts.length;
-  const PROGRESS_INTERVAL = 5; // post progress every N drafts
+  const PROGRESS_INTERVAL = Math.max(5, Math.ceil(total / 8)); // ~8 progress updates max
+  let lastProgress = 0;
 
   for (let i = 0; i < total; i++) {
     const d = drafts[i];
@@ -112,7 +113,9 @@ self.onmessage = (ev: MessageEvent) => {
       dups,
     };
 
-    if ((i + 1) % PROGRESS_INTERVAL === 0 || i === total - 1) {
+    // Throttle progress: at most 8 updates per run
+    if (i + 1 - lastProgress >= PROGRESS_INTERVAL || i === total - 1) {
+      lastProgress = i + 1;
       (self as unknown as Worker).postMessage({
         type: "progress",
         done: i + 1,

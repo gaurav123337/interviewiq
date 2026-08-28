@@ -17,6 +17,8 @@ export interface ScraperSourceRow {
   enabled: boolean;
   note: string;
   config?: Record<string, unknown>;
+  /** Per-source schedule override — null means use global schedule */
+  scheduleOverride?: { days: number[]; hour: number; minute: number } | null;
 }
 
 export interface RunResult {
@@ -37,7 +39,7 @@ export async function listScraperSources(): Promise<ScraperSourceRow[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
   const { data, error } = await client.from("scraper_sources")
-    .select("id, url, type, field_id, level, max_items, enabled, note, config")
+    .select("id, url, type, field_id, level, max_items, enabled, note, config, schedule_override")
     .order("id");
   if (error) return [];
   return ((data ?? []) as Record<string, unknown>[]).map(r => ({
@@ -45,7 +47,8 @@ export async function listScraperSources(): Promise<ScraperSourceRow[]> {
     type: (String(r.type) as ScraperSourceRow["type"]) || "markdown",
     fieldId: String(r.field_id), level: String(r.level),
     maxItems: Number(r.max_items ?? 20), enabled: !!r.enabled, note: String(r.note ?? ""),
-    config: (r.config && typeof r.config === "object" ? r.config as Record<string, unknown> : {})
+    config: (r.config && typeof r.config === "object" ? r.config as Record<string, unknown> : {}),
+    scheduleOverride: r.schedule_override && typeof r.schedule_override === "object" ? r.schedule_override as ScraperSourceRow["scheduleOverride"] : null
   }));
 }
 
@@ -87,6 +90,14 @@ export async function deleteScraperSource(id: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
   const { error } = await client.from("scraper_sources").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function saveScraperSourceSchedule(id: string, override: ScraperSourceRow["scheduleOverride"]): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("scraper_sources")
+    .update({ schedule_override: override, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw new Error(error.message);
 }
 
@@ -136,8 +147,17 @@ export async function runScraperNow(sources: ScraperSourceRow[]): Promise<RunRes
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
   const results: RunResult[] = [];
+  const now = new Date();
+  const currentDay = now.getUTCDay() || 7; // 1=Mon..7=Sun (ISO)
+  const currentHour = now.getUTCHours();
 
   for (const s of sources.filter(x => x.enabled)) {
+    // Per-source schedule override check
+    if (s.scheduleOverride && s.scheduleOverride.days.length > 0) {
+      const so = s.scheduleOverride;
+      if (!so.days.includes(currentDay)) continue;
+      if (so.hour !== undefined && Math.abs(currentHour - so.hour) > 1) continue;
+    }
     const report: RunResult = { sourceId: s.id, url: s.url, extracted: 0, inserted: 0 };
     try {
       const res = await fetch(s.url, { headers: { "User-Agent": "interviewiq-scraper/1.0" } });

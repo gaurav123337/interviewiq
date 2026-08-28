@@ -33,6 +33,10 @@ export function peekUndo(): UndoEntry | null {
   return stack[stack.length - 1] ?? null;
 }
 
+export function getUndoHistory(): UndoEntry[] {
+  return [...stack];
+}
+
 export function clearUndo() {
   stack.length = 0;
   onChange?.();

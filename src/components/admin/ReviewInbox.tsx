@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { chat, aiAvailable } from "../../ai";
-import { draftIssues, triageLevel, type DuplicateMatch } from "../../services/duplicates";
+import { type DuplicateMatch } from "../../services/duplicates";
 import { batchDeleteQuestions, batchSetQuestionsPublished, createQuestion, deleteQuestion, setQuestionPublished, updateQuestion, adminMissCandidates, type MissCandidate } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
 import { toast } from "../../toast";
-import { pushUndo, popUndo, peekUndo, onUndoChange } from "../../services/undoStack";
+import { pushUndo, popUndo, peekUndo, onUndoChange, getUndoHistory, clearUndo } from "../../services/undoStack";
 import { cardCls, btnPrimary, btnGhost, btnDanger, btnSm, btnSoft, Chip } from "../ui";
 
 /* ------------------------------------------------------------------ */
@@ -72,6 +72,14 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [dragOver, setDragOver] = useState(false);
   const [bulkField, setBulkField] = useState("");
   const [bulkLevel, setBulkLevel] = useState("");
+  /* CSV preview state */
+  const [csvPreview, setCsvPreview] = useState<null | {
+    rows: { question: string; answer: string; keyPoints: string[]; fieldId: string; level: LevelId }[];
+    skipped: Set<number>;
+    fileName: string;
+  }>(null);
+  /* Undo history panel */
+  const [showUndoHistory, setShowUndoHistory] = useState(false);
   const filteredDrafts = useMemo(() => {
     let out = sortedDrafts;
     const q = search.toLowerCase().trim();
@@ -122,9 +130,13 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     workerRef.current = w;
 
     // Use ref in handler to avoid stale closure
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
     w.onmessage = (ev: MessageEvent) => {
       const msg = ev.data;
       if (msg.type === "progress") {
+        // Debounce progress — only update UI at most once per 200ms to prevent cascade
+        if (progressTimer) return;
+        progressTimer = setTimeout(() => { progressTimer = null; }, 200);
         setTriageProgress(Math.round((msg.done / msg.total) * 100));
       } else if (msg.type === "result") {
         // Merge all results at once — single state update, no cascade
@@ -136,6 +148,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     w.postMessage({ type: "triage", drafts: toTriage, bank });
 
     return () => {
+      if (progressTimer) clearTimeout(progressTimer);
       w.terminate();
       workerRef.current = null;
     };
@@ -157,14 +170,12 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     a.click(); URL.revokeObjectURL(url);
     toast(`📥 Exported ${filteredDrafts.length} draft(s) as CSV`);
   };
-  const importCsv = async (file: File) => {
+  const parseCsvFile = async (file: File) => {
     const text = await file.text();
     const lines = text.split("\n").filter(l => l.trim());
     if (lines.length < 2) { toast("CSV must have a header row + data rows"); return; }
     const header = lines[0].toLowerCase();
-    const hasQuestion = header.includes("question");
-    if (!hasQuestion) { toast("CSV must have a 'question' column"); return; }
-    // Find column indices
+    if (!header.includes("question")) { toast("CSV must have a 'question' column"); return; }
     const cols = header.split(",").map(c => c.trim().replace(/["\s]/g, ""));
     const qIdx = cols.findIndex(c => c === "question");
     const aIdx = cols.findIndex(c => c === "answer");
@@ -183,7 +194,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       cells.push(current.trim());
       return cells;
     };
-    let imported = 0;
+    const rows: { question: string; answer: string; keyPoints: string[]; fieldId: string; level: LevelId }[] = [];
     for (let i = 1; i < lines.length; i++) {
       const cells = parseCsvRow(lines[i]);
       const q = cells[qIdx]?.trim();
@@ -192,31 +203,42 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       const fieldId = FIELDS.find(f => f.name.toLowerCase() === fieldRaw?.toLowerCase() || f.id === fieldRaw)?.id ?? FIELDS[0]?.id ?? "";
       const levelRaw = lIdx >= 0 ? cells[lIdx]?.trim() : "";
       const level = LEVELS.find(l => l.name.toLowerCase() === levelRaw?.toLowerCase() || l.id === levelRaw)?.id as LevelId ?? "mid" as LevelId;
-      await createQuestion({
-        fieldId, level, question: q,
+      rows.push({
+        question: q,
         answer: aIdx >= 0 ? cells[aIdx]?.trim() ?? "" : "",
         keyPoints: kIdx >= 0 ? cells[kIdx]?.split(/[;|]/).map(k => k.trim()).filter(Boolean) : [],
-        published: false
+        fieldId, level
       });
-      imported++;
+    }
+    setCsvPreview({ rows, skipped: new Set(), fileName: file.name });
+  };
+  const importCsv = (file: File) => { void parseCsvFile(file); };
+  const confirmCsvImport = async () => {
+    if (!csvPreview) return;
+    const toImport = csvPreview.rows.filter((_, i) => !csvPreview.skipped.has(i));
+    if (!toImport.length) { toast("No rows to import"); return; }
+    setBusy(true);
+    let imported = 0;
+    for (const row of toImport) {
+      try {
+        await createQuestion({ fieldId: row.fieldId, level: row.level, question: row.question, answer: row.answer, keyPoints: row.keyPoints, published: false });
+        imported++;
+      } catch { /* skip duplicates */ }
     }
     if (imported > 0) {
-      // Auto-score imported drafts
-      const newDrafts = (await onChanged(), list.filter(q => !q.published));
-      const bank = newDrafts.map(d => d.question).slice(-500);
-      const scored: typeof triage = {};
-      for (const d of newDrafts) {
-        if (triage[d.id]) continue; // already scored
-        const issues = draftIssues(d);
-        scored[d.id] = { issues, level: triageLevel(issues), dups: [] };
-      }
-      if (Object.keys(scored).length > 0) setTriage(prev => ({ ...prev, ...scored }));
-      const ready = Object.values(scored).filter(t => t.level === "ready").length;
-      const issues = Object.values(scored).filter(t => t.level !== "ready").length;
-      toast(`📥 Imported ${imported} draft(s) — ${ready} ready, ${issues} need review`);
+      await onChanged();
+      toast(`📥 Imported ${imported} draft(s)`);
     } else {
-      toast("No valid questions found in CSV");
+      toast("No new questions imported — all may be duplicates");
     }
+    setCsvPreview(null);
+    setBusy(false);
+  };
+  const toggleCsvSkip = (idx: number) => {
+    if (!csvPreview) return;
+    const next = new Set(csvPreview.skipped);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    setCsvPreview({ ...csvPreview, skipped: next });
   };
   const downloadTemplate = () => {
     const csv = "question,answer,keyPoints,field,level\n\"What is a closure?\",\"A closure is...\",\"scope; functions\",\"Backend Engineer\",\"Senior\"\n\"Explain REST\",\"REST is...\",\"HTTP; stateless\",\"Full-Stack Engineer\",\"Mid-Level\"";
@@ -518,8 +540,8 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       }
       setAiTriage(t => ({ ...t, ...out }));
       setAiProgress({ done: Math.min(i + BATCH, pending.length), total: pending.length });
-      // Yield to browser between batches to keep UI smooth
-      if (i + BATCH < pending.length) await new Promise(r => setTimeout(r, 0));
+      // Yield to browser between batches — 50ms avoids violation thresholds
+      if (i + BATCH < pending.length) await new Promise(r => setTimeout(r, 50));
     }
     setAiBusy(false);
   };
@@ -653,6 +675,9 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
                   ↩ Undo
                 </button>
               )}
+              <button className={btnGhost + btnSm} onClick={() => setShowUndoHistory(true)}>
+                📋 History
+              </button>
             </div>
           )}
           {/* Bulk tag editing bar — shows when items are selected */}
@@ -781,6 +806,96 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
           />
         );
       })}
+
+      {/* ── CSV Preview Modal ─────────────────────────────────────────── */}
+      {csvPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setCsvPreview(null)}>
+          <div className="mx-4 flex max-h-[85vh] w-full max-w-[800px] flex-col rounded-2xl border border-line/15 bg-panel1 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-line/10 px-5 py-4">
+              <div>
+                <h3 className="text-[15px] font-extrabold">📥 Preview CSV Import</h3>
+                <p className="text-[12px] text-mut">{csvPreview.fileName} — {csvPreview.rows.length} rows found, {csvPreview.rows.length - csvPreview.skipped.size} will be imported</p>
+              </div>
+              <button onClick={() => setCsvPreview(null)} className="rounded-lg p-1.5 text-mut hover:bg-wht/10 text-[18px]">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <div className="space-y-2">
+                {csvPreview.rows.map((row, idx) => {
+                  const skipped = csvPreview.skipped.has(idx);
+                  const field = FIELDS.find(f => f.id === row.fieldId);
+                  const level = LEVELS.find(l => l.id === row.level);
+                  return (
+                    <div key={idx} className={`flex items-start gap-3 rounded-xl border p-3.5 transition-opacity ${skipped ? "border-line/5 bg-wht/2 opacity-50" : "border-line/10 bg-wht/5"}`}>
+                      <input type="checkbox" checked={!skipped} onChange={() => toggleCsvSkip(idx)} className="mt-1 h-4 w-4 accent-acc1" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {field && <Chip tone="cat">{field.icon} {field.name}</Chip>}
+                          {level && <Chip tone="lvl">{level.icon} {level.name}</Chip>}
+                          {skipped && <Chip tone="bad">Skipped</Chip>}
+                        </div>
+                        <div className="mt-1.5 text-[13.5px] font-bold leading-snug">{row.question}</div>
+                        {row.answer && <p className="mt-1 text-[12px] text-fnt line-clamp-2">{row.answer}</p>}
+                        {row.keyPoints.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">{row.keyPoints.slice(0, 5).map((kp, i) => <Chip key={i}>{kp}</Chip>)}{row.keyPoints.length > 5 && <Chip>+{row.keyPoints.length - 5} more</Chip>}</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex items-center justify-between border-t border-line/10 px-5 py-4">
+              <button className={btnGhost + btnSm} onClick={() => setCsvPreview(null)}>Cancel</button>
+              <div className="flex items-center gap-2">
+                <button className={btnGhost + btnSm} onClick={() => setCsvPreview({ ...csvPreview, skipped: new Set() })}>Select all</button>
+                <button className={btnGhost + btnSm} onClick={() => setCsvPreview({ ...csvPreview, skipped: new Set(csvPreview.rows.map((_, i) => i)) })}>Skip all</button>
+                <button className={btnPrimary + btnSm} onClick={confirmCsvImport} disabled={busy || csvPreview.rows.length === csvPreview.skipped.size}>
+                  📥 Import {csvPreview.rows.length - csvPreview.skipped.size} row(s)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Undo History Panel ────────────────────────────────────────── */}
+      {showUndoHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowUndoHistory(false)}>
+          <div className="mx-4 flex max-h-[70vh] w-full max-w-[500px] flex-col rounded-2xl border border-line/15 bg-panel1 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-line/10 px-5 py-4">
+              <div>
+                <h3 className="text-[15px] font-extrabold">↩ Undo History</h3>
+                <p className="text-[12px] text-mut">Last 20 operations — click to undo</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button className={btnDanger + btnSm} onClick={() => { clearUndo(); setShowUndoHistory(false); toast("🗑 History cleared"); }}>Clear all</button>
+                <button onClick={() => setShowUndoHistory(false)} className="rounded-lg p-1.5 text-mut hover:bg-wht/10 text-[18px]">✕</button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {getUndoHistory().length === 0 ? (
+                <p className="text-center text-[13px] text-mut">No operations recorded yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {[...getUndoHistory()].reverse().map((entry, idx) => (
+                    <div key={idx} className="flex items-center justify-between rounded-xl border border-line/10 bg-wht/5 px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[14px]">{idx === 0 ? "🟢" : "⚪"}</span>
+                        <span className="text-[13px] font-bold">{entry.label}</span>
+                      </div>
+                      <button className={btnSoft + btnSm} onClick={async () => {
+                        const ok = await popUndo();
+                        if (ok) toast(`↩ Undone: ${entry.label}`);
+                        await onChanged();
+                      }}>↩ Undo</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bottom pagination */}
       {filteredDrafts.length > pageSize && (
