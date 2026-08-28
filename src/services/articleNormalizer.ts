@@ -376,7 +376,22 @@ export async function normalizeAndUpdateContent(contentId: string): Promise<Norm
         glossary: n.glossary,
         estimatedReadMinutes: n.estimatedReadMinutes,
         // Extended fields (stored in content_refined JSONB)
-        summary_ai: n.summary,
+        summary_ai: (() => {
+          const raw = n.summary || '';
+          // Clean JSON-wrapped summaries at storage time
+          if (raw.startsWith("{") && raw.includes('"summary"')) {
+            const match = raw.match(/"summary"\s*:\s*"([^"]+)"/);
+            if (match) return match[1];
+          }
+          if (raw.startsWith("{") && raw.length < 1000) {
+            try {
+              const obj = JSON.parse(raw);
+              if (obj && typeof obj.summary === "string") return obj.summary;
+              if (typeof obj === "object") return '';
+            } catch { /* use as-is */ }
+          }
+          return raw;
+        })(),
         keywords: n.keywords,
         code_sections: n.codeSections,
         read_time_beginner: n.readTimeBeginner,
@@ -385,14 +400,17 @@ export async function normalizeAndUpdateContent(contentId: string): Promise<Norm
       },
       summary: (() => {
         const raw = n.summary || item.title;
-        // If it looks like JSON with a summary field, extract just the text
+        // Clean JSON-wrapped summaries at storage time
         if (raw.startsWith("{") && raw.includes('"summary"')) {
           const match = raw.match(/"summary"\s*:\s*"([^"]+)"/);
           if (match) return match[1];
         }
-        // If it's a JSON object, strip it
-        if (raw.startsWith("{") && raw.endsWith("}")) {
-          try { return item.title; } catch { /* use as-is */ }
+        if (raw.startsWith("{") && raw.length < 1000) {
+          try {
+            const obj = JSON.parse(raw);
+            if (obj && typeof obj.summary === "string") return obj.summary;
+            return item.title;
+          } catch { /* use as-is */ }
         }
         return raw;
       })(),

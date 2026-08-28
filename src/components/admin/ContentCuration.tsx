@@ -535,11 +535,18 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                         <span>{item.content.split(/\s+/).length} words</span>
                       </div>
                       {item.summary && (() => {
-                        // Clean JSON-wrapped summaries
+                        // Clean JSON-wrapped summaries from broken AI responses
                         let displaySummary = item.summary;
                         if (displaySummary.startsWith("{") && displaySummary.includes('"summary"')) {
                           const match = displaySummary.match(/"summary"\s*:\s*"([^"]+)"/);
                           if (match) displaySummary = match[1];
+                        }
+                        // Also try parsing as JSON and extracting summary field
+                        if (displaySummary.startsWith("{") && displaySummary.length < 1000) {
+                          try {
+                            const obj = JSON.parse(displaySummary);
+                            if (obj && typeof obj.summary === "string") displaySummary = obj.summary;
+                          } catch { /* not JSON, use as-is */ }
                         }
                         return (
                           <p className="mt-1.5 text-[12.5px] text-ink leading-relaxed line-clamp-2">{displaySummary}</p>

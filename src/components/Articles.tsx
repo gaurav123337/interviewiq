@@ -822,11 +822,12 @@ function ArticleCard({ article }: { article: Article }) {
       const match = trimmed.match(/"summary"\s*:\s*"([^"]+)"/);
       if (match) return match[1];
     }
-    // If it starts with a JSON brace but no summary field, strip the JSON wrapper
-    if (trimmed.startsWith("{") && trimmed.length < 500) {
+    // Also try parsing as JSON and extracting summary field
+    if (trimmed.startsWith("{") && trimmed.length < 1000) {
       try {
         const obj = JSON.parse(trimmed);
-        if (typeof obj === "object") return ""; // Don't show JSON objects as preview
+        if (obj && typeof obj.summary === "string") return obj.summary;
+        if (typeof obj === "object") return ""; // Don't show raw JSON objects
       } catch { /* not valid JSON, use as-is */ }
     }
     return trimmed;
