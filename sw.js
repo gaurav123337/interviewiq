@@ -1,16 +1,16 @@
 /* InterviewIQ — service worker (Vite build): stale-while-revalidate.
    Hashed build assets get stale-while-revalidate (serve cached instantly,
    update in background); navigations are network-first so app updates land,
-   with cached shell offline fallback. This means users always see the
-   latest version after a page reload, without waiting for network. */
+   with cached shell offline fallback. */
 
-const CACHE = "interviewiq-v16";
+const CACHE = "interviewiq-v18";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
   e.waitUntil(
     caches.open(CACHE)
       .then(c => c.addAll(SHELL))
+      .then(() => caches.open(CACHE))
       .then(c =>
         fetch("./index.html", { cache: "no-cache" })
           .then(res => res.text())
@@ -28,6 +28,8 @@ self.addEventListener("activate", e => {
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: "window" }))
+      .then(clients => clients.forEach(c => c.navigate(c.url)))
   );
 });
 
@@ -59,7 +61,7 @@ self.addEventListener("fetch", e => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
-  if (url.origin !== location.origin) return; /* let browser handle external (e.g., AI API) */
+  if (url.origin !== location.origin) return;
 
   /* navigations: network-first, fallback to cached shell for offline */
   if (req.mode === "navigate") {
@@ -72,8 +74,7 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  /* static assets (hashed JS/CSS): stale-while-revalidate
-     Serve from cache instantly, fetch update in background for next load. */
+  /* static assets (hashed JS/CSS): stale-while-revalidate */
   if (req.url.match(/\.(?:js|css|woff2?|png|jpg|svg|ico)$/)) {
     e.respondWith(
       caches.open(CACHE).then(async cache => {
