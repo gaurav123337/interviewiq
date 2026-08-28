@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useTranslation, Trans } from "react-i18next";
+import { useTranslation } from "react-i18next";
 import { useApp } from "../store";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
 import { computeStats, xpLevel, generateLeaderboard, ACHIEVEMENTS } from "../services/xp";

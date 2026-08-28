@@ -36,7 +36,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
   const [tab, setTab] = useState<"sources" | "items" | "stats">("items");
   const [sources, setSources] = useState<ContentSourceRow[]>([]);
   const [items, setItems] = useState<ContentItemRow[]>([]);
-  const [totalItems, setTotalItems] = useState(0);
+  const [, setTotalItems] = useState(0);
   const [stats, setStats] = useState<ContentStats | null>(null);
   const [statusFilter, setStatusFilter] = useState("pending");
   const [loading, setLoading] = useState(true);
@@ -286,10 +286,6 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
     });
   };
 
-  const toggleSelectAll = () => {
-    if (selectedIds.size === items.length) setSelectedIds(new Set());
-    else setSelectedIds(new Set(items.map((i) => i.id)));
-  };
 
   /* ── Render ────────────────────────────────────────────────────────── */
 

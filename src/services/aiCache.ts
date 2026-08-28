@@ -3,7 +3,7 @@
    returns the cached response instantly. TTL: 7 days (configurable per module).
    Falls through to the real API on miss, then stores the response. */
 
-import { getSupabaseClient, getCloudState } from "./cloud";
+import { getSupabaseClient } from "./cloud";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 

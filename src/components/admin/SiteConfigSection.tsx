@@ -262,7 +262,7 @@ const ALL_MENU_ITEMS = [
 ];
 
 function MenuVisibilityTab() {
-  const { t } = useTranslation();
+  useTranslation();
   const [visibility, setVisibility] = useState<Record<string, boolean>>(() => {
     try {
       const stored = localStorage.getItem("iq.menuVisibility");

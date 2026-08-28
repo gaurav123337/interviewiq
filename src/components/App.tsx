@@ -85,7 +85,7 @@ function RouteSpinner() {
 interface BIP extends Event { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
 
 export function App() {
-  const { t } = useTranslation();
+  useTranslation();
   const { state, nav } = useApp();
   const [installEvt, setInstallEvt] = useState<BIP | null>(null);
   const [online, setOnline] = useState(navigator.onLine);

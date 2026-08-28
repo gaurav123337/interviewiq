@@ -7,7 +7,6 @@ import { CONFIG } from "../../config";
 import { toast } from "../../toast";
 import { btnGhost, btnPrimary, btnSm, Chip, Modal } from "../ui";
 import { importFromUrlWithFallback, sourceLabel, splitJobUrls, type ImportListOutcome } from "../../services/importJob";
-import { isListingPage } from "../../services/listingDetect";
 import { addImportedJob, listJobs } from "../../services/jobs";
 import { decodeHtml } from "../../util";
 
