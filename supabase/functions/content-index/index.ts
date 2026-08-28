@@ -36,16 +36,18 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const contentId: string | undefined = body.contentId;
 
-    // Fetch approved content items that haven't been indexed yet
+    // Fetch approved content items
+    // For specific contentId: always fetch (for re-indexing)
+    // For bulk: only un-indexed items
     let query = client
       .from("content_items")
-      .select("id, title, content, summary, source_name, source_url, domain, field_id, content_refined")
+      .select("id, title, content, summary, source_name, source_url, domain, field_id, content_refined, rag_document_id")
       .eq("status", "approved");
 
     if (contentId) {
       query = query.eq("id", contentId);
     } else {
-      // Only un-indexed items
+      // Only un-indexed items (skip already indexed)
       query = query.is("rag_document_id", null);
     }
 
@@ -123,7 +125,16 @@ Deno.serve(async (req) => {
         // Join all parts with clear separators for better chunking
         const fullContent = enrichedParts.join("\n\n---\n\n").slice(0, 50000);
 
-        // Create pdf_documents entry
+        // ── Idempotent: delete old document + chunks if re-indexing ──
+        const existingDocId = (item as Record<string, unknown>).rag_document_id;
+        if (existingDocId) {
+          // Delete old chunks first (foreign key dependency)
+          await client.from("pdf_chunks").delete().eq("document_id", existingDocId);
+          // Delete old document
+          await client.from("pdf_documents").delete().eq("id", existingDocId);
+        }
+
+        // Create new pdf_documents entry
         const { data: doc, error: docError } = await client
           .from("pdf_documents")
           .insert({

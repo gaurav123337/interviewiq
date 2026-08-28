@@ -349,11 +349,17 @@ export async function normalizeAndUpdateContent(contentId: string): Promise<Norm
 
   const { data: item, error: fetchError } = await client
     .from("content_items")
-    .select("id, title, content, source_name")
+    .select("id, title, content, source_name, content_refined")
     .eq("id", contentId)
     .single();
 
   if (fetchError || !item) return { success: false, error: "Content item not found" };
+
+  // Idempotent: skip if already normalized (has beginner content)
+  const existing = (item.content_refined ?? {}) as Record<string, unknown>;
+  if (existing.beginner && String(existing.beginner).length > 50) {
+    return { success: true, normalized: existing as unknown as import("./articleNormalizer").NormalizedArticle };
+  }
 
   const result = await normalizeArticle({
     title: item.title,
