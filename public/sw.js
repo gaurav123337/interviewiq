@@ -3,7 +3,7 @@
    update in background); navigations are network-first so app updates land,
    with cached shell offline fallback. */
 
-const CACHE = "interviewiq-v17";
+const CACHE = "interviewiq-v18";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest"];
 
 self.addEventListener("install", e => {
@@ -26,19 +26,22 @@ self.addEventListener("install", e => {
   );
 });
 
-self.addEventListener("activate", e => {
-  e.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
-});
-
 /* Notify all clients when a new version is waiting */
 self.addEventListener("message", e => {
   if (e.data && e.data.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
+});
+
+/* Auto-reload clients when a new SW takes over */
+self.addEventListener("activate", e => {
+  e.waitUntil(
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: "window" }))
+      .then(clients => clients.forEach(c => c.navigate(c.url)))
+  );
 });
 
 /* notification click: focus the app (or open it) on the practice screen */

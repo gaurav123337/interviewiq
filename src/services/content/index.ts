@@ -5,21 +5,12 @@
      const provider = getContentProvider();
      const coach = await provider.getCoachContent("react"); */
 
-export type {
-  // Article normalization types
-  IContentProvider,
-  ArticleContent,
-  ArticleHit,
-  ContentRequest,
-  CoachContent,
-  SystemDesignContent,
-  RoadmapContent,
-  InterviewContent,
-  // Re-export from CMS types
-  Testimonial,
-  Ad,
-  Resource,
-  TipConfig,
-} from "./types";
+// Original barrel exports (CRUD, cache, analytics, AB tests)
+export * from "./types";
+export * from "./abTest";
+export * from "./cache";
+export * from "./crud";
+export * from "./analytics";
 
+// Content provider (article normalization → module consumption)
 export { getContentProvider, resetContentProvider } from "./contentProvider";

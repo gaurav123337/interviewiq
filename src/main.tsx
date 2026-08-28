@@ -45,7 +45,20 @@ createRoot(document.getElementById("root")!).render(
    mask every edit — HMR already handles dev reloads. */
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch(() => { /* offline not critical */ });
+    navigator.serviceWorker.register("./sw.js").then(reg => {
+      // Detect when a new SW is installed and waiting
+      reg.addEventListener("updatefound", () => {
+        const newSw = reg.installing;
+        if (!newSw) return;
+        newSw.addEventListener("statechange", () => {
+          if (newSw.state === "installed" && navigator.serviceWorker.controller) {
+            // New SW installed — force reload to pick up new assets
+            newSw.postMessage({ type: "SKIP_WAITING" });
+            window.location.reload();
+          }
+        });
+      });
+    }).catch(() => { /* offline not critical */ });
   });
 }
 
