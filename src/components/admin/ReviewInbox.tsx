@@ -80,6 +80,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   }>(null);
   /* Undo history panel */
   const [showUndoHistory, setShowUndoHistory] = useState(false);
+  const [undoSearch, setUndoSearch] = useState("");
   const filteredDrafts = useMemo(() => {
     let out = sortedDrafts;
     const q = search.toLowerCase().trim();
@@ -283,7 +284,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     e.preventDefault();
     setDragOver(false);
     const file = e.dataTransfer.files?.[0];
-    if (file && file.name.endsWith(".csv")) importCsv(file);
+    if (file && file.name.endsWith(".csv")) { void parseCsvFile(file); }
     else if (file) toast("Please drop a .csv file");
   };
 
@@ -876,21 +877,39 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
               {getUndoHistory().length === 0 ? (
                 <p className="text-center text-[13px] text-mut">No operations recorded yet</p>
               ) : (
-                <div className="space-y-2">
-                  {[...getUndoHistory()].reverse().map((entry, idx) => (
-                    <div key={idx} className="flex items-center justify-between rounded-xl border border-line/10 bg-wht/5 px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[14px]">{idx === 0 ? "🟢" : "⚪"}</span>
-                        <span className="text-[13px] font-bold">{entry.label}</span>
+                <>
+                  <input
+                    value={undoSearch}
+                    onChange={ev => setUndoSearch(ev.target.value)}
+                    placeholder="🔍 Search operations…"
+                    className="inp mb-3"
+                    autoFocus
+                  />
+                  {(() => {
+                    const filtered = [...getUndoHistory()].reverse().filter(e =>
+                      !undoSearch || e.label.toLowerCase().includes(undoSearch.toLowerCase())
+                    );
+                    if (filtered.length === 0) return <p className="text-center text-[13px] text-mut">No matching operations</p>;
+                    return (
+                      <div className="space-y-2">
+                        {filtered.map((entry, idx) => (
+                          <div key={idx} className="flex items-center justify-between rounded-xl border border-line/10 bg-wht/5 px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[14px]">{idx === 0 ? "🟢" : "⚪"}</span>
+                              <span className="text-[13px] font-bold">{entry.label}</span>
+                            </div>
+                            <button className={btnSoft + btnSm} onClick={async () => {
+                              const ok = await popUndo();
+                              if (ok) toast(`↩ Undone: ${entry.label}`);
+                              await onChanged();
+                              setUndoSearch("");
+                            }}>↩ Undo</button>
+                          </div>
+                        ))}
                       </div>
-                      <button className={btnSoft + btnSm} onClick={async () => {
-                        const ok = await popUndo();
-                        if (ok) toast(`↩ Undone: ${entry.label}`);
-                        await onChanged();
-                      }}>↩ Undo</button>
-                    </div>
-                  ))}
-                </div>
+                    );
+                  })()}
+                </>
               )}
             </div>
           </div>

@@ -29,8 +29,6 @@ export interface RunResult {
   error?: string;
 }
 
-const DEFAULT_DAYS = [1]; /* Monday — matches the original weekly cron */
-
 /* ------------------------------------------------------------------ */
 /* Sources                                                            */
 /* ------------------------------------------------------------------ */
@@ -38,17 +36,28 @@ const DEFAULT_DAYS = [1]; /* Monday — matches the original weekly cron */
 export async function listScraperSources(): Promise<ScraperSourceRow[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
-  const { data, error } = await client.from("scraper_sources")
+  let rows: Record<string, unknown>[] | null = null;
+  let hasScheduleCol = true;
+  const primary = await client.from("scraper_sources")
     .select("id, url, type, field_id, level, max_items, enabled, note, config, schedule_override")
     .order("id");
-  if (error) return [];
-  return ((data ?? []) as Record<string, unknown>[]).map(r => ({
+  if (primary.error) {
+    hasScheduleCol = false;
+    const fallback = await client.from("scraper_sources")
+      .select("id, url, type, field_id, level, max_items, enabled, note, config")
+      .order("id");
+    if (fallback.error) return [];
+    rows = fallback.data as Record<string, unknown>[];
+  } else {
+    rows = primary.data as Record<string, unknown>[];
+  }
+  return (rows ?? []).map(r => ({
     id: String(r.id), url: String(r.url),
     type: (String(r.type) as ScraperSourceRow["type"]) || "markdown",
     fieldId: String(r.field_id), level: String(r.level),
     maxItems: Number(r.max_items ?? 20), enabled: !!r.enabled, note: String(r.note ?? ""),
     config: (r.config && typeof r.config === "object" ? r.config as Record<string, unknown> : {}),
-    scheduleOverride: r.schedule_override && typeof r.schedule_override === "object" ? r.schedule_override as ScraperSourceRow["scheduleOverride"] : null
+    scheduleOverride: hasScheduleCol && r.schedule_override && typeof r.schedule_override === "object" ? r.schedule_override as ScraperSourceRow["scheduleOverride"] : null
   }));
 }
 

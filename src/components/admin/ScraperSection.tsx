@@ -24,6 +24,17 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
   const [fLevel, setFLevel] = useState("mid");
   const [fMax, setFMax] = useState(20);
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  /* Scraper run history — stored in localStorage */
+  type RunHistoryEntry = { timestamp: string; sources: number; inserted: number; errors: number; details: RunResult[] };
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
+  useEffect(() => {
+    try { setRunHistory(JSON.parse(localStorage.getItem("scraper_run_history") || "[]")); } catch { setRunHistory([]); }
+  }, []);
+  const saveRunHistory = (entry: RunHistoryEntry) => {
+    const next = [entry, ...runHistory].slice(0, 50); // keep last 50 runs
+    setRunHistory(next);
+    localStorage.setItem("scraper_run_history", JSON.stringify(next));
+  };
 
   const load = () => {
     setLoading(true);
@@ -80,6 +91,8 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
       setRunReport(report);
       const ok = report.filter(r => !r.error);
       const added = report.reduce((n, r) => n + r.inserted, 0);
+      const errors = report.filter(r => r.error).length;
+      saveRunHistory({ timestamp: new Date().toISOString(), sources: ok.length, inserted: added, errors, details: report });
       toast(`🕷️ Ran ${ok.length}/${report.length} source(s) — ${added} draft(s) landed in the Review inbox`);
     } catch (e) { toast("✗ " + ((e as Error).message || "Run failed")); }
     finally { setRunBusy(false); }
@@ -151,6 +164,37 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
           </div>
         )}
       </div>
+
+      {runHistory.length > 0 && (
+        <div className={`${cardCls} p-5`}>
+          <h2 className="mb-3 text-[16px] font-extrabold">📋 Run History ({runHistory.length})</h2>
+          <div className="space-y-2">
+            {runHistory.slice(0, 10).map((h, idx) => {
+              const ts = new Date(h.timestamp);
+              const timeAgo = (() => {
+                const diff = Date.now() - ts.getTime();
+                if (diff < 60000) return "just now";
+                if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+                if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+                return ts.toLocaleDateString();
+              })();
+              return (
+                <div key={idx} className="flex items-center gap-3 rounded-xl border border-line/10 bg-wht/5 px-4 py-3">
+                  <span className="text-[14px]">{h.errors === 0 ? "🟢" : "🟡"}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[13px] font-bold">{h.inserted} draft(s) added</span>
+                      <span className="text-[11px] text-mut">from {h.sources} source(s)</span>
+                      {h.errors > 0 && <span className="text-[11px] text-warn">{h.errors} error(s)</span>}
+                    </div>
+                    <div className="text-[11px] text-mut">{timeAgo} · {ts.toLocaleString()}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">🕷️ Sources ({sources.length})</h2>
