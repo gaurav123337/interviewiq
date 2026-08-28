@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { chat, aiAvailable } from "../../ai";
@@ -28,24 +28,24 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   list: ReturnType<typeof getPublishedQuestions>; busy: boolean;
   setBusy: (b: boolean) => void; onChanged: () => Promise<void>;
 }) {
-  const drafts = list.filter(q => !q.published);
+  const drafts = useMemo(() => list.filter(q => !q.published), [list]);
   /* auto-triage: heuristic issues + near-duplicate detection — runs in Web Worker */
   const [triage, setTriage] = useState<Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }>>({});
   const [triageProgress, setTriageProgress] = useState(0);
   const workerRef = useRef<Worker | null>(null);
+  const triageRef = useRef(triage);
+  triageRef.current = triage;
 
-  /* Page-aware triage: only compute for visible drafts, not all 400+ */
-  const [sortedDrafts, setSortedDrafts] = useState<typeof drafts>([]);
-  // Initialize + re-sort when triage or drafts change (but preserve manual reorder)
+  /* Page-aware triage: derive sorted list with useMemo (no state, no cascade) */
   const [manualOrder, setManualOrder] = useState(false);
-  useEffect(() => {
-    if (manualOrder) return;
-    const sorted = [...drafts].sort((a, b) => {
+  const [manualDrafts, setManualDrafts] = useState<typeof drafts | null>(null);
+  const sortedDrafts = useMemo(() => {
+    if (manualOrder && manualDrafts) return manualDrafts;
+    return [...drafts].sort((a, b) => {
       const p = { "review-first": 0, "needs-work": 1, ready: 2 };
       return (p[triage[a.id]?.level ?? "ready"] - p[triage[b.id]?.level ?? "ready"]) || a.id - b.id;
     });
-    setSortedDrafts(sorted);
-  }, [drafts, triage, manualOrder]);
+  }, [drafts, triage, manualOrder, manualDrafts]);
   const [aiTriage, setAiTriage] = useState<Record<number, { score: number; note: string }>>({});
   const [aiBusy, setAiBusy] = useState(false);
   const [edits, setEdits] = useState<Record<number, DraftEdit>>({});
@@ -66,9 +66,9 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     if (drafts.length === 0) return;
     setTriageProgress(0);
 
-    // Only triage drafts not yet computed
+    // Only triage drafts not yet computed (use ref to avoid stale closure)
     const visibleDrafts = sortedDrafts.slice(page * pageSize, (page + 1) * pageSize);
-    const toTriage = visibleDrafts.filter(d => !triage[d.id]);
+    const toTriage = visibleDrafts.filter(d => !triageRef.current[d.id]);
     if (toTriage.length === 0) return;
 
     const bank = list.map(q => q.question).slice(-500);
@@ -80,11 +80,13 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     );
     workerRef.current = w;
 
+    // Use ref in handler to avoid stale closure
     w.onmessage = (ev: MessageEvent) => {
       const msg = ev.data;
       if (msg.type === "progress") {
         setTriageProgress(Math.round((msg.done / msg.total) * 100));
       } else if (msg.type === "result") {
+        // Merge all results at once — single state update, no cascade
         setTriage(prev => ({ ...prev, ...msg.triage }));
         setTriageProgress(100);
       }
@@ -163,19 +165,18 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     setDragIdx(idx);
     e.dataTransfer.effectAllowed = "move";
   };
-  const onDragOver = (idx: number) => (e: React.DragEvent) => {
+  const onDragOver = (_idx: number) => (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   };
   const onDrop = (idx: number) => (e: React.DragEvent) => {
     e.preventDefault();
     if (dragIdx === null || dragIdx === idx) return;
-    // Reorder sortedDrafts by moving item from dragIdx to idx
     const item = sortedDrafts[dragIdx];
     const newDrafts = [...sortedDrafts];
     newDrafts.splice(dragIdx, 1);
     newDrafts.splice(idx, 0, item);
-    setSortedDrafts(newDrafts);
+    setManualDrafts(newDrafts);
     setManualOrder(true);
     setDragIdx(null);
   };
@@ -485,8 +486,6 @@ function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, onToggle, onExpa
   onDragStart?: (e: React.DragEvent) => void; onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void; onDragEnd?: () => void;
 }) {
-  const currentLevel = LEVELS.find(l => l.id === e.level);
-  const currentField = FIELDS.find(f => f.id === e.fieldId);
   return (
     <div
       className={`${cardCls} p-5 ${sel ? "ring-2 ring-acc1/60" : ""} ${focused ? "ring-2 ring-acc1" : ""} transition-shadow`}
