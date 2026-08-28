@@ -110,3 +110,93 @@ export interface DailyAnalytics {
   clicks: number;
 }
 
+/* ── Content Provider Types (Article Normalization) ──────────────────── */
+
+/** A normalized article with all enrichment data */
+export interface ArticleContent {
+  id: string;
+  title: string;
+  summary: string;
+  keywords: string[];
+  difficulty: "beginner" | "intermediate" | "advanced";
+  content: string;
+  rawContent: string;
+  codeSections: CodeSection[];
+  glossary: GlossaryEntry[];
+  keyTakeaways: string[];
+  readTimeMinutes: number;
+  sourceName: string;
+  sourceUrl: string;
+  fieldId: string;
+}
+
+export interface CodeSection {
+  language: string;
+  code: string;
+  description: string;
+}
+
+export interface GlossaryEntry {
+  term: string;
+  definition: string;
+}
+
+export interface ArticleHit {
+  articleId: string;
+  title: string;
+  snippet: string;
+  score: number;
+  keywords: string[];
+  difficulty: string;
+}
+
+export interface ContentRequest {
+  topic: string;
+  field?: string;
+  level?: "beginner" | "intermediate" | "advanced";
+  limit?: number;
+  filters?: Record<string, unknown>;
+}
+
+export interface CoachContent {
+  groundingChunks: string[];
+  quickRef: GlossaryEntry[];
+  takeaways: string[];
+  sources: { title: string; url: string }[];
+}
+
+export interface SystemDesignContent {
+  codeExamples: CodeSection[];
+  glossary: GlossaryEntry[];
+  caseStudies: { title: string; summary: string; url: string }[];
+  patterns: string[];
+}
+
+export interface RoadmapContent {
+  learningPath: {
+    level: "beginner" | "intermediate" | "advanced";
+    title: string;
+    readTime: number;
+    articleId: string;
+  }[];
+  totalReadTime: number;
+  relatedTopics: string[];
+}
+
+export interface InterviewContent {
+  questions: string[];
+  keyConcepts: string[];
+  cheatSheet: string[];
+  furtherReading: { title: string; url: string }[];
+}
+
+export interface IContentProvider {
+  getArticle(id: string, level?: "beginner" | "intermediate" | "advanced"): Promise<ArticleContent | null>;
+  searchArticles(request: ContentRequest): Promise<ArticleHit[]>;
+  getCoachContent(field: string, level?: string): Promise<CoachContent>;
+  getSystemDesignContent(topic: string): Promise<SystemDesignContent>;
+  getRoadmapContent(field: string): Promise<RoadmapContent>;
+  getInterviewContent(field: string, level?: string): Promise<InterviewContent>;
+  getAllKeywords(): Promise<string[]>;
+}
+
