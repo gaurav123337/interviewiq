@@ -495,9 +495,64 @@ function findCodeRegions(lines: string[]): Set<number> {
   return expanded;
 }
 
+/** Preprocess raw scraped text into markdown when no formatting is detected.
+ *  Auto-promotes questions/titles to headings, adds paragraph breaks, etc. */
+function preprocessRawText(text: string): string {
+  // If the text already has markdown headings, leave it alone
+  if (/^#{1,6}\s/m.test(text) || /^```/m.test(text) || /^\s*[-*]\s/m.test(text)) {
+    return text;
+  }
+
+  const lines = text.split("\n");
+  const processed: string[] = [];
+  let prevBlank = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      if (!prevBlank) processed.push("");
+      prevBlank = true;
+      continue;
+    }
+    prevBlank = false;
+
+    // Detect questions → headings
+    if (/^(How|What|Why|Where|When|Which|Who)\b/.test(trimmed) && trimmed.endsWith("?") && trimmed.length < 120) {
+      processed.push("");
+      processed.push("### " + trimmed);
+      processed.push("");
+      continue;
+    }
+
+    // Detect short standalone lines that look like section titles (all caps, or Title Case, short)
+    if (trimmed.length < 60 && !trimmed.endsWith(".") && !trimmed.endsWith(",") &&
+        /^[A-Z]/.test(trimmed) && (trimmed === trimmed.toUpperCase() || /^[A-Z][a-z]+(\s[A-Z][a-z]+)+$/.test(trimmed))) {
+      processed.push("");
+      processed.push("### " + trimmed);
+      processed.push("");
+      continue;
+    }
+
+    // Detect list-like patterns
+    if (/^\d+[.)]\s/.test(trimmed) || /^[-*]\s/.test(trimmed)) {
+      processed.push(trimmed);
+      continue;
+    }
+
+    // Regular text — add as paragraph
+    processed.push(trimmed);
+  }
+
+  return processed.join("\n");
+}
+
 /** Split markdown into blocks and render as safe React elements */
 function MarkdownContent({ text }: { text: string }) {
-  const lines = text.split("\n");
+  // Preprocess raw text to add structure
+  const preprocessed = preprocessRawText(text);
+  const lines = preprocessed.split("\n");
   const elements: ReactNode[] = [];
   let inExplicitCodeBlock = false;
   let explicitCodeLines: string[] = [];
@@ -1224,10 +1279,13 @@ export function Articles() {
 
   const filtered = articles.filter(a => {
     const matchesFilter = filter === "all" || a.fieldId === filter;
+    const q = searchQuery.toLowerCase();
     const matchesSearch = !searchQuery ||
-      a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (a.summary?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
-      a.sourceName.toLowerCase().includes(searchQuery.toLowerCase());
+      a.title.toLowerCase().includes(q) ||
+      (a.summary?.toLowerCase().includes(q) ?? false) ||
+      a.sourceName.toLowerCase().includes(q) ||
+      a.tags.some(t => t.toLowerCase().includes(q)) ||
+      (a.contentRefined?.keywords || []).some(k => k.toLowerCase().includes(q));
     const matchesKeyword = !keywordFilter ||
       (a.contentRefined?.keywords || []).some(k => k.toLowerCase().includes(keywordFilter.toLowerCase()));
     return matchesFilter && matchesSearch && matchesKeyword;
