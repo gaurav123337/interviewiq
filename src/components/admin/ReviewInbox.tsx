@@ -67,6 +67,10 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [filterDateTo, setFilterDateTo] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const csvInputRef = useRef<HTMLInputElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [bulkField, setBulkField] = useState("");
+  const [bulkLevel, setBulkLevel] = useState("");
   const filteredDrafts = useMemo(() => {
     let out = sortedDrafts;
     const q = search.toLowerCase().trim();
@@ -201,6 +205,41 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     } else {
       toast("No valid questions found in CSV");
     }
+  };
+  const downloadTemplate = () => {
+    const csv = "question,answer,keyPoints,field,level\n\"What is a closure?\",\"A closure is...\",\"scope; functions\",\"Backend Engineer\",\"Senior\"\n\"Explain REST\",\"REST is...\",\"HTTP; stateless\",\"Full-Stack Engineer\",\"Mid-Level\"";
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "interviewiq-csv-template.csv";
+    a.click(); URL.revokeObjectURL(url);
+    toast("📥 Template downloaded — fill in your questions and import");
+  };
+  const applyBulkTags = async () => {
+    if (selected.size === 0 || (!bulkField && !bulkLevel)) return;
+    setBusy(true);
+    try {
+      for (const id of selected) {
+        const patch: Record<string, unknown> = {};
+        if (bulkField) patch.fieldId = bulkField;
+        if (bulkLevel) patch.level = bulkLevel;
+        await updateQuestion(id, patch);
+      }
+      toast(`🏷 Updated ${selected.size} draft(s) — ${bulkField ? `field → ${FIELDS.find(f => f.id === bulkField)?.name}` : ""} ${bulkLevel ? `level → ${LEVELS.find(l => l.id === bulkLevel)?.name}` : ""}`);
+      setSelected(new Set());
+      setBulkField("");
+      setBulkLevel("");
+      await onChanged();
+    } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
+    finally { setBusy(false); }
+  };
+  /* Drag-and-drop CSV import on the entire section */
+  const onDropHandler = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file && file.name.endsWith(".csv")) importCsv(file);
+    else if (file) toast("Please drop a .csv file");
   };
 
   /* ── Keyboard shortcuts ── */
@@ -454,7 +493,23 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   };
 
   return (
-    <div className="space-y-4">
+    <div
+      ref={dropRef}
+      className="space-y-4 relative"
+      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; setDragOver(true); }}
+      onDragLeave={e => { if (e.currentTarget === dropRef.current && !e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false); }}
+      onDrop={onDropHandler}
+    >
+      {/* Drag overlay */}
+      {dragOver && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-acc/10 backdrop-blur-sm pointer-events-none">
+          <div className="rounded-2xl border-2 border-dashed border-acc bg-panel1/95 px-12 py-8 text-center shadow-2xl">
+            <div className="text-[40px]">📥</div>
+            <p className="mt-2 text-[16px] font-extrabold text-acc">Drop CSV to import</p>
+            <p className="mt-1 text-[12px] text-mut">Questions will be added as drafts</p>
+          </div>
+        </div>
+      )}
       {/* harvest candidates — real user misses, one click to draft */}
       <div className={`${cardCls} p-5`}>
         <div className="flex flex-wrap items-center gap-3">
@@ -534,6 +589,23 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
               </button>
             </div>
           )}
+          {/* Bulk tag editing bar — shows when items are selected */}
+          {selected.size > 0 && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-acc1/30 bg-acc1/5 px-3 py-2">
+              <span className="text-[11px] font-bold text-acc1">🏷 Bulk edit ({selected.size} selected):</span>
+              <select value={bulkField} onChange={ev => setBulkField(ev.target.value)} className="inp text-[11px]">
+                <option value="">Keep field</option>
+                {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
+              </select>
+              <select value={bulkLevel} onChange={ev => setBulkLevel(ev.target.value)} className="inp text-[11px]">
+                <option value="">Keep level</option>
+                {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
+              </select>
+              <button className={btnPrimary + btnSm} onClick={applyBulkTags} disabled={busy || (!bulkField && !bulkLevel)}>
+                ✓ Apply to {selected.size}
+              </button>
+            </div>
+          )}
         </div>
         {/* Triage progress bar */}
         {triageProgress > 0 && triageProgress < 100 && (
@@ -590,6 +662,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
               <div className="flex-1" />
               <button className={btnGhost + btnSm} onClick={exportCsv} disabled={filteredDrafts.length === 0}>📥 Export CSV</button>
               <button className={btnGhost + btnSm} onClick={() => csvInputRef.current?.click()}>📤 Import CSV</button>
+              <button className={btnGhost + btnSm} onClick={downloadTemplate}>📄 Template</button>
               <input ref={csvInputRef} type="file" accept=".csv" className="hidden" onChange={ev => { const f = ev.target.files?.[0]; if (f) importCsv(f); ev.target.value = ""; }} />
             </div>
           </div>
