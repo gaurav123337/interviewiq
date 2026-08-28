@@ -63,6 +63,10 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [filterField, setFilterField] = useState("");
   const [filterLevel, setFilterLevel] = useState("");
   const [filterTriage, setFilterTriage] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const csvInputRef = useRef<HTMLInputElement>(null);
   const filteredDrafts = useMemo(() => {
     let out = sortedDrafts;
     const q = search.toLowerCase().trim();
@@ -70,10 +74,28 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     if (filterField) out = out.filter(d => d.fieldId === filterField);
     if (filterLevel) out = out.filter(d => d.level === filterLevel);
     if (filterTriage) out = out.filter(d => (triage[d.id]?.level ?? "ready") === filterTriage);
+    if (filterDateFrom) {
+      const from = new Date(filterDateFrom).getTime();
+      out = out.filter(d => {
+        const item = list.find(l => l.id === d.id);
+        const ts = item?.updatedAt ? new Date(item.updatedAt).getTime() : 0;
+        return ts >= from;
+      });
+    }
+    if (filterDateTo) {
+      const to = new Date(filterDateTo).getTime() + 86400000; // include full day
+      out = out.filter(d => {
+        const item = list.find(l => l.id === d.id);
+        const ts = item?.updatedAt ? new Date(item.updatedAt).getTime() : 0;
+        return ts > 0 ? ts <= to : true;
+      });
+    }
     return out;
-  }, [sortedDrafts, search, filterField, filterLevel, filterTriage, triage]);
+  }, [sortedDrafts, search, filterField, filterLevel, filterTriage, filterDateFrom, filterDateTo, triage, list]);
+  const hasFilters = search || filterField || filterLevel || filterTriage || filterDateFrom || filterDateTo;
+  const clearFilters = () => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterTriage(""); setFilterDateFrom(""); setFilterDateTo(""); };
   // Reset page when filters change
-  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterTriage, drafts.length]);
+  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterTriage, filterDateFrom, filterDateTo, drafts.length]);
 
   /* Web Worker triage: all duplicate detection runs off main thread */
   useEffect(() => {
@@ -114,9 +136,92 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     };
   }, [page, pageSize]);
 
+  /* ── CSV export/import ── */
+  const exportCsv = () => {
+    const esc = (s: string) => '"' + s.replace(/"/g, '""') + '"';
+    const header = ["question","answer","keyPoints","field","level"].join(",");
+    const rows = filteredDrafts.map(d => {
+      const field = FIELDS.find(f => f.id === d.fieldId)?.name ?? d.fieldId;
+      const level = LEVELS.find(l => l.id === d.level)?.name ?? d.level;
+      return [esc(d.question), esc(d.answer), esc(d.keyPoints.join("; ")), esc(field), esc(level)].join(",");
+    }).join("\n");
+    const blob = new Blob([header + "\n" + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `interviewiq-drafts-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    toast(`📥 Exported ${filteredDrafts.length} draft(s) as CSV`);
+  };
+  const importCsv = async (file: File) => {
+    const text = await file.text();
+    const lines = text.split("\n").filter(l => l.trim());
+    if (lines.length < 2) { toast("CSV must have a header row + data rows"); return; }
+    const header = lines[0].toLowerCase();
+    const hasQuestion = header.includes("question");
+    if (!hasQuestion) { toast("CSV must have a 'question' column"); return; }
+    // Find column indices
+    const cols = header.split(",").map(c => c.trim().replace(/["\s]/g, ""));
+    const qIdx = cols.findIndex(c => c === "question");
+    const aIdx = cols.findIndex(c => c === "answer");
+    const kIdx = cols.findIndex(c => c.includes("keypoint") || c.includes("key_point"));
+    const fIdx = cols.findIndex(c => c === "field" || c === "fieldid" || c === "field_id");
+    const lIdx = cols.findIndex(c => c === "level");
+    const parseCsvRow = (row: string) => {
+      const cells: string[] = [];
+      let current = "";
+      let inQuotes = false;
+      for (const ch of row) {
+        if (ch === '"') { inQuotes = !inQuotes; continue; }
+        if (ch === "," && !inQuotes) { cells.push(current.trim()); current = ""; continue; }
+        current += ch;
+      }
+      cells.push(current.trim());
+      return cells;
+    };
+    let imported = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cells = parseCsvRow(lines[i]);
+      const q = cells[qIdx]?.trim();
+      if (!q) continue;
+      const fieldRaw = fIdx >= 0 ? cells[fIdx]?.trim() : "";
+      const fieldId = FIELDS.find(f => f.name.toLowerCase() === fieldRaw?.toLowerCase() || f.id === fieldRaw)?.id ?? FIELDS[0]?.id ?? "";
+      const levelRaw = lIdx >= 0 ? cells[lIdx]?.trim() : "";
+      const level = LEVELS.find(l => l.name.toLowerCase() === levelRaw?.toLowerCase() || l.id === levelRaw)?.id as LevelId ?? "mid" as LevelId;
+      await createQuestion({
+        fieldId, level, question: q,
+        answer: aIdx >= 0 ? cells[aIdx]?.trim() ?? "" : "",
+        keyPoints: kIdx >= 0 ? cells[kIdx]?.split(/[;|]/).map(k => k.trim()).filter(Boolean) : [],
+        published: false
+      });
+      imported++;
+    }
+    if (imported > 0) {
+      toast(`📥 Imported ${imported} draft(s) from CSV`);
+      await onChanged();
+    } else {
+      toast("No valid questions found in CSV");
+    }
+  };
+
   /* ── Keyboard shortcuts ── */
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Global shortcuts work everywhere
+      if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (e.key === "Escape") {
+        if (search || hasFilters) {
+          clearFilters();
+          searchRef.current?.blur();
+          return;
+        }
+        if (expandedDrafts.size > 0) { setExpandedDrafts(new Set()); return; }
+      }
       // Ignore when typing in an input/textarea/select
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -172,7 +277,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sortedDrafts, focusedIdx]);
+  }, [sortedDrafts, focusedIdx, search, hasFilters, expandedDrafts]);
 
   /* ── Drag-and-drop reorder ── */
   const onDragStart = (idx: number) => (e: React.DragEvent) => {
@@ -450,34 +555,47 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
         )}
         {/* Search + filters */}
         {drafts.length > 5 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <input
-              value={search}
-              onChange={ev => setSearch(ev.target.value)}
-              placeholder="🔍 Search questions…"
-              className="inp flex-1 min-w-[180px]"
-            />
-            <select value={filterField} onChange={ev => setFilterField(ev.target.value)} className="inp text-[11px]">
-              <option value="">All fields</option>
-              {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
-            </select>
-            <select value={filterLevel} onChange={ev => setFilterLevel(ev.target.value)} className="inp text-[11px]">
-              <option value="">All levels</option>
-              {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
-            </select>
-            <select value={filterTriage} onChange={ev => setFilterTriage(ev.target.value)} className="inp text-[11px]">
-              <option value="">All triage</option>
-              <option value="ready">🟢 Ready</option>
-              <option value="needs-work">🟡 Needs work</option>
-              <option value="review-first">🔴 Review first</option>
-            </select>
-            {(search || filterField || filterLevel || filterTriage) && (
-              <button className={btnGhost + btnSm} onClick={() => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterTriage(""); }}>Clear</button>
-            )}
+          <div className="mt-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                ref={searchRef}
+                value={search}
+                onChange={ev => setSearch(ev.target.value)}
+                placeholder="🔍 Search questions… (press /)"
+                className="inp flex-1 min-w-[180px]"
+              />
+              <select value={filterField} onChange={ev => setFilterField(ev.target.value)} className="inp text-[11px]">
+                <option value="">All fields</option>
+                {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
+              </select>
+              <select value={filterLevel} onChange={ev => setFilterLevel(ev.target.value)} className="inp text-[11px]">
+                <option value="">All levels</option>
+                {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
+              </select>
+              <select value={filterTriage} onChange={ev => setFilterTriage(ev.target.value)} className="inp text-[11px]">
+                <option value="">All triage</option>
+                <option value="ready">🟢 Ready</option>
+                <option value="needs-work">🟡 Needs work</option>
+                <option value="review-first">🔴 Review first</option>
+              </select>
+              {hasFilters && (
+                <button className={btnGhost + btnSm} onClick={clearFilters}>Clear</button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-[11px] text-mut font-bold">From:</label>
+              <input type="date" value={filterDateFrom} onChange={ev => setFilterDateFrom(ev.target.value)} className="inp text-[11px] w-[140px]" />
+              <label className="text-[11px] text-mut font-bold">To:</label>
+              <input type="date" value={filterDateTo} onChange={ev => setFilterDateTo(ev.target.value)} className="inp text-[11px] w-[140px]" />
+              <div className="flex-1" />
+              <button className={btnGhost + btnSm} onClick={exportCsv} disabled={filteredDrafts.length === 0}>📥 Export CSV</button>
+              <button className={btnGhost + btnSm} onClick={() => csvInputRef.current?.click()}>📤 Import CSV</button>
+              <input ref={csvInputRef} type="file" accept=".csv" className="hidden" onChange={ev => { const f = ev.target.files?.[0]; if (f) importCsv(f); ev.target.value = ""; }} />
+            </div>
           </div>
         )}
-        {(search || filterField || filterLevel || filterTriage) && (
-          <p className="mt-2 text-[11px] text-mut font-bold">Showing {filteredDrafts.length} of {sortedDrafts.length} drafts</p>
+        {hasFilters && (
+          <p className="mt-2 text-[11px] text-mut font-bold">Showing {filteredDrafts.length} of {sortedDrafts.length} drafts {search && <span className="text-acc">· "{search}"</span>}</p>
         )}
       </div>
 
