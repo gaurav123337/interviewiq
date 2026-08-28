@@ -651,7 +651,9 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
             <div className="flex flex-wrap items-center gap-2">
               {aiAvailable() && (
                 <div className="flex items-center gap-2">
-                  <button className={btnSoft + btnSm} onClick={aiTriageAll} disabled={aiBusy || busy}>
+                  <button className={btnSoft + btnSm} onClick={aiTriageAll} disabled={aiBusy || busy}
+                    title="AI-triage: Use AI to score each draft for quality, relevance, and difficulty level"
+                  >
                     {aiBusy ? <><span className="spinner" /> Scoring…</> : `✨ AI-triage (${sortedDrafts.filter(d => !aiTriage[d.id]).length})`}
                   </button>
                   {aiBusy && aiProgress.total > 0 && (
@@ -659,24 +661,34 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
                   )}
                 </div>
               )}
-              <button className={btnGhost + btnSm} onClick={toggleAll} disabled={busy}>
+              <button className={btnGhost + btnSm} onClick={toggleAll} disabled={busy}
+                title="Select or deselect all visible drafts"
+              >
                 {selected.size === filteredDrafts.length && filteredDrafts.length > 0 ? "Deselect all" : `Select all (${filteredDrafts.length})`}
               </button>
-              <button className={btnPrimary + btnSm} onClick={publishSelected} disabled={busy || selected.size === 0}>
+              <button className={btnPrimary + btnSm} onClick={publishSelected} disabled={busy || selected.size === 0}
+                title="Publish: Move selected drafts to the Question Bank for users"
+              >
                 🚀 Publish {selected.size || ""}
               </button>
-              <button className={btnDanger + btnSm} onClick={deleteSelected} disabled={busy || selected.size === 0}>
+              <button className={btnDanger + btnSm} onClick={deleteSelected} disabled={busy || selected.size === 0}
+                title="Delete: Permanently remove selected drafts"
+              >
                 🗑 Delete {selected.size || ""}
               </button>
               {canUndo && (
                 <button className={btnSoft + btnSm} onClick={async () => {
                   const entry = peekUndo();
                   if (entry) { await popUndo(); toast(`↩ Undone: ${entry.label}`); await onChanged(); }
-                }} disabled={busy}>
+                }} disabled={busy}
+                  title="Undo: Reverse the last action (publish, delete, or tag)"
+                >
                   ↩ Undo
                 </button>
               )}
-              <button className={btnGhost + btnSm} onClick={() => setShowUndoHistory(true)}>
+              <button className={btnGhost + btnSm} onClick={() => setShowUndoHistory(true)}
+                title="History: View all recent operations with one-click undo"
+              >
                 📋 History
               </button>
             </div>

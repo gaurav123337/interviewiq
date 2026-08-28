@@ -146,7 +146,9 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
               same pipeline as the cron, no waiting.
             </p>
           </div>
-          <button className={btnOk + btnSm} onClick={runNow} disabled={runBusy || busy}>
+          <button className={btnOk + btnSm} onClick={runNow} disabled={runBusy || busy}
+            title="Run scraper: Fetch new content from all enabled sources. Respects per-source schedule overrides."
+          >
             {runBusy ? <><span className="spinner" /> Scraping…</> : `🕷️ Run now (${sources.filter(s => s.enabled).length} sources)`}
           </button>
         </div>

@@ -463,17 +463,23 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                 </button>
               )}
               {(statusFilter === "approved" || statusFilter === "all") && (
-                <button className={`${btnPrimary} ${btnSm}`} onClick={batchRefine} disabled={refining}>
+                <button className={`${btnPrimary} ${btnSm}`} onClick={batchRefine} disabled={refining}
+                  title="Refine all: Transform raw text into beginner/intermediate/advanced levels using AI. Skips already refined articles."
+                >
                   {refining ? "✨ Refining..." : "✨ Refine All Content"}
                 </button>
               )}
               {(statusFilter === "approved" || statusFilter === "all") && (
-                <button className={`${btnPrimary} ${btnSm}`} onClick={batchNormalize} disabled={normalizing}>
+                <button className={`${btnPrimary} ${btnSm}`} onClick={batchNormalize} disabled={normalizing}
+                  title="Normalize all: Extract keywords, code examples, glossary, and summary using AI. Enables better search and RAG."
+                >
                   {normalizing ? "🧠 Normalizing..." : "🧠 Normalize All (keywords + code)"}
                 </button>
               )}
               {statusFilter === "approved" && (
-                <button className={`${btnPrimary} ${btnSm}`} onClick={indexAllUnindexed} disabled={indexing}>
+                <button className={`${btnPrimary} ${btnSm}`} onClick={indexAllUnindexed} disabled={indexing}
+                  title="Index all: Add to AI knowledge base for grounding coach answers and search. Skips already indexed articles."
+                >
                   {indexing ? "🧠 Indexing..." : "🧠 Index All to AI"}
                 </button>
               )}
@@ -554,14 +560,15 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                     <div className="flex gap-1">
                       {item.status === "pending" && (
                         <>
-                          <button className={`${btnOk} ${btnSm}`} onClick={() => approveItem(item.id)}>✅</button>
-                          <button className={`${btnDanger} ${btnSm}`} onClick={() => rejectItem(item.id)}>❌</button>
+                          <button className={`${btnOk} ${btnSm}`} title="Approve: Mark as approved and publish to the Articles page" onClick={() => approveItem(item.id)}>✅</button>
+                          <button className={`${btnDanger} ${btnSm}`} title="Reject: Hide from the Articles page" onClick={() => rejectItem(item.id)}>❌</button>
                         </>
                       )}
                       {item.status === "approved" && (
                         <button
                           className={`${btnPrimary} ${btnSm}`}
                           disabled={busy}
+                          title="Refine: Transform raw scraped text into beginner/intermediate/advanced difficulty levels using AI"
                           onClick={(e) => { e.stopPropagation(); console.log("[ContentCuration] Refine button clicked for", item.id); refineSingle(item.id); }}
                         >✨ Refine</button>
                       )}
@@ -569,6 +576,7 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                         <button
                           className={`${btnPrimary} ${btnSm}`}
                           disabled={busy}
+                          title="Normalize: Extract keywords, code examples, glossary, and summary using AI. Enables better search and RAG retrieval"
                           onClick={(e) => { e.stopPropagation(); console.log("[ContentCuration] Normalize button clicked for", item.id); normalizeSingle(item.id); }}
                         >🧠 Normalize</button>
                       )}
@@ -576,11 +584,12 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                         <button
                           className={`${btnPrimary} ${btnSm}`}
                           disabled={busy}
+                          title="Index: Add to AI knowledge base for grounding coach answers and search"
                           onClick={(e) => { e.stopPropagation(); indexContentToRAG(item.id); }}
                         >🧠 Index</button>
                       )}
                       {item.status === "approved" && (item as any).ragDocumentId && (
-                        <span className="text-[11px] text-acc font-bold">🧠 Indexed</span>
+                        <span className="text-[11px] text-acc font-bold" title="Already indexed in the AI knowledge base">🧠 Indexed</span>
                       )}
                     </div>
                   </div>
