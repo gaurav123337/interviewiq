@@ -58,8 +58,22 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  // Reset page when drafts change
-  useEffect(() => { setPage(0); }, [drafts.length]);
+  /* Search + filter — derived with useMemo, no cascade */
+  const [search, setSearch] = useState("");
+  const [filterField, setFilterField] = useState("");
+  const [filterLevel, setFilterLevel] = useState("");
+  const [filterTriage, setFilterTriage] = useState("");
+  const filteredDrafts = useMemo(() => {
+    let out = sortedDrafts;
+    const q = search.toLowerCase().trim();
+    if (q) out = out.filter(d => d.question.toLowerCase().includes(q) || d.answer.toLowerCase().includes(q));
+    if (filterField) out = out.filter(d => d.fieldId === filterField);
+    if (filterLevel) out = out.filter(d => d.level === filterLevel);
+    if (filterTriage) out = out.filter(d => (triage[d.id]?.level ?? "ready") === filterTriage);
+    return out;
+  }, [sortedDrafts, search, filterField, filterLevel, filterTriage, triage]);
+  // Reset page when filters change
+  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterTriage, drafts.length]);
 
   /* Web Worker triage: all duplicate detection runs off main thread */
   useEffect(() => {
@@ -245,7 +259,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   };
 
   const toggleAll = () =>
-    setSelected(selected.size === drafts.length ? new Set() : new Set(drafts.map(d => d.id)));
+    setSelected(selected.size === filteredDrafts.length ? new Set() : new Set(filteredDrafts.map(d => d.id)));
 
   const saveOne = async (id: number) => {
     const e = edits[id];
@@ -289,23 +303,35 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     finally { setBusy(false); }
   };
 
+  const [aiProgress, setAiProgress] = useState({ done: 0, total: 0 });
   const aiTriageAll = async () => {
     const pending = sortedDrafts.filter(d => !aiTriage[d.id]);
     if (!pending.length) return;
     setAiBusy(true);
-    const out: Record<number, { score: number; note: string }> = {};
-    for (const d of pending) {
-      try {
-        const raw = await chat([
-          { role: "system", content: "You are a senior interview-question editor. Score each draft 0-10 for clarity, answer completeness and key-point quality. Reply with ONLY `N — short reason`." },
-          { role: "user", content: `Question: ${d.question}\nModel answer: ${d.answer || "(missing)"}\nKey points: ${d.keyPoints.join(", ") || "(none)"}` }
-        ], { temperature: 0.2, maxTokens: 60 });
-        const m = raw.trim().match(/^(\d{1,2})\s*[-—:.]\s*(.+)$/s);
-        const score = Math.max(0, Math.min(10, Number(m?.[1] ?? 5)));
-        out[d.id] = { score, note: (m?.[2] ?? raw).slice(0, 160) };
-      } catch { out[d.id] = { score: 5, note: "AI unavailable" }; }
+    setAiProgress({ done: 0, total: pending.length });
+    const BATCH = 5;
+    for (let i = 0; i < pending.length; i += BATCH) {
+      const batch = pending.slice(i, i + BATCH);
+      const results = await Promise.allSettled(batch.map(async d => {
+        try {
+          const raw = await chat([
+            { role: "system", content: "You are a senior interview-question editor. Score each draft 0-10 for clarity, answer completeness and key-point quality. Reply with ONLY `N — short reason`." },
+            { role: "user", content: `Question: ${d.question}\nModel answer: ${d.answer || "(missing)"}\nKey points: ${d.keyPoints.join(", ") || "(none)"}` }
+          ], { temperature: 0.2, maxTokens: 60 });
+          const m = raw.trim().match(/^(\d{1,2})\s*[-—:.]\s*(.+)$/s);
+          const score = Math.max(0, Math.min(10, Number(m?.[1] ?? 5)));
+          return { id: d.id, score, note: (m?.[2] ?? raw).slice(0, 160) };
+        } catch { return { id: d.id, score: 5, note: "AI unavailable" as string }; }
+      }));
+      const out: Record<number, { score: number; note: string }> = {};
+      for (const r of results) {
+        if (r.status === "fulfilled") out[r.value.id] = r.value;
+      }
+      setAiTriage(t => ({ ...t, ...out }));
+      setAiProgress({ done: Math.min(i + BATCH, pending.length), total: pending.length });
+      // Yield to browser between batches to keep UI smooth
+      if (i + BATCH < pending.length) await new Promise(r => setTimeout(r, 0));
     }
-    setAiTriage(t => ({ ...t, ...out }));
     setAiBusy(false);
   };
 
@@ -383,12 +409,17 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
           {drafts.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               {aiAvailable() && (
-                <button className={btnSoft + btnSm} onClick={aiTriageAll} disabled={aiBusy || busy}>
-                  {aiBusy ? <><span className="spinner" /> Scoring…</> : `✨ AI-triage (${sortedDrafts.filter(d => !aiTriage[d.id]).length})`}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button className={btnSoft + btnSm} onClick={aiTriageAll} disabled={aiBusy || busy}>
+                    {aiBusy ? <><span className="spinner" /> Scoring…</> : `✨ AI-triage (${sortedDrafts.filter(d => !aiTriage[d.id]).length})`}
+                  </button>
+                  {aiBusy && aiProgress.total > 0 && (
+                    <span className="text-[11px] text-acc font-bold">{aiProgress.done}/{aiProgress.total}</span>
+                  )}
+                </div>
               )}
               <button className={btnGhost + btnSm} onClick={toggleAll} disabled={busy}>
-                {selected.size === drafts.length && drafts.length > 0 ? "Deselect all" : `Select all (${drafts.length})`}
+                {selected.size === filteredDrafts.length && filteredDrafts.length > 0 ? "Deselect all" : `Select all (${filteredDrafts.length})`}
               </button>
               <button className={btnPrimary + btnSm} onClick={publishSelected} disabled={busy || selected.size === 0}>
                 🚀 Publish {selected.size || ""}
@@ -417,6 +448,37 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
         {triageProgress === 100 && drafts.length > 20 && (
           <p className="mt-2 text-[11px] text-ok font-bold">✅ Triage complete — {Object.keys(triage).length} drafts analyzed</p>
         )}
+        {/* Search + filters */}
+        {drafts.length > 5 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              value={search}
+              onChange={ev => setSearch(ev.target.value)}
+              placeholder="🔍 Search questions…"
+              className="inp flex-1 min-w-[180px]"
+            />
+            <select value={filterField} onChange={ev => setFilterField(ev.target.value)} className="inp text-[11px]">
+              <option value="">All fields</option>
+              {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
+            </select>
+            <select value={filterLevel} onChange={ev => setFilterLevel(ev.target.value)} className="inp text-[11px]">
+              <option value="">All levels</option>
+              {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
+            </select>
+            <select value={filterTriage} onChange={ev => setFilterTriage(ev.target.value)} className="inp text-[11px]">
+              <option value="">All triage</option>
+              <option value="ready">🟢 Ready</option>
+              <option value="needs-work">🟡 Needs work</option>
+              <option value="review-first">🔴 Review first</option>
+            </select>
+            {(search || filterField || filterLevel || filterTriage) && (
+              <button className={btnGhost + btnSm} onClick={() => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterTriage(""); }}>Clear</button>
+            )}
+          </div>
+        )}
+        {(search || filterField || filterLevel || filterTriage) && (
+          <p className="mt-2 text-[11px] text-mut font-bold">Showing {filteredDrafts.length} of {sortedDrafts.length} drafts</p>
+        )}
       </div>
 
       {drafts.length === 0 && (
@@ -430,7 +492,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       )}
 
       {/* Pagination */}
-      {sortedDrafts.length > 0 && (
+      {filteredDrafts.length > 0 && (
         <div className="flex items-center justify-between gap-2 py-3">
           <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</button>
           <div className="flex items-center gap-2">
@@ -439,13 +501,13 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
               <option value={50}>50 / page</option>
               <option value={100}>100 / page</option>
             </select>
-            <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(sortedDrafts.length / pageSize)} ({sortedDrafts.length} total)</span>
+            <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(filteredDrafts.length / pageSize)} ({filteredDrafts.length} total)</span>
           </div>
-          <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.min(Math.ceil(sortedDrafts.length / pageSize) - 1, p + 1))} disabled={(page + 1) * pageSize >= sortedDrafts.length}>Next →</button>
+          <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.min(Math.ceil(filteredDrafts.length / pageSize) - 1, p + 1))} disabled={(page + 1) * pageSize >= filteredDrafts.length}>Next →</button>
         </div>
       )}
 
-      {sortedDrafts.slice(page * pageSize, (page + 1) * pageSize).map((d, i) => {
+      {filteredDrafts.slice(page * pageSize, (page + 1) * pageSize).map((d, i) => {
         const e = edits[d.id];
         if (!e) return null;
         const idx = page * pageSize + i;
@@ -464,11 +526,11 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       })}
 
       {/* Bottom pagination */}
-      {sortedDrafts.length > pageSize && (
+      {filteredDrafts.length > pageSize && (
         <div className="flex items-center justify-center gap-2 py-3">
           <button className={btnGhost + btnSm} onClick={() => { setPage(p => Math.max(0, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }} disabled={page === 0}>← Prev</button>
-          <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(sortedDrafts.length / pageSize)}</span>
-          <button className={btnGhost + btnSm} onClick={() => { setPage(p => Math.min(Math.ceil(sortedDrafts.length / pageSize) - 1, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }} disabled={(page + 1) * pageSize >= sortedDrafts.length}>Next →</button>
+          <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(filteredDrafts.length / pageSize)}</span>
+          <button className={btnGhost + btnSm} onClick={() => { setPage(p => Math.min(Math.ceil(filteredDrafts.length / pageSize) - 1, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }} disabled={(page + 1) * pageSize >= filteredDrafts.length}>Next →</button>
         </div>
       )}
     </div>

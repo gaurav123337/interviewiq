@@ -1,6 +1,6 @@
 /* QuestionsSection — extracted from Admin.tsx */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { createQuestion, deleteQuestion, setQuestionPublished } from "../../services/admin";
@@ -24,7 +24,18 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
-  useEffect(() => { setPage(0); }, [list.length]);
+  const [search, setSearch] = useState("");
+  const [filterField, setFilterField] = useState("");
+  const [filterLevel, setFilterLevel] = useState("");
+  const filteredList = useMemo(() => {
+    let out = list;
+    const q = search.toLowerCase().trim();
+    if (q) out = out.filter(d => d.question.toLowerCase().includes(q) || (d.answer && d.answer.toLowerCase().includes(q)));
+    if (filterField) out = out.filter(d => d.fieldId === filterField);
+    if (filterLevel) out = out.filter(d => d.level === filterLevel);
+    return out;
+  }, [list, search, filterField, filterLevel]);
+  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, list.length]);
 
   const publish = async () => {
     if (!question.trim()) { toast("Question is required"); return; }
@@ -64,7 +75,26 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">📚 Published questions ({list.length})</h2>
-        {list.length > 0 && (
+        {list.length > 5 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <input value={search} onChange={ev => setSearch(ev.target.value)} placeholder="🔍 Search questions…" className="inp flex-1 min-w-[180px]" />
+            <select value={filterField} onChange={ev => setFilterField(ev.target.value)} className="inp text-[11px]">
+              <option value="">All fields</option>
+              {FIELDS.map(f => <option key={f.id} value={f.id}>{f.icon} {f.name}</option>)}
+            </select>
+            <select value={filterLevel} onChange={ev => setFilterLevel(ev.target.value)} className="inp text-[11px]">
+              <option value="">All levels</option>
+              {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
+            </select>
+            {(search || filterField || filterLevel) && (
+              <button className={btnGhost + btnSm} onClick={() => { setSearch(""); setFilterField(""); setFilterLevel(""); }}>Clear</button>
+            )}
+          </div>
+        )}
+        {(search || filterField || filterLevel) && (
+          <p className="mt-2 text-[11px] text-mut font-bold">Showing {filteredList.length} of {list.length}</p>
+        )}
+        {filteredList.length > 0 && (
           <div className="flex items-center justify-between gap-2 py-2">
             <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</button>
             <div className="flex items-center gap-2">
@@ -73,14 +103,15 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
                 <option value={50}>50 / page</option>
                 <option value={100}>100 / page</option>
               </select>
-              <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(list.length / pageSize)}</span>
+              <span className="text-[12px] text-mut font-bold">Page {page + 1} of {Math.ceil(filteredList.length / pageSize)} ({filteredList.length} total)</span>
             </div>
-            <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.min(Math.ceil(list.length / pageSize) - 1, p + 1))} disabled={(page + 1) * pageSize >= list.length}>Next →</button>
+            <button className={btnGhost + btnSm} onClick={() => setPage(p => Math.min(Math.ceil(filteredList.length / pageSize) - 1, p + 1))} disabled={(page + 1) * pageSize >= filteredList.length}>Next →</button>
           </div>
         )}
         <div className="mt-3 space-y-2.5">
           {list.length === 0 && <p className="text-[13px] text-mut">Nothing published yet.</p>}
-          {list.slice(page * pageSize, (page + 1) * pageSize).map(q => (
+          {list.length > 0 && filteredList.length === 0 && <p className="text-[13px] text-mut">No questions match your filters.</p>}
+          {filteredList.slice(page * pageSize, (page + 1) * pageSize).map(q => (
             <div key={q.id} className="flex items-start gap-3 rounded-xl border border-line/10 bg-wht/5 p-3.5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
