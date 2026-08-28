@@ -97,18 +97,27 @@ function parseRefinedContent(raw: string): RefinedContent | null {
     try { parsed = JSON.parse(codeBlockMatch[1].trim()); } catch { /* try next */ }
   }
 
-  // Strategy 2: Find the outermost { ... } block
+  // Strategy 2: Find the outermost { ... } block (string-aware)
   if (!parsed) {
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try { parsed = JSON.parse(jsonMatch[0]); } catch {
-        // Strategy 3: Try fixing common JSON issues
-        let fixed = jsonMatch[0]
-          .replace(/'/g, '"')  // single quotes
-          .replace(/\n/g, ' ') // newlines inside strings
-          .replace(/,\s*([}\]])/g, '$1') // trailing commas
-          .replace(/([\w]+)\s*:/g, '"$1":'); // unquoted keys
-        try { parsed = JSON.parse(fixed); } catch { /* try next */ }
+    const start = raw.indexOf("{");
+    if (start >= 0) {
+      let depth = 0, inStr = false, esc = false, end = -1;
+      for (let i = start; i < raw.length; i++) {
+        const c = raw[i];
+        if (esc) { esc = false; continue; }
+        if (c === "\\") { esc = true; continue; }
+        if (c === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c === "{") depth++;
+        else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end > start) {
+        const slice = raw.slice(start, end + 1);
+        try { parsed = JSON.parse(slice); } catch {
+          // Strategy 3: Try fixing common JSON issues
+          let fixed = slice.replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1');
+          try { parsed = JSON.parse(fixed); } catch { /* try next */ }
+        }
       }
     }
   }
@@ -144,7 +153,11 @@ function parseRefinedContent(raw: string): RefinedContent | null {
     }
   }
 
-  if (!parsed) return null;
+  if (!parsed) {
+    console.error("[contentRefiner] Failed to parse AI response. Raw length:", raw.length);
+    console.error("[contentRefiner] First 500 chars:", raw.slice(0, 500));
+    return null;
+  }
 
   const beginner = String(parsed.beginner || "");
   const intermediate = String(parsed.intermediate || "");

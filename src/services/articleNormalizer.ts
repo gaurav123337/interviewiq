@@ -53,7 +53,8 @@ function buildNormalizationMessages(
   isUserArticle: boolean,
 ): ChatMessage[] {
   // Truncate very long articles to stay within token limits
-  const maxContent = isUserArticle ? 12000 : 8000;
+  // ~4 chars per token, need room for the structured output too
+  const maxContent = isUserArticle ? 10000 : 6000;
   const truncated = content.slice(0, maxContent);
 
   const systemLines = [
@@ -140,16 +141,23 @@ function parseNormalized(raw: string): NormalizedArticle | null {
     try { parsed = JSON.parse(codeBlockMatch[1].trim()); } catch { /* try next */ }
   }
 
-  // Strategy 2: Find the outermost { ... } block
+  // Strategy 2: Find the outermost { ... } block using string-aware parser
+  // (handles braces inside quoted strings like code examples)
   if (!parsed) {
-    // Find the first { and matching }
     const start = raw.indexOf("{");
     if (start >= 0) {
       let depth = 0;
+      let inString = false;
+      let escape = false;
       let end = -1;
       for (let i = start; i < raw.length; i++) {
-        if (raw[i] === "{") depth++;
-        else if (raw[i] === "}") {
+        const ch = raw[i];
+        if (escape) { escape = false; continue; }
+        if (ch === "\\") { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === "{") depth++;
+        else if (ch === "}") {
           depth--;
           if (depth === 0) { end = i; break; }
         }
@@ -168,7 +176,54 @@ function parseNormalized(raw: string): NormalizedArticle | null {
     }
   }
 
-  if (!parsed) return null;
+  // Strategy 4: Try to find JSON by looking for "beginner" key
+  if (!parsed) {
+    const beginnerIdx = raw.indexOf('"beginner"');
+    if (beginnerIdx >= 0) {
+      // Walk backward to find the opening {
+      let start = beginnerIdx;
+      while (start > 0 && raw[start] !== "{") start--;
+      if (start >= 0) {
+        try {
+          parsed = JSON.parse(raw.slice(start));
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
+  if (!parsed) {
+    // Debug: log the raw response for troubleshooting
+    console.error("[articleNormalizer] Failed to parse AI response. Raw length:", raw.length);
+    console.error("[articleNormalizer] First 500 chars:", raw.slice(0, 500));
+    console.error("[articleNormalizer] Last 500 chars:", raw.slice(-500));
+    
+    // Fallback: Create basic normalized article from the raw text
+    // Split content into rough thirds for the difficulty levels
+    const words = raw.replace(/[#*`[\]()]/g, "").split(/\s+/).filter(Boolean);
+    const third = Math.ceil(words.length / 3);
+    const beginner = words.slice(0, third).join(" ");
+    const intermediate = words.slice(third, third * 2).join(" ");
+    const advanced = words.slice(third * 2).join(" ");
+    
+    if (words.length > 20) {
+      parsed = {
+        summary: words.slice(0, 30).join(" ") + "...",
+        keywords: [],
+        codeSections: [],
+        beginner: beginner || raw,
+        intermediate: intermediate || raw,
+        advanced: advanced || raw,
+        glossary: [],
+        keyTakeaways: ["Read the original article for full details"],
+        estimatedReadMinutes: Math.ceil(words.length / 250),
+        readTimeBeginner: Math.ceil(third / 250),
+        readTimeIntermediate: Math.ceil(third / 250),
+        readTimeAdvanced: Math.ceil(third / 250),
+      };
+    } else {
+      return null;
+    }
+  }
 
   const clamp = (v: unknown, fallback: number) => {
     const n = Number(v);
@@ -249,8 +304,8 @@ export async function normalizeArticle(params: {
     const messages = buildNormalizationMessages(title, content, sourceName, isUserArticle);
 
     const rawText = await chat(messages, {
-      maxTokens: 5000,
-      temperature: 0.3,
+      maxTokens: 8000,
+      temperature: 0.2,
       module: "articleNormalize",
     });
 
