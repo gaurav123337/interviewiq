@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FIELDS, LEVELS } from "../../data";
-import { listScraperSources, getScraperSchedule, saveScraperSchedule, saveScraperSource, setScraperSourceEnabled, deleteScraperSource, runScraperNow, type ScraperSourceRow, type RunResult } from "../../services/scraper";
+import { listScraperSources, getScraperSchedule, saveScraperSchedule, saveScraperSource, setScraperSourceEnabled, deleteScraperSource, runScraperNow, type ScraperSourceRow, type ScraperSchedule, type RunResult } from "../../services/scraper";
 import { toast } from "../../toast";
 import { btnPrimary, btnSm, btnOk, btnDanger, cardCls, Chip, Switch } from "../ui";
 
@@ -14,7 +14,7 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: boolean) => void }) {
   const [sources, setSources] = useState<ScraperSourceRow[]>([]);
-  const [days, setDays] = useState<number[]>([1]);
+  const [schedule, setSchedule] = useState<ScraperSchedule>({ days: [1], hour: 3, minute: 0 });
   const [loading, setLoading] = useState(true);
   const [runReport, setRunReport] = useState<RunResult[] | null>(null);
   const [runBusy, setRunBusy] = useState(false);
@@ -27,19 +27,19 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
   const load = () => {
     setLoading(true);
     void Promise.all([listScraperSources(), getScraperSchedule()])
-      .then(([s, d]) => { setSources(s); setDays(d); })
+      .then(([s, sc]) => { setSources(s); setSchedule(sc); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
 
   const toggleDay = (iso: number) => {
-    setDays(ds => (ds.includes(iso) ? ds.filter(d => d !== iso) : [...ds, iso].sort()));
+    setSchedule(sc => ({ ...sc, days: sc.days.includes(iso) ? sc.days.filter(d => d !== iso) : [...sc.days, iso].sort() }));
   };
 
   const saveSchedule = async () => {
     setBusy(true);
-    try { await saveScraperSchedule(days); toast("🗓️ Schedule saved — the cron checks it daily"); }
+    try { await saveScraperSchedule(schedule); toast("🗓️ Schedule saved — the cron checks it daily"); }
     catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
     finally { setBusy(false); }
   };
@@ -91,26 +91,35 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
           <div className="flex-1">
             <h2 className="text-[16px] font-extrabold">🗓️ Schedule</h2>
             <p className="text-[12.5px] text-mut">
-              Which days the weekly scraper runs (03:00 UTC). The GitHub Actions workflow runs daily
-              and skips days not selected here — no repo edits needed to change cadence.
+              Which days and time the scraper runs (UTC). The GitHub Actions workflow runs daily
+              and skips days not selected here.
             </p>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {DAY_NAMES.map((name, i) => {
-              const iso = i + 1;
-              const on = days.includes(iso);
-              return (
-                <button
-                  key={name}
-                  onClick={() => toggleDay(iso)}
-                  className={`rounded-lg px-3 py-1.5 text-[12.5px] font-bold transition-colors ${on ? "grad-bg text-white" : "border border-line/15 bg-wht/5 text-mut hover:bg-wht/10"}`}
-                >
-                  {name}
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap gap-1.5">
+              {DAY_NAMES.map((name, i) => {
+                const iso = i + 1;
+                const on = schedule.days.includes(iso);
+                return (
+                  <button
+                    key={name}
+                    onClick={() => toggleDay(iso)}
+                    className={`rounded-lg px-3 py-1.5 text-[12.5px] font-bold transition-colors ${on ? "grad-bg text-white" : "border border-line/15 bg-wht/5 text-mut hover:bg-wht/10"}`}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-mut font-bold">at</span>
+              <select value={schedule.hour} onChange={ev => setSchedule(sc => ({ ...sc, hour: Number(ev.target.value) }))} className="inp text-[11px] w-[70px]">
+                {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>)}
+              </select>
+              <span className="text-[11px] text-mut font-bold">UTC</span>
+            </div>
+            <button className={btnPrimary + btnSm} onClick={saveSchedule} disabled={busy}>💾 Save schedule</button>
           </div>
-          <button className={btnPrimary + btnSm} onClick={saveSchedule} disabled={busy}>💾 Save schedule</button>
         </div>
       </div>
 

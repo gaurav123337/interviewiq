@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { chat, aiAvailable } from "../../ai";
-import type { DuplicateMatch } from "../../services/duplicates";
+import { draftIssues, triageLevel, type DuplicateMatch } from "../../services/duplicates";
 import { batchDeleteQuestions, batchSetQuestionsPublished, createQuestion, deleteQuestion, setQuestionPublished, updateQuestion, adminMissCandidates, type MissCandidate } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
 import { toast } from "../../toast";
+import { pushUndo, popUndo, peekUndo, onUndoChange } from "../../services/undoStack";
 import { cardCls, btnPrimary, btnGhost, btnDanger, btnSm, btnSoft, Chip } from "../ui";
 
 /* ------------------------------------------------------------------ */
@@ -200,8 +201,19 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       imported++;
     }
     if (imported > 0) {
-      toast(`📥 Imported ${imported} draft(s) from CSV`);
-      await onChanged();
+      // Auto-score imported drafts
+      const newDrafts = (await onChanged(), list.filter(q => !q.published));
+      const bank = newDrafts.map(d => d.question).slice(-500);
+      const scored: typeof triage = {};
+      for (const d of newDrafts) {
+        if (triage[d.id]) continue; // already scored
+        const issues = draftIssues(d);
+        scored[d.id] = { issues, level: triageLevel(issues), dups: [] };
+      }
+      if (Object.keys(scored).length > 0) setTriage(prev => ({ ...prev, ...scored }));
+      const ready = Object.values(scored).filter(t => t.level === "ready").length;
+      const issues = Object.values(scored).filter(t => t.level !== "ready").length;
+      toast(`📥 Imported ${imported} draft(s) — ${ready} ready, ${issues} need review`);
     } else {
       toast("No valid questions found in CSV");
     }
@@ -217,6 +229,11 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   };
   const applyBulkTags = async () => {
     if (selected.size === 0 || (!bulkField && !bulkLevel)) return;
+    // Snapshot current tags for undo
+    const snapshot = [...selected].map(id => {
+      const d = list.find(q => q.id === id);
+      return d ? { id, fieldId: d.fieldId, level: d.level } : null;
+    }).filter(Boolean) as { id: number; fieldId: string; level: string }[];
     setBusy(true);
     try {
       for (const id of selected) {
@@ -225,7 +242,13 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
         if (bulkLevel) patch.level = bulkLevel;
         await updateQuestion(id, patch);
       }
-      toast(`🏷 Updated ${selected.size} draft(s) — ${bulkField ? `field → ${FIELDS.find(f => f.id === bulkField)?.name}` : ""} ${bulkLevel ? `level → ${LEVELS.find(l => l.id === bulkLevel)?.name}` : ""}`);
+      pushUndo({
+        label: `Tagged ${selected.size} draft(s)`,
+        undo: async () => {
+          for (const s of snapshot) await updateQuestion(s.id, { fieldId: s.fieldId, level: s.level as LevelId });
+        }
+      });
+      toast(`🏷 Updated ${selected.size} draft(s) — Ctrl+Z to undo`);
       setSelected(new Set());
       setBulkField("");
       setBulkLevel("");
@@ -242,9 +265,22 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     else if (file) toast("Please drop a .csv file");
   };
 
-  /* ── Keyboard shortcuts ── */
+  /* ── Undo support ── */
+  const [canUndo, setCanUndo] = useState(false);
+  useEffect(() => onUndoChange(() => setCanUndo(!!peekUndo())), []);
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const handler = async (e: KeyboardEvent) => {
+      // Ctrl+Z / Cmd+Z undo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        const entry = peekUndo();
+        if (entry) {
+          e.preventDefault();
+          const ok = await popUndo();
+          if (ok) toast(`↩ Undone: ${entry.label}`);
+          await onChanged();
+        }
+        return;
+      }
       // Global shortcuts work everywhere
       if (e.key === "/" && !e.ctrlKey && !e.metaKey) {
         const tag = (e.target as HTMLElement).tagName;
@@ -437,10 +473,19 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const publishSelected = async () => {
     const ids = [...selected];
     if (!ids.length) return;
+    // Snapshot current state for undo
+    const snapshot = ids.map(id => {
+      const d = list.find(q => q.id === id);
+      return d ? { id, published: d.published } : null;
+    }).filter(Boolean) as { id: number; published: boolean }[];
     setBusy(true);
     try {
       await batchSetQuestionsPublished(ids, true);
-      toast(`🚀 Published ${ids.length} question(s) — live for all users`);
+      pushUndo({
+        label: `Published ${ids.length} question(s)`,
+        undo: async () => { await batchSetQuestionsPublished(snapshot.map(s => s.id), false); }
+      });
+      toast(`🚀 Published ${ids.length} question(s) — Ctrl+Z to undo`);
       setSelected(new Set());
       await onChanged();
     } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
@@ -482,10 +527,23 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const deleteSelected = async () => {
     const ids = [...selected];
     if (!ids.length) return;
+    // Snapshot full question data for undo (re-create on undo)
+    const snapshot = ids.map(id => {
+      const d = list.find(q => q.id === id);
+      return d ? { ...d } : null;
+    }).filter(Boolean) as typeof list;
     setBusy(true);
     try {
       await batchDeleteQuestions(ids);
-      toast(`Deleted ${ids.length} question(s)`);
+      pushUndo({
+        label: `Deleted ${ids.length} question(s)`,
+        undo: async () => {
+          for (const q of snapshot) {
+            await createQuestion({ fieldId: q.fieldId, level: q.level as LevelId, question: q.question, answer: q.answer, keyPoints: q.keyPoints, published: q.published });
+          }
+        }
+      });
+      toast(`🗑 Deleted ${ids.length} question(s) — Ctrl+Z to undo`);
       setSelected(new Set());
       await onChanged();
     } catch (err) { toast("✗ " + ((err as Error).message || "Failed")); }
@@ -587,6 +645,14 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
               <button className={btnDanger + btnSm} onClick={deleteSelected} disabled={busy || selected.size === 0}>
                 🗑 Delete {selected.size || ""}
               </button>
+              {canUndo && (
+                <button className={btnSoft + btnSm} onClick={async () => {
+                  const entry = peekUndo();
+                  if (entry) { await popUndo(); toast(`↩ Undone: ${entry.label}`); await onChanged(); }
+                }} disabled={busy}>
+                  ↩ Undo
+                </button>
+              )}
             </div>
           )}
           {/* Bulk tag editing bar — shows when items are selected */}

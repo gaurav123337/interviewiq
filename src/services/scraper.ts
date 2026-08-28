@@ -95,22 +95,32 @@ export async function deleteScraperSource(id: string): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 /** ISO weekday numbers the scraper runs on (1=Mon … 7=Sun). */
-export async function getScraperSchedule(): Promise<number[]> {
-  const client = await getSupabaseClient();
-  if (!client) return DEFAULT_DAYS;
-  const { data, error } = await client.from("scraper_config").select("value").eq("key", "schedule").maybeSingle();
-  if (error || !data) return DEFAULT_DAYS;
-  const days = (data as { value: { days?: unknown } }).value?.days;
-  if (!Array.isArray(days)) return DEFAULT_DAYS;
-  const nums = days.map(Number).filter(n => Number.isInteger(n) && n >= 1 && n <= 7);
-  return nums.length ? nums : DEFAULT_DAYS;
+export interface ScraperSchedule {
+  days: number[];
+  hour: number;  // 0-23 UTC
+  minute: number; // 0-59
 }
 
-export async function saveScraperSchedule(days: number[]): Promise<void> {
+const DEFAULT_SCHEDULE: ScraperSchedule = { days: [1], hour: 3, minute: 0 };
+
+export async function getScraperSchedule(): Promise<ScraperSchedule> {
+  const client = await getSupabaseClient();
+  if (!client) return DEFAULT_SCHEDULE;
+  const { data, error } = await client.from("scraper_config").select("value").eq("key", "schedule").maybeSingle();
+  if (error || !data) return DEFAULT_SCHEDULE;
+  const v = (data as { value: Record<string, unknown> }).value;
+  if (!v) return DEFAULT_SCHEDULE;
+  const days = Array.isArray(v.days) ? v.days.map(Number).filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 7) : [1];
+  const hour = typeof v.hour === "number" && v.hour >= 0 && v.hour <= 23 ? v.hour : 3;
+  const minute = typeof v.minute === "number" && v.minute >= 0 && v.minute <= 59 ? v.minute : 0;
+  return { days: days.length ? days : [1], hour, minute };
+}
+
+export async function saveScraperSchedule(schedule: ScraperSchedule): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
   const { error } = await client.from("scraper_config").upsert(
-    { key: "schedule", value: { days }, updated_at: Date.now() },
+    { key: "schedule", value: schedule, updated_at: Date.now() },
     { onConflict: "key" }
   );
   if (error) throw new Error(error.message);
