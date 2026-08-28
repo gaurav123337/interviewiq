@@ -74,15 +74,70 @@ export interface ChatOptions {
 /* ── Smart Model Routing + Fallback Chain ──────────────────────────────── */
 
 /** Module-specific token caps — prevents runaway output costs. */
-const MODULE_MAX_TOKENS: Record<string, number> = {
-  hint: 120,
-  feedback: 500,
-  coach: 1200,
-  deepdive: 600,
-  rag: 500,
-  contentRefine: 4000,
-  articleNormalize: 8000,
+/**
+ * Dynamic output-token estimation — replaces the old hardcoded MODULE_MAX_TOKENS.
+ *
+ * Strategy: input-size × heuristic multiplier, clamped to sane bounds.
+ * 1. Estimate input tokens from character count (~4 chars per token).
+ * 2. Detect whether the prompt asks for structured/JSON output (needs ~2× more).
+ * 3. Apply a small per-module multiplier for known heavy/light modules.
+ * 4. Clamp between a floor (128) and a global ceiling (8192).
+ */
+const MODULE_OUTPUT_MULTIPLIER: Record<string, number> = {
+  hint: 0.3,
+  feedback: 0.8,
+  coach: 1.0,
+  deepdive: 0.8,
+  rag: 0.7,
+  contentRefine: 2.0,   // JSON + 3 difficulty levels
+  articleNormalize: 2.5, // JSON + keywords + code sections + summary
 };
+const TOKEN_FLOOR = 128;
+const TOKEN_CEILING = 8192;
+
+/** Detect whether the prompt likely asks for structured/JSON output. */
+function expectsStructuredOutput(messages: ChatMessage[]): boolean {
+  const allText = messages.map(m => m.content).join(" ").toLowerCase();
+  return (
+    allText.includes("json") ||
+    allText.includes("respond in exactly this") ||
+    allText.includes("respond with a json") ||
+    allText.includes("\" begin") || // "beginner": pattern in prompt
+    allText.match(/\{[\s\S]{0,50}"[a-z]+"\s*:/) !== null // JSON-like structure in instructions
+  );
+}
+
+/**
+ * Estimate the ideal output token limit for a request.
+ * 
+ * @param messages - The chat messages being sent
+ * @param moduleId - The module identifier (e.g. "contentRefine")
+ * @param requestedMax - The explicit maxTokens from the caller (if any)
+ * @returns Estimated token count, clamped to sane bounds
+ */
+function estimateOutputTokens(
+  messages: ChatMessage[],
+  moduleId: string,
+  requestedMax?: number,
+): number {
+  // 1. Estimate input tokens (English ≈ 4 chars per token)
+  const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+  const inputTokens = Math.ceil(totalChars / 4);
+
+  // 2. Base multiplier: structured output needs ~2× input; prose needs ~0.5×
+  const isStructured = expectsStructuredOutput(messages);
+  const baseMultiplier = isStructured ? 2.0 : 0.5;
+
+  // 3. Per-module adjustment (tune these sparingly)
+  const moduleMultiplier = MODULE_OUTPUT_MULTIPLIER[moduleId] ?? 1.0;
+
+  // 4. Final estimate: inputTokens × base × module
+  const estimated = Math.ceil(inputTokens * baseMultiplier * moduleMultiplier);
+
+  // 5. Clamp: never below floor, never above ceiling or caller's explicit request
+  const ceiling = requestedMax ?? TOKEN_CEILING;
+  return Math.max(TOKEN_FLOOR, Math.min(estimated, ceiling));
+}
 
 /** Fallback chains per provider — only models the provider actually serves. */
 const FALLBACK_CHAINS: Record<string, string[]> = {
@@ -116,10 +171,13 @@ async function chatWithSettings(
   const moduleId = opts.module ?? "general";
   const sysPrompt = messages.find((m) => m.role === "system")?.content ?? "";
   const usrPrompt = messages.find((m) => m.role === "user")?.content ?? "";
-  const maxTokens = Math.min(
-    opts.maxTokens ?? getAiDefaults().maxTokens ?? 700,
-    MODULE_MAX_TOKENS[moduleId] ?? 700,
-  );
+  // Dynamic token estimation: scales with input size + prompt heuristics.
+  // When caller explicitly requests maxTokens, honor it but use estimate as
+  // a floor so responses aren't truncated by an overly conservative guess.
+  const estimated = estimateOutputTokens(messages, moduleId);
+  const maxTokens = opts.maxTokens
+    ? Math.max(estimated, opts.maxTokens) // never truncate below what caller needs
+    : estimated;
   const temperature = opts.temperature ?? getAiDefaults().temperature ?? 0.6;
 
   /* ── Step 0: Rate limit + quota (BYOK users are exempt — they pay their own API) */
