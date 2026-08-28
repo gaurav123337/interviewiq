@@ -80,6 +80,8 @@ const MODULE_MAX_TOKENS: Record<string, number> = {
   coach: 1200,
   deepdive: 600,
   rag: 500,
+  contentRefine: 4000,
+  articleNormalize: 8000,
 };
 
 /** Fallback chains per provider — only models the provider actually serves. */
