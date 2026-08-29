@@ -1,203 +1,165 @@
 /**
- * Model Capability Registry
+ * Model Capability Registry — fully dynamic, no hardcoded model names.
  *
- * Maps model families to their strengths/weaknesses and modules to their requirements.
- * Used by:
- * 1. Product Config UI — show warnings when admin selects unsuitable model
- * 2. Edge function — smart fallback when model doesn't match task
- * 3. Client — suggest better models
+ * Detects capabilities from naming patterns and model metadata.
+ * Works for ANY model from ANY provider.
  */
 
-/* ── Model Types ────────────────────────────────────────────────────────── */
-
-export type ModelType = "thinking" | "general" | "code" | "creative";
-
-export interface ModelCapability {
-  type: ModelType;
-  /** Human-readable description */
-  description: string;
-  /** What this model excels at */
-  strengths: string[];
-  /** What this model struggles with */
-  weaknesses: string[];
-  /** Recommended model families (by provider prefix) */
-  recommendedAlternatives: string[];
-}
-
-/* ── Module Requirements ────────────────────────────────────────────────── */
-
-export interface ModuleRequirement {
-  /** Human-readable module name */
-  name: string;
-  /** What this module needs */
-  needs: {
-    structuredJson: boolean;
-    longFormContent: boolean;
-    reasoning: boolean;
-    codeGeneration: boolean;
-  };
-  /** Minimum recommended tokens */
-  minTokens: number;
-  /** Ideal model types for this module */
-  idealModelTypes: ModelType[];
-  /** Models that should NOT be used */
-  avoidModelPatterns: string[];
-}
-
-/* ── Registry ───────────────────────────────────────────────────────────── */
-
-export const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
-  thinking: {
-    type: "thinking",
-    description: "Chain-of-thought reasoning model",
-    strengths: ["Complex reasoning", "Math/logic problems", "Multi-step analysis", "Nuanced conversations"],
-    weaknesses: ["Structured JSON output", "Bulk content generation", "Fast responses"],
-    recommendedAlternatives: ["gpt-4o-mini", "gemini-2.5-flash", "claude-3.5-haiku"],
-  },
-  general: {
-    type: "general",
-    description: "General-purpose model",
-    strengths: ["Structured output", "Content generation", "Fast responses", "JSON formatting"],
-    weaknesses: ["Deep reasoning", "Complex multi-step problems"],
-    recommendedAlternatives: [],
-  },
-  code: {
-    type: "code",
-    description: "Code-specialized model",
-    strengths: ["Code generation", "Code review", "Technical documentation"],
-    weaknesses: ["Creative writing", "Conversational responses"],
-    recommendedAlternatives: ["gpt-4o-mini", "deepseek-coder"],
-  },
-  creative: {
-    type: "creative",
-    description: "Creative writing model",
-    strengths: ["Creative content", "Marketing copy", "Storytelling"],
-    weaknesses: ["Structured data", "Precise JSON output"],
-    recommendedAlternatives: ["gpt-4o-mini", "gemini-2.5-flash"],
-  },
-};
-
-export const MODULE_REQUIREMENTS: Record<string, ModuleRequirement> = {
-  contentRefine: {
-    name: "Content Refinement",
-    needs: {
-      structuredJson: true,
-      longFormContent: true,
-      reasoning: false,
-      codeGeneration: false,
-    },
-    minTokens: 4000,
-    idealModelTypes: ["general"],
-    avoidModelPatterns: ["qwen3", "deepseek-r1", "o1", "o3"],
-  },
-  articleNormalize: {
-    name: "Article Normalization",
-    needs: {
-      structuredJson: true,
-      longFormContent: false,
-      reasoning: false,
-      codeGeneration: false,
-    },
-    minTokens: 4000,
-    idealModelTypes: ["general"],
-    avoidModelPatterns: ["qwen3", "deepseek-r1", "o1", "o3"],
-  },
-  contentIndex: {
-    name: "Content Indexing",
-    needs: {
-      structuredJson: true,
-      longFormContent: false,
-      reasoning: false,
-      codeGeneration: false,
-    },
-    minTokens: 2000,
-    idealModelTypes: ["general"],
-    avoidModelPatterns: ["qwen3", "deepseek-r1", "o1", "o3"],
-  },
-  coach: {
-    name: "AI Coach Chat",
-    needs: {
-      structuredJson: false,
-      longFormContent: false,
-      reasoning: true,
-      codeGeneration: false,
-    },
-    minTokens: 800,
-    idealModelTypes: ["thinking", "general"],
-    avoidModelPatterns: [],
-  },
-  hint: {
-    name: "Interview Hints",
-    needs: {
-      structuredJson: false,
-      longFormContent: false,
-      reasoning: true,
-      codeGeneration: false,
-    },
-    minTokens: 200,
-    idealModelTypes: ["thinking", "general"],
-    avoidModelPatterns: [],
-  },
-  feedback: {
-    name: "Answer Feedback",
-    needs: {
-      structuredJson: false,
-      longFormContent: false,
-      reasoning: true,
-      codeGeneration: false,
-    },
-    minTokens: 600,
-    idealModelTypes: ["thinking", "general"],
-    avoidModelPatterns: [],
-  },
-  deepdive: {
-    name: "Deep Dive Analysis",
-    needs: {
-      structuredJson: false,
-      longFormContent: true,
-      reasoning: true,
-      codeGeneration: false,
-    },
-    minTokens: 1000,
-    idealModelTypes: ["thinking", "general"],
-    avoidModelPatterns: [],
-  },
-  rag: {
-    name: "RAG Response",
-    needs: {
-      structuredJson: false,
-      longFormContent: false,
-      reasoning: false,
-      codeGeneration: false,
-    },
-    minTokens: 500,
-    idealModelTypes: ["general", "thinking"],
-    avoidModelPatterns: [],
-  },
-};
-
-/* ── Detection Helpers ──────────────────────────────────────────────────── */
+/* ── Dynamic Detection ────────────────────────────────────────────────── */
 
 /** Detect if a model name is a thinking/reasoning model */
 export function isThinkingModel(modelName: string): boolean {
   const lower = modelName.toLowerCase();
   return (
     lower.includes("qwen3") ||
+    lower.includes("qwq") ||
     lower.includes("deepseek-r1") ||
-    lower.includes("o1") ||
-    lower.includes("o3") ||
-    lower.includes("thinking")
+    lower.includes("deepseek-reasoner") ||
+    lower.match(/\bo[13]\b/) !== null ||
+    lower.includes("-o1") ||
+    lower.includes("-o3") ||
+    lower.includes("thinking") ||
+    lower.includes("chain-of-thought") ||
+    lower.includes("-cot")
   );
 }
 
-/** Detect model type from name */
-export function detectModelType(modelName: string): ModelType {
+/** Classify a model into capability tags */
+export function classifyModel(modelName: string): {
+  isThinking: boolean;
+  tags: string[];
+  description: string;
+} {
   const lower = modelName.toLowerCase();
-  if (isThinkingModel(lower)) return "thinking";
-  if (lower.includes("coder") || lower.includes("code")) return "code";
-  if (lower.includes("creative") || lower.includes("story")) return "creative";
-  return "general";
+  const tags: string[] = [];
+  let isThinking = false;
+
+  // Thinking/reasoning detection
+  if (isThinkingModel(modelName)) {
+    isThinking = true;
+    tags.push("thinking");
+  }
+
+  // Code-specialized
+  if (lower.includes("coder") || lower.includes("code") || lower.includes("codestral")) {
+    tags.push("code");
+  }
+
+  // Embeddings
+  if (lower.includes("embed") || lower.includes("embedding")) {
+    tags.push("embeddings");
+  }
+
+  // Vision/multimodal
+  if (lower.includes("vision") || lower.includes("-vl") || lower.includes("multimodal")) {
+    tags.push("vision");
+  }
+
+  // Fast/cheap (by naming heuristic)
+  if (lower.includes("mini") || lower.includes("flash") || lower.includes("lite") || lower.includes("nano") || lower.includes("tiny")) {
+    tags.push("fast");
+  }
+
+  // Build description
+  const parts: string[] = [];
+  if (isThinking) parts.push("Reasoning/thinking model");
+  if (tags.includes("fast")) parts.push("Fast & cheap");
+  if (tags.includes("code")) parts.push("Code-specialized");
+  if (tags.includes("embeddings")) parts.push("Embedding model");
+  if (tags.includes("vision")) parts.push("Vision/multimodal");
+  if (parts.length === 0) parts.push("General-purpose model");
+
+  return { isThinking, tags, description: parts.join(" · ") };
 }
+
+/* ── Module Requirements ────────────────────────────────────────────────── */
+
+export interface ModuleRequirement {
+  name: string;
+  needs: {
+    structuredJson: boolean;
+    longFormContent: boolean;
+    reasoning: boolean;
+    codeGeneration: boolean;
+  };
+  idealTags: string[]; // tags that make a model ideal
+  avoidThinking: boolean; // if true, thinking models are bad for this module
+}
+
+export const MODULE_REQUIREMENTS: Record<string, ModuleRequirement> = {
+  contentRefine: {
+    name: "Content Refinement",
+    needs: { structuredJson: true, longFormContent: true, reasoning: false, codeGeneration: false },
+    idealTags: ["fast"],
+    avoidThinking: true,
+  },
+  articleNormalize: {
+    name: "Article Normalization",
+    needs: { structuredJson: true, longFormContent: false, reasoning: false, codeGeneration: false },
+    idealTags: ["fast"],
+    avoidThinking: true,
+  },
+  contentIndex: {
+    name: "Content Indexing",
+    needs: { structuredJson: true, longFormContent: false, reasoning: false, codeGeneration: false },
+    idealTags: ["fast"],
+    avoidThinking: true,
+  },
+  contentQuality: {
+    name: "Content Quality Scoring",
+    needs: { structuredJson: true, longFormContent: false, reasoning: false, codeGeneration: false },
+    idealTags: ["fast"],
+    avoidThinking: true,
+  },
+  coach: {
+    name: "AI Coach Chat",
+    needs: { structuredJson: false, longFormContent: false, reasoning: true, codeGeneration: false },
+    idealTags: [],
+    avoidThinking: false,
+  },
+  hint: {
+    name: "Interview Hints",
+    needs: { structuredJson: false, longFormContent: false, reasoning: true, codeGeneration: false },
+    idealTags: ["fast"],
+    avoidThinking: false,
+  },
+  feedback: {
+    name: "Answer Feedback",
+    needs: { structuredJson: false, longFormContent: false, reasoning: true, codeGeneration: false },
+    idealTags: [],
+    avoidThinking: false,
+  },
+  deepdive: {
+    name: "Deep Dive Analysis",
+    needs: { structuredJson: false, longFormContent: true, reasoning: true, codeGeneration: false },
+    idealTags: [],
+    avoidThinking: false,
+  },
+  rag: {
+    name: "RAG Response",
+    needs: { structuredJson: false, longFormContent: false, reasoning: false, codeGeneration: false },
+    idealTags: ["fast"],
+    avoidThinking: false,
+  },
+  code: {
+    name: "Code Assistant",
+    needs: { structuredJson: false, longFormContent: false, reasoning: false, codeGeneration: true },
+    idealTags: ["code"],
+    avoidThinking: false,
+  },
+  tutor: {
+    name: "Tutor / Explanations",
+    needs: { structuredJson: false, longFormContent: true, reasoning: true, codeGeneration: false },
+    idealTags: [],
+    avoidThinking: false,
+  },
+  embeddings: {
+    name: "Embeddings",
+    needs: { structuredJson: false, longFormContent: false, reasoning: false, codeGeneration: false },
+    idealTags: ["embeddings"],
+    avoidThinking: false,
+  },
+};
 
 /* ── Suitability Check ──────────────────────────────────────────────────── */
 
@@ -208,7 +170,10 @@ export interface SuitabilityResult {
   suggestions: string[];
 }
 
-/** Check if a model is suitable for a given module */
+/**
+ * Check if a model is suitable for a given module.
+ * Works for ANY model — uses dynamic classification, not hardcoded lists.
+ */
 export function checkModelSuitability(
   modelName: string,
   moduleId: string,
@@ -218,35 +183,54 @@ export function checkModelSuitability(
     return { suitable: true, severity: "ok", message: "Unknown module — cannot evaluate", suggestions: [] };
   }
 
-  const modelType = detectModelType(modelName);
-  const modelCap = MODEL_CAPABILITIES[modelType];
-  const isThinking = isThinkingModel(modelName);
+  const { isThinking, tags, description } = classifyModel(modelName);
 
-  // Check: thinking model used for JSON-output module
-  if (req.needs.structuredJson && isThinking) {
-    const alternatives = modelCap?.recommendedAlternatives ?? ["gpt-4o-mini", "gemini-2.5-flash"];
+  // Embedding models should only be used for embeddings module
+  if (tags.includes("embeddings") && moduleId !== "embeddings") {
     return {
       suitable: false,
-      severity: "warning",
-      message: `"${modelName}" is a thinking model. It will waste all output tokens on internal reasoning instead of producing the structured JSON that ${req.name} needs. Thinking mode should be disabled for this module.`,
-      suggestions: alternatives.map(a => `Use "${a}" instead (better for structured output)`),
+      severity: "error",
+      message: `"${modelName}" is an embedding model — it generates vectors, not text. Use a text generation model for ${req.name}.`,
+      suggestions: ["Use a text generation model like gpt-4o-mini or gemini-2.5-flash"],
     };
   }
 
-  // Check: model type doesn't match module needs
-  if (!req.idealModelTypes.includes(modelType)) {
+  // Thinking model used for JSON-output module
+  if (req.avoidThinking && isThinking) {
     return {
       suitable: false,
       severity: "warning",
-      message: `"${modelName}" (${modelCap?.description ?? modelType}) is not ideal for ${req.name}.`,
-      suggestions: req.idealModelTypes.map(t => `Use a ${t} model for better results`),
+      message: `"${modelName}" is a thinking/reasoning model. It will waste output tokens on internal reasoning instead of producing the structured JSON that ${req.name} needs.`,
+      suggestions: [
+        "Use a non-thinking model for direct JSON output",
+        "Fast models (gpt-4o-mini, gemini-2.5-flash) are ideal for this task",
+      ],
     };
   }
+
+  // Model has matching ideal tags
+  const hasMatch = req.idealTags.some(t => tags.includes(t));
+  if (req.idealTags.length > 0 && !hasMatch && !isThinking) {
+    return {
+      suitable: true,
+      severity: "ok",
+      message: `${description} — will work for ${req.name}`,
+      suggestions: [],
+    };
+  }
+
+  // All good
+  const strengths: string[] = [];
+  if (isThinking && req.needs.reasoning) strengths.push("reasoning helps here");
+  if (tags.includes("fast")) strengths.push("fast & cheap");
+  if (tags.includes("code") && req.needs.codeGeneration) strengths.push("code-specialized");
 
   return {
     suitable: true,
     severity: "ok",
-    message: `"${modelName}" is suitable for ${req.name}`,
+    message: strengths.length > 0
+      ? `"${modelName}" is suitable for ${req.name} (${strengths.join(", ")})`
+      : `"${modelName}" is suitable for ${req.name}`,
     suggestions: [],
   };
 }
@@ -256,18 +240,4 @@ export function getModelWarnings(modelName: string): { moduleId: string; result:
   return Object.keys(MODULE_REQUIREMENTS)
     .map(moduleId => ({ moduleId, result: checkModelSuitability(modelName, moduleId) }))
     .filter(w => !w.result.suitable);
-}
-
-/** Suggest the best model for a module from available options */
-export function suggestModel(moduleId: string, availableModels: string[]): string | null {
-  const req = MODULE_REQUIREMENTS[moduleId];
-  if (!req) return null;
-
-  // Find first available model that matches ideal types
-  for (const model of availableModels) {
-    const type = detectModelType(model);
-    if (req.idealModelTypes.includes(type)) return model;
-  }
-
-  return null;
 }

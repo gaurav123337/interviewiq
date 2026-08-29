@@ -68,6 +68,8 @@ function ModuleModelOverrides({ config }: { config: RemoteConfig }) {
   const [editingModule, setEditingModule] = useState<string | null>(null);
   const [editModel, setEditModel] = useState("");
   const [loading, setLoading] = useState(true);
+  const [availableModels, setAvailableModels] = useState<{ id: string; name: string; isThinking: boolean; tags: string[] }[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
     getModuleModels().then(rows => {
@@ -79,6 +81,19 @@ function ModuleModelOverrides({ config }: { config: RemoteConfig }) {
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
+
+  // Fetch available models when editing starts
+  useEffect(() => {
+    if (editingModule && availableModels.length === 0) {
+      setModelsLoading(true);
+      import("../../services/aiModels").then(({ fetchAvailableModels }) =>
+        fetchAvailableModels().then(models => {
+          setAvailableModels(models);
+          setModelsLoading(false);
+        })
+      ).catch(() => setModelsLoading(false));
+    }
+  }, [editingModule]);
 
   const globalModel = String(config.ai?.model ?? "");
 
@@ -131,12 +146,36 @@ function ModuleModelOverrides({ config }: { config: RemoteConfig }) {
                 <p className="text-[11.5px] text-mut">{m.description}</p>
                 <label className="block">
                   <span className="mb-0.5 block text-[11.5px] font-bold text-mut">Model name</span>
-                  <input
-                    value={editModel} onChange={e => setEditModel(e.target.value)}
-                    placeholder={m.suggestedModel}
-                    className="w-full rounded-lg border border-line/20 bg-deep/60 px-3 py-2 font-mono text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
-                    autoFocus
-                  />
+                  {availableModels.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <select
+                        value={editModel}
+                        onChange={e => setEditModel(e.target.value)}
+                        className="w-full rounded-lg border border-line/20 bg-deep/60 px-3 py-2 text-[12.5px] text-fnt focus:border-acc1/80 focus:outline-none"
+                      >
+                        <option value="">— Use global default ({globalModel || "not set"}) —</option>
+                        {availableModels.map(model => (
+                          <option key={model.id} value={model.id}>
+                            {model.isThinking ? "🧠 " : "⚡ "}{model.name || model.id}{model.tags.length > 0 ? ` (${model.tags.join(", ")})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        value={editModel}
+                        onChange={e => setEditModel(e.target.value)}
+                        placeholder="Or type a model name..."
+                        className="w-full rounded-lg border border-line/20 bg-deep/60 px-3 py-2 font-mono text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <input
+                      value={editModel} onChange={e => setEditModel(e.target.value)}
+                      placeholder={modelsLoading ? "Loading models from provider..." : m.suggestedModel}
+                      disabled={modelsLoading}
+                      className="w-full rounded-lg border border-line/20 bg-deep/60 px-3 py-2 font-mono text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none disabled:opacity-50"
+                      autoFocus
+                    />
+                  )}
                 </label>
                 {suit && suit.severity === "ok" && (
                   <div className="flex items-center gap-1.5 rounded-md border border-ok/20 bg-ok/5 px-2.5 py-1.5">

@@ -14,27 +14,94 @@ import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-/* ── Model Intelligence ─────────────────────────────────────────────────── */
+/* ── Dynamic Model Intelligence ──────────────────────────────────────────── */
 
-function isThinkingModel(modelName: string): boolean {
+/** Detect model capabilities from name patterns — works for ANY model */
+function classifyModel(modelName: string): {
+  isThinking: boolean;
+  tags: string[];
+} {
   const lower = modelName.toLowerCase();
-  return lower.includes("qwen3") || lower.includes("deepseek-r1") ||
-    lower.includes("/o1") || lower.includes("/o3") || lower.includes("thinking");
+  const tags: string[] = [];
+  let isThinking = false;
+
+  // Thinking/reasoning models — detect by naming patterns
+  if (lower.includes("qwen3") || lower.includes("qwq")) { isThinking = true; tags.push("thinking"); }
+  if (lower.includes("deepseek-r1") || lower.includes("deepseek-reasoner")) { isThinking = true; tags.push("reasoning"); }
+  if (lower.match(/\bo[13]\b/) || lower.includes("-o1") || lower.includes("-o3")) { isThinking = true; tags.push("reasoning"); }
+  if (lower.includes("thinking")) { isThinking = true; tags.push("thinking"); }
+  if (lower.includes("chain-of-thought") || lower.includes("cot")) { isThinking = true; tags.push("reasoning"); }
+
+  // Code-specialized models
+  if (lower.includes("coder") || lower.includes("code") || lower.includes("codestral")) { tags.push("code"); }
+
+  // Embedding models
+  if (lower.includes("embed") || lower.includes("embedding")) { tags.push("embeddings"); }
+
+  // Vision models
+  if (lower.includes("vision") || lower.includes("-vl") || lower.includes("multimodal")) { tags.push("vision"); }
+
+  // Creative models
+  if (lower.includes("creative") || lower.includes("story")) { tags.push("creative"); }
+
+  // Fast/cheap models (by name heuristic)
+  if (lower.includes("mini") || lower.includes("flash") || lower.includes("lite") || lower.includes("nano") || lower.includes("tiny")) { tags.push("fast"); }
+
+  return { isThinking, tags };
 }
 
-/** Modules that need structured JSON output — thinking should be disabled for these */
-const JSON_OUTPUT_MODULES = new Set([
-  "contentRefine", "articleNormalize", "contentIndex",
-]);
-
-/** Modules that benefit from reasoning — thinking should stay ON */
-const REASONING_MODULES = new Set([
-  "coach", "hint", "feedback", "deepdive", "rag",
-]);
-
+/** Determine if thinking should be disabled for this module */
 function shouldDisableThinking(modelName: string, moduleId: string): boolean {
-  // Only disable for thinking models + JSON-output modules
-  return isThinkingModel(modelName) && JSON_OUTPUT_MODULES.has(moduleId);
+  const { isThinking } = classifyModel(modelName);
+  // JSON-output modules should never use thinking models
+  const JSON_MODULES = new Set(["contentRefine", "articleNormalize", "contentIndex", "contentQuality"]);
+  return isThinking && JSON_MODULES.has(moduleId);
+}
+
+/* ── GET /models — list available models from provider ──────────────────── */
+
+async function handleListModels(providerConfig: Record<string, string>, projectUrl: string): Promise<Response> {
+  const apiKey = providerConfig.key ?? providerConfig.apiKey ?? "";
+  const baseUrl = (providerConfig.base ?? providerConfig.baseUrl ?? "").replace(/\/+$/, "");
+  if (!apiKey || !baseUrl) {
+  	return new Response(JSON.stringify({ error: "Provider not configured" }), { status: 503, headers: { "Content-Type": "application/json" } });
+  }
+
+  try {
+  	const res = await fetch(`${baseUrl}/models`, {
+  	  headers: { "Authorization": `Bearer ${apiKey}` },
+  	});
+  	if (!res.ok) {
+  	  return new Response(JSON.stringify({ error: `Provider returned HTTP ${res.status}` }), { status: 502, headers: { "Content-Type": "application/json" } });
+  	}
+  	const data = await res.json().catch(() => ({}));
+  	const models: { id: string; name?: string; owned_by?: string }[] = data.data ?? [];
+
+  	// Read module overrides to show which model each module uses
+  	const modRes = await fetch(`${projectUrl}/rest/v1/ai_provider_config?key=like.module:*&select=key,value`, {
+  	  headers: { "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""}`, "apikey": Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "" },
+  	});
+  	const modRows = await modRes.json().catch(() => []);
+  	const moduleDefaults: Record<string, string> = {};
+  	for (const r of modRows) {
+  	  const id = (r.key ?? "").replace(/^module:/, "");
+  	  const v = typeof r.value === "string" ? JSON.parse(r.value) : (r.value ?? {});
+  	  if (v.model) moduleDefaults[id] = v.model;
+  	}
+
+  	// Enrich each model with capability tags
+  	const enriched = models
+  	  .filter(m => m.id && !m.id.includes("embedding") && !m.id.includes("tts") && !m.id.includes("whisper"))
+  	  .map(m => {
+  	    const { isThinking, tags } = classifyModel(m.id);
+  	    return { id: m.id, name: m.name ?? m.id, owner: m.owned_by ?? "", isThinking, tags };
+  	  })
+  	  .sort((a, b) => a.id.localeCompare(b.id));
+
+  	return new Response(JSON.stringify({ models: enriched, moduleDefaults }), { status: 200, headers: { "Content-Type": "application/json" } });
+  } catch (e) {
+  	return new Response(JSON.stringify({ error: (e as Error).message ?? "Failed to list models" }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
 }
 
 /* ── Main Handler ───────────────────────────────────────────────────────── */
@@ -47,10 +114,6 @@ Deno.serve(async (req) => {
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "POST only" }), { status: 405, headers });
-    }
-
     // Verify the user is authenticated
     const authHeader = req.headers.get("Authorization") ?? "";
     const token = authHeader.replace("Bearer ", "");
@@ -82,7 +145,15 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "AI provider not fully configured — missing API key or base URL." }), { status: 503, headers });
     }
 
+    // GET /models — list available models from provider
+    if (req.method === "GET") {
+      return await handleListModels(config, projectUrl);
+    }
+
     // Parse the request body
+    if (req.method !== "POST") {
+      return new Response(JSON.stringify({ error: "POST or GET only" }), { status: 405, headers });
+    }
     const body = await req.json().catch(() => ({}));
     const { messages, temperature = 0.6, maxTokens = 700, module: moduleId } = body;
 
