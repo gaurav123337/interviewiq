@@ -212,15 +212,20 @@ export async function refineContent(params: {
 
     // Use the project's multi-provider chat function
     // This handles: BYOK fallback, cloud proxy, model fallback chain, caching
+    console.log(`[contentRefiner] Calling AI for "${title}" (${content.length} chars input)`);
     const rawText = await chat(messages, {
       maxTokens: 4000,
       temperature: 0.3,
       module: "contentRefine",
     });
+    console.log(`[contentRefiner] AI response length: ${rawText.length} chars`);
+    console.log(`[contentRefiner] First 300 chars: ${rawText.slice(0, 300)}`);
+    console.log(`[contentRefiner] Last 200 chars: ${rawText.slice(-200)}`);
 
     const refined = parseRefinedContent(rawText);
     if (!refined) {
-      return { success: false, error: "Failed to parse AI response" };
+      console.error(`[contentRefiner] PARSE FAILED for "${title}". Raw: ${rawText.length} chars.`);
+      return { success: false, error: `Failed to parse AI response (${rawText.length} chars returned). Check console for details.` };
     }
 
     return { success: true, refined };
