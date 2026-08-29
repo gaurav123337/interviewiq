@@ -329,11 +329,14 @@ async function cloudChat(messages: ChatMessage[], opts: ChatOptions): Promise<st
     })
   });
   const body = await res.json().catch(() => ({}));
+  console.log(`[cloudChat] Edge function response: status=${res.status}, body keys=${Object.keys(body).join(',')}`);
   if (!res.ok) throw new Error((body as { error?: string }).error ?? "AI request failed");
   /* Log cost for cloud proxy calls */
   const userId = getCloudState().user?.id;
   const logModuleId = opts.module ?? "coach";
   const text = (body as { text?: string; usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string }).text ?? "";
+  console.log(`[cloudChat] text length=${text.length}, model=${(body as { model?: string }).model}, usage=${JSON.stringify((body as { usage?: unknown }).usage)}`);
+  if (!text) console.warn(`[cloudChat] EMPTY response from edge function! Full body:`, JSON.stringify(body).slice(0, 500));
   const usage = (body as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
   const model = (body as { model?: string }).model ?? "unknown";
   if (userId) {

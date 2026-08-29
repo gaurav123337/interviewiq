@@ -104,6 +104,22 @@ Deno.serve(async (req) => {
     const text = aiBody.choices?.[0]?.message?.content ?? "";
     const usage = aiBody.usage ?? {};
 
+    // If the AI returned an error in the body (non-HTTP error), forward it
+    if (!text && aiBody.error) {
+      const errMsg = typeof aiBody.error === "string" ? aiBody.error : aiBody.error.message ?? JSON.stringify(aiBody.error);
+      return new Response(JSON.stringify({
+        error: `AI provider error: ${errMsg}`,
+      }), { status: 502, headers });
+    }
+
+    // If text is empty, return the full body for debugging
+    if (!text) {
+      console.error("[ai-chat] Empty text from AI provider. Model:", finalModel, "Response:", JSON.stringify(aiBody).slice(0, 500));
+      return new Response(JSON.stringify({
+        error: `AI provider returned empty response (model: ${finalModel}). Check the API key and provider configuration.`,
+      }), { status: 502, headers });
+    }
+
     return new Response(JSON.stringify({
       text,
       model: finalModel,
