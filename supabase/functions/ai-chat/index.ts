@@ -31,6 +31,7 @@ function classifyModel(modelName: string): {
   if (lower.match(/\bo[13]\b/) || lower.includes("-o1") || lower.includes("-o3")) { isThinking = true; tags.push("reasoning"); }
   if (lower.includes("thinking")) { isThinking = true; tags.push("thinking"); }
   if (lower.includes("chain-of-thought") || lower.includes("cot")) { isThinking = true; tags.push("reasoning"); }
+  if (lower.includes("hy3") || lower.includes("-reason") || lower.includes("-think")) { isThinking = true; tags.push("thinking"); }
 
   // Code-specialized models
   if (lower.includes("coder") || lower.includes("code") || lower.includes("codestral")) { tags.push("code"); }

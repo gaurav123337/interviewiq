@@ -20,7 +20,10 @@ export function isThinkingModel(modelName: string): boolean {
     lower.includes("-o3") ||
     lower.includes("thinking") ||
     lower.includes("chain-of-thought") ||
-    lower.includes("-cot")
+    lower.includes("-cot") ||
+    lower.includes("hy3") ||
+    lower.includes("-reason") ||
+    lower.includes("-think")
   );
 }
 

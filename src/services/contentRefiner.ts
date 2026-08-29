@@ -92,21 +92,33 @@ function escapeRegex(s: string): string {
 function parseRefinedContent(raw: string): RefinedContent | null {
   if (!raw || raw.trim().length < 50) return null;
 
-  // Strip thinking model preamble — everything before the first '{'
-  // Thinking models like Qwen3 output reasoning before the actual JSON
   let text = raw;
+
+  // Strategy 0: Find the actual JSON object by looking for known keys
+  // Thinking models embed JSON inside reasoning text — find it by key name
+  const jsonKeyIdx = text.indexOf('"beginner"');
+  if (jsonKeyIdx > 0) {
+    // Walk backward to find the opening { of this JSON object
+    let start = jsonKeyIdx;
+    while (start > 0 && text[start] !== '{') start--;
+    if (start > 0) {
+      console.log('[contentRefiner] Found JSON by key at position', start, 'of', text.length);
+      text = text.slice(start);
+    }
+  }
+
+  // Strip thinking model preamble — everything before the first '{'
   const firstBrace = text.indexOf('{');
   if (firstBrace > 0) {
     const before = text.slice(0, firstBrace).toLowerCase();
-    // Thinking preamble patterns: "We need", "Let me", "Need to", etc.
-    const thinkingPatterns = /^(we\s|let\s|need\s|must\s|should\s|first,|to\s|for\s|this\s|okay|alright|here)/i;
+    const thinkingPatterns = /^(we\s|let\s|need\s|must\s|should\s|first,|to\s|for\s|this\s|okay|alright|here|the\s|based\s|given\s|from\s|after\s|since\s|because\s|if\s|when\s|before\s)/i;
     if (before.trim().length > 10 && thinkingPatterns.test(before.trim())) {
       console.log('[contentRefiner] Stripping thinking preamble (' + before.length + ' chars):', before.slice(0, 80));
       text = text.slice(firstBrace);
     }
   }
 
-  // Also handle case where model wraps JSON in ```json...``` with thinking before it
+  // Also handle ```json...``` wrappers
   if (text.includes('```json')) {
     const jsonBlock = text.match(/```json\s*([\s\S]*?)```/);
     if (jsonBlock) {
