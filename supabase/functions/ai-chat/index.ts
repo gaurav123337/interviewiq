@@ -79,18 +79,26 @@ Deno.serve(async (req) => {
 
     // Call the AI provider
     const apiBase = baseUrl.replace(/\/+$/, "");
+    // For thinking models (Qwen3, DeepSeek, etc.), disable thinking mode
+    // so the model produces actual content instead of consuming all tokens on reasoning
+    const isThinkingModel = finalModel.toLowerCase().includes("qwen3") || finalModel.toLowerCase().includes("deepseek-r1");
+    const requestBody: Record<string, unknown> = {
+      model: finalModel,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+    };
+    if (isThinkingModel) {
+      // OpenRouter: disable thinking to get actual content output
+      requestBody.reasoning = { effort: "none" };
+    }
     const aiRes = await fetch(`${apiBase}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: finalModel,
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!aiRes.ok) {
@@ -101,7 +109,9 @@ Deno.serve(async (req) => {
     }
 
     const aiBody = await aiRes.json().catch(() => ({}));
-    const text = aiBody.choices?.[0]?.message?.content ?? "";
+    // Primary: check content field. Fallback: check reasoning_content (thinking models)
+    const choiceMsg = aiBody.choices?.[0]?.message ?? {};
+    const text = choiceMsg.content || choiceMsg.reasoning_content || "";
     const usage = aiBody.usage ?? {};
 
     // If the AI returned an error in the body (non-HTTP error), forward it
