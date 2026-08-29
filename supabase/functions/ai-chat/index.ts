@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
     };
     if (isThinkingModel) {
       // OpenRouter: disable thinking to get actual content output
-      requestBody.reasoning = { effort: "none" };
+      requestBody.reasoning = false;
     }
     const aiRes = await fetch(`${apiBase}/chat/completions`, {
       method: "POST",
@@ -109,9 +109,9 @@ Deno.serve(async (req) => {
     }
 
     const aiBody = await aiRes.json().catch(() => ({}));
-    // Primary: check content field. Fallback: check reasoning_content (thinking models)
+    // Check content, reasoning_content, and reasoning fields (format varies by provider)
     const choiceMsg = aiBody.choices?.[0]?.message ?? {};
-    const text = choiceMsg.content || choiceMsg.reasoning_content || "";
+    const text = choiceMsg.content || choiceMsg.reasoning_content || choiceMsg.reasoning || "";
     const usage = aiBody.usage ?? {};
 
     // If the AI returned an error in the body (non-HTTP error), forward it
