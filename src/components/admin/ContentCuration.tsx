@@ -10,6 +10,7 @@ import {
   type ContentSourceRow, type ContentItemRow, type ContentStats,
 } from "../../services/contentCuration";
 import { toast } from "../../toast";
+import { batchCalculateQualityScores } from "../../services/contentRefiner";
 import { btnPrimary, btnSm, btnOk, btnDanger, cardCls, Chip, Switch } from "../ui";
 
 /* ── Quality badge color ────────────────────────────────────────────────── */
@@ -57,6 +58,9 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
   // Expanded item for review
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Quality score calculation
+  const [scoring, setScoring] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -194,6 +198,17 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
       await load();
     } catch (e) { toast("Quality check failed: " + ((e as Error).message || "Unknown")); }
     finally { setQualityChecking(false); }
+  };
+
+  /* ── Retroactive AI output quality scoring ────────────────────── */
+  const handleCalculateScores = async () => {
+    setScoring(true);
+    try {
+      const result = await batchCalculateQualityScores();
+      toast(`🎯 Quality scores: ${result.updated} updated, ${result.errors} errors`);
+      await load();
+    } catch (e) { toast("Score calculation failed: " + ((e as Error).message || "Unknown")); }
+    finally { setScoring(false); }
   };
 
   /* ── Batch content refinement ────────────────────────────────── */
@@ -480,6 +495,13 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                   title="Index all: Add to AI knowledge base for grounding coach answers and search. Skips already indexed articles."
                 >
                   {indexing ? "🧠 Indexing..." : "🧠 Index All to AI"}
+                </button>
+              )}
+              {statusFilter === "approved" && (
+                <button className={`${btnPrimary} ${btnSm}`} onClick={handleCalculateScores} disabled={scoring}
+                  title="Calculate quality scores for all existing refined articles. No AI tokens used — analyzes existing content."
+                >
+                  {scoring ? "🎯 Calculating..." : "🎯 Calculate Scores"}
                 </button>
               )}
             </div>
