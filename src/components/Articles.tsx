@@ -170,7 +170,7 @@ function inlineMarkdown(text: string): ReactNode {
     switch (earliest.type) {
       case "code":
         parts.push(
-          <code key={key++} className="rounded bg-panel2/80 px-1.5 py-0.5 text-[12px] text-acc">
+          <code key={key++} className="rounded bg-panel3 px-1.5 py-0.5 text-[12px] text-acc font-mono">
             {earliest.match[1]}
           </code>
         );
@@ -179,7 +179,7 @@ function inlineMarkdown(text: string): ReactNode {
         parts.push(<strong key={key++} className="font-bold text-ink">{earliest.match[1]}</strong>);
         break;
       case "italic":
-        parts.push(<em key={key++} className="italic text-ink/80">{earliest.match[1]}</em>);
+        parts.push(<em key={key++} className="italic text-ink">{earliest.match[1]}</em>);
         break;
       case "link":
         parts.push(
@@ -751,7 +751,7 @@ function KeyTakeaways({ takeaways }: { takeaways: string[] }) {
       <h4 className="mb-2 text-[13px] font-extrabold text-acc">💡 Key Takeaways</h4>
       <ol className="space-y-1.5">
         {takeaways.map((t, i) => (
-          <li key={i} className="flex gap-2 text-[12.5px] text-ink/85">
+          <li key={i} className="flex gap-2 text-[12.5px] text-ink">
             <span className="shrink-0 font-bold text-acc">{i + 1}.</span>
             <span>{t}</span>
           </li>
@@ -770,7 +770,7 @@ function Glossary({ terms }: { terms: { term: string; definition: string }[] }) 
         {terms.map((t, i) => (
           <div key={i} className="text-[12px]">
             <dt className="font-bold text-acc">{t.term}</dt>
-            <dd className="ml-3 text-ink/75">{t.definition}</dd>
+            <dd className="ml-3 text-ink">{t.definition}</dd>
           </div>
         ))}
       </dl>
@@ -780,16 +780,14 @@ function Glossary({ terms }: { terms: { term: string; definition: string }[] }) 
 
 function DifficultySelector({ level, onChange }: { level: DifficultyLevel; onChange: (l: DifficultyLevel) => void }) {
   return (
-    <div className="flex gap-1 rounded-lg bg-panel2/50 p-1">
+    <div className="flex gap-1 rounded-lg bg-panel2 p-1">
       {(["beginner", "intermediate", "advanced"] as DifficultyLevel[]).map((l) => {
         const config = DIFFICULTY_CONFIG[l];
         return (
           <button
             key={l}
-            onClick={() => onChange(l)}
-            className={`flex-1 rounded-md px-3 py-2 text-[12px] font-bold transition ${
-              level === l ? "bg-acc text-white shadow-sm" : "text-ink hover:bg-panel3 hover:text-acc"
-            }`}
+            onClick={() => onChange(l)}              className={`flex-1 rounded-md px-3 py-2 text-[12px] font-bold transition ${
+              level === l ? "bg-acc text-white shadow-sm" : "text-fnt hover:bg-panel3 hover:text-acc"}`}
           >
             <span className="mr-1">{config.icon}</span>
             {config.label}
@@ -855,7 +853,7 @@ function ArticleCard({ article }: { article: Article }) {
               )}
             </div>
             <SourceBadge article={article} />
-            <p className="mt-2 text-[13px] text-ink/80 leading-relaxed line-clamp-2">{preview}</p>
+            <p className="mt-2 text-[13px] text-ink leading-relaxed line-clamp-2">{preview}</p>
             {/* Keywords from normalization */}
             {keywords.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
@@ -902,7 +900,7 @@ function ArticleCard({ article }: { article: Article }) {
       </div>
 
       {expanded && (
-        <div className="border-t border-line/10 bg-panel2/50 px-5 py-4 space-y-4">
+        <div className="border-t border-line/20 bg-panel2/50 px-5 py-4 space-y-4">
           <div className="flex flex-wrap gap-2">
             <a href={article.sourceUrl} target="_blank" rel="noopener"
               className="rounded-lg bg-acc px-4 py-1.5 text-[12px] font-bold text-white hover:opacity-90 transition">
@@ -1046,7 +1044,7 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {/* Mode toggle */}
-          <div className="flex gap-1 rounded-lg bg-panel2/50 p-1">
+          <div className="flex gap-1 rounded-lg bg-panel2 p-1">
             <button
               onClick={() => setMode("url")}
               className={`flex-1 rounded-md px-3 py-2 text-[12px] font-bold transition ${
@@ -1173,7 +1171,7 @@ function UserArticleCard({ article, onDelete }: { article: { id: string; title: 
               <h3 className="text-[14px] font-extrabold leading-tight">🧠 {article.title}</h3>
               <span className="rounded bg-green/15 px-1.5 py-0.5 text-[10px] font-bold text-green">✅ Normalized</span>
             </div>
-            <p className="mt-1 text-[12px] text-ink/80 line-clamp-1">{n.summary}</p>
+            <p className="mt-1 text-[12px] text-ink line-clamp-1">{n.summary}</p>
             <div className="mt-1.5 flex flex-wrap gap-1">
               {n.keywords.slice(0, 6).map(kw => (
                 <span key={kw} className="rounded bg-acc/10 px-1.5 py-0.5 text-[9px] font-bold text-acc">{kw}</span>
@@ -1194,7 +1192,7 @@ function UserArticleCard({ article, onDelete }: { article: { id: string; title: 
       </div>
 
       {expanded && (
-        <div className="border-t border-line/10 bg-panel2/50 px-4 py-3 space-y-3">
+        <div className="border-t border-line/20 bg-panel2/50 px-4 py-3 space-y-3">
           <DifficultySelector level={difficulty} onChange={setDifficulty} />
           <p className="text-[10px] text-mut italic">{DIFFICULTY_CONFIG[difficulty].desc}</p>
           {n.keyTakeaways.length > 0 && <KeyTakeaways takeaways={n.keyTakeaways} />}
