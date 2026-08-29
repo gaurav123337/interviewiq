@@ -313,6 +313,10 @@ async function cloudChat(messages: ChatMessage[], opts: ChatOptions): Promise<st
   const { data: session } = await client.auth.getSession();
   const token = session?.session?.access_token;
   if (!token) throw new Error("Sign in or add your own API key to use AI.");
+  // Apply the same dynamic token estimation as BYOK path
+  const moduleId = opts.module ?? "general";
+  const estimated = estimateOutputTokens(messages, moduleId);
+  const resolvedMaxTokens = opts.maxTokens ? Math.max(opts.maxTokens, estimated) : estimated;
   const res = await fetch(`${CONFIG.supabase.url}/functions/v1/ai-chat`, {
     method: "POST",
     signal: opts.signal,
@@ -321,21 +325,21 @@ async function cloudChat(messages: ChatMessage[], opts: ChatOptions): Promise<st
       module: opts.module,
       messages,
       temperature: opts.temperature,
-      maxTokens: opts.maxTokens
+      maxTokens: resolvedMaxTokens
     })
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string }).error ?? "AI request failed");
   /* Log cost for cloud proxy calls */
   const userId = getCloudState().user?.id;
-  const moduleId = opts.module ?? "coach";
+  const logModuleId = opts.module ?? "coach";
   const text = (body as { text?: string; usage?: { prompt_tokens?: number; completion_tokens?: number }; model?: string }).text ?? "";
   const usage = (body as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
   const model = (body as { model?: string }).model ?? "unknown";
   if (userId) {
     void logAiCost({
       userId,
-      module: moduleId,
+      module: logModuleId,
       model,
       inputTokens: usage?.prompt_tokens ?? 0,
       outputTokens: usage?.completion_tokens ?? 0,
