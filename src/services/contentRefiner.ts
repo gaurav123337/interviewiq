@@ -10,6 +10,7 @@
 
 import { chat, type ChatMessage } from "../ai";
 import { getSupabaseClient } from "./cloud";
+import { normalizeAiOutput } from "./aiOutputNormalizer";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -84,152 +85,24 @@ function buildRefinementMessages(title: string, content: string, sourceName: str
 }
 
 /* ── Parse LLM Response ────────────────────────────────────────────────── */
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** Extract a JSON object from text by brace-counting from a known key */
-function extractJsonByKey(text: string, key: string): Record<string, unknown> | null {
-  const searchKey = `"${key}"`;
-  const keyIdx = text.indexOf(searchKey);
-  if (keyIdx < 0) return null;
-
-  // Walk backward to find opening {
-  let start = keyIdx;
-  while (start > 0 && text[start] !== '{') start--;
-  if (text[start] !== '{') return null;
-
-  // Brace-count forward to find matching }
-  let depth = 0, inStr = false, esc = false, end = -1;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
-    if (esc) { esc = false; continue; }
-    if (c === '\\') { esc = true; continue; }
-    if (c === '"') { inStr = !inStr; continue; }
-    if (inStr) continue;
-    if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
-  }
-  if (end <= start) return null;
-
-  const slice = text.slice(start, end + 1);
-  try {
-    return JSON.parse(slice);
-  } catch {
-    // Try fixing common issues
-    const fixed = slice.replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1');
-    try { return JSON.parse(fixed); } catch { return null; }
-  }
-}
-
-/** Extract content between markdown headers (no regex needed) */
-function extractByHeaders(text: string, headerNames: string[]): string {
-  const lines = text.split('\n');
-  let capturing = false;
-  let headerPattern = '';
-  const result: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Check if this is a header matching any of our target names
-    const isHeader = trimmed.match(/^#{1,3}\s+(.+)/i);
-    if (isHeader) {
-      const title = isHeader[1].toLowerCase();
-      if (headerNames.some(h => title.includes(h.toLowerCase()))) {
-        capturing = true;
-        headerPattern = trimmed;
-        continue;
-      } else if (capturing) {
-        // Hit a different header — stop capturing
-        break;
-      }
-    }
-    if (capturing && trimmed) {
-      result.push(line);
-    }
-  }
-
-  return result.join('\n').trim();
-}
-
-/** Split text into three roughly equal parts */
-function splitIntoThree(text: string): { first: string; second: string; third: string } {
-  const cleaned = text.replace(/^[\s\S]*?(?=\n#{1,3}\s|We need|Let me|The |Based on)/i, '').trim() || text;
-  const words = cleaned.split(/\s+/).filter(Boolean);
-  const third = Math.ceil(words.length / 3);
-  return {
-    first: words.slice(0, third).join(' '),
-    second: words.slice(third, third * 2).join(' '),
-    third: words.slice(third * 2).join(' '),
-  };
-}
-
 function parseRefinedContent(raw: string): RefinedContent | null {
   if (!raw || raw.trim().length < 50) return null;
 
-  let parsed: Record<string, unknown> | null = null;
+  // Use the universal AI output normalizer
+  const result = normalizeAiOutput(raw, ['beginner', 'intermediate', 'advanced']);
+  console.log(`[contentRefiner] Normalizer strategy: ${result.strategy}, raw: ${result.rawLength} chars, stripped: ${result.strippedLength} chars`);
 
-  // ═══ STRATEGY 1: Direct JSON parse ═══
-  // Handle ```json...``` blocks
-  if (!parsed && raw.includes('```json')) {
-    const m = raw.match(/```json\s*([\s\S]*?)```/);
-    if (m) try { parsed = JSON.parse(m[1].trim()); } catch { /* next */ }
-  }
-
-  // Handle JSON with thinking prefix — find by key
-  if (!parsed) {
-    parsed = extractJsonByKey(raw, 'beginner');
-    if (parsed) console.log('[contentRefiner] Extracted JSON by key from', raw.length, 'chars');
-  }
-
-  // Handle plain JSON (no prefix)
-  if (!parsed) {
-    parsed = extractJsonByKey(raw, 'beginner');
-  }
-
-  // ═══ STRATEGY 2: Markdown-structured content ═══
-  // Model outputted markdown headers instead of JSON
-  if (!parsed) {
-    const beginner = extractByHeaders(raw, ['beginner', 'what is', 'introduction', 'intro', 'overview', 'simplified']);
-    const intermediate = extractByHeaders(raw, ['intermediate', 'how it works', 'implementation', 'details', 'patterns']);
-    const advanced = extractByHeaders(raw, ['advanced', 'deep dive', 'internals', 'interview', 'performance']);
-    if (beginner && intermediate && advanced) {
-      parsed = { beginner, intermediate, advanced };
-      console.log('[contentRefiner] Extracted content from markdown headers');
-    }
-  }
-
-  // ═══ STRATEGY 3: Split by content markers ═══
-  // Model outputted plain text with sections
-  if (!parsed && raw.length > 200) {
-    const split = splitIntoThree(raw);
-    if (split.first.length > 50 && split.second.length > 50) {
-      parsed = { beginner: split.first, intermediate: split.second, advanced: split.third };
-      console.log('[contentRefiner] Split content into three levels');
-    }
-  }
-
-  // ═══ STRATEGY 4: Last resort — use everything as intermediate ═══
-  if (!parsed && raw.length > 100) {
-    parsed = {
-      beginner: raw.slice(0, Math.ceil(raw.length / 3)).trim(),
-      intermediate: raw.slice(Math.ceil(raw.length / 3), Math.ceil(raw.length * 2 / 3)).trim(),
-      advanced: raw.slice(Math.ceil(raw.length * 2 / 3)).trim(),
-    };
-    console.log('[contentRefiner] Last resort: split into thirds');
-  }
-
-  if (!parsed) {
-    console.error('[contentRefiner] All strategies failed. Raw length:', raw.length);
+  if (!result.parsed) {
+    console.error('[contentRefiner] All normalization strategies failed. Raw length:', raw.length);
+    console.error('[contentRefiner] First 500 chars:', raw.slice(0, 500));
     return null;
   }
 
+  const parsed = result.parsed;
   const beginner = String(parsed.beginner || "");
   const intermediate = String(parsed.intermediate || "");
   const advanced = String(parsed.advanced || "");
 
-  // Need at least some content
   if (!beginner && !intermediate && !advanced) return null;
 
   return {
@@ -247,8 +120,6 @@ function parseRefinedContent(raw: string): RefinedContent | null {
     estimatedReadMinutes: Number(parsed.estimatedReadMinutes) || Math.ceil(raw.length / 1500),
   };
 }
-
-
 
 /* ── Main Refinement Function ──────────────────────────────────────────── */
 
