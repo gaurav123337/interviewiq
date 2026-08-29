@@ -181,6 +181,7 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
                     onClick={() => {
                       setBase(entry.base);
                       setModel(entry.model);
+                      setKey(entry.fullKey);
                       onToast(`↩️ Loaded ${entry.model} — click Save to activate`);
                     }}
                   >
