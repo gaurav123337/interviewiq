@@ -198,33 +198,53 @@ export function checkModelSuitability(
     };
   }
 
-  // Thinking model used for JSON-output module
-  if (req.avoidThinking && isThinking) {
+  // Thinking model used for JSON-output module — ALWAYS warn
+  if (isThinking && req.avoidThinking) {
     return {
       suitable: false,
       severity: "warning",
-      message: `"${modelName}" is a thinking/reasoning model. It will waste output tokens on internal reasoning instead of producing the structured JSON that ${req.name} needs.`,
+      message: `⚠️ "${modelName}" is a thinking/reasoning model. It will waste ALL output tokens on internal reasoning instead of producing the structured JSON that ${req.name} needs. You WILL get empty or malformed responses.`,
       suggestions: [
         "Use a non-thinking model for direct JSON output",
-        "Fast models (gpt-4o-mini, gemini-2.5-flash) are ideal for this task",
+        "Recommended: gpt-4o-mini, gemini-2.5-flash, claude-3-haiku",
       ],
+    };
+  }
+
+  // Thinking model for conversational module — GOOD
+  if (isThinking && req.needs.reasoning) {
+    return {
+      suitable: true,
+      severity: "ok",
+      message: `✅ "${modelName}" is a thinking model — reasoning helps for ${req.name}`,
+      suggestions: [],
+    };
+  }
+
+  // Non-thinking model for JSON-output module — IDEAL
+  if (!isThinking && req.avoidThinking) {
+    const fast = tags.includes("fast");
+    return {
+      suitable: true,
+      severity: "ok",
+      message: `✅ "${modelName}" is ideal for ${req.name}${fast ? " (fast & cheap)" : " (direct JSON output, no thinking overhead)"}`,
+      suggestions: [],
     };
   }
 
   // Model has matching ideal tags
   const hasMatch = req.idealTags.some(t => tags.includes(t));
-  if (req.idealTags.length > 0 && !hasMatch && !isThinking) {
+  if (req.idealTags.length > 0 && !hasMatch) {
     return {
       suitable: true,
       severity: "ok",
-      message: `${description} — will work for ${req.name}`,
+      message: `✅ "${modelName}" (${description}) — will work for ${req.name}`,
       suggestions: [],
     };
   }
 
   // All good
   const strengths: string[] = [];
-  if (isThinking && req.needs.reasoning) strengths.push("reasoning helps here");
   if (tags.includes("fast")) strengths.push("fast & cheap");
   if (tags.includes("code") && req.needs.codeGeneration) strengths.push("code-specialized");
 
@@ -232,8 +252,8 @@ export function checkModelSuitability(
     suitable: true,
     severity: "ok",
     message: strengths.length > 0
-      ? `"${modelName}" is suitable for ${req.name} (${strengths.join(", ")})`
-      : `"${modelName}" is suitable for ${req.name}`,
+      ? `✅ "${modelName}" is suitable for ${req.name} (${strengths.join(", ")})`
+      : `✅ "${modelName}" will work for ${req.name}`,
     suggestions: [],
   };
 }
