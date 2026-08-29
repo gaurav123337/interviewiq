@@ -2,6 +2,7 @@ import { memo, useMemo, useState, useEffect } from "react";
 import { CONFIG } from "../../config";
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../../services/secrets";
 import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, type AiProviderStatus } from "../../services/aiProvider";
+import { listProviderHistory, saveToHistory, deleteHistoryEntry, formatHistoryDate, type ProviderHistoryEntry } from "../../services/aiProviderHistory";
 import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretStatus } from "../../services/edgeSecrets";
 import { toast } from "../../toast";
 import { cardCls, btnPrimary, btnGhost, btnSm, Chip } from "../ui";
@@ -19,6 +20,8 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
+  const [history, setHistory] = useState<ProviderHistoryEntry[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     if (status) {
@@ -26,6 +29,11 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
       setModel(status.model || "");
     }
   }, [status]);
+
+  // Load history on mount
+  useEffect(() => {
+    listProviderHistory().then(setHistory).catch(() => {});
+  }, []);
 
   const save = async () => {
     /* guard: a model ID (vendor/name, e.g. nvidia/nemotron-3.5-lightning:free)
@@ -40,6 +48,12 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
     setTestNote(null);
     try {
       await saveAiProviderConfig({ key: k, base, model });
+      // Auto-save to history (only if key was provided)
+      if (k) {
+        await saveToHistory({ base, model, key: k });
+        const updated = await listProviderHistory();
+        setHistory(updated);
+      }
       onToast("🤖 AI pipeline key saved — the next scrape/problem-bank run uses it");
       setKey("");
       await onLoad();
@@ -129,7 +143,66 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
         <button className={btnGhost + btnSm} onClick={() => void test()} disabled={saving || testing} title="One live call to the provider's /models endpoint with the entered key">
           {testing ? "Testing…" : "🧪 Test key"}
         </button>
+        {history.length > 0 && (
+          <button
+            className={btnGhost + btnSm}
+            onClick={() => setShowHistory(!showHistory)}
+          >
+            {showHistory ? "Hide" : "📜"} History ({history.length})
+          </button>
+        )}
       </div>
+
+      {/* ── Provider History ──────────────────────────────────────── */}
+      {showHistory && history.length > 0 && (
+        <div className="mt-4 rounded-xl border border-line/10 bg-wht/3 p-4">
+          <h3 className="mb-2 text-[13px] font-extrabold">📜 Previously used providers</h3>
+          <p className="mb-3 text-[11px] text-mut">Click restore to switch back to a previous provider configuration.</p>
+          <div className="space-y-2">
+            {history.map(entry => (
+              <div
+                key={entry.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line/10 bg-wht/5 px-3 py-2.5 transition-colors hover:border-acc1/30"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[12px] font-bold text-fnt">{entry.model || "(no model)"}</span>
+                    <span className="rounded bg-acc1/15 px-1.5 py-0.5 text-[10px] font-bold text-acctxt">{entry.base.includes("openrouter") ? "OpenRouter" : entry.base.includes("openai") ? "OpenAI" : entry.base.includes("deepseek") ? "DeepSeek" : entry.base.includes("orca") ? "OrcaRouter" : "Custom"}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[10.5px] text-mut">
+                    <span>{entry.keyHint}</span>
+                    <span>·</span>
+                    <span>{formatHistoryDate(entry.savedAt)}</span>
+                  </div>
+                </div>
+                <div className="flex gap-1.5">
+                  <button
+                    className="rounded-lg border border-acc1/30 bg-acc1/10 px-2.5 py-1 text-[11px] font-bold text-acctxt hover:bg-acc1/20"
+                    onClick={() => {
+                      setBase(entry.base);
+                      setModel(entry.model);
+                      onToast(`↩️ Loaded ${entry.model} — click Save to activate`);
+                    }}
+                  >
+                    ↩️ Restore
+                  </button>
+                  <button
+                    className="rounded-lg border border-line/15 px-2 py-1 text-[11px] text-mut hover:bg-warn/10 hover:text-warn"
+                    onClick={async () => {
+                      await deleteHistoryEntry(entry.id);
+                      const updated = await listProviderHistory();
+                      setHistory(updated);
+                      onToast("🗑️ History entry deleted");
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
