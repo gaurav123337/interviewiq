@@ -28,6 +28,7 @@ export interface ContentRefinementResult {
   success: boolean;
   refined?: RefinedContent;
   error?: string;
+  qualityScore?: number;
 }
 
 /* ── Prompt Building ───────────────────────────────────────────────────── */
@@ -85,11 +86,17 @@ function buildRefinementMessages(title: string, content: string, sourceName: str
 }
 
 /* ── Parse LLM Response ────────────────────────────────────────────────── */
+
+/** Last quality score from parsing (read by refineContent after calling parseRefinedContent) */
+let lastQualityScore = 0;
+export function getLastQualityScore() { return lastQualityScore; }
+
 function parseRefinedContent(raw: string): RefinedContent | null {
-  if (!raw || raw.trim().length < 50) return null;
+  if (!raw || raw.trim().length < 50) { lastQualityScore = 0; return null; }
 
   // Use the universal AI output normalizer
   const result = normalizeAiOutput(raw, ['beginner', 'intermediate', 'advanced']);
+  lastQualityScore = result.quality.score;
   console.log(`[contentRefiner] Strategy: ${result.strategy} | Quality: ${result.quality.score}/100 | Passed: ${result.quality.passed}`);
   if (result.quality.issues.length > 0) {
     console.warn('[contentRefiner] Quality issues:', result.quality.issues);
@@ -166,12 +173,13 @@ export async function refineContent(params: {
     console.log(`[contentRefiner] Last 200 chars: ${rawText.slice(-200)}`);
 
     const refined = parseRefinedContent(rawText);
+    const qualityScore = getLastQualityScore();
     if (!refined) {
       console.error(`[contentRefiner] PARSE FAILED for "${title}". Raw: ${rawText.length} chars.`);
-      return { success: false, error: `Failed to parse AI response (${rawText.length} chars returned). Check console for details.` };
+      return { success: false, error: `Failed to parse AI response (${rawText.length} chars returned). Check console for details.`, qualityScore };
     }
 
-    return { success: true, refined };
+    return { success: true, refined, qualityScore };
   } catch (e) {
     const msg = (e as Error).message || "Refinement failed";
     // Provide helpful guidance for common AI configuration errors
@@ -212,6 +220,7 @@ export async function refineAndUpdateContent(contentId: string): Promise<Content
     .from("content_items")
     .update({
       content_refined: result.refined,
+      quality_score: result.qualityScore ?? 0,
       updated_at: new Date().toISOString(),
     })
     .eq("id", contentId);
