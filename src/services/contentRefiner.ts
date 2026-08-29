@@ -89,121 +89,139 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Extract a JSON object from text by brace-counting from a known key */
+function extractJsonByKey(text: string, key: string): Record<string, unknown> | null {
+  const searchKey = `"${key}"`;
+  const keyIdx = text.indexOf(searchKey);
+  if (keyIdx < 0) return null;
+
+  // Walk backward to find opening {
+  let start = keyIdx;
+  while (start > 0 && text[start] !== '{') start--;
+  if (text[start] !== '{') return null;
+
+  // Brace-count forward to find matching }
+  let depth = 0, inStr = false, esc = false, end = -1;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\') { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end <= start) return null;
+
+  const slice = text.slice(start, end + 1);
+  try {
+    return JSON.parse(slice);
+  } catch {
+    // Try fixing common issues
+    const fixed = slice.replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1');
+    try { return JSON.parse(fixed); } catch { return null; }
+  }
+}
+
+/** Extract content between markdown headers (no regex needed) */
+function extractByHeaders(text: string, headerNames: string[]): string {
+  const lines = text.split('\n');
+  let capturing = false;
+  let headerPattern = '';
+  const result: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    // Check if this is a header matching any of our target names
+    const isHeader = trimmed.match(/^#{1,3}\s+(.+)/i);
+    if (isHeader) {
+      const title = isHeader[1].toLowerCase();
+      if (headerNames.some(h => title.includes(h.toLowerCase()))) {
+        capturing = true;
+        headerPattern = trimmed;
+        continue;
+      } else if (capturing) {
+        // Hit a different header — stop capturing
+        break;
+      }
+    }
+    if (capturing && trimmed) {
+      result.push(line);
+    }
+  }
+
+  return result.join('\n').trim();
+}
+
+/** Split text into three roughly equal parts */
+function splitIntoThree(text: string): { first: string; second: string; third: string } {
+  const cleaned = text.replace(/^[\s\S]*?(?=\n#{1,3}\s|We need|Let me|The |Based on)/i, '').trim() || text;
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  const third = Math.ceil(words.length / 3);
+  return {
+    first: words.slice(0, third).join(' '),
+    second: words.slice(third, third * 2).join(' '),
+    third: words.slice(third * 2).join(' '),
+  };
+}
+
 function parseRefinedContent(raw: string): RefinedContent | null {
   if (!raw || raw.trim().length < 50) return null;
 
-  let text = raw;
-
-  // Strategy 0: Extract the EXACT JSON object from thinking model output
-  // Find '"beginner"' (the JSON key), walk backward to '{', forward to matching '}'
-  const keyIdx = text.indexOf('"beginner"');
-  if (keyIdx > 0) {
-    // Walk backward to find opening {
-    let start = keyIdx;
-    while (start > 0 && text[start] !== '{') start--;
-    if (start > 0 && text[start] === '{') {
-      // Walk forward with brace counting to find matching }
-      let depth = 0;
-      let inStr = false;
-      let esc = false;
-      let end = -1;
-      for (let i = start; i < text.length; i++) {
-        const c = text[i];
-        if (esc) { esc = false; continue; }
-        if (c === '\\') { esc = true; continue; }
-        if (c === '"') { inStr = !inStr; continue; }
-        if (inStr) continue;
-        if (c === '{') depth++;
-        else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
-      }
-      if (end > start) {
-        const candidate = text.slice(start, end + 1);
-        // Verify it looks like valid JSON (has required keys)
-        if (candidate.includes('"beginner"') && candidate.includes('"intermediate"')) {
-          console.log('[contentRefiner] Extracted JSON object:', candidate.length, 'chars from position', start, '-', end, 'of', text.length);
-          text = candidate;
-        }
-      }
-    }
-  }
-
-  // Also handle ```json...``` wrappers
-  if (text.includes('```json')) {
-    const jsonBlock = text.match(/```json\s*([\s\S]*?)```/);
-    if (jsonBlock) {
-      const inner = jsonBlock[1].trim();
-      if (inner.startsWith('{')) text = inner;
-    }
-  }
-
-  // Try multiple strategies to extract JSON
   let parsed: Record<string, unknown> | null = null;
 
-  // Strategy 1: Extract from ```json code block (search stripped text, not raw)
-  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlockMatch) {
-    try { parsed = JSON.parse(codeBlockMatch[1].trim()); } catch { /* try next */ }
+  // ═══ STRATEGY 1: Direct JSON parse ═══
+  // Handle ```json...``` blocks
+  if (!parsed && raw.includes('```json')) {
+    const m = raw.match(/```json\s*([\s\S]*?)```/);
+    if (m) try { parsed = JSON.parse(m[1].trim()); } catch { /* next */ }
   }
 
-  // Strategy 2: Find the outermost { ... } block (string-aware)
+  // Handle JSON with thinking prefix — find by key
   if (!parsed) {
-    const start = raw.indexOf("{");
-    if (start >= 0) {
-      let depth = 0, inStr = false, esc = false, end = -1;
-      for (let i = start; i < raw.length; i++) {
-        const c = raw[i];
-        if (esc) { esc = false; continue; }
-        if (c === "\\") { esc = true; continue; }
-        if (c === '"') { inStr = !inStr; continue; }
-        if (inStr) continue;
-        if (c === "{") depth++;
-        else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
-      }
-      if (end > start) {
-        const slice = raw.slice(start, end + 1);
-        try { parsed = JSON.parse(slice); } catch {
-          // Strategy 3: Try fixing common JSON issues
-          let fixed = slice.replace(/'/g, '"').replace(/,\s*([}\]])/g, '$1');
-          try { parsed = JSON.parse(fixed); } catch { /* try next */ }
-        }
-      }
-    }
+    parsed = extractJsonByKey(raw, 'beginner');
+    if (parsed) console.log('[contentRefiner] Extracted JSON by key from', raw.length, 'chars');
   }
 
-  // Strategy 4: Look for individual fields if JSON parsing failed
+  // Handle plain JSON (no prefix)
   if (!parsed) {
-    const beginner = extractSection(raw, 'beginner') || extractSection(raw, 'level1') || extractSection(raw, 'intro');
-    const intermediate = extractSection(raw, 'intermediate') || extractSection(raw, 'level2') || extractSection(raw, 'details');
-    const advanced = extractSection(raw, 'advanced') || extractSection(raw, 'level3') || extractSection(raw, 'deep');
+    parsed = extractJsonByKey(raw, 'beginner');
+  }
+
+  // ═══ STRATEGY 2: Markdown-structured content ═══
+  // Model outputted markdown headers instead of JSON
+  if (!parsed) {
+    const beginner = extractByHeaders(raw, ['beginner', 'what is', 'introduction', 'intro', 'overview', 'simplified']);
+    const intermediate = extractByHeaders(raw, ['intermediate', 'how it works', 'implementation', 'details', 'patterns']);
+    const advanced = extractByHeaders(raw, ['advanced', 'deep dive', 'internals', 'interview', 'performance']);
     if (beginner && intermediate && advanced) {
       parsed = { beginner, intermediate, advanced };
+      console.log('[contentRefiner] Extracted content from markdown headers');
     }
   }
 
-  // Strategy 5: If nothing worked but we have substantial content, treat the whole response as beginner-level
-  if (!parsed && raw.length > 100) {
-    const sections = raw.split(/\n(?=##\s)/);
-    if (sections.length >= 2) {
-      // Split content roughly into thirds
-      const third = Math.ceil(raw.length / 3);
-      parsed = {
-        beginner: raw.slice(0, third).trim(),
-        intermediate: raw.slice(third, third * 2).trim(),
-        advanced: raw.slice(third * 2).trim(),
-      };
-    } else {
-      // Just one big chunk — use it as all three levels
-      parsed = {
-        beginner: raw.trim(),
-        intermediate: raw.trim(),
-        advanced: raw.trim(),
-      };
+  // ═══ STRATEGY 3: Split by content markers ═══
+  // Model outputted plain text with sections
+  if (!parsed && raw.length > 200) {
+    const split = splitIntoThree(raw);
+    if (split.first.length > 50 && split.second.length > 50) {
+      parsed = { beginner: split.first, intermediate: split.second, advanced: split.third };
+      console.log('[contentRefiner] Split content into three levels');
     }
+  }
+
+  // ═══ STRATEGY 4: Last resort — use everything as intermediate ═══
+  if (!parsed && raw.length > 100) {
+    parsed = {
+      beginner: raw.slice(0, Math.ceil(raw.length / 3)).trim(),
+      intermediate: raw.slice(Math.ceil(raw.length / 3), Math.ceil(raw.length * 2 / 3)).trim(),
+      advanced: raw.slice(Math.ceil(raw.length * 2 / 3)).trim(),
+    };
+    console.log('[contentRefiner] Last resort: split into thirds');
   }
 
   if (!parsed) {
-    console.error("[contentRefiner] Failed to parse AI response. Raw length:", raw.length);
-    console.error("[contentRefiner] First 500 chars:", raw.slice(0, 500));
+    console.error('[contentRefiner] All strategies failed. Raw length:', raw.length);
     return null;
   }
 
@@ -230,14 +248,7 @@ function parseRefinedContent(raw: string): RefinedContent | null {
   };
 }
 
-/** Try to extract a named section from text (e.g. **BEGINNER:** ... ) */
-function extractSection(text: string, name: string): string {
-  // Escape special regex chars in name to prevent crashes like "Nothing to repeat"
-  const safe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const regex = new RegExp(`(?:\*\*\s*${safe}\s*\*\*|###?\s*${safe}|"${safe}"\s*:|'${safe}'\s*:)\s*([\s\S]*?)(?=\n(?:\*\*|###?\s*[A-Z]|"[a-z]|'[a-z]|$))`, 'i');
-  const match = text.match(regex);
-  return match ? match[1].trim() : '';
-}
+
 
 /* ── Main Refinement Function ──────────────────────────────────────────── */
 
