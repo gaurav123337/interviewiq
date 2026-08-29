@@ -98,18 +98,28 @@ function parseRefinedContent(raw: string): RefinedContent | null {
   const firstBrace = text.indexOf('{');
   if (firstBrace > 0) {
     const before = text.slice(0, firstBrace).toLowerCase();
-    // If substantial text before the first brace, it's likely thinking preamble
-    if (before.length > 20) {
-      console.log('[contentRefiner] Stripping thinking preamble (' + before.length + ' chars)');
+    // Thinking preamble patterns: "We need", "Let me", "Need to", etc.
+    const thinkingPatterns = /^(we\s|let\s|need\s|must\s|should\s|first,|to\s|for\s|this\s|okay|alright|here)/i;
+    if (before.trim().length > 10 && thinkingPatterns.test(before.trim())) {
+      console.log('[contentRefiner] Stripping thinking preamble (' + before.length + ' chars):', before.slice(0, 80));
       text = text.slice(firstBrace);
+    }
+  }
+
+  // Also handle case where model wraps JSON in ```json...``` with thinking before it
+  if (text.includes('```json')) {
+    const jsonBlock = text.match(/```json\s*([\s\S]*?)```/);
+    if (jsonBlock) {
+      const inner = jsonBlock[1].trim();
+      if (inner.startsWith('{')) text = inner;
     }
   }
 
   // Try multiple strategies to extract JSON
   let parsed: Record<string, unknown> | null = null;
 
-  // Strategy 1: Extract from ```json code block
-  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  // Strategy 1: Extract from ```json code block (search stripped text, not raw)
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
     try { parsed = JSON.parse(codeBlockMatch[1].trim()); } catch { /* try next */ }
   }
