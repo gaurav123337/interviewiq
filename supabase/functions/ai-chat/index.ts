@@ -1,11 +1,43 @@
 /* ai-chat — Cloud proxy for AI requests. Uses the admin-configured provider
    (from ai_provider_config table) so users don't need their own API key.
-   Requires authentication — the user's JWT proves they're signed in. */
+   Requires authentication — the user's JWT proves they're signed in.
+
+   Smart model handling:
+   - Detects thinking models (Qwen3, DeepSeek-R1, o1, o3)
+   - For JSON-output modules: disables thinking to prevent token waste
+   - For conversational modules: keeps thinking enabled for better reasoning
+   - Falls back gracefully with informative errors
+*/
 
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+/* ── Model Intelligence ─────────────────────────────────────────────────── */
+
+function isThinkingModel(modelName: string): boolean {
+  const lower = modelName.toLowerCase();
+  return lower.includes("qwen3") || lower.includes("deepseek-r1") ||
+    lower.includes("/o1") || lower.includes("/o3") || lower.includes("thinking");
+}
+
+/** Modules that need structured JSON output — thinking should be disabled for these */
+const JSON_OUTPUT_MODULES = new Set([
+  "contentRefine", "articleNormalize", "contentIndex",
+]);
+
+/** Modules that benefit from reasoning — thinking should stay ON */
+const REASONING_MODULES = new Set([
+  "coach", "hint", "feedback", "deepdive", "rag",
+]);
+
+function shouldDisableThinking(modelName: string, moduleId: string): boolean {
+  // Only disable for thinking models + JSON-output modules
+  return isThinkingModel(modelName) && JSON_OUTPUT_MODULES.has(moduleId);
+}
+
+/* ── Main Handler ───────────────────────────────────────────────────────── */
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return preflightResponse(req);
@@ -74,26 +106,26 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Resolve model (may have been overridden above)
     const finalModel = resolvedModel || model;
 
-    // Call the AI provider
-    const apiBase = baseUrl.replace(/\/+$/, "");
-    // For thinking models (Qwen3, DeepSeek-R1), control thinking per-module:
-    // - Structured JSON modules → thinking OFF (avoids wasting tokens on reasoning)
-    // - Conversational modules (coach, hints) → thinking ON
-    const isThinkingModel = finalModel.toLowerCase().includes("qwen3") || finalModel.toLowerCase().includes("deepseek-r1");
-    const noThinkingModules = ["contentRefine", "articleNormalize", "contentIndex"];
-    const disableThinking = isThinkingModel && noThinkingModules.includes(moduleId);
+    /* ── Smart Model Handling ─────────────────────────────────────────── */
+    const thinkingDisabled = shouldDisableThinking(finalModel, moduleId);
+
+    // Build request body
     const requestBody: Record<string, unknown> = {
       model: finalModel,
       messages,
       temperature,
       max_tokens: maxTokens,
     };
-    if (disableThinking) {
+
+    // Disable thinking for JSON-output modules using thinking models
+    if (thinkingDisabled) {
       requestBody.reasoning = false;
     }
+
+    /* ── Call AI Provider ─────────────────────────────────────────────── */
+    const apiBase = baseUrl.replace(/\/+$/, "");
     const aiRes = await fetch(`${apiBase}/chat/completions`, {
       method: "POST",
       headers: {
@@ -111,27 +143,72 @@ Deno.serve(async (req) => {
     }
 
     const aiBody = await aiRes.json().catch(() => ({}));
-    // Check content, reasoning_content, and reasoning fields (format varies by provider)
+
+    /* ── Extract Response (multiple field formats) ────────────────────── */
     const choiceMsg = aiBody.choices?.[0]?.message ?? {};
+    // Priority: content > reasoning_content > reasoning (format varies by provider)
     const text = choiceMsg.content || choiceMsg.reasoning_content || choiceMsg.reasoning || "";
     const usage = aiBody.usage ?? {};
 
-    // If the AI returned an error in the body (non-HTTP error), forward it
+    /* ── Handle Errors ────────────────────────────────────────────────── */
     if (!text && aiBody.error) {
       const errMsg = typeof aiBody.error === "string" ? aiBody.error : aiBody.error.message ?? JSON.stringify(aiBody.error);
+      return new Response(JSON.stringify({ error: `AI provider error: ${errMsg}` }), { status: 502, headers });
+    }
+
+    /* ── Thinking Model Fallback ──────────────────────────────────────── */
+    // If content is empty but reasoning exists, the thinking model consumed
+    // all tokens on reasoning without producing output.
+    if (!text && choiceMsg.reasoning) {
+      // Try again with thinking disabled (only if we didn't already disable it)
+      if (!thinkingDisabled) {
+        const retryBody = { ...requestBody, reasoning: false };
+        const retryRes = await fetch(`${apiBase}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(retryBody),
+        });
+
+        if (retryRes.ok) {
+          const retryBody2 = await retryRes.json().catch(() => ({}));
+          const retryMsg = retryBody2.choices?.[0]?.message ?? {};
+          const retryText = retryMsg.content || retryMsg.reasoning_content || "";
+          const retryUsage = retryBody2.usage ?? {};
+
+          if (retryText) {
+            console.log(`[ai-chat] Fallback succeeded: thinking disabled for module "${moduleId}" on model "${finalModel}"`);
+            return new Response(JSON.stringify({
+              text: retryText,
+              model: finalModel,
+              usage: {
+                prompt_tokens: retryUsage.prompt_tokens ?? 0,
+                completion_tokens: retryUsage.completion_tokens ?? 0,
+              },
+              _fallback: true, // Signal that fallback was used
+            }), { status: 200, headers });
+          }
+        }
+      }
+
+      // All attempts failed — provide actionable error
       return new Response(JSON.stringify({
-        error: `AI provider error: ${errMsg}`,
+        error: `Model "${finalModel}" returned only thinking/reasoning output with no content for module "${moduleId}". ` +
+          `This model is a thinking model that wastes tokens on internal reasoning. ` +
+          `Recommendation: Configure a non-thinking model (gpt-4o-mini, gemini-2.5-flash) for JSON-output modules in Product Config.`,
       }), { status: 502, headers });
     }
 
-    // If text is empty, return the full body for debugging
+    /* ── Empty Response ───────────────────────────────────────────────── */
     if (!text) {
-      console.error("[ai-chat] Empty text from AI provider. Model:", finalModel, "Response:", JSON.stringify(aiBody).slice(0, 500));
       return new Response(JSON.stringify({
-        error: `AI provider returned empty response (model: ${finalModel}). Check the API key and provider configuration.`,
+        error: `AI returned empty response (model: ${finalModel}). Check API key and provider configuration.`,
       }), { status: 502, headers });
     }
 
+    /* ── Success ──────────────────────────────────────────────────────── */
     return new Response(JSON.stringify({
       text,
       model: finalModel,

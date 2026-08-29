@@ -1,4 +1,5 @@
 import { memo, useEffect, useState } from "react";
+import { isThinkingModel as checkThinking, MODULE_REQUIREMENTS } from "../../services/modelCapabilities";
 import { JobFeedCard, RagRetrievalCard, CoachVocabCard } from "./config";
 import { COMPANIES, companyById } from "../../data";
 import { COMPANY_FREQ, problemsForCompany } from "../../data/codingCompanies";
@@ -342,6 +343,27 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
             <label className="block">
               <span className="mb-1 block text-[12px] font-bold text-mut">Suggested model</span>
               <input value={config.ai.model ?? ""} onChange={e => setAi("model", e.target.value)} placeholder="gpt-4o-mini" className="inp w-full" />
+              {config.ai.model && checkThinking(config.ai.model) && (() => {
+                const jsonModules = Object.entries(MODULE_REQUIREMENTS)
+                  .filter(([, r]) => r.needs.structuredJson)
+                  .map(([, r]) => r.name);
+                return (
+                  <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+                    <p className="text-[11.5px] font-bold text-amber-400">⚠️ Thinking model detected</p>
+                    <p className="mt-1 text-[11px] text-amber-300/80">
+                      &quot;{config.ai.model}&quot; is a thinking/reasoning model. It will waste all output tokens on internal reasoning
+                      for JSON-output modules ({jsonModules.join(", ")}), producing empty responses.
+                    </p>
+                    <p className="mt-1 text-[11px] text-amber-300/80">
+                      ✅ Good for: Coach chat, hints, feedback (reasoning helps)<br/>
+                      ❌ Bad for: Content refinement, article normalization, indexing (need direct JSON)
+                    </p>
+                    <p className="mt-1 text-[11px] font-bold text-amber-300">
+                      💡 Recommended: gpt-4o-mini, gemini-2.5-flash, or claude-3.5-haiku
+                    </p>
+                  </div>
+                );
+              })()}
             </label>
             <label className="block">
               <span className="mb-1 block text-[12px] font-bold text-mut">Embeddings model (RAG)</span>
