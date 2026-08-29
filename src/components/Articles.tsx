@@ -579,13 +579,13 @@ function MarkdownContent({ text }: { text: string }) {
         isOrdered ? (
           <ol key={`ol-${keyCounter++}`} className="ml-5 mb-3 list-decimal space-y-1">
             {listItems.map((li, i) => (
-              <li key={i} className="text-[13px] text-ink/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
+              <li key={i} className="text-[13px] text-ink leading-relaxed">{inlineMarkdown(li.text)}</li>
             ))}
           </ol>
         ) : (
           <ul key={`ul-${keyCounter++}`} className="ml-5 mb-3 list-disc space-y-1">
             {listItems.map((li, i) => (
-              <li key={i} className="text-[13px] text-ink/85 leading-relaxed">{inlineMarkdown(li.text)}</li>
+              <li key={i} className="text-[13px] text-ink leading-relaxed">{inlineMarkdown(li.text)}</li>
             ))}
           </ul>
         )
@@ -659,7 +659,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith("### ")) {
       flushList();
       elements.push(
-        <h3 key={`h3-${keyCounter++}`} className="mt-5 mb-2 text-[15px] font-extrabold text-ink">
+        <h3 key={`h3-${keyCounter++}`} className="mt-5 mb-2 text-[15px] font-extrabold text-fnt">
           {inlineMarkdown(line.slice(4))}
         </h3>
       );
@@ -669,7 +669,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith("## ")) {
       flushList();
       elements.push(
-        <h2 key={`h2-${keyCounter++}`} className="mt-7 mb-3 text-[17px] font-extrabold text-ink border-b border-line/10 pb-1">
+        <h2 key={`h2-${keyCounter++}`} className="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/20 pb-1">
           {inlineMarkdown(line.slice(3))}
         </h2>
       );
@@ -691,7 +691,7 @@ function MarkdownContent({ text }: { text: string }) {
     // Regular text
     flushList();
     elements.push(
-      <p key={`p-${keyCounter++}`} className="mb-3 text-[13px] text-ink/85 leading-relaxed">
+      <p key={`p-${keyCounter++}`} className="mb-3 text-[13px] text-ink leading-relaxed">
         {inlineMarkdown(line)}
       </p>
     );
@@ -709,7 +709,7 @@ function SourceBadge({ article }: { article: Article }) {
     <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-mut">
       <span className="font-bold text-acc">{article.sourceName}</span>
       <span>·</span>
-      <a href={article.sourceUrl} target="_blank" rel="noopener" className="hover:underline text-ink/60">
+      <a href={article.sourceUrl} target="_blank" rel="noopener" className="hover:underline text-mut">
         {article.domain}
       </a>
       {article.author && (
