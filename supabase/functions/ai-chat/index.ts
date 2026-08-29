@@ -79,17 +79,19 @@ Deno.serve(async (req) => {
 
     // Call the AI provider
     const apiBase = baseUrl.replace(/\/+$/, "");
-    // For thinking models (Qwen3, DeepSeek, etc.), disable thinking mode
-    // so the model produces actual content instead of consuming all tokens on reasoning
+    // For thinking models (Qwen3, DeepSeek-R1), control thinking per-module:
+    // - Structured JSON modules → thinking OFF (avoids wasting tokens on reasoning)
+    // - Conversational modules (coach, hints) → thinking ON
     const isThinkingModel = finalModel.toLowerCase().includes("qwen3") || finalModel.toLowerCase().includes("deepseek-r1");
+    const noThinkingModules = ["contentRefine", "articleNormalize", "contentIndex"];
+    const disableThinking = isThinkingModel && noThinkingModules.includes(moduleId);
     const requestBody: Record<string, unknown> = {
       model: finalModel,
       messages,
       temperature,
       max_tokens: maxTokens,
     };
-    if (isThinkingModel) {
-      // OpenRouter: disable thinking to get actual content output
+    if (disableThinking) {
       requestBody.reasoning = false;
     }
     const aiRes = await fetch(`${apiBase}/chat/completions`, {
