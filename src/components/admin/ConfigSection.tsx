@@ -68,7 +68,7 @@ function ModuleModelOverrides({ config }: { config: RemoteConfig }) {
   const [editingModule, setEditingModule] = useState<string | null>(null);
   const [editModel, setEditModel] = useState("");
   const [loading, setLoading] = useState(true);
-  const [availableModels, setAvailableModels] = useState<{ id: string; name: string; isThinking: boolean; tags: string[] }[]>([]);
+  const [availableModels, setAvailableModels] = useState<{ id: string; name: string; owner: string; isThinking: boolean; tags: string[] }[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
 
   useEffect(() => {
@@ -148,22 +148,46 @@ function ModuleModelOverrides({ config }: { config: RemoteConfig }) {
                   <span className="mb-0.5 block text-[11.5px] font-bold text-mut">Model name</span>
                   {availableModels.length > 0 ? (
                     <div className="space-y-1.5">
+                      {/* Provider info bar */}
+                      <div className="flex items-center gap-2 rounded-lg border border-line/10 bg-wht/3 px-2.5 py-1.5">
+                        <span className="text-[10.5px] text-mut">Provider:</span>
+                        <span className="text-[10.5px] font-bold text-fnt">{availableModels[0]?.owner || "Unknown"}</span>
+                        <span className="text-[10px] text-mut">·</span>
+                        <span className="text-[10px] text-mut">{availableModels.length} models available</span>
+                      </div>
                       <select
                         value={editModel}
                         onChange={e => setEditModel(e.target.value)}
                         className="w-full rounded-lg border border-line/20 bg-deep/60 px-3 py-2 text-[12.5px] text-fnt focus:border-acc1/80 focus:outline-none"
                       >
                         <option value="">— Use global default ({globalModel || "not set"}) —</option>
-                        {availableModels.map(model => (
-                          <option key={model.id} value={model.id}>
-                            {model.isThinking ? "🧠 " : "⚡ "}{model.name || model.id}{model.tags.length > 0 ? ` (${model.tags.join(", ")})` : ""}
-                          </option>
-                        ))}
+                        {(() => {
+                          // Group models by owner/provider
+                          const grouped = new Map<string, typeof availableModels>();
+                          for (const model of availableModels) {
+                            const owner = model.owner || "other";
+                            if (!grouped.has(owner)) grouped.set(owner, []);
+                            grouped.get(owner)!.push(model);
+                          }
+                          const result: any[] = [];
+                          for (const [owner, models] of grouped) {
+                            result.push(
+                              <optgroup key={owner} label={`${owner} (${models.length} models)`}>
+                                {models.map(model => (
+                                  <option key={model.id} value={model.id}>
+                                    {model.isThinking ? "🧠 " : "⚡ "}{model.name || model.id}{model.tags.length > 0 ? ` (${model.tags.join(", ")})` : ""}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          }
+                          return result;
+                        })()}
                       </select>
                       <input
                         value={editModel}
                         onChange={e => setEditModel(e.target.value)}
-                        placeholder="Or type a model name..."
+                        placeholder="Or type any model name..."
                         className="w-full rounded-lg border border-line/20 bg-deep/60 px-3 py-2 font-mono text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
                       />
                     </div>
