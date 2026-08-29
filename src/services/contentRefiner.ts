@@ -90,12 +90,23 @@ function parseRefinedContent(raw: string): RefinedContent | null {
 
   // Use the universal AI output normalizer
   const result = normalizeAiOutput(raw, ['beginner', 'intermediate', 'advanced']);
-  console.log(`[contentRefiner] Normalizer strategy: ${result.strategy}, raw: ${result.rawLength} chars, stripped: ${result.strippedLength} chars`);
+  console.log(`[contentRefiner] Strategy: ${result.strategy} | Quality: ${result.quality.score}/100 | Passed: ${result.quality.passed}`);
+  if (result.quality.issues.length > 0) {
+    console.warn('[contentRefiner] Quality issues:', result.quality.issues);
+  }
+  if (result.quality.suggestions.length > 0) {
+    console.log('[contentRefiner] Suggestions:', result.quality.suggestions);
+  }
 
   if (!result.parsed) {
     console.error('[contentRefiner] All normalization strategies failed. Raw length:', raw.length);
     console.error('[contentRefiner] First 500 chars:', raw.slice(0, 500));
     return null;
+  }
+
+  // Warn if quality is low but still return the content
+  if (result.quality.score < 50) {
+    console.warn(`[contentRefiner] Low quality output (${result.quality.score}/100) — content may need manual review`);
   }
 
   const parsed = result.parsed;

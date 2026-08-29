@@ -32,6 +32,19 @@ export interface NormalizeResult {
   rawLength: number;
   /** How much was stripped (thinking preamble) */
   strippedLength: number;
+  /** Quality validation */
+  quality: QualityCheck;
+}
+
+export interface QualityCheck {
+  /** Overall quality score (0-100) */
+  score: number;
+  /** Whether the output passes quality gates */
+  passed: boolean;
+  /** Issues found */
+  issues: string[];
+  /** Suggestions for improvement */
+  suggestions: string[];
 }
 
 /* ── Core Normalizer ───────────────────────────────────────────────────── */
@@ -48,7 +61,7 @@ export function normalizeAiOutput(
   requiredKeys: string[],
 ): NormalizeResult {
   if (!raw || raw.trim().length < 50) {
-    return { parsed: null, strategy: 'empty', cleanedText: raw, rawLength: raw.length, strippedLength: 0 };
+    return { parsed: null, strategy: 'empty', cleanedText: raw, rawLength: raw.length, strippedLength: 0, quality: { score: 0, passed: false, issues: ['Response too short'], suggestions: [] } };
   }
 
   const rawLength = raw.length;
@@ -57,24 +70,37 @@ export function normalizeAiOutput(
   const cleaned = stripThinkingPreamble(raw);
   const strippedLength = rawLength - cleaned.length;
 
+  // Helper to build result with quality check
+  const result = (parsed: Record<string, unknown> | null, strategy: string): NormalizeResult => {
+    const quality = validateQuality(parsed, requiredKeys, strategy, rawLength);
+    // Penalize if too much was stripped (model wasted tokens on thinking)
+    if (rawLength > 0 && strippedLength / rawLength > 0.5) {
+      quality.issues.push(`Model wasted ${Math.round(strippedLength / rawLength * 100)}% of output on thinking`);
+      quality.score = Math.max(0, quality.score - 15);
+      quality.suggestions.push('Use a non-thinking model to get more actual content');
+    }
+    quality.passed = quality.score >= 50 && quality.issues.every(i => !i.includes('Missing'));
+    return { parsed, strategy, cleanedText: cleaned, rawLength, strippedLength, quality };
+  };
+
   // ═══ Step 2: Try to extract JSON ═══
 
   // Strategy A: JSON in code block
   const fromCodeBlock = extractFromCodeBlock(cleaned);
   if (fromCodeBlock && hasRequiredKeys(fromCodeBlock, requiredKeys)) {
-    return { parsed: fromCodeBlock, strategy: 'code-block', cleanedText: cleaned, rawLength, strippedLength };
+    return result(fromCodeBlock, 'code-block');
   }
 
   // Strategy B: JSON by key name (handles thinking models)
   const fromKey = extractJsonByKey(cleaned, requiredKeys[0] || 'beginner');
   if (fromKey && hasRequiredKeys(fromKey, requiredKeys)) {
-    return { parsed: fromKey, strategy: 'key-extraction', cleanedText: cleaned, rawLength, strippedLength };
+    return result(fromKey, 'key-extraction');
   }
 
   // Strategy C: Plain JSON (no prefix)
   const plainJson = tryParseJson(cleaned);
   if (plainJson && hasRequiredKeys(plainJson, requiredKeys)) {
-    return { parsed: plainJson, strategy: 'plain-json', cleanedText: cleaned, rawLength, strippedLength };
+    return result(plainJson, 'plain-json');
   }
 
   // ═══ Step 3: Non-JSON formats ═══
@@ -82,16 +108,16 @@ export function normalizeAiOutput(
   // Strategy D: Markdown headers
   const fromHeaders = extractFromHeaders(cleaned, requiredKeys);
   if (fromHeaders) {
-    return { parsed: fromHeaders, strategy: 'markdown-headers', cleanedText: cleaned, rawLength, strippedLength };
+    return result(fromHeaders, 'markdown-headers');
   }
 
   // Strategy E: Content splitting (last resort)
   if (cleaned.length > 200) {
     const split = splitContent(cleaned, requiredKeys);
-    return { parsed: split, strategy: 'content-split', cleanedText: cleaned, rawLength, strippedLength };
+    return result(split, 'content-split');
   }
 
-  return { parsed: null, strategy: 'failed', cleanedText: cleaned, rawLength, strippedLength };
+  return result(null, 'failed');
 }
 
 /* ── Thinking Preamble Stripper ────────────────────────────────────────── */
@@ -247,4 +273,90 @@ function splitContent(
   }
 
   return result;
+}
+
+/* ── Quality Validation ─────────────────────────────────────────────────── */
+
+function validateQuality(
+  parsed: Record<string, unknown> | null,
+  keys: string[],
+  strategy: string,
+  rawLength: number,
+): QualityCheck {
+  if (!parsed) {
+    return { score: 0, passed: false, issues: ['No structured output extracted'], suggestions: ['Try a different model or check API configuration'] };
+  }
+
+  const issues: string[] = [];
+  const suggestions: string[] = [];
+  let score = 100;
+
+  // Check 1: All required keys present
+  const missingKeys = keys.filter(k => !parsed[k] || String(parsed[k]).trim().length === 0);
+  if (missingKeys.length > 0) {
+    issues.push(`Missing keys: ${missingKeys.join(', ')}`);
+    score -= missingKeys.length * 20;
+  }
+
+  // Check 2: Content length per key (too short = bad)
+  const minWords = 20;
+  for (const key of keys) {
+    const val = String(parsed[key] || '');
+    const words = val.split(/\s+/).filter(Boolean).length;
+    if (words < minWords) {
+      issues.push(`"${key}" has only ${words} words (minimum ${minWords})`);
+      score -= 15;
+    }
+  }
+
+  // Check 3: Identical content across levels (sign of bad extraction)
+  const values = keys.map(k => String(parsed[k] || '').trim());
+  const uniqueValues = new Set(values);
+  if (uniqueValues.size === 1 && values.length > 1 && values[0].length > 0) {
+    issues.push('All difficulty levels have identical content — extraction likely failed');
+    score -= 50;
+    suggestions.push('Model may not be following format instructions — try gpt-4o-mini');
+  }
+
+  // Check 4: Similarity between levels (partial duplication)
+  if (uniqueValues.size > 1) {
+    for (let i = 0; i < values.length; i++) {
+      for (let j = i + 1; j < values.length; j++) {
+        if (values[i].length > 50 && values[j].length > 50) {
+          // Simple overlap check: first 100 chars
+          const overlap = values[i].slice(0, 100) === values[j].slice(0, 100);
+          if (overlap) {
+            issues.push(`"${keys[i]}" and "${keys[j]}" start with identical text`);
+            score -= 20;
+          }
+        }
+      }
+    }
+  }
+
+  // Check 5: Strategy quality bonus
+  if (strategy === 'code-block' || strategy === 'key-extraction' || strategy === 'plain-json') {
+    score += 5; // JSON extraction is highest quality
+  } else if (strategy === 'markdown-headers') {
+    score += 2; // Markdown is good
+  } else if (strategy === 'content-split') {
+    score -= 10; // Content split is lowest quality
+    suggestions.push('Content was split into thirds — difficulty levels may not be differentiated');
+  }
+
+  // Check 6: Response was mostly thinking (stripped a lot)
+  if (rawLength > 0) {
+    // This check is done in the caller (strippedLength / rawLength)
+  }
+
+  // Normalize score
+  score = Math.max(0, Math.min(100, score));
+
+  const passed = score >= 50 && missingKeys.length === 0;
+
+  if (passed && issues.length === 0) {
+    suggestions.push('Output looks good');
+  }
+
+  return { score, passed, issues, suggestions };
 }
