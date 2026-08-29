@@ -94,27 +94,36 @@ function parseRefinedContent(raw: string): RefinedContent | null {
 
   let text = raw;
 
-  // Strategy 0: Find the actual JSON object by looking for known keys
-  // Thinking models embed JSON inside reasoning text — find it by key name
-  const jsonKeyIdx = text.indexOf('"beginner"');
-  if (jsonKeyIdx > 0) {
-    // Walk backward to find the opening { of this JSON object
-    let start = jsonKeyIdx;
+  // Strategy 0: Extract the EXACT JSON object from thinking model output
+  // Find '"beginner"' (the JSON key), walk backward to '{', forward to matching '}'
+  const keyIdx = text.indexOf('"beginner"');
+  if (keyIdx > 0) {
+    // Walk backward to find opening {
+    let start = keyIdx;
     while (start > 0 && text[start] !== '{') start--;
-    if (start > 0) {
-      console.log('[contentRefiner] Found JSON by key at position', start, 'of', text.length);
-      text = text.slice(start);
-    }
-  }
-
-  // Strip thinking model preamble — everything before the first '{'
-  const firstBrace = text.indexOf('{');
-  if (firstBrace > 0) {
-    const before = text.slice(0, firstBrace).toLowerCase();
-    const thinkingPatterns = /^(we\s|let\s|need\s|must\s|should\s|first,|to\s|for\s|this\s|okay|alright|here|the\s|based\s|given\s|from\s|after\s|since\s|because\s|if\s|when\s|before\s)/i;
-    if (before.trim().length > 10 && thinkingPatterns.test(before.trim())) {
-      console.log('[contentRefiner] Stripping thinking preamble (' + before.length + ' chars):', before.slice(0, 80));
-      text = text.slice(firstBrace);
+    if (start > 0 && text[start] === '{') {
+      // Walk forward with brace counting to find matching }
+      let depth = 0;
+      let inStr = false;
+      let esc = false;
+      let end = -1;
+      for (let i = start; i < text.length; i++) {
+        const c = text[i];
+        if (esc) { esc = false; continue; }
+        if (c === '\\') { esc = true; continue; }
+        if (c === '"') { inStr = !inStr; continue; }
+        if (inStr) continue;
+        if (c === '{') depth++;
+        else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end > start) {
+        const candidate = text.slice(start, end + 1);
+        // Verify it looks like valid JSON (has required keys)
+        if (candidate.includes('"beginner"') && candidate.includes('"intermediate"')) {
+          console.log('[contentRefiner] Extracted JSON object:', candidate.length, 'chars from position', start, '-', end, 'of', text.length);
+          text = candidate;
+        }
+      }
     }
   }
 
