@@ -1,5 +1,7 @@
 import { memo, useEffect, useState } from "react";
-import { isThinkingModel as checkThinking, MODULE_REQUIREMENTS } from "../../services/modelCapabilities";
+import { isThinkingModel as checkThinking, checkModelSuitability, MODULE_REQUIREMENTS } from "../../services/modelCapabilities";
+import { MODULE_LIST, type ModuleId } from "../../services/moduleModels";
+import { getModuleModels, saveModuleModel } from "../../services/aiProvider";
 import { JobFeedCard, RagRetrievalCard, CoachVocabCard } from "./config";
 import { COMPANIES, companyById } from "../../data";
 import { COMPANY_FREQ, problemsForCompany } from "../../data/codingCompanies";
@@ -57,6 +59,148 @@ function parseBrandJson(json: string): Record<string, { accent?: string; fontFam
   } catch {
     return {};
   }
+}
+
+/* ── Per-module model overrides (admin panel) ──────────────────────── */
+
+function ModuleModelOverrides({ config }: { config: RemoteConfig }) {
+  const [moduleModels, setModuleModels] = useState<Record<string, string>>({});
+  const [editingModule, setEditingModule] = useState<string | null>(null);
+  const [editModel, setEditModel] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getModuleModels().then(rows => {
+      const map: Record<string, string> = {};
+      for (const [id, row] of Object.entries(rows)) {
+        if (row.model) map[id] = row.model;
+      }
+      setModuleModels(map);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, []);
+
+  const globalModel = String(config.ai?.model ?? "");
+
+  const startEdit = (id: string) => {
+    setEditingModule(id);
+    setEditModel(moduleModels[id] ?? "");
+  };
+
+  const saveModule = async (id: string) => {
+    const model = editModel.trim();
+    try {
+      if (model) {
+        await saveModuleModel(id, { model });
+        setModuleModels(prev => ({ ...prev, [id]: model }));
+        toast(`✅ Model set for ${MODULE_LIST.find(m => m.id === id)?.label ?? id}`);
+      } else {
+        await saveModuleModel(id, null);
+        setModuleModels(prev => { const n = { ...prev }; delete n[id]; return n; });
+        toast(`↩️ ${MODULE_LIST.find(m => m.id === id)?.label ?? id} reverted to global default`);
+      }
+    } catch (e) {
+      toast(`❌ Failed: ${(e as Error).message}`);
+    }
+    setEditingModule(null);
+  };
+
+  if (loading) return null;
+
+  return (
+    <div className={`${cardCls} p-5`}>
+      <h2 className="mb-1 text-[16px] font-extrabold">🧩 Per-module AI models</h2>
+      <p className="mb-3 text-[12.5px] text-mut">
+        Set a different model for each feature. Leave empty to use the global default ({globalModel || "not set"}).
+        The compatibility indicator shows whether your chosen model fits the module's needs.
+      </p>
+      <div className="space-y-2">
+        {MODULE_LIST.map(m => {
+          const currentModel = moduleModels[m.id] ?? "";
+          const isEditing = editingModule === m.id;
+          const hasOverride = !!currentModel;
+
+          if (isEditing) {
+            const suit = editModel.trim() ? checkModelSuitability(editModel.trim(), m.id) : null;
+            return (
+              <div key={m.id} className="rounded-xl border border-acc1/40 bg-acc1/10 p-4 space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] font-bold text-acctxt">✏️ {m.label}</span>
+                  {m.needsJson && <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">JSON output</span>}
+                </div>
+                <p className="text-[11.5px] text-mut">{m.description}</p>
+                <label className="block">
+                  <span className="mb-0.5 block text-[11.5px] font-bold text-mut">Model name</span>
+                  <input
+                    value={editModel} onChange={e => setEditModel(e.target.value)}
+                    placeholder={m.suggestedModel}
+                    className="w-full rounded-lg border border-line/20 bg-deep/60 px-3 py-2 font-mono text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+                    autoFocus
+                  />
+                </label>
+                {suit && suit.severity === "ok" && (
+                  <div className="flex items-center gap-1.5 rounded-md border border-ok/20 bg-ok/5 px-2.5 py-1.5">
+                    <span className="text-[13px]">✅</span>
+                    <span className="text-[11px] font-medium text-ok">{suit.message}</span>
+                  </div>
+                )}
+                {suit && suit.severity === "warning" && (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[13px]">⚠️</span>
+                      <span className="text-[11px] font-bold text-amber-400">Not ideal for {m.label}</span>
+                    </div>
+                    <p className="mt-1 text-[10.5px] leading-snug text-amber-300/80">{suit.message}</p>
+                    {suit.suggestions.length > 0 && (
+                      <div className="mt-1.5 space-y-0.5">
+                        {suit.suggestions.map((s, i) => (
+                          <p key={i} className="text-[10.5px] text-amber-300/70">💡 {s}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <button className={btnPrimary + " rounded-lg px-3 py-1.5 text-[12px] font-bold"} onClick={() => saveModule(m.id)}>Save</button>
+                  <button className="rounded-lg border border-line/20 px-3 py-1.5 text-[12px] text-mut hover:bg-wht/5" onClick={() => setEditingModule(null)}>Cancel</button>
+                  {hasOverride && (
+                    <button className="rounded-lg border border-warn/30 px-3 py-1.5 text-[12px] text-warn hover:bg-warn/10" onClick={async () => { await saveModuleModel(m.id, null); setModuleModels(prev => { const n = { ...prev }; delete n[m.id]; return n; }); setEditingModule(null); toast(`↩️ ${m.label} reverted to default`); }}>↩️ Default</button>
+                  )}
+                </div>
+              </div>
+            );
+          }
+
+          const suit = hasOverride ? checkModelSuitability(currentModel, m.id) : null;
+          return (
+            <div key={m.id} className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 transition-colors ${hasOverride ? "border-acc1/30 bg-acc1/10" : "border-line/10 bg-wht/5"}`}>
+              <div className="min-w-[200px] flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[13px] font-bold">{m.label}</span>
+                  {hasOverride && <Chip tone="ok">{currentModel}</Chip>}
+                  {suit && !suit.suitable && <Chip tone="warn">⚠️ not ideal</Chip>}
+                  {m.needsJson && !hasOverride && <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">JSON</span>}
+                </div>
+                <div className="text-[11.5px] text-mut">{m.description}</div>
+                {!hasOverride && <div className="text-[10.5px] text-fnt">Using global: {globalModel || "not set"} · Suggested: {m.suggestedModel}</div>}
+              </div>
+              <button className="rounded-lg border border-line/20 px-3 py-1.5 text-[11.5px] text-mut hover:bg-wht/5" onClick={() => startEdit(m.id)}>
+                {hasOverride ? "✏️ Edit" : "➕ Set model"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 rounded-lg border border-line/10 bg-wht/3 p-3">
+        <p className="text-[11px] font-bold text-fnt">💡 Choosing the right model</p>
+        <ul className="mt-1 space-y-0.5 text-[10.5px] text-mut">
+          <li>• <span className="text-ok">JSON modules</span> (refine, normalize, index, quality) → non-thinking models like <code className="text-fnt">gpt-4o-mini</code></li>
+          <li>• <span className="text-ok">Conversational modules</span> (coach, hints, feedback, tutor) → thinking models like <code className="text-fnt">qwen3</code> are great</li>
+          <li>• ⚠️ indicator = model wastes tokens or doesn't fit the task</li>
+        </ul>
+      </div>
+    </div>
+  );
 }
 
 export const ConfigSection = memo(function ConfigSection({ config, setConfig, busy, setBusy }: {
@@ -372,6 +516,9 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
           </div>
         </div>
       </div>
+
+      {/* ── Per-module model overrides ──────────────────────────────── */}
+      <ModuleModelOverrides config={config} />
 
       <div className={`${cardCls} p-5`}>
         <h2 className="mb-1 text-[16px] font-extrabold">🎟️ Free quotas</h2>
