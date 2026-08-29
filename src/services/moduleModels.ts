@@ -20,13 +20,17 @@ import { getAiDefaults } from "./remoteConfig";
 
 /** Module identifiers for per-model routing. */
 export type ModuleId =
-  | "tutor"         // Roadmap topic explanations + follow-up chat
-  | "coach"         // Interview question coaching (CoachChat)
-  | "feedback"      // Post-answer generative feedback
-  | "hint"          // One-shot hints
-  | "code"          // Code playground assistance
-  | "embeddings"    // RAG embedding generation
-  | "contentRefine" // Content refinement (raw → progressive difficulty)
+  | "tutor"           // Roadmap topic explanations + follow-up chat
+  | "coach"           // Interview question coaching (CoachChat)
+  | "feedback"        // Post-answer generative feedback
+  | "hint"            // One-shot hints
+  | "code"            // Code playground assistance
+  | "embeddings"      // RAG embedding generation
+  | "contentRefine"   // Content refinement (raw → progressive difficulty)
+  | "articleNormalize" // Article normalization (keywords, glossary, summary)
+  | "contentIndex"    // Content indexing for RAG retrieval
+  | "deepdive"        // Deep dive analysis
+  | "rag"             // RAG tutor & knowledge answers
   | "contentQuality"; // Content quality scoring (LLM-as-Judge)
 
 /** Per-module model override — stored in localStorage. */
@@ -50,6 +54,10 @@ export interface ModuleInfo {
   label: string;
   description: string;
   suggestedModel: string;
+  /** Does this module need structured JSON output? */
+  needsJson: boolean;
+  /** Does this module benefit from chain-of-thought reasoning? */
+  benefitsFromReasoning: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -57,12 +65,18 @@ export interface ModuleInfo {
 /* ------------------------------------------------------------------ */
 
 export const MODULE_LIST: ModuleInfo[] = [
-  { id: "tutor",       label: "Tutor / Explanations",  description: "Needs clear, structured prose and patient explanations.",   suggestedModel: "claude-3.5-sonnet" },
-  { id: "coach",       label: "Interview Coach",       description: "Needs concise, specific feedback with good judgment.",     suggestedModel: "gpt-4o" },
-  { id: "feedback",    label: "Post-Answer Feedback",   description: "Needs brief, actionable evaluation.",                      suggestedModel: "gpt-4o-mini" },
-  { id: "hint",        label: "Hints",                  description: "Needs one short, targeted hint.",                          suggestedModel: "gpt-4o-mini" },
-  { id: "code",        label: "Code Assistant",         description: "Needs strong code generation and explanation.",            suggestedModel: "codestral-latest" },
-  { id: "embeddings",  label: "Embeddings",             description: "Must return 1536-dim vectors for pgvector.",              suggestedModel: "text-embedding-3-small" }
+  { id: "tutor",          label: "Tutor / Explanations",    description: "Needs clear, structured prose and patient explanations.",   suggestedModel: "claude-3.5-sonnet",   needsJson: false, benefitsFromReasoning: true },
+  { id: "coach",          label: "Interview Coach",         description: "Needs concise, specific feedback with good judgment.",     suggestedModel: "gpt-4o",              needsJson: false, benefitsFromReasoning: true },
+  { id: "feedback",       label: "Post-Answer Feedback",    description: "Needs brief, actionable evaluation.",                      suggestedModel: "gpt-4o-mini",         needsJson: false, benefitsFromReasoning: true },
+  { id: "hint",           label: "Hints",                   description: "Needs one short, targeted hint.",                          suggestedModel: "gpt-4o-mini",         needsJson: false, benefitsFromReasoning: true },
+  { id: "code",           label: "Code Assistant",          description: "Needs strong code generation and explanation.",            suggestedModel: "codestral-latest",     needsJson: false, benefitsFromReasoning: false },
+  { id: "embeddings",     label: "Embeddings",              description: "Must return 1536-dim vectors for pgvector.",              suggestedModel: "text-embedding-3-small", needsJson: false, benefitsFromReasoning: false },
+  { id: "contentRefine",  label: "Content Refinement",      description: "Transforms raw scraped content into beginner/intermediate/advanced difficulty levels.", suggestedModel: "gpt-4o-mini", needsJson: true, benefitsFromReasoning: false },
+  { id: "articleNormalize", label: "Article Normalization", description: "Extracts keywords, code examples, glossary, and summary from articles.", suggestedModel: "gpt-4o-mini", needsJson: true, benefitsFromReasoning: false },
+  { id: "contentIndex",   label: "Content Indexing",        description: "Indexes content into the AI knowledge base for RAG retrieval.", suggestedModel: "gpt-4o-mini", needsJson: true, benefitsFromReasoning: false },
+  { id: "deepdive",       label: "Deep Dive Analysis",      description: "Multi-step analysis of complex topics.",                   suggestedModel: "gpt-4o",              needsJson: false, benefitsFromReasoning: true },
+  { id: "rag",            label: "RAG Tutor & Knowledge",   description: "Grounded retrieval-augmented answers.",                    suggestedModel: "gpt-4o-mini",         needsJson: false, benefitsFromReasoning: false },
+  { id: "contentQuality", label: "Content Quality Scoring", description: "Evaluates content accuracy and relevance (LLM-as-Judge).",  suggestedModel: "gpt-4o-mini",         needsJson: true, benefitsFromReasoning: false },
 ];
 
 /* ------------------------------------------------------------------ */
