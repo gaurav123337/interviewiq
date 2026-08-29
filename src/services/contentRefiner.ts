@@ -268,3 +268,71 @@ export async function batchRefineContent(): Promise<{ refined: number; errors: n
 
   return { refined, errors, firstError };
 }
+
+/* ── Retroactive Quality Scoring ──────────────────────────────────────── */
+
+/** Calculate quality score from existing refined content (no AI call needed) */
+function calculateQualityFromRefined(refined: Record<string, unknown>): number {
+  let score = 0;
+
+  // Check required keys
+  const beginner = String(refined.beginner || '');
+  const intermediate = String(refined.intermediate || '');
+  const advanced = String(refined.advanced || '');
+
+  if (beginner.length > 0) score += 20;
+  if (intermediate.length > 0) score += 20;
+  if (advanced.length > 0) score += 20;
+
+  // Check content length (good content should have substance)
+  const minWords = 20;
+  const wordCount = (s: string) => s.split(/\s+/).filter(Boolean).length;
+  if (wordCount(beginner) >= minWords) score += 10;
+  if (wordCount(intermediate) >= minWords) score += 10;
+  if (wordCount(advanced) >= minWords) score += 10;
+
+  // Check for differentiation (levels should not be identical)
+  const unique = new Set([beginner.slice(0, 200), intermediate.slice(0, 200), advanced.slice(0, 200)]);
+  if (unique.size === 3) score += 10;
+  else if (unique.size === 2) score += 5;
+
+  return Math.min(100, score);
+}
+
+/** Batch calculate quality scores for all refined articles */
+export async function batchCalculateQualityScores(): Promise<{ updated: number; errors: number }> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+
+  const { data: items, error: fetchError } = await client
+    .from("content_items")
+    .select("id, content_refined")
+    .eq("status", "approved")
+    .not("content_refined->>beginner", "is", null)
+    .limit(200);
+
+  if (fetchError) throw fetchError;
+  if (!items?.length) return { updated: 0, errors: 0 };
+
+  let updated = 0;
+  let errors = 0;
+
+  for (const item of items) {
+    try {
+      const refined = (item.content_refined ?? {}) as Record<string, unknown>;
+      const score = calculateQualityFromRefined(refined);
+
+      const { error: updateError } = await client
+        .from("content_items")
+        .update({ quality_score: score })
+        .eq("id", item.id);
+
+      if (updateError) errors++;
+      else updated++;
+    } catch {
+      errors++;
+    }
+  }
+
+  return { updated, errors };
+}
