@@ -41,6 +41,8 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
   const [statusFilter, setStatusFilter] = useState("pending");
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Per-item processing tracking — only disables the specific row being processed
+  const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
 
   // Add source form
   const [showAddSource, setShowAddSource] = useState(false);
@@ -105,10 +107,15 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
     finally { setBusy(false); }
   };
 
-  /* ── Item review actions ───────────────────────────────────────────── */
+  /* ── Item review actions (per-item processing) ───────────────────── */
+
+  /** Per-item helpers — only disable the specific row being processed */
+  const startProcessing = (id: string) => setProcessingIds(prev => { const next = new Set(prev); next.add(id); return next; });
+  const stopProcessing = (id: string) => setProcessingIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+  const isProcessing = (id: string) => processingIds.has(id);
 
   const approveItem = async (id: string) => {
-    setBusy(true);
+    startProcessing(id);
     try {
       await reviewContentItem(id, "approved");
       toast("✅ Approved");
@@ -116,14 +123,14 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
       indexContentToRAG(id).catch(() => {});
       await load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
-    finally { setBusy(false); }
+    finally { stopProcessing(id); }
   };
 
   const rejectItem = async (id: string) => {
-    setBusy(true);
+    startProcessing(id);
     try { await reviewContentItem(id, "rejected"); toast("❌ Rejected"); await load(); }
     catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
-    finally { setBusy(false); }
+    finally { stopProcessing(id); }
   };
 
   /* ── RAG indexing ─────────────────────────────────────────────── */
@@ -211,20 +218,16 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
   /** Refine a single content item */
   const refineSingle = async (contentId: string) => {
-    console.log("[ContentCuration] refineSingle called for", contentId);
-    setBusy(true);
+    startProcessing(contentId);
     try {
       const { refineAndUpdateContent } = await import("../../services/contentRefiner");
-      console.log("[ContentCuration] contentRefiner loaded");
       const result = await refineAndUpdateContent(contentId);
-      console.log("[ContentCuration] refine result:", result.success, result.error);
       if (result.success) toast("✨ Content refined into progressive difficulty levels");
       else toast("Refinement failed: " + (result.error || "Unknown"));
       await load();
     } catch (e) {
-      console.error("[ContentCuration] refineSingle error:", e);
       toast("Refinement failed: " + ((e as Error).message || "Unknown"));
-    } finally { setBusy(false); }
+    } finally { stopProcessing(contentId); }
   };
 
   /* ── Batch article normalization (keywords + code + summary) ── */
@@ -249,20 +252,16 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
 
   /** Normalize a single content item */
   const normalizeSingle = async (contentId: string) => {
-    console.log("[ContentCuration] normalizeSingle called for", contentId);
-    setBusy(true);
+    startProcessing(contentId);
     try {
       const { normalizeAndUpdateContent } = await import("../../services/articleNormalizer");
-      console.log("[ContentCuration] articleNormalizer loaded");
       const result = await normalizeAndUpdateContent(contentId);
-      console.log("[ContentCuration] normalize result:", result.success, result.error);
       if (result.success) toast("🧠 Article normalized with keywords, code sections, and summary");
       else toast("Normalization failed: " + (result.error || "Unknown"));
       await load();
     } catch (e) {
-      console.error("[ContentCuration] normalizeSingle error:", e);
       toast("Normalization failed: " + ((e as Error).message || "Unknown"));
-    } finally { setBusy(false); }
+    } finally { stopProcessing(contentId); }
   };
 
   const bulkAction = async (status: "approved" | "rejected") => {
@@ -560,33 +559,36 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
                     <div className="flex gap-1">
                       {item.status === "pending" && (
                         <>
-                          <button className={`${btnOk} ${btnSm}`} title="Approve: Mark as approved and publish to the Articles page" onClick={() => approveItem(item.id)}>✅</button>
-                          <button className={`${btnDanger} ${btnSm}`} title="Reject: Hide from the Articles page" onClick={() => rejectItem(item.id)}>❌</button>
+                          <button className={`${btnOk} ${btnSm}`} disabled={isProcessing(item.id)} title="Approve: Mark as approved and publish to the Articles page" onClick={() => approveItem(item.id)}>{isProcessing(item.id) ? "⏳" : "✅"}</button>
+                          <button className={`${btnDanger} ${btnSm}`} disabled={isProcessing(item.id)} title="Reject: Hide from the Articles page" onClick={() => rejectItem(item.id)}>{isProcessing(item.id) ? "⏳" : "❌"}</button>
                         </>
                       )}
                       {item.status === "approved" && (
-                        <button
-                          className={`${btnPrimary} ${btnSm}`}
-                          disabled={busy}
-                          title="Refine: Transform raw scraped text into beginner/intermediate/advanced difficulty levels using AI"
-                          onClick={(e) => { e.stopPropagation(); console.log("[ContentCuration] Refine button clicked for", item.id); refineSingle(item.id); }}
-                        >✨ Refine</button>
-                      )}
-                      {item.status === "approved" && (
-                        <button
-                          className={`${btnPrimary} ${btnSm}`}
-                          disabled={busy}
-                          title="Normalize: Extract keywords, code examples, glossary, and summary using AI. Enables better search and RAG retrieval"
-                          onClick={(e) => { e.stopPropagation(); console.log("[ContentCuration] Normalize button clicked for", item.id); normalizeSingle(item.id); }}
-                        >🧠 Normalize</button>
-                      )}
-                      {item.status === "approved" && !(item as any).ragDocumentId && (
-                        <button
-                          className={`${btnPrimary} ${btnSm}`}
-                          disabled={busy}
-                          title="Index: Add to AI knowledge base for grounding coach answers and search"
-                          onClick={(e) => { e.stopPropagation(); indexContentToRAG(item.id); }}
-                        >🧠 Index</button>
+                        <>
+                          <button
+                            className={`${btnPrimary} ${btnSm}`}
+                            disabled={isProcessing(item.id)}
+                            title="Refine: Transform raw scraped text into beginner/intermediate/advanced difficulty levels using AI"
+                            onClick={(e) => { e.stopPropagation(); refineSingle(item.id); }}
+                          >{isProcessing(item.id) ? "⏳" : "✨"} Refine</button>
+                          <button
+                            className={`${btnPrimary} ${btnSm}`}
+                            disabled={isProcessing(item.id)}
+                            title="Normalize: Extract keywords, code examples, glossary, and summary using AI. Enables better search and RAG retrieval"
+                            onClick={(e) => { e.stopPropagation(); normalizeSingle(item.id); }}
+                          >{isProcessing(item.id) ? "⏳" : "🧠"} Normalize</button>
+                          {!(item as any).ragDocumentId && (
+                            <button
+                              className={`${btnPrimary} ${btnSm}`}
+                              disabled={isProcessing(item.id)}
+                              title="Index: Add to AI knowledge base for grounding coach answers and search"
+                              onClick={(e) => { e.stopPropagation(); indexContentToRAG(item.id); }}
+                            >{isProcessing(item.id) ? "⏳" : "🧠"} Index</button>
+                          )}
+                          {(item as any).ragDocumentId && (
+                            <span className="text-[11px] text-acc font-bold" title="Already indexed in the AI knowledge base">🧠 Indexed</span>
+                          )}
+                        </>
                       )}
                       {item.status === "approved" && (item as any).ragDocumentId && (
                         <span className="text-[11px] text-acc font-bold" title="Already indexed in the AI knowledge base">🧠 Indexed</span>
