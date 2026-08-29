@@ -147,8 +147,21 @@ Deno.serve(async (req) => {
     /* ── Extract Response (multiple field formats) ────────────────────── */
     const choiceMsg = aiBody.choices?.[0]?.message ?? {};
     // Priority: content > reasoning_content > reasoning (format varies by provider)
-    const text = choiceMsg.content || choiceMsg.reasoning_content || choiceMsg.reasoning || "";
+    let text = choiceMsg.content || choiceMsg.reasoning_content || choiceMsg.reasoning || "";
     const usage = aiBody.usage ?? {};
+
+    /* ── Strip thinking preamble ─────────────────────────────────────── */
+    // Qwen3 thinking models sometimes put reasoning INTO the content field
+    // instead of leaving it empty. Strip everything before the first '{'
+    // when the preamble looks like thinking output.
+    if (text && thinkingDisabled && text.indexOf('{') > 20) {
+      const beforeBrace = text.slice(0, text.indexOf('{'));
+      // Thinking preamble typically starts with 'We need', 'Let me', 'First', etc.
+      if (/^(we|let|first|need|must|should|to |for |this )/i.test(beforeBrace.trim())) {
+        console.log(`[ai-chat] Stripping ${beforeBrace.length} char thinking preamble from content`);
+        text = text.slice(text.indexOf('{'));
+      }
+    }
 
     /* ── Handle Errors ────────────────────────────────────────────────── */
     if (!text && aiBody.error) {

@@ -85,8 +85,25 @@ function buildRefinementMessages(title: string, content: string, sourceName: str
 
 /* ── Parse LLM Response ────────────────────────────────────────────────── */
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function parseRefinedContent(raw: string): RefinedContent | null {
   if (!raw || raw.trim().length < 50) return null;
+
+  // Strip thinking model preamble — everything before the first '{'
+  // Thinking models like Qwen3 output reasoning before the actual JSON
+  let text = raw;
+  const firstBrace = text.indexOf('{');
+  if (firstBrace > 0) {
+    const before = text.slice(0, firstBrace).toLowerCase();
+    // If substantial text before the first brace, it's likely thinking preamble
+    if (before.length > 20) {
+      console.log('[contentRefiner] Stripping thinking preamble (' + before.length + ' chars)');
+      text = text.slice(firstBrace);
+    }
+  }
 
   // Try multiple strategies to extract JSON
   let parsed: Record<string, unknown> | null = null;
@@ -184,7 +201,9 @@ function parseRefinedContent(raw: string): RefinedContent | null {
 
 /** Try to extract a named section from text (e.g. **BEGINNER:** ... ) */
 function extractSection(text: string, name: string): string {
-  const regex = new RegExp(`(?:\*\*\s*${name}\s*\*\*|###?\s*${name}|"${name}"\s*:|'${name}'\s*:)\s*([\s\S]*?)(?=\n(?:\*\*|###?\s*[A-Z]|"[a-z]|'[a-z]|$))`, 'i');
+  // Escape special regex chars in name to prevent crashes like "Nothing to repeat"
+  const safe = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(?:\*\*\s*${safe}\s*\*\*|###?\s*${safe}|"${safe}"\s*:|'${safe}'\s*:)\s*([\s\S]*?)(?=\n(?:\*\*|###?\s*[A-Z]|"[a-z]|'[a-z]|$))`, 'i');
   const match = text.match(regex);
   return match ? match[1].trim() : '';
 }
