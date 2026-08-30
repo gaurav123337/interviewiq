@@ -21,6 +21,11 @@
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
+import { validateQuality, applyThinkingPenalty, type QualityCheck } from "./aiQualityValidator";
+
+// Re-export for backward compatibility
+export type { QualityCheck } from "./aiQualityValidator";
+
 export interface NormalizeResult {
   /** Whether we got valid structured output */
   parsed: Record<string, unknown> | null;
@@ -34,17 +39,6 @@ export interface NormalizeResult {
   strippedLength: number;
   /** Quality validation */
   quality: QualityCheck;
-}
-
-export interface QualityCheck {
-  /** Overall quality score (0-100) */
-  score: number;
-  /** Whether the output passes quality gates */
-  passed: boolean;
-  /** Issues found */
-  issues: string[];
-  /** Suggestions for improvement */
-  suggestions: string[];
 }
 
 /* ── Core Normalizer ───────────────────────────────────────────────────── */
@@ -70,16 +64,10 @@ export function normalizeAiOutput(
   const cleaned = stripThinkingPreamble(raw);
   const strippedLength = rawLength - cleaned.length;
 
-  // Helper to build result with quality check
+  // Helper to build result with quality check (delegates to extracted validator)
   const result = (parsed: Record<string, unknown> | null, strategy: string): NormalizeResult => {
-    const quality = validateQuality(parsed, requiredKeys, strategy, rawLength);
-    // Penalize if too much was stripped (model wasted tokens on thinking)
-    if (rawLength > 0 && strippedLength / rawLength > 0.5) {
-      quality.issues.push(`Model wasted ${Math.round(strippedLength / rawLength * 100)}% of output on thinking`);
-      quality.score = Math.max(0, quality.score - 15);
-      quality.suggestions.push('Use a non-thinking model to get more actual content');
-    }
-    quality.passed = quality.score >= 50 && quality.issues.every(i => !i.includes('Missing'));
+    let quality = validateQuality(parsed, requiredKeys, strategy, rawLength);
+    quality = applyThinkingPenalty(quality, rawLength, strippedLength);
     return { parsed, strategy, cleanedText: cleaned, rawLength, strippedLength, quality };
   };
 
@@ -273,90 +261,4 @@ function splitContent(
   }
 
   return result;
-}
-
-/* ── Quality Validation ─────────────────────────────────────────────────── */
-
-function validateQuality(
-  parsed: Record<string, unknown> | null,
-  keys: string[],
-  strategy: string,
-  rawLength: number,
-): QualityCheck {
-  if (!parsed) {
-    return { score: 0, passed: false, issues: ['No structured output extracted'], suggestions: ['Try a different model or check API configuration'] };
-  }
-
-  const issues: string[] = [];
-  const suggestions: string[] = [];
-  let score = 100;
-
-  // Check 1: All required keys present
-  const missingKeys = keys.filter(k => !parsed[k] || String(parsed[k]).trim().length === 0);
-  if (missingKeys.length > 0) {
-    issues.push(`Missing keys: ${missingKeys.join(', ')}`);
-    score -= missingKeys.length * 20;
-  }
-
-  // Check 2: Content length per key (too short = bad)
-  const minWords = 20;
-  for (const key of keys) {
-    const val = String(parsed[key] || '');
-    const words = val.split(/\s+/).filter(Boolean).length;
-    if (words < minWords) {
-      issues.push(`"${key}" has only ${words} words (minimum ${minWords})`);
-      score -= 15;
-    }
-  }
-
-  // Check 3: Identical content across levels (sign of bad extraction)
-  const values = keys.map(k => String(parsed[k] || '').trim());
-  const uniqueValues = new Set(values);
-  if (uniqueValues.size === 1 && values.length > 1 && values[0].length > 0) {
-    issues.push('All difficulty levels have identical content — extraction likely failed');
-    score -= 50;
-    suggestions.push('Model may not be following format instructions — try gpt-4o-mini');
-  }
-
-  // Check 4: Similarity between levels (partial duplication)
-  if (uniqueValues.size > 1) {
-    for (let i = 0; i < values.length; i++) {
-      for (let j = i + 1; j < values.length; j++) {
-        if (values[i].length > 50 && values[j].length > 50) {
-          // Simple overlap check: first 100 chars
-          const overlap = values[i].slice(0, 100) === values[j].slice(0, 100);
-          if (overlap) {
-            issues.push(`"${keys[i]}" and "${keys[j]}" start with identical text`);
-            score -= 20;
-          }
-        }
-      }
-    }
-  }
-
-  // Check 5: Strategy quality bonus
-  if (strategy === 'code-block' || strategy === 'key-extraction' || strategy === 'plain-json') {
-    score += 5; // JSON extraction is highest quality
-  } else if (strategy === 'markdown-headers') {
-    score += 2; // Markdown is good
-  } else if (strategy === 'content-split') {
-    score -= 10; // Content split is lowest quality
-    suggestions.push('Content was split into thirds — difficulty levels may not be differentiated');
-  }
-
-  // Check 6: Response was mostly thinking (stripped a lot)
-  if (rawLength > 0) {
-    // This check is done in the caller (strippedLength / rawLength)
-  }
-
-  // Normalize score
-  score = Math.max(0, Math.min(100, score));
-
-  const passed = score >= 50 && missingKeys.length === 0;
-
-  if (passed && issues.length === 0) {
-    suggestions.push('Output looks good');
-  }
-
-  return { score, passed, issues, suggestions };
 }

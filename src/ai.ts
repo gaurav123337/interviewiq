@@ -1,10 +1,17 @@
 /* Optional AI feedback via any OpenAI-compatible endpoint.
    Works fully offline without a key (curated engine); with a key, adds
-   real generative feedback on top. Key stays in localStorage only. */
+   real generative feedback on top. Key stays in localStorage only.
 
-import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./services/storage";
+   Architecture: This file is a FACADE that composes:
+   - ai/settings.ts: API key, base URL, model management
+   - ai/tokenEstimator.ts: Dynamic output token estimation
+   - ai/fallbackChain.ts: Model fallback strategies
+   - aiCache: Semantic caching and rate limiting
+   - moduleModels: Per-module model resolution
+   */
+
 import { aiCallsLeft, isPaywallEnabled, recordAiCall } from "./services/entitlements";
-import { aiEnabled, getAiDefaults } from "./services/remoteConfig";
+import { aiEnabled } from "./services/remoteConfig";
 import { queueEvent } from "./services/events";
 import { getCloudState, getSupabaseClient } from "./services/cloud";
 import { CONFIG } from "./config";
@@ -13,41 +20,13 @@ import { resolveModuleModel, type ModuleId } from "./services/moduleModels";
 import { cacheLookup, cacheStore, logAiCost, checkRateLimit, checkUserQuota } from "./services/aiCache";
 import { getTier } from "./services/entitlements";
 
-export interface AISettings {
-  key: string;
-  base: string;
-  model: string;
-}
-
-const DEFAULT_BASE = "https://api.openai.com/v1";
-const DEFAULT_MODEL = "gpt-4o-mini";
-
-/** The product team can push a suggested model remotely (used until the user picks one). */
-export function aiDefaultModel(): string {
-  return getAiDefaults().model || DEFAULT_MODEL;
-}
-
-export function getSettings(): AISettings {
-  return {
-    key: storageGet(STORAGE_KEYS.apiKey, ""),
-    base: storageGet(STORAGE_KEYS.apiBase, DEFAULT_BASE),
-    model: storageGet(STORAGE_KEYS.apiModel, aiDefaultModel())
-  };
-}
-
-export function saveSettings(s: AISettings) {
-  storageSet(STORAGE_KEYS.apiKey, s.key.trim());
-  storageSet(STORAGE_KEYS.apiBase, s.base.trim().replace(/\/+$/, ""));
-  storageSet(STORAGE_KEYS.apiModel, s.model.trim() || DEFAULT_MODEL);
-}
-
-export function clearKey() {
-  storageRemove(STORAGE_KEYS.apiKey);
-}
-
-export function aiAvailable(): boolean {
-  return !!getSettings().key;
-}
+// Re-export from extracted modules for backward compatibility
+export { getSettings, saveSettings, clearKey, aiAvailable, aiDefaultModel } from "./services/ai/settings";
+export type { AISettings } from "./services/ai/settings";
+import { getSettings, aiAvailable, type AISettings } from "./services/ai/settings";
+import { resolveMaxTokens } from "./services/ai/tokenEstimator";
+import { getFallbackModels } from "./services/ai/fallbackChain";
+import { getAiDefaults } from "./services/remoteConfig";
 
 /** True when generative AI is reachable: the user's own key, or a signed-in
     session (the ai-chat proxy serves the admin-configured provider, with
@@ -71,98 +50,7 @@ export interface ChatOptions {
   module?: AiModuleId;
 }
 
-/* ── Smart Model Routing + Fallback Chain ──────────────────────────────── */
-
-/** Module-specific token caps — prevents runaway output costs. */
-/**
- * Dynamic output-token estimation — replaces hardcoded MODULE_MAX_TOKENS.
- *
- * How it works:
- * 1. Count input tokens (chars / 4).
- * 2. Detect structured/JSON output from prompt heuristics.
- * 3. Pick the HIGHER of: base estimate OR module-specific multiplier.
- *    (Never compound — that over-allocates.)
- * 4. Clamp to [TOKEN_FLOOR, TOKEN_CEILING].
- * 5. In chatWithSettings, validate against caller's maxTokens:
- *    - If caller's maxTokens >= estimate → use caller's (they need more)
- *    - If caller's maxTokens < estimate → use estimate + log warning
- *      (caller is under-requesting, would truncate)
- */
-const MODULE_OUTPUT_MULTIPLIER: Record<string, number> = {
-  hint: 128,        // very short
-  feedback: 600,    // short paragraph
-  coach: 1200,      // structured feedback
-  deepdive: 800,    // focused explanation
-  rag: 500,         // retrieval response
-  contentRefine: 4000,   // JSON + 3 difficulty levels + glossary
-  articleNormalize: 6000, // JSON + keywords + code sections + summary
-};
-const TOKEN_FLOOR = 128;
-const TOKEN_CEILING = 8192;
-
-/** Detect whether the prompt likely asks for structured/JSON output. */
-function expectsStructuredOutput(messages: ChatMessage[]): boolean {
-  const allText = messages.map(m => m.content).join(" ").toLowerCase();
-  return (
-    allText.includes("json") ||
-    allText.includes("respond in exactly this") ||
-    allText.includes("respond with a json") ||
-    allText.includes('" begin') || // "beginner": pattern in prompt
-    allText.match(/\{[\s\S]{0,50}"[a-z]+"\s*:/) !== null // JSON-like in instructions
-  );
-}
-
-/**
- * Estimate the ideal output token limit for a request.
- * Uses the HIGHER of input-based estimate or module-specific hint.
- * 
- * @param messages - The chat messages being sent
- * @param moduleId - The module identifier (e.g. "contentRefine")
- * @returns Estimated token count, clamped to sane bounds
- */
-function estimateOutputTokens(
-  messages: ChatMessage[],
-  moduleId: string,
-): number {
-  // 1. Estimate input tokens (English ~ 4 chars per token)
-  const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
-  const inputTokens = Math.ceil(totalChars / 4);
-
-  // 2. Base estimate: structured output needs ~1.5x input; prose needs ~0.4x
-  const isStructured = expectsStructuredOutput(messages);
-  const baseEstimate = isStructured
-    ? Math.ceil(inputTokens * 1.5)
-    : Math.ceil(inputTokens * 0.4);
-
-  // 3. Module-specific hint (absolute token count, not a multiplier)
-  const moduleHint = MODULE_OUTPUT_MULTIPLIER[moduleId] ?? 0;
-
-  // 4. Take the HIGHER of base estimate or module hint — never compound
-  const estimated = Math.max(baseEstimate, moduleHint);
-
-  // 5. Clamp to sane bounds
-  return Math.max(TOKEN_FLOOR, Math.min(estimated, TOKEN_CEILING));
-}
-
-/** Fallback chains per provider — only models the provider actually serves. */
-const FALLBACK_CHAINS: Record<string, string[]> = {
-  // OpenAI direct
-  openai: ["gpt-4o-mini", "gpt-4.1-nano"],
-  // Google Gemini
-  gemini: ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
-  // OpenRouter / OrcaRouter / any OpenAI-compatible router
-  default: [], // Don't fall back to other providers — retry the same model
-};
-
-function getFallbackChain(base: string, model: string): string[] {
-  const lower = base.toLowerCase();
-  if (lower.includes("openai.com")) return FALLBACK_CHAINS.openai;
-  if (lower.includes("gemini") || lower.includes("google")) return FALLBACK_CHAINS.gemini;
-  // For OrcaRouter, OpenRouter, etc — only retry the same model (no cross-provider fallback)
-  return [];
-}
-
-
+/* ── Core Chat Function ───────────────────────────────────────────────── */
 
 /** Core fetch — separated so both chat() and chatForModule() share it.
     Now includes: semantic caching, token caps, cost logging, and fallback. */
@@ -176,37 +64,15 @@ async function chatWithSettings(
   const moduleId = opts.module ?? "general";
   const sysPrompt = messages.find((m) => m.role === "system")?.content ?? "";
   const usrPrompt = messages.find((m) => m.role === "user")?.content ?? "";
-  // Smart hybrid token estimation:
-  // 1. Always estimate from input size + prompt heuristics
-  // 2. Validate against caller's explicit maxTokens
-  // 3. If caller requests LESS than estimated → use estimate + warn
-  //    (caller is under-requesting, response would be truncated)
-  // 4. If caller requests MORE than estimated → use caller's
-  //    (caller knows they need more, e.g. long structured output)
-  const estimated = estimateOutputTokens(messages, moduleId);
-  let maxTokens: number;
-  if (opts.maxTokens) {
-    if (opts.maxTokens < estimated) {
-      // Caller is under-requesting — use estimate to prevent truncation
-      console.warn(
-        `[ai] Token estimate ${estimated} > caller's maxTokens ${opts.maxTokens} for module "${moduleId}". Using estimate to prevent truncation.`
-      );
-      maxTokens = estimated;
-    } else {
-      // Caller needs more than estimate — honor their request
-      maxTokens = opts.maxTokens;
-    }
-  } else {
-    // No explicit request — use dynamic estimate
-    maxTokens = estimated;
-  }
-  console.log(`[ai] module="${moduleId}" inputChars=${sysPrompt.length + usrPrompt.length} estimated=${estimated} callerMax=${opts.maxTokens ?? 'none'} final=${maxTokens}`);
+  
+  // Delegate token estimation to extracted module
+  const maxTokens = resolveMaxTokens(messages, moduleId, opts.maxTokens);
+  console.log(`[ai] module="${moduleId}" inputChars=${sysPrompt.length + usrPrompt.length} callerMax=${opts.maxTokens ?? 'none'} final=${maxTokens}`);
   const temperature = opts.temperature ?? getAiDefaults().temperature ?? 0.6;
 
   /* ── Step 0: Rate limit + quota (BYOK users are exempt — they pay their own API) */
   const cloudUser = getCloudState().user;
   if (cloudUser) {
-    // Check per-user quota (daily/monthly limits set by admin)
     const quota = await checkUserQuota(cloudUser.id);
     if (!quota.allowed) {
       throw new Error(quota.reason ?? "AI quota exceeded.");
@@ -234,8 +100,8 @@ async function chatWithSettings(
   }
 
   /* ── Step 2: Call API with fallback chain on failure ─────────────────── */
-  const fallbackModels = getFallbackChain(s.base, s.model);
-  const models = [s.model, ...fallbackModels.filter((m) => m !== s.model)];
+  // Delegate fallback chain to extracted module
+  const models = getFallbackModels(s.base, s.model);
   let lastError: string = "";
 
   for (const model of models) {
@@ -253,7 +119,6 @@ async function chatWithSettings(
       });
 
       if (res.status === 429 || res.status >= 500) {
-        // Rate limited or server error — try next model in chain
         try { const j = await res.json(); lastError = j.error?.message || `HTTP ${res.status}`; } catch { lastError = `HTTP ${res.status}`; }
         continue;
       }
@@ -313,10 +178,9 @@ async function cloudChat(messages: ChatMessage[], opts: ChatOptions): Promise<st
   const { data: session } = await client.auth.getSession();
   const token = session?.session?.access_token;
   if (!token) throw new Error("Sign in or add your own API key to use AI.");
-  // Apply the same dynamic token estimation as BYOK path
+  // Delegate token estimation to extracted module
   const moduleId = opts.module ?? "general";
-  const estimated = estimateOutputTokens(messages, moduleId);
-  const resolvedMaxTokens = opts.maxTokens ? Math.max(opts.maxTokens, estimated) : estimated;
+  const resolvedMaxTokens = resolveMaxTokens(messages, moduleId, opts.maxTokens);
   const res = await fetch(`${CONFIG.supabase.url}/functions/v1/ai-chat`, {
     method: "POST",
     signal: opts.signal,

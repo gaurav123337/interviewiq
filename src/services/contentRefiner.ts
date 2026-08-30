@@ -83,20 +83,23 @@ function buildRefinementMessages(title: string, content: string, sourceName: str
     { role: "system", content: systemLines.join("\n") },
     { role: "user", content: userLines.join("\n") },
   ];
+}/* ── Parse LLM Response ────────────────────────────────────────────────── */
+
+/** Parsed result with quality metadata — returned instead of using global state */
+export interface ParsedRefinement {
+  refined: RefinedContent | null;
+  qualityScore: number;
 }
 
-/* ── Parse LLM Response ────────────────────────────────────────────────── */
-
-/** Last quality score from parsing (read by refineContent after calling parseRefinedContent) */
-let lastQualityScore = 0;
-export function getLastQualityScore() { return lastQualityScore; }
-
-function parseRefinedContent(raw: string): RefinedContent | null {
-  if (!raw || raw.trim().length < 50) { lastQualityScore = 0; return null; }
+/** Parse raw AI response into structured content + quality score */
+function parseRefinedContent(raw: string): ParsedRefinement {
+  if (!raw || raw.trim().length < 50) {
+    return { refined: null, qualityScore: 0 };
+  }
 
   // Use the universal AI output normalizer
   const result = normalizeAiOutput(raw, ['beginner', 'intermediate', 'advanced']);
-  lastQualityScore = result.quality.score;
+  const qualityScore = result.quality.score;
   console.log(`[contentRefiner] Strategy: ${result.strategy} | Quality: ${result.quality.score}/100 | Passed: ${result.quality.passed}`);
   if (result.quality.issues.length > 0) {
     console.warn('[contentRefiner] Quality issues:', result.quality.issues);
@@ -108,12 +111,12 @@ function parseRefinedContent(raw: string): RefinedContent | null {
   if (!result.parsed) {
     console.error('[contentRefiner] All normalization strategies failed. Raw length:', raw.length);
     console.error('[contentRefiner] First 500 chars:', raw.slice(0, 500));
-    return null;
+    return { refined: null, qualityScore };
   }
 
   // Warn if quality is low but still return the content
-  if (result.quality.score < 50) {
-    console.warn(`[contentRefiner] Low quality output (${result.quality.score}/100) — content may need manual review`);
+  if (qualityScore < 50) {
+    console.warn(`[contentRefiner] Low quality output (${qualityScore}/100) — content may need manual review`);
   }
 
   const parsed = result.parsed;
@@ -121,21 +124,26 @@ function parseRefinedContent(raw: string): RefinedContent | null {
   const intermediate = String(parsed.intermediate || "");
   const advanced = String(parsed.advanced || "");
 
-  if (!beginner && !intermediate && !advanced) return null;
+  if (!beginner && !intermediate && !advanced) {
+    return { refined: null, qualityScore };
+  }
 
   return {
-    beginner: beginner || intermediate || advanced,
-    intermediate: intermediate || beginner,
-    advanced: advanced || intermediate || beginner,
-    tableOfContents: Array.isArray(parsed.tableOfContents) ? parsed.tableOfContents.map(String) : [],
-    keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways.map(String) : [],
-    glossary: Array.isArray(parsed.glossary)
-      ? parsed.glossary.map((g: Record<string, unknown>) => ({
-          term: String(g.term || ""),
-          definition: String(g.definition || ""),
-        }))
-      : [],
-    estimatedReadMinutes: Number(parsed.estimatedReadMinutes) || Math.ceil(raw.length / 1500),
+    refined: {
+      beginner: beginner || intermediate || advanced,
+      intermediate: intermediate || beginner,
+      advanced: advanced || intermediate || beginner,
+      tableOfContents: Array.isArray(parsed.tableOfContents) ? parsed.tableOfContents.map(String) : [],
+      keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways.map(String) : [],
+      glossary: Array.isArray(parsed.glossary)
+        ? parsed.glossary.map((g: Record<string, unknown>) => ({
+              term: String(g.term || ""),
+              definition: String(g.definition || ""),
+            }))
+        : [],
+      estimatedReadMinutes: Number(parsed.estimatedReadMinutes) || Math.ceil(raw.length / 1500),
+    },
+    qualityScore,
   };
 }
 
@@ -172,8 +180,7 @@ export async function refineContent(params: {
     console.log(`[contentRefiner] First 300 chars: ${rawText.slice(0, 300)}`);
     console.log(`[contentRefiner] Last 200 chars: ${rawText.slice(-200)}`);
 
-    const refined = parseRefinedContent(rawText);
-    const qualityScore = getLastQualityScore();
+    const { refined, qualityScore } = parseRefinedContent(rawText);
     if (!refined) {
       console.error(`[contentRefiner] PARSE FAILED for "${title}". Raw: ${rawText.length} chars.`);
       return { success: false, error: `Failed to parse AI response (${rawText.length} chars returned). Check console for details.`, qualityScore };
