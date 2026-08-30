@@ -407,9 +407,9 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
   }
 
   return (
-    <div className="my-4 rounded-xl border border-line/15 overflow-hidden">
+    <div className="my-4 rounded-xl border border-line/30 overflow-hidden">
       {/* Header bar */}
-      <div className="flex items-center justify-between bg-panel3/60 px-4 py-1.5">
+      <div className="flex items-center justify-between bg-panel3 px-4 py-1.5">
         <span className="text-[11px] font-bold text-mut uppercase tracking-wide">
           {detected || "Code"}
         </span>
@@ -421,8 +421,8 @@ function CodeBlock({ code, language }: { code: string; language?: string }) {
         </button>
       </div>
       {/* Code body */}
-      <pre className="overflow-x-auto bg-deep/40 p-4">
-        <code className="text-[12.5px] leading-relaxed font-mono text-ink/90">
+      <pre className="overflow-x-auto bg-deep p-4">
+        <code className="text-[12.5px] leading-relaxed font-mono text-ink">
           {highlighted}
         </code>
       </pre>
@@ -669,7 +669,7 @@ function MarkdownContent({ text }: { text: string }) {
     if (line.startsWith("## ")) {
       flushList();
       elements.push(
-        <h2 key={`h2-${keyCounter++}`} className="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/20 pb-1">
+        <h2 key={`h2-${keyCounter++}`} className="mt-7 mb-3 text-[17px] font-extrabold text-fnt border-b border-line/40 pb-1">
           {inlineMarkdown(line.slice(3))}
         </h2>
       );
@@ -732,9 +732,8 @@ function SourceBadge({ article }: { article: Article }) {
 
 function TableOfContents({ items }: { items: string[] }) {
   if (!items.length) return null;
-  return (
-    <div className="rounded-lg bg-panel2/50 p-3">
-      <h4 className="mb-2 text-[12px] font-extrabold text-ink">📑 In this article</h4>
+  return (          <div className="rounded-lg bg-panel2 p-3">
+      <h4 className="mb-2 text-[12px] font-extrabold text-fnt">📑 In this article</h4>
       <ul className="space-y-1">
         {items.map((item, i) => (
           <li key={i} className="text-[12px] text-acc">{i + 1}. {item}</li>
@@ -747,7 +746,7 @@ function TableOfContents({ items }: { items: string[] }) {
 function KeyTakeaways({ takeaways }: { takeaways: string[] }) {
   if (!takeaways.length) return null;
   return (
-    <div className="rounded-lg border border-acc/20 bg-acc/5 p-4">
+    <div className="rounded-lg border border-acc/30 bg-acc/10 p-4">
       <h4 className="mb-2 text-[13px] font-extrabold text-acc">💡 Key Takeaways</h4>
       <ol className="space-y-1.5">
         {takeaways.map((t, i) => (
@@ -764,8 +763,8 @@ function KeyTakeaways({ takeaways }: { takeaways: string[] }) {
 function Glossary({ terms }: { terms: { term: string; definition: string }[] }) {
   if (!terms.length) return null;
   return (
-    <div className="rounded-lg bg-panel2/50 p-4">
-      <h4 className="mb-2 text-[13px] font-extrabold text-ink">📖 Glossary</h4>
+    <div className="rounded-lg bg-panel2 p-4">
+      <h4 className="mb-2 text-[13px] font-extrabold text-fnt">📖 Glossary</h4>
       <dl className="space-y-2">
         {terms.map((t, i) => (
           <div key={i} className="text-[12px]">
@@ -847,9 +846,9 @@ function ArticleCard({ article }: { article: Article }) {
                 </span>
               )}
               {hasRefined ? (
-                <span className="rounded bg-acc/15 px-1.5 py-0.5 text-[10px] font-bold text-acc">✨ AI Refined</span>
+                <span className="rounded bg-acc/20 px-1.5 py-0.5 text-[10px] font-bold text-acc">✨ AI Refined</span>
               ) : (
-                <span className="rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-bold text-warn">⏳ Needs refinement</span>
+                <span className="rounded bg-warn/20 px-1.5 py-0.5 text-[10px] font-bold text-warn">⏳ Needs refinement</span>
               )}
             </div>
             <SourceBadge article={article} />
@@ -858,7 +857,7 @@ function ArticleCard({ article }: { article: Article }) {
             {keywords.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
                 {keywords.slice(0, 8).map(kw => (
-                  <span key={kw} className="rounded-md bg-acc/10 px-2 py-0.5 text-[10px] font-bold text-acc">{kw}</span>
+                  <span key={kw} className="rounded-md bg-acc/15 px-2 py-0.5 text-[10px] font-bold text-acc">{kw}</span>
                 ))}
                 {keywords.length > 8 && (
                   <span className="text-[10px] text-mut">+{keywords.length - 8} more</span>
@@ -874,7 +873,7 @@ function ArticleCard({ article }: { article: Article }) {
             {/* Code sections + read time badges */}
             <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-mut">
               {codeSections.length > 0 && (
-                <span className="rounded-md bg-purple-400/10 px-1.5 py-0.5 font-bold text-purple-400">
+                <span className="rounded-md bg-purple-400/15 px-1.5 py-0.5 font-bold text-purple-400">
                   💻 {codeSections.length} code example{codeSections.length !== 1 ? 's' : ''}
                 </span>
               )}
@@ -900,7 +899,7 @@ function ArticleCard({ article }: { article: Article }) {
       </div>
 
       {expanded && (
-        <div className="border-t border-line/20 bg-panel2/50 px-5 py-4 space-y-4">
+        <div className="border-t border-line/30 bg-panel2 px-5 py-4 space-y-4">
           <div className="flex flex-wrap gap-2">
             <a href={article.sourceUrl} target="_blank" rel="noopener"
               className="rounded-lg bg-acc px-4 py-1.5 text-[12px] font-bold text-white hover:opacity-90 transition">
@@ -927,7 +926,7 @@ function ArticleCard({ article }: { article: Article }) {
               <DifficultySelector level={difficulty} onChange={setDifficulty} />
               <p className="text-[11px] text-mut italic">{DIFFICULTY_CONFIG[difficulty].desc}</p>
               {refined!.tableOfContents.length > 0 && <TableOfContents items={refined!.tableOfContents} />}
-              <div className="rounded-lg bg-panel2/50 p-4">
+              <div className="rounded-lg bg-panel2 p-4">
                 <MarkdownContent text={currentContent} />
               </div>
               <KeyTakeaways takeaways={refined!.keyTakeaways} />
@@ -943,10 +942,10 @@ function ArticleCard({ article }: { article: Article }) {
             </>
           ) : (
             <div className="space-y-3">
-              <div className="rounded-lg border border-warn/20 bg-warn/5 p-3 text-[12px] text-ink">
+              <div className="rounded-lg border border-warn/30 bg-warn/10 p-3 text-[12px] text-ink">
                 <span className="font-bold">⏳ This article needs AI refinement.</span> Admins can click "✨ Refine" in Content Pipeline to generate progressive difficulty levels, key takeaways, and a glossary.
               </div>
-              <div className="rounded-lg bg-panel2/50 p-4">
+              <div className="rounded-lg bg-panel2 p-4">
                 <MarkdownContent text={currentContent} />
               </div>
               {article.content.length > 3000 && (
@@ -1029,13 +1028,13 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="relative mx-4 flex max-h-[90vh] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl border border-line/20 bg-surface shadow-2xl"
+        className="relative mx-4 flex max-h-[90vh] w-full max-w-[600px] flex-col overflow-hidden rounded-2xl border border-line/40 bg-surface shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-line/10 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-line/30 px-6 py-4">
           <div>
-            <h2 className="text-[16px] font-extrabold text-ink">🧠 Understand this article</h2>
+            <h2 className="text-[16px] font-extrabold text-fnt">🧠 Understand this article</h2>
             <p className="text-[11px] text-mut">AI will analyze and create structured learning levels</p>
           </div>
           <button onClick={onClose} className="text-[20px] text-mut hover:text-ink transition">✕</button>
@@ -1069,7 +1068,7 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="Article title (optional)"
-            className="w-full rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+            className="w-full rounded-lg border border-line/30 bg-panel2 px-3 py-2 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
           />
 
           {/* URL input */}
@@ -1080,7 +1079,7 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
                 value={url}
                 onChange={e => setUrl(e.target.value)}
                 placeholder="https://example.com/article..."
-                className="w-full rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+                className="w-full rounded-lg border border-line/30 bg-panel2 px-3 py-2 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
               />
               <p className="text-[10px] text-mut">Paste the article text below if the URL can't be auto-fetched</p>
               <textarea
@@ -1088,7 +1087,7 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
                 value={text}
                 onChange={e => setText(e.target.value)}
                 placeholder="Optional: paste the article text here for better results..."
-                className="h-32 w-full resize-none rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[12px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+                className="h-32 w-full resize-none rounded-lg border border-line/30 bg-panel2 px-3 py-2 text-[12px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
               />
             </div>
           )}
@@ -1100,13 +1099,13 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
               value={text}
               onChange={e => setText(e.target.value)}
               placeholder="Paste the full article text here..."
-              className="h-48 w-full resize-none rounded-lg border border-line/15 bg-panel2/50 px-3 py-2 text-[12px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+              className="h-48 w-full resize-none rounded-lg border border-line/30 bg-panel2 px-3 py-2 text-[12px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
             />
           )}
 
           {/* Token cost estimate */}
           {contentLength > 0 && (
-            <div className="rounded-lg bg-panel2/50 p-3">
+            <div className="rounded-lg bg-panel2 p-3">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-mut">📊 Estimated token usage:</span>
                 <span className="font-bold text-acc">{tokenEst.estimatedCost}</span>
@@ -1119,13 +1118,13 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
           )}
 
           {/* Warning */}
-          <div className="rounded-lg border border-warn/20 bg-warn/5 p-3 text-[11px] text-ink">
+          <div className="rounded-lg border border-warn/30 bg-warn/10 p-3 text-[11px] text-ink">
             <span className="font-bold">⚠️ This will use AI tokens.</span> The normalized article will be saved to your personal collection (private, not shared with other users).
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t border-line/10 px-6 py-3">
+        <div className="flex items-center justify-between border-t border-line/30 px-6 py-3">
           <span className="text-[11px] text-mut">{contentLength > 0 ? `${(contentLength / 1000).toFixed(1)}K chars` : ""}</span>
           <div className="flex gap-2">
             <button
@@ -1169,12 +1168,12 @@ function UserArticleCard({ article, onDelete }: { article: { id: string; title: 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-[14px] font-extrabold leading-tight">🧠 {article.title}</h3>
-              <span className="rounded bg-green/15 px-1.5 py-0.5 text-[10px] font-bold text-green">✅ Normalized</span>
+              <span className="rounded bg-green/20 px-1.5 py-0.5 text-[10px] font-bold text-green">✅ Normalized</span>
             </div>
             <p className="mt-1 text-[12px] text-ink line-clamp-1">{n.summary}</p>
             <div className="mt-1.5 flex flex-wrap gap-1">
               {n.keywords.slice(0, 6).map(kw => (
-                <span key={kw} className="rounded bg-acc/10 px-1.5 py-0.5 text-[9px] font-bold text-acc">{kw}</span>
+                <span key={kw} className="rounded bg-acc/15 px-1.5 py-0.5 text-[9px] font-bold text-acc">{kw}</span>
               ))}
             </div>
           </div>
@@ -1192,7 +1191,7 @@ function UserArticleCard({ article, onDelete }: { article: { id: string; title: 
       </div>
 
       {expanded && (
-        <div className="border-t border-line/20 bg-panel2/50 px-4 py-3 space-y-3">
+        <div className="border-t border-line/30 bg-panel2 px-4 py-3 space-y-3">
           <DifficultySelector level={difficulty} onChange={setDifficulty} />
           <p className="text-[10px] text-mut italic">{DIFFICULTY_CONFIG[difficulty].desc}</p>
           {n.keyTakeaways.length > 0 && <KeyTakeaways takeaways={n.keyTakeaways} />}
@@ -1204,7 +1203,7 @@ function UserArticleCard({ article, onDelete }: { article: { id: string; title: 
               ))}
             </div>
           )}
-          <div className="rounded-lg bg-panel2/50 p-3">
+          <div className="rounded-lg bg-panel2 p-3">
             <MarkdownContent text={currentContent} />
           </div>
           {n.glossary.length > 0 && (
@@ -1370,7 +1369,7 @@ export function Articles() {
         </div>
         <button
           onClick={() => setUnderstandOpen(true)}
-          className="shrink-0 rounded-xl bg-acc/15 px-4 py-2.5 text-[13px] font-bold text-acc hover:bg-acc/25 transition"
+          className="shrink-0 rounded-xl bg-acc/20 px-4 py-2.5 text-[13px] font-bold text-acc hover:bg-acc/30 transition"
         >
           🧠 Understand any article
         </button>
@@ -1382,7 +1381,7 @@ export function Articles() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="🔍 Search articles..."
-          className="w-full rounded-xl border border-line/15 bg-panel2/50 px-4 py-2.5 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
+          className="w-full rounded-xl border border-line/30 bg-panel2 px-4 py-2.5 text-[13px] text-ink placeholder:text-mut focus:border-acc focus:outline-none"
         />
       </div>
 
@@ -1415,7 +1414,7 @@ export function Articles() {
             {keywordFilter && (
               <button
                 onClick={() => setKeywordFilter("")}
-                className="rounded-md bg-err/15 px-2 py-0.5 text-[10px] font-bold text-err hover:bg-err/25 transition"
+                className="rounded-md bg-err/20 px-2 py-0.5 text-[10px] font-bold text-err hover:bg-err/30 transition"
               >
                 ✕ Clear
               </button>

@@ -13,12 +13,20 @@
   --color-ink: #e8edf8;
   --color-mut: #93a1bd;
   --color-fnt: #64718f;
+  --color-acc: #6366f1;
   --color-acc1: #6366f1;
   --color-acc2: #a855f7;
   --color-acc3: #22d3ee;
   --color-ok: #34d399;
+  --color-green: #34d399;
   --color-warn: #fbbf24;
+  --color-amber: #fbbf24;
   --color-bad: #fb7185;
+  --color-err: #fb7185;
+  --color-red: #fb7185;
+  --color-surface: #111a2e;
+  --color-cyan: #22d3ee;
+  --color-purple: #a855f7;
 
   /* semantic overlays — translucent "white" fills and hairlines that flip
      to dark-tinted equivalents in light mode (so bg-white/10, border-line/10
@@ -45,12 +53,20 @@ html.light {
   --color-ink: #0f172a;
   --color-mut: #475569;
   --color-fnt: #1e293b;
+  --color-acc: #4f46e5;
   --color-acc1: #4f46e5;
   --color-acc2: #9333ea;
   --color-acc3: #0e7490;
   --color-ok: #059669;
+  --color-green: #059669;
   --color-warn: #b45309;
+  --color-amber: #b45309;
   --color-bad: #e11d48;
+  --color-err: #e11d48;
+  --color-red: #e11d48;
+  --color-surface: #ffffff;
+  --color-cyan: #0e7490;
+  --color-purple: #9333ea;
   --color-wht: #1e293b;
   --color-line: #1e293b;
   --color-deep: #f8fafc;
