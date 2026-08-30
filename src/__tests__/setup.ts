@@ -17,3 +17,11 @@ Object.defineProperty(window, "localStorage", { value: (globalThis as { localSto
 
 /* jsdom doesn't implement scrollTo; the app calls it on navigation */
 window.scrollTo = (() => {}) as typeof window.scrollTo;
+
+/* Initialize i18n for the whole suite. The app was migrated to react-i18next;
+   components render their copy via t()/<Trans>, so without an initialized
+   instance useTranslation() warns NO_I18NEXT_INSTANCE and t() returns raw keys
+   — breaking any test that asserts on visible English text (e.g. the landing
+   → onboarding flow). The module inits synchronously from bundled en/hi
+   resources with fallbackLng "en", so importing it here is enough. */
+import "../i18n";

@@ -3,7 +3,7 @@
    grant/discount/code actions. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
+import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services/storage";
 import { getTier, setTier } from "../services/entitlements";
 
 interface CloudUser { id: string; email: string }
@@ -94,13 +94,25 @@ describe("entitlement refresh (server is authoritative when signed in)", () => {
     expect(getTier()).toBe("free");
   });
 
-  it("leaves the local tier untouched when signed out", async () => {
-    signedIn.mockReturnValueOnce({ user: null, configured: true, syncing: false, error: null, oauth: [] });
-    setTier("pro");
-    const { refreshEntitlement, serverPro } = await import("../services/entitlement");
-    expect(await refreshEntitlement()).toBeNull();
-    expect(getTier()).toBe("pro");
-    expect(serverPro()).toBe(false);
+  it("keeps the stored tier on disk but reports free to a signed-out guest", async () => {
+    /* Signed out for the whole test. refreshEntitlement must stay a no-op
+       offline (returns null, never clobbers the stored tier — a real Pro user
+       who is briefly signed-out keeps it for reconciliation on reconnect). But
+       Pro is an ACCOUNT property, so getTier() must fail closed to "free" for a
+       guest even when a forged/stale iq.tier="pro" sits in storage. */
+    signedIn.mockReturnValue({ user: null, configured: true, syncing: false, error: null, oauth: [] });
+    try {
+      setTier("pro");
+      const { refreshEntitlement, serverPro } = await import("../services/entitlement");
+      expect(await refreshEntitlement()).toBeNull();
+      /* the raw stored value is untouched … */
+      expect(storageGet<string>(STORAGE_KEYS.tier, "free")).toBe("pro");
+      /* … but a signed-out guest is never treated as Pro */
+      expect(getTier()).toBe("free");
+      expect(serverPro()).toBe(false);
+    } finally {
+      signedIn.mockReturnValue({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] });
+    }
   });
 });
 

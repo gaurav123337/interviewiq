@@ -23,8 +23,8 @@ afterEach(() => {
 });
 
 describe("tutorChat", () => {
-  it("requires an API key", async () => {
-    await expect(tutorChat("APIs & services", goal, [])).rejects.toThrow("No API key");
+  it("requires auth (a local key or a signed-in cloud session)", async () => {
+    await expect(tutorChat("APIs & services", goal, [])).rejects.toThrow(/add your own API key/);
   });
 
   it("continues the conversation with full history", async () => {
@@ -36,7 +36,10 @@ describe("tutorChat", () => {
     ]);
     expect(reply.text).toBe("Follow-up answer");
     expect(reply.citations).toEqual([]); /* no signed-in user → no grounding */
-    const body = JSON.parse(String(fn.mock.calls[0][1]?.body)) as { messages: { role: string; content: string }[] };
+    /* find the chat-completion call specifically — remote-config / cache reads
+       may fetch first, so calls[0] is not necessarily the chat request. */
+    const chatCall = fn.mock.calls.find(c => String(c[0]).includes("/chat/completions"));
+    const body = JSON.parse(String(chatCall?.[1]?.body)) as { messages: { role: string; content: string }[] };
     expect(body.messages.map(m => m.role)).toEqual(["system", "assistant", "user"]);
     expect(body.messages[0].content).toContain("APIs & services");
   });

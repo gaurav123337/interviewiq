@@ -273,7 +273,11 @@ export async function retrieveContext(query: string, ctx?: RagContext): Promise<
     const client = await getSupabaseClient();
     if (!client || !getCloudState().user) return { hits: [], checked: false };
     const qv = await embed([query]);
-    if (!qv[0]?.length) return { hits: [], checked: true };
+    /* An empty embedding vector means we never actually queried the KB (embed
+       failed or returned nothing) — report checked:false so callers don't tell
+       the user "we searched and found nothing" or prompt them to add a topic we
+       never looked up. */
+    if (!qv[0]?.length) return { hits: [], checked: false };
     const raw = await searchPdfChunks(qv[0], effectiveCandidatePool());
     const minSim = effectiveGroundingMinSim();
     const hardFloor = effectiveHardFloor();
@@ -304,7 +308,11 @@ export async function retrieveContext(query: string, ctx?: RagContext): Promise<
     });
     return { hits, checked: true };
   } catch {
-    return { hits: [], checked: true }; /* grounding must never break the tutor */
+    /* A retrieval error means we could NOT check the KB — report checked:false
+       so callers never tell the user "we searched and found nothing" (which
+       would be false) or prompt them to add a topic we never actually looked up.
+       Grounding still must never break the tutor: empty hits, answer proceeds. */
+    return { hits: [], checked: false };
   }
 }
 

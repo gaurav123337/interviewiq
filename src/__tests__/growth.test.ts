@@ -1,10 +1,30 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { adaptPlan, buildPlan } from "../services/planner";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
 import { activatePro, deactivatePro, generateProKey, isValidProKey } from "../services/license";
 import { getTier } from "../services/entitlements";
 import { getSrs, rate, resetSrs } from "../services/drill";
 import type { Config, SavedSession, SessionQuestion } from "../types";
+
+/* license.ts gates format-key activation behind testLicensing(), which now
+   ships OFF for launch (real Pro is server-verified). These tests exercise the
+   legacy format-key feature itself, so force the flag on regardless of the
+   shipped config default. */
+vi.mock("../services/entitlement", async () => {
+  const actual = await vi.importActual<typeof import("../services/entitlement")>("../services/entitlement");
+  return { ...actual, testLicensing: () => true };
+});
+
+/* getTier() now gates local Pro on a signed-in account (Pro is an account
+   property; a guest's forgeable local tier is ignored). The legacy format-key
+   activation test below round-trips activatePro → getTier, so stub the cloud
+   session as signed-in. getSupabaseClient is stubbed too because license.ts →
+   events.queueEvent reaches for it (it no-ops on a null client). */
+vi.mock("../services/cloud", () => ({
+  getCloudState: () => ({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] }),
+  getSupabaseClient: () => Promise.resolve(null),
+  isCloudConfigured: () => false,
+}));
 
 const CFG: Config = { count: 8, mode: "standard", timing: "none", voice: false };
 

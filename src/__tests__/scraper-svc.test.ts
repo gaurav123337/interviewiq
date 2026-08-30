@@ -13,7 +13,7 @@ function makeClient() {
     scraper_sources: [
       { id: "backend-arialdo-questions", url: "https://example.com/backend.md", type: "markdown", field_id: "backend", level: "senior", max_items: 30, enabled: true, note: "note" }
     ],
-    scraper_config: [{ key: "schedule", value: { days: [1, 3] } }]
+    scraper_config: [{ key: "schedule", value: { days: [1, 3], hour: 5, minute: 30 } }]
   };
   const chain = (table: string) => {
     const c = {
@@ -76,16 +76,16 @@ describe("scraper sources", () => {
 
 describe("scraper schedule", () => {
   it("reads the configured days", async () => {
-    expect(await getScraperSchedule()).toEqual([1, 3]);
+    expect(await getScraperSchedule()).toEqual({ days: [1, 3], hour: 5, minute: 30 });
   });
 
   it("defaults to Monday when unset", async () => {
     fake!.rows.scraper_config = [];
-    expect(await getScraperSchedule()).toEqual([1]);
+    expect(await getScraperSchedule()).toEqual({ days: [1], hour: 3, minute: 0 });
   });
 
   it("persists a schedule", async () => {
-    await saveScraperSchedule([2, 5]);
+    await saveScraperSchedule({ days: [2, 5], hour: 3, minute: 0 });
     const u = fake!.calls.find(c => c.startsWith("upsert:"));
     expect(u).toContain('"days":[2,5]');
     expect(u).toContain('"onConflict":"key"');

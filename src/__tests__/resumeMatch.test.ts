@@ -64,10 +64,11 @@ describe("resumeToProfile", () => {
     const p = resumeToProfile(FRONTEND_RESUME);
     expect(p.headline).toBe("Senior Frontend Engineer");
     expect(p.years).toBe(7);
+    /* skills are extracted as individual tech keywords (not composite field
+       labels) — the matcher tokenizes against posting skills the same way */
     expect(p.skills).toEqual(expect.arrayContaining([
-      "JavaScript / TypeScript", "React · Vue · Angular", "CSS & accessibility"
+      "React", "TypeScript", "JavaScript", "CSS", "GraphQL", "Node.js", "Tailwind CSS", "Docker"
     ]));
-    expect(p.skills).toEqual(expect.arrayContaining(["GraphQL", "Node.js", "Tailwind CSS", "Docker"]));
     expect(p.targetTitles).toContain("Senior Frontend Engineer");
     expect(p.targetTitles).toContain("Frontend Engineer");
     expect(p.summary.length).toBeGreaterThan(0);

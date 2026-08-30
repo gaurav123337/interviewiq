@@ -301,17 +301,18 @@ export function resumeToProfile(text: string): CareerProfile {
   const levelName = LEVELS.find(l => l.id === levelId)?.name ?? "";
   
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-  
-  // Use ONLY normalized skills (individual tech keywords, not composite labels)
+
+  /* Skills come from the normalized parser (individual tech keywords, not
+     composite field labels). Headline / target titles / years stay on the
+     exec-aware extractors below: they strip the owner's name, split
+     "CTO Frontend Engineer" into "CTO / Frontend Engineer", and fall back to a
+     seniority-based year estimate. The flat normalized parser drops all three
+     (normalizeResume hardcodes 3 years and keeps the raw, unsplit title), which
+     corrupts the seniority signal the company matcher scores on. */
   const allSkills = normalized.skills;
-  
-  const years = normalized.years > 0 ? normalized.years : extractYears(text, levelId);
-  const headline = normalized.titles.length > 0 
-    ? normalized.titles[0] 
-    : extractHeadline(lines, fieldName, levelName);
-  const targetTitles = normalized.titles.length > 0 
-    ? normalized.titles 
-    : extractTitles(lines);
+  const years = extractYears(text, levelId);
+  const headline = extractHeadline(lines, fieldName, levelName);
+  const targetTitles = extractTitles(lines);
   
   return {
     headline: headline || `${levelName} ${fieldName}`.trim(),

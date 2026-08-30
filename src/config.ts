@@ -26,9 +26,10 @@ export const CONFIG = {
     /** Master switch for the freemium paywall. Off = the app is fully free; flip to true to enforce limits. */
     paywall: true,
     /** Allow the old IQPRO-XXXX format keys (client-side checksum) — TEST ONLY.
-        They are forgeable, so flip to false before launch: real Pro comes from
-        the server (supabase/billing.sql entitlements + grant codes). */
-    testLicensing: true
+        They are forgeable, so this ships OFF: real Pro is server-verified
+        (supabase/billing.sql entitlements + grant codes + payment webhooks).
+        Flip to true only for local testing of the legacy key path. */
+    testLicensing: false
   },
   /** Optional cross-device sync. Create a free Supabase project, run the SQL in
       the README, and paste the project URL + anon key here. Empty = cloud sync off. */

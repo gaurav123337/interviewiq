@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import {render} from "@testing-library/react";
+import type { JobPosting } from "../types";
 
 /* ------------------------------------------------------------------ */
 /* Mock all external services                                          */
@@ -98,19 +99,21 @@ describe("FeedFilters", () => {
 import { MatchFeedCard } from "../components/jobs/MatchFeedCard";
 
 describe("MatchFeedCard", () => {
-  const job = {
-    id: "j1",
+  const job: JobPosting = {
+    id: "linkedin:j1",
+    externalId: "j1",
     title: "Senior React Developer",
     company: "TechCorp",
     location: "San Francisco",
     remote: true,
     level: "Senior",
     source: "linkedin",
+    description: "Build React apps with TypeScript.",
     url: "https://example.com",
     skills: ["React", "TypeScript"],
-    salaryMin: 150000,
-    salaryMax: 200000,
-    currency: "USD",
+    salary: { min: 150000, max: 200000, currency: "USD", source: "posting" },
+    companySize: "large",
+    postedAt: null,
     alsoSources: [],
   };
 
@@ -184,7 +187,7 @@ describe("MatchFeedCard", () => {
   it("calls onAddSkill when missing skill clicked", () => {
     const { container } = renderCard();
     const addBtn = container.querySelector("button[title*='Add']");
-    if (addBtn) addBtn.click();
+    if (addBtn) (addBtn as HTMLElement).click();
     expect(baseProps.onAddSkill).toHaveBeenCalledWith("GraphQL");
   });
 });

@@ -58,7 +58,11 @@ describe("chat() module routing", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain("/functions/v1/ai-chat");
     const body = JSON.parse((init as RequestInit).body as string);
-    expect(body).toMatchObject({ module: "coach", maxTokens: 450, messages: [{ role: "user", content: "hi" }] });
+    expect(body).toMatchObject({ module: "coach", messages: [{ role: "user", content: "hi" }] });
+    /* resolveMaxTokens raises the caller's maxTokens up to the module's floor
+       (coach → 1200) to prevent mid-reply truncation, so the value that reaches
+       the wire is >= what the caller passed. */
+    expect(body.maxTokens).toBeGreaterThanOrEqual(450);
     expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer tok-1" });
   });
 
@@ -79,6 +83,53 @@ describe("chat() module routing", () => {
   it("throws a clear error for guests without a key or module", async () => {
     cloudUser = null;
     const { chat } = await import("../ai");
-    await expect(chat([{ role: "user", content: "hi" }])).rejects.toThrow("No API key configured");
+    await expect(chat([{ role: "user", content: "hi" }])).rejects.toThrow("Sign in to use AI, or add your own API key in Settings → AI.");
+  });
+});
+
+/* chatForModule() is the ladder the system-design tutor rides (systemDesignTutor.ts
+   calls chatForModule("tutor", …)). It mirrors chat()'s three rungs but resolves a
+   per-module model first. Covered directly here because the earlier suite only
+   exercised the sibling chat()/tutorChat(), so a regression that reverted the
+   signed-in cloud-fallback rung to a throw would have slipped past unnoticed. */
+describe("chatForModule() ladder", () => {
+  it("routes a signed-in, keyless user through the cloud proxy with the module id", async () => {
+    /* the documented P0 fix: signed in + no local key → cloudChat(module),
+       NOT a throw. cloudUser is set in beforeEach. */
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, text: "tutor reply", model: "tutor-model" })
+    });
+    const { chatForModule } = await import("../ai");
+    const out = await chatForModule("tutor", [{ role: "user", content: "explain CAP" }]);
+    expect(out).toBe("tutor reply");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/functions/v1/ai-chat");
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body).toMatchObject({ module: "tutor", messages: [{ role: "user", content: "explain CAP" }] });
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer tok-1" });
+  });
+
+  it("uses the user's own local key (BYOK) instead of the cloud proxy", async () => {
+    storageSet(STORAGE_KEYS.apiKey, "sk-user");
+    storageSet(STORAGE_KEYS.apiBase, "https://local.example/v1");
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "local reply" } }] })
+    });
+    const { chatForModule } = await import("../ai");
+    const out = await chatForModule("tutor", [{ role: "user", content: "explain CAP" }]);
+    expect(out).toBe("local reply");
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("local.example/v1/chat/completions");
+    expect(url).not.toContain("/functions/v1/ai-chat");
+  });
+
+  it("throws the same clear error for a keyless guest", async () => {
+    cloudUser = null;
+    const { chatForModule } = await import("../ai");
+    await expect(chatForModule("tutor", [{ role: "user", content: "hi" }]))
+      .rejects.toThrow("Sign in to use AI, or add your own API key in Settings → AI.");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

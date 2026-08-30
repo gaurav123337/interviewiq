@@ -31,11 +31,18 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       # fast retrieval-regression gate: a golden-set failure here stops the deploy
       - run: npm run eval:rag
+      # type-check the WHOLE project including the test suite. `npm run build`
+      # uses tsconfig.build.json, which EXCLUDES tests, so type regressions in
+      # the tests would otherwise slip past the build and only surface at runtime.
+      - run: npm run typecheck
       # build BEFORE test so the offline-readiness suite (service-worker precache
-      # vs built assets) runs against the real dist/ artifact; any test failure
-      # still stops the deploy
+      # vs built assets) runs against the real dist/ artifact
       - run: npm run build
-      - run: npm test || echo "⚠️ Pre-existing test failures — deploy not blocked"
+      # the unit/integration suite is a HARD gate — a failure stops the deploy.
+      # (This was previously `npm test || echo …`, i.e. non-blocking, so real
+      # regressions could ship green-looking; the suite is green now and CI keeps
+      # it that way.)
+      - run: npm test
       # edge-function shared code is pure TS — verify it with Deno so the
       # import-job extraction logic is tested in the pipeline (mirrors the
       # client suite, which exercises the same file)

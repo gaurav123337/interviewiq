@@ -14,8 +14,11 @@ async function guard(): Promise<void> {
 }
 
 /** A retrieved knowledge-base excerpt the tutor answer was grounded on.
-    `grounded` is false when the hit was too weak to cite — the answer then
-    comes from general knowledge and says so. */
+    `withGrounding` only emits citations for hits that clear the grounding
+    threshold, so every citation here is a genuine source the model answered
+    from — `grounded` is therefore always true and the field is retained only
+    for callers that still read it. When nothing clears the bar the answer comes
+    from general knowledge and the citation list is empty. */
 export interface Citation {
   documentId: number;
   title: string;
@@ -33,24 +36,33 @@ export async function withGrounding(
   ragCtx?: RagContext
 ): Promise<{ sys: string; citations: Citation[]; grounded: boolean; checked: boolean }> {
   const { hits, checked } = await retrieveContext(query, ragCtx);
-  if (!hits.length) {
-    /* checked + nothing grounded → the user's question wasn't in the KB;
-       surface a rate-limited notification so they know the answer is from
-       general knowledge and can suggest adding the topic */
+  /* Only chunks that clear the grounding threshold count as sources: they are
+     both what the model is told to answer from AND the only citations shown to
+     the user. A below-threshold near-miss must never be surfaced — labelling it
+     "📚 Grounded · N sources" would falsely claim the answer came from the
+     knowledge base when the model was actually told to answer from general
+     knowledge and never even saw the chunk. Keying the UI on citation presence
+     is therefore safe precisely because this is the only producer of them. */
+  const groundedHits = hits.filter(h => h.grounded);
+  if (!groundedHits.length) {
+    /* Retrieval ran but nothing cleared the bar (or there were no hits at all):
+       tell the model to answer from general knowledge and say so, surface a
+       rate-limited "not in the knowledge base" notification, and cite nothing.
+       When retrieval never ran (checked:false) we stay silent — we can't claim
+       the KB lacks the topic if we never looked. */
     if (checked) notifyKnowledgeGap(query);
     return { sys: checked ? groundingPrompt(sys, false, "") : sys, citations: [], grounded: false, checked };
   }
   const titles = await documentTitles();
-  const citations: Citation[] = hits.map(h => ({
+  const citations: Citation[] = groundedHits.map(h => ({
     documentId: h.documentId,
     title: titles.get(h.documentId) ?? "Knowledge base",
     content: h.content,
     similarity: h.similarity,
-    grounded: h.grounded
+    grounded: true
   }));
-  const grounded = hits.some(h => h.grounded);
-  const ctx = hits.map(c => c.content).join("\n\n---\n\n").slice(0, 6000);
-  return { sys: groundingPrompt(sys, grounded, ctx), citations, grounded, checked };
+  const ctx = groundedHits.map(c => c.content).join("\n\n---\n\n").slice(0, 6000);
+  return { sys: groundingPrompt(sys, true, ctx), citations, grounded: true, checked };
 }
 
 /** Plain-language explanation of a roadmap topic for the user's target level. */

@@ -400,7 +400,9 @@ describe("ATS parse preview", () => {
       "Jane Dev\nBangalore · 6+ years\njane@dev.io · +91 98765 43210\n\nSUMMARY\nI build frontends.\n\nSKILLS\nreact typescript",
       { ...JOB, skills: ["react", "typescript", "kubernetes"] }
     );
-    expect(p.sections).toContain("SUMMARY");
+    /* parseResumeSections normalizes the summary/skills headings to Title Case
+       ("Summary"/"Skills") regardless of the source doc's casing */
+    expect(p.sections).toContain("Summary");
     expect(p.contact.email).toBe("jane@dev.io");
     expect(p.contact.phone).not.toBeNull();
     expect(p.coverage.score).toBe(67);
@@ -545,7 +547,7 @@ describe("designed resume HTML", () => {
     expect(html).not.toContain("<script");
     expect(html).not.toContain("window.print");
     expect(html).toContain("#4f46e5"); /* default accent */
-    expect(html).toContain("SUMMARY");
+    expect(html).toContain("Summary"); /* resumeToHtml renders a styled <h2>Summary</h2> */
     expect(html).toContain("Airbnb");
     expect(html).toContain("Senior Frontend Engineer");
   });

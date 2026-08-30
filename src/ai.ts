@@ -225,7 +225,15 @@ export async function chatForModule(
   opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal } = {}
 ): Promise<string> {
   const s = resolveModuleModel(moduleId);
-  return chatWithSettings(s, messages, opts);
+  /* BYOK (user's own key, possibly a per-module override) always wins */
+  if (s.key) return chatWithSettings(s, messages, { ...opts, module: moduleId });
+  /* No local key — route through the admin's cloud proxy (requires sign-in),
+     passing the module so the edge function resolves its per-module model.
+     Mirrors chat()'s ladder so module-routed features (e.g. the system-design
+     tutor) work for signed-in users without a key instead of throwing. */
+  if (getCloudState().user) return cloudChat(messages, { ...opts, module: moduleId as AiModuleId });
+  /* Neither BYOK nor signed in */
+  throw new Error("Sign in to use AI, or add your own API key in Settings → AI.");
 }
 
 export interface FeedbackContext {

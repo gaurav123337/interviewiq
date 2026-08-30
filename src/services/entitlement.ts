@@ -183,7 +183,7 @@ export async function adminListEntitlements(): Promise<AdminEntitlementRow[]> {
 /** The format-key test mode — when the config flag is off, format keys are
     rejected entirely (they're forgeable; real Pro comes from the server). */
 export function testLicensing(): boolean {
-  return CONFIG.features.testLicensing === true;
+  return CONFIG.features.testLicensing;
 }
 
 /** Local tier source, for the Settings readout: server (verified), admin
