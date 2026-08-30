@@ -3,6 +3,7 @@
 
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 import { BASE_LIMITS, getLimits, paywallOn } from "./remoteConfig";
+import { getCloudState } from "./cloud";
 
 export type Tier = "free" | "pro";
 
@@ -47,6 +48,16 @@ export function isPaywallEnabled(): boolean {
 
 export function getTier(): Tier {
   if (adminUnlocked || teamPro) return "pro";
+  /* Pro is an ACCOUNT property, never a device property. A signed-out visitor
+     cannot legitimately hold Pro, so we ignore the locally-stored `iq.tier`
+     for guests and fail closed to "free" — otherwise anyone could unlock Pro
+     by writing `localStorage["iq.tier"]="pro"`. A signed-in user keeps Pro
+     even offline: Supabase persists the session, so getCloudState().user stays
+     truthy, and refreshEntitlement() has already mirrored the server tier into
+     `iq.tier` (downgrading forgers on reconnect). During the brief window
+     before initCloud() populates the session, a real Pro user reads as "free"
+     — a safe, self-correcting degradation. */
+  if (!getCloudState().user) return "free";
   return storageGet<Tier>(STORAGE_KEYS.tier, "free");
 }
 

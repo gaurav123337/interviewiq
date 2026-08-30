@@ -3,8 +3,10 @@
 
 echo "Running pre-push checks..."
 
-# Type check (uses tsconfig.build.json)
-if ! npx tsc -p tsconfig.build.json --noEmit 2>/dev/null; then
+# Type check the WHOLE project including tests (tsconfig.json), matching CI's
+# `npm run typecheck`. The production build uses tsconfig.build.json, which
+# excludes tests, so this is what catches type regressions in the suite.
+if ! npx tsc --noEmit 2>/dev/null; then
   echo "Type check failed. Fix errors before pushing."
   exit 1
 fi
@@ -18,6 +20,13 @@ fi
 # Production build
 if ! npx vite build 2>/dev/null; then
   echo "Build failed. Fix before pushing."
+  exit 1
+fi
+
+# Unit/integration suite — the same hard gate CI enforces. Heavy (~2-4 min);
+# use `git push --no-verify` to skip deliberately when you know the suite is green.
+if ! npx vitest run 2>/dev/null; then
+  echo "Tests failed. Fix before pushing."
   exit 1
 fi
 

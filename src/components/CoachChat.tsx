@@ -209,7 +209,7 @@ export function CoachChat(ctx: CoachContext) {
           { role: "user", content: text }
         ];
         const reply = await chat(history, { maxTokens: 450 });
-        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded, checked, citationsSource: "vector" }]);
+        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded, checked, citationsSource: citations.length ? "vector" : undefined }]);
       } else {
         /* offline mode — no key needed. The deterministic coach answer is
            grounded in the question bank; when the network is up, it ALSO
@@ -228,7 +228,7 @@ export function CoachChat(ctx: CoachContext) {
             grounded: true
           }));
         }
-        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded: citations.length > 0, checked: citations.length > 0, citationsSource: "lexical" }]);
+        setMsgs(m => [...m, { role: "assistant", text: reply, citations, grounded: citations.length > 0, checked: true, citationsSource: "lexical" }]);
       }
     } catch (e) {
       const msg = (e as Error).message || "Coach unavailable";
@@ -285,7 +285,7 @@ export function CoachChat(ctx: CoachContext) {
                       ))}
                     </div>
                   )}
-                  {m.role === "assistant" && !m.grounded && (
+                  {m.role === "assistant" && m.checked && !m.grounded && (
                     <button
                       type="button"
                       onClick={() => {

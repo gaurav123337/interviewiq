@@ -197,8 +197,11 @@ export class RazorpayProvider implements PaymentProvider {
       ["sign"]
     );
     const mac = await crypto.subtle.sign("HMAC", expected, new TextEncoder().encode(rawBody));
-    const computed = btoa(String.fromCharCode(...new Uint8Array(mac)));
-    if (computed !== sig)    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null, periodEnd: null };
+    /* Razorpay's X-Razorpay-Signature is a lowercase hex HMAC-SHA256 digest —
+       same encoding as the checkout-callback signature above and the Stripe
+       webhook path below. (Was base64, which never matched the real header.) */
+    const computed = [...new Uint8Array(mac)].map(b => b.toString(16).padStart(2, "0")).join("");
+    if (!timingSafeEqualHex(computed, sig.trim().toLowerCase()))    return { valid: false, event: null, externalId: null, userId: null, plan: null, amountMinor: null, currency: null, notes: null, periodEnd: null };
 
     try {
       const payload = JSON.parse(rawBody) as {

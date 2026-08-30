@@ -1,10 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { analyzeJd } from "../services/jd";
 import { buildJdSession, buildWeakTopicSession } from "../services/session";
 import { composeRelevantSession, composeSession, pickRelevant, verdict } from "../engine";
 import { getSrs, isDue, learnedCount, makeDeck, rate, resetSrs } from "../services/drill";
 import { aiCallsLeft, recordAiCall, recordSession, sessionsLeft, setTier } from "../services/entitlements";
 import type { Config } from "../types";
+
+/* entitlements.getTier() treats Pro as an ACCOUNT property: it honors a stored
+   "pro" tier only for a signed-in user (a guest's forgeable local tier is
+   ignored and fails closed to "free"). The dormant-paywall test below sets tier
+   "pro" and expects unlimited quota, so stub the cloud session as signed-in.
+   entitlements is the only module in this file's graph that imports cloud, and
+   it only calls getCloudState — the rest are harmless stubs. */
+vi.mock("../services/cloud", () => ({
+  getCloudState: () => ({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] }),
+  getSupabaseClient: () => Promise.resolve(null),
+  isCloudConfigured: () => false,
+}));
 
 const CFG: Config = { count: 8, mode: "standard", timing: "none", voice: false };
 

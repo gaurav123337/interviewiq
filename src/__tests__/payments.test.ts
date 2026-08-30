@@ -70,7 +70,7 @@ describe("razorpay webhook verification (default provider)", () => {
   });
 
   it("accepts a valid signature and maps the payload", async () => {
-    const sig = await hmacBase64("whsec_rzp", body);
+    const sig = await hmacHex("whsec_rzp", body);
     const v = await provider.verifyWebhook(body, { "x-razorpay-signature": sig });
     expect(v.valid).toBe(true);
     expect(v.event).toBe("payment.captured");
@@ -85,8 +85,12 @@ describe("razorpay webhook verification (default provider)", () => {
     expect((await provider.verifyWebhook(body, { "x-razorpay-signature": "bogus" })).valid).toBe(false);
     expect((await provider.verifyWebhook(body, {})).valid).toBe(false);
     /* a signature over DIFFERENT content must not verify */
-    const otherSig = await hmacBase64("whsec_rzp", JSON.stringify({ event: "payment.failed" }));
+    const otherSig = await hmacHex("whsec_rzp", JSON.stringify({ event: "payment.failed" }));
     expect((await provider.verifyWebhook(body, { "x-razorpay-signature": otherSig })).valid).toBe(false);
+    /* base64 is NOT Razorpay's encoding: a base64 HMAC of the RIGHT body must
+       still be rejected — the header is lowercase hex (regression guard). */
+    const base64Sig = await hmacBase64("whsec_rzp", body);
+    expect((await provider.verifyWebhook(body, { "x-razorpay-signature": base64Sig })).valid).toBe(false);
   });
 });
 
@@ -257,7 +261,7 @@ describe("subscription lifecycle (period end, cancel adapters, cancel events)", 
         }
       }
     });
-    const sig = await hmacBase64("whsec_rzp", body);
+    const sig = await hmacHex("whsec_rzp", body);
     const v = await provider.verifyWebhook(body, { "x-razorpay-signature": sig });
     expect(v.valid).toBe(true);
     expect(v.periodEnd).toBe(new Date(1799999999 * 1000).toISOString());
