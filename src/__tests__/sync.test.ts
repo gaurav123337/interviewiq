@@ -4,6 +4,19 @@ import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "../services
 
 const T0 = Date.parse("2026-08-09T12:00:00Z");
 
+/* A canonical profile aggregate (Item 11). The sync engine treats the value as
+   an opaque blob; these fixtures prove an arbitrarily-shaped profile round-trips
+   as a single unit under the "lww" policy. */
+const profileBlob = (over: Record<string, unknown> = {}) => ({
+  version: 2,
+  goal: { currentLevel: "mid", targetLevel: "senior", fieldId: "frontend", companyId: "general", targetDate: "2026-12-01", hoursPerWeek: 6, createdAt: 1 },
+  headline: "Senior Frontend Engineer", years: 6, location: "", remote: true,
+  workAuth: "", targetTitles: ["Frontend Engineer"], summary: "",
+  skills: { react: { slug: "react", display: "React", catalogId: "react", self: 4, sources: ["roadmap"], updatedAt: 1 } },
+  updatedAt: 1,
+  ...over
+});
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -17,6 +30,8 @@ describe("sync policies", () => {
     expect(policyFor(STORAGE_KEYS.onboard)).toBe("lww");
     expect(policyFor(STORAGE_KEYS.tier)).toBe("lww");
     expect(policyFor(STORAGE_KEYS.licenseKey)).toBe("lww");
+    /* the one canonical profile aggregate syncs as a single blob (Item 11) */
+    expect(policyFor(STORAGE_KEYS.profile)).toBe("lww");
     /* device-private keys must never sync */
     expect(policyFor(STORAGE_KEYS.apiKey)).toBe("local");
     expect(policyFor(STORAGE_KEYS.apiBase)).toBe("local");
@@ -25,6 +40,13 @@ describe("sync policies", () => {
     expect(policyFor(STORAGE_KEYS.notifPrefs)).toBe("local");
     expect(policyFor(STORAGE_KEYS.notifLast)).toBe("local");
     expect(policyFor(STORAGE_KEYS.syncMeta)).toBe("local");
+    /* the legacy shapes the canonical profile subsumes must NOT also sync —
+       syncing both blobs would let two copies of the same data diverge across
+       devices. They stay device-local until Item 11 PR6 retires them. */
+    expect(policyFor(STORAGE_KEYS.skills)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.goal)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.career)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.resume)).toBe("local");
   });
 
   it("defaults unknown/future keys to local (nothing leaks by accident)", () => {
@@ -193,5 +215,66 @@ describe("sync engine — apply tracker per-job merge", () => {
     const snap = await remote.pull();
     const pushed = snap[STORAGE_KEYS.applyTrack]?.value as Record<string, { status: string }>;
     expect(Object.keys(pushed).sort()).toEqual(["jobA", "jobB", "jobC"]);
+  });
+});
+
+describe("sync engine — canonical profile (Item 11)", () => {
+  it("pushes the one canonical profile up on first sign-in", async () => {
+    const profile = profileBlob();
+    storageSet(STORAGE_KEYS.profile, profile);
+    const remote = new InMemoryRemoteStore();
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const snap = await remote.pull();
+    /* the whole aggregate (goal + skill graph + career fields) travels as one blob */
+    expect(snap[STORAGE_KEYS.profile]?.value).toEqual(profile);
+  });
+
+  it("pulls the canonical profile down onto a fresh device", async () => {
+    const profile = profileBlob();
+    const remote = new InMemoryRemoteStore();
+    await remote.push({ [STORAGE_KEYS.profile]: { value: profile, updatedAt: T0 } });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote); /* fresh device: no local profile → pulled */
+    expect(storageGet(STORAGE_KEYS.profile, null)).toEqual(profile);
+  });
+
+  it("last-write-wins: a newer remote profile replaces an older pre-sync local one", async () => {
+    storageSet(STORAGE_KEYS.profile, profileBlob({ headline: "Old", updatedAt: 1 }));
+    /* "pre-sync" = written before any account existed, so it carries no sync
+       stamp (meta 0). Clear iq.syncMeta to model that exactly — and to shield
+       the assertion from engines left subscribed by earlier tests in this file,
+       which would otherwise re-stamp this key on the write above. */
+    storageRemove(STORAGE_KEYS.syncMeta);
+    const remote = new InMemoryRemoteStore();
+    const newer = profileBlob({ headline: "New", updatedAt: T0 + 5000 });
+    await remote.push({ [STORAGE_KEYS.profile]: { value: newer, updatedAt: T0 + 5000 } });
+    const engine = new SyncEngine(() => T0 + 6000);
+    await engine.signIn(remote);
+    expect(storageGet(STORAGE_KEYS.profile, {})).toEqual(newer);
+  });
+
+  it("a cleared profile is not resurrected by a stale remote copy on pull", async () => {
+    /* This locks the PR4 rebuild-and-restamp leak-fix under the PR5 lww policy:
+       clearGoal / clearUploadedResume rewrite iq.profile with a FRESH stamp, so a
+       stale-but-present remote row (older stamp) can never re-apply on a pull. */
+    vi.useFakeTimers();
+    try {
+      const remote = new InMemoryRemoteStore();
+      const engine = new SyncEngine(() => T0);
+      await engine.signIn(remote);
+      /* the user clears their goal/resume → the store rewrites a minimal profile
+         (this local write stamps iq.syncMeta[profile] = T0) */
+      const cleared = profileBlob({ goal: null, skills: {}, headline: "", updatedAt: T0 });
+      storageSet(STORAGE_KEYS.profile, cleared);
+      await vi.advanceTimersByTimeAsync(1000); /* debounced flush pushes the cleared profile up */
+      /* a stale rich copy (older stamp) is what a lagging device/table still holds */
+      await remote.push({ [STORAGE_KEYS.profile]: { value: profileBlob({ headline: "Rich" }), updatedAt: T0 - 5000 } });
+      await engine.pull();
+      /* local stamp (T0) ≥ stale remote stamp (T0−5000) → cleared profile stands */
+      expect(storageGet(STORAGE_KEYS.profile, null)).toEqual(cleared);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
