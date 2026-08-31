@@ -6,7 +6,8 @@
    Uses safe React text rendering with proper escaping. */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { getSupabaseClient } from "../services/cloud";
+import { getSupabaseClient, cloudFnHeaders } from "../services/cloud";
+import { CONFIG } from "../config";
 import { normalizeUserArticle, listUserArticles, deleteUserArticle, estimateTokenCost, type NormalizedArticle } from "../services/articleNormalizer";
 import { fire } from "../services/notifications";
 import { cardCls, Chip } from "./ui";
@@ -990,12 +991,42 @@ function UnderstandModal({ open, onClose, onResult }: UnderstandModalProps) {
       let articleText = text;
       let articleTitle = title || url;
 
-      // If URL, try to fetch content
+      // If URL, fetch + extract the real article server-side (SSRF-guarded
+      // via the article-fetch edge function). The client can't fetch the page
+      // cross-origin, and normalizing the bare URL string (the old behavior)
+      // wasted an AI call on garbage.
       if (mode === "url") {
         setProgress("Fetching article from URL...");
-        // For now, use the URL as a reference — user can paste text if fetch fails
-        articleText = text || url;
-        if (!title) articleTitle = new URL(url).hostname;
+        let ok = false;
+        let failMsg = "Couldn't fetch that URL — paste the article text instead.";
+        try {
+          const res = await fetch(`${CONFIG.supabase.url}/functions/v1/article-fetch`, {
+            method: "POST",
+            headers: await cloudFnHeaders(),
+            body: JSON.stringify({ url }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (res.ok && body?.ok && body.article?.content) {
+            articleText = body.article.content;
+            articleTitle = title || body.article.title || new URL(url).hostname;
+            ok = true;
+          } else if (typeof body?.error === "string" && body.error) {
+            failMsg = body.error;
+          }
+        } catch {
+          failMsg = "Couldn't reach the article service — check your connection or paste the text instead.";
+        }
+        if (!ok) {
+          if (text.trim()) {
+            // Use the pasted-text fallback the UI already offers.
+            articleText = text;
+            if (!title) articleTitle = new URL(url).hostname;
+          } else {
+            // Nothing to normalize — surface the reason, don't spend an AI call.
+            fire("❌ Couldn't fetch that URL", failMsg);
+            return;
+          }
+        }
       }
 
       setProgress("🤖 AI is analyzing and normalizing the article...");

@@ -121,3 +121,9 @@ jobs:
           npx supabase functions deploy embed \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
+          # article-fetch — SSRF-guarded fetch of a user-pasted article URL.
+          # --no-verify-jwt so the gateway forwards the request and the function
+          # verifies the signed-in caller itself (requireUser → real getUser).
+          npx supabase functions deploy article-fetch \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt
