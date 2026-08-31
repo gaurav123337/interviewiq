@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { CONFIG } from "../../../config";
 import { aiAvailable } from "../../../ai";
-import { listPdfChunks, type PdfDocumentRow } from "../../../services/admin";
+import { listPdfChunks, seedKnowledgeBase, type PdfDocumentRow } from "../../../services/admin";
 import { cloudFnHeaders } from "../../../services/cloud";
 import { reindexDocument } from "../../../services/indexer";
 import {
@@ -48,6 +48,7 @@ export const RagHealthTab = memo(function RagHealthTab({
   const [ragThreshold, setRagThreshold] = useState<number>(() => effectiveGroundingMinSim());
   const [histSel, setHistSel] = useState<number | null>(null);
   const [reindexBusy, setReindexBusy] = useState(false);
+  const [seedBusy, setSeedBusy] = useState(false);
   const [digestSentWeek, setDigestSentWeek] = useState<string | null>(() => storageGet<string>(STORAGE_KEYS.ragDigestWeek, "") || null);
 
   const ragAlerts = useMemo(
@@ -136,6 +137,27 @@ export const RagHealthTab = memo(function RagHealthTab({
             users' questions aren't in the uploaded PDFs — time to add documents or improve chunking.
           </p>
         </div>
+        <button
+          className={btnGhost + btnSm}
+          disabled={seedBusy || busy}
+          title="Embed the in-repo starter corpus (content/rag-seed) into the knowledge base using the server-configured embeddings provider — no key needed in your shell"
+          onClick={async () => {
+            setSeedBusy(true);
+            try {
+              const r = await seedKnowledgeBase();
+              let msg = `🌱 Seeded ${r.seeded} doc${r.seeded === 1 ? "" : "s"} · ${r.chunks} chunk${r.chunks === 1 ? "" : "s"} · model ${r.model}`;
+              if (r.errors > 0) { msg += ` · ${r.errors} failed — see console`; console.error("[seed-rag] errors:", r.errorDetails); }
+              toast(msg);
+              onRefresh();
+            } catch (e) {
+              let m = (e as Error).message || "Seed failed";
+              if (/not configured/i.test(m)) m += " — set it in Secrets → 🧬 Embeddings provider";
+              toast("✗ " + m);
+            } finally { setSeedBusy(false); }
+          }}
+        >
+          {seedBusy ? <><span className="spinner" /> Seeding…</> : "🌱 Seed / re-seed starter corpus"}
+        </button>
         {kbDocs.length > 0 && (
           <button
             className={btnGhost + btnSm}
@@ -165,6 +187,20 @@ export const RagHealthTab = memo(function RagHealthTab({
           </button>
         )}
       </div>
+
+      {/* starter-corpus seed status — kbDocs already carries `source`, so no extra query */}
+      {(() => {
+        const seedDocs = kbDocs.filter(d => d.source === "seed");
+        const seedChunks = seedDocs.reduce((n, d) => n + (d.chunk_count ?? 0), 0);
+        return (
+          <p className="mt-2 text-[11.5px] text-mut">
+            {seedDocs.length > 0
+              ? <>🌱 Starter corpus: <span className="font-bold text-fnt">{seedDocs.length}</span> doc{seedDocs.length === 1 ? "" : "s"} · {seedChunks} chunk{seedChunks === 1 ? "" : "s"} seeded.</>
+              : <>🌱 Starter corpus not seeded yet.</>}
+            {" "}Uses the <span className="font-bold text-fnt">Secrets → 🧬 Embeddings provider</span> key; for orcarouter set model <span className="font-mono">openai/text-embedding-3-small</span>.
+          </p>
+        );
+      })()}
 
       {/* digest alert banner */}
       {ragAlerts.length > 0 && (

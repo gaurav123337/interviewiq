@@ -11,6 +11,7 @@
     "test": "vitest run",
     "eval:rag": "vitest run src/__tests__/rag-eval.test.ts",
     "seed:rag": "node scripts/seed-rag.mjs",
+    "gen:rag-corpus": "node scripts/gen-rag-corpus.mjs",
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/gen-icons.js",
     "prepare": "husky"
