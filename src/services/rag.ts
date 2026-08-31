@@ -18,7 +18,7 @@
 
 import { conceptOverlap, conceptSet, familyVocabulary, sigTokens } from "../coach/concepts";
 import { getCloudState, getSupabaseClient } from "./cloud";
-import { embed } from "./embeddings";
+import { embedQuery } from "./embeddings";
 import { listPdfDocuments, searchPdfChunks, type PdfHit } from "./admin";
 import { queueEvent } from "./events";
 import { getRagDefaults } from "./remoteConfig";
@@ -272,13 +272,13 @@ export async function retrieveContext(query: string, ctx?: RagContext): Promise<
   try {
     const client = await getSupabaseClient();
     if (!client || !getCloudState().user) return { hits: [], checked: false };
-    const qv = await embed([query]);
-    /* An empty embedding vector means we never actually queried the KB (embed
-       failed or returned nothing) — report checked:false so callers don't tell
-       the user "we searched and found nothing" or prompt them to add a topic we
-       never looked up. */
-    if (!qv[0]?.length) return { hits: [], checked: false };
-    const raw = await searchPdfChunks(qv[0], effectiveCandidatePool());
+    const qv = await embedQuery(query);
+    /* An empty embedding vector means we never actually queried the KB (the
+       embed call failed or returned nothing) — report checked:false so callers
+       don't tell the user "we searched and found nothing" or prompt them to add
+       a topic we never looked up. */
+    if (!qv?.length) return { hits: [], checked: false };
+    const raw = await searchPdfChunks(qv, effectiveCandidatePool());
     const minSim = effectiveGroundingMinSim();
     const hardFloor = effectiveHardFloor();
     const expanded = expandQuery(query);

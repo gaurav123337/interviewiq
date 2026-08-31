@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, useEffect } from "react";
 import { CONFIG } from "../../config";
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../../services/secrets";
-import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, type AiProviderStatus } from "../../services/aiProvider";
+import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, getEmbeddingsProviderConfig, saveEmbeddingsProviderConfig, testEmbeddingsProvider, type AiProviderStatus, type EmbeddingsProviderStatus } from "../../services/aiProvider";
 import { listProviderHistory, saveToHistory, deleteHistoryEntry, formatHistoryDate, type ProviderHistoryEntry } from "../../services/aiProviderHistory";
 import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretStatus } from "../../services/edgeSecrets";
 import { toast } from "../../toast";
@@ -209,6 +209,142 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
 }
 
 /* ------------------------------------------------------------------ */
+/* Embeddings provider — the key/base/model used to turn text into      */
+/* 1536-dim vectors for RAG. A DEDICATED row (key='embeddings') because  */
+/* chat APIs like OpenRouter can't embed. When unset, retrieval falls    */
+/* back to the chat provider server-side; setting a real embeddings API  */
+/* here is what powers the keyless-query path (functions/embed).         */
+/* ------------------------------------------------------------------ */
+
+function EmbeddingsProviderCard({ status, onLoad, onToast }: { status: EmbeddingsProviderStatus | null; onLoad: () => void; onToast: (m: string) => void }) {
+  const [key, setKey] = useState("");
+  const [base, setBase] = useState("");
+  const [model, setModel] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testNote, setTestNote] = useState<string | null>(null);
+
+  /* Prefill from the effective status — but NOT the inherited chat key's model
+     as if it were ours; when inherited the fields show the defaults to save a
+     dedicated row on top of. */
+  useEffect(() => {
+    if (status) {
+      setBase(status.base || "https://api.openai.com/v1");
+      setModel(status.model || "");
+    }
+  }, [status]);
+
+  const dedicated = !!status?.configured && !status.inherited;
+
+  const save = async () => {
+    /* same guard as the chat provider: a model ID is not an API key */
+    const k = key.trim();
+    if (/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]+$/.test(k)) {
+      onToast("✗ That looks like a MODEL name — paste your API key here; the model goes in the Model field");
+      return;
+    }
+    setSaving(true);
+    setTestNote(null);
+    try {
+      await saveEmbeddingsProviderConfig({ key: k, base, model });
+      onToast("🧬 Embeddings provider saved — RAG retrieval + keyless queries now use it");
+      setKey("");
+      await onLoad();
+    } catch (e) {
+      onToast("✗ " + ((e as Error).message || "Save failed"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    setTestNote(null);
+    try {
+      const r = await testEmbeddingsProvider({ key, base, model });
+      setTestNote((r.ok ? "✅ " : "✗ ") + r.note);
+    } catch (e) {
+      setTestNote("✗ " + ((e as Error).message || "Test failed"));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className={`${cardCls} p-5`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-[16px] font-extrabold">🧬 Embeddings provider</h2>
+          <p className="mt-1 max-w-[700px] text-[12.5px] text-mut">
+            The key/model that turns text into <span className="font-bold">1536-dim vectors</span> for knowledge-base search.
+            Kept separate from the chat provider because chat APIs like OpenRouter <span className="font-bold">can't embed</span> —
+            point this at OpenAI (or any 1536-dim <code className="font-mono">/embeddings</code> API). When unset, retrieval falls
+            back to the chat provider.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {status && (
+            dedicated ? (
+              <Chip tone="ok">✅ Configured · {status.keyHint}{status.model ? ` · ${status.model}` : ""}</Chip>
+            ) : status.inherited ? (
+              <Chip tone="warn">↩ Inheriting chat provider — set a real embeddings API</Chip>
+            ) : (
+              <Chip tone="warn">⚠️ Not configured — keyless RAG retrieval is off</Chip>
+            )
+          )}
+          <button className={btnGhost + btnSm} onClick={onLoad} disabled={saving}>Refresh</button>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="text-[11.5px] font-bold text-fnt">Base URL</span>
+          <input
+            type="text"
+            value={base}
+            onChange={e => setBase(e.target.value)}
+            placeholder="https://api.openai.com/v1"
+            className="mt-1 w-full rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+          />
+        </label>
+        <label className="block">
+          <span className="text-[11.5px] font-bold text-fnt">Model</span>
+          <input
+            type="text"
+            value={model}
+            onChange={e => setModel(e.target.value)}
+            placeholder="text-embedding-3-small"
+            className="mt-1 w-full rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+          />
+        </label>
+      </div>
+      <label className="mt-3 block">
+        <span className="text-[11.5px] font-bold text-fnt">API key {dedicated && <span className="font-normal text-mut">(leave blank to keep the saved one)</span>}</span>
+        <input
+          type="password"
+          value={key}
+          onChange={e => setKey(e.target.value)}
+          placeholder={dedicated ? status!.keyHint : "sk-…"}
+          autoComplete="off"
+          className="mt-1 w-full rounded-xl border border-line/15 bg-deep/80 px-3 py-2 text-[12.5px] placeholder:text-fnt focus:border-acc1/80 focus:outline-none"
+        />
+      </label>
+
+      {testNote && <p className={`mt-2 text-[12px] ${testNote.startsWith("✅") ? "text-ok" : "text-warn"}`}>{testNote}</p>}
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button className={btnPrimary + btnSm} onClick={() => void save()} disabled={saving || testing}>
+          {saving ? "Saving…" : "💾 Save key"}
+        </button>
+        <button className={btnGhost + btnSm} onClick={() => void test()} disabled={saving || testing} title="One live call to the provider's /embeddings endpoint — verifies it can embed and returns 1536-dim vectors">
+          {testing ? "Testing…" : "🧪 Test embeddings"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* App-managed Edge Function secrets — the credentials the admin edits  */
 /* day-to-day (Resend, Adzuna, GitHub, Safe Browsing). Stored in the    */
 /* private edge_secrets table, editable HERE — no dashboard visits.     */
@@ -314,6 +450,16 @@ export const SecretsSection = memo(function SecretsSection() {
     }
   };
 
+  const [embStatus, setEmbStatus] = useState<EmbeddingsProviderStatus | null>(null);
+
+  const loadEmbeddings = async () => {
+    try {
+      setEmbStatus(await getEmbeddingsProviderConfig());
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Failed to load embeddings provider config"));
+    }
+  };
+
   const [edgeSecrets, setEdgeSecrets] = useState<EdgeSecretStatus[] | null>(null);
 
   const loadEdgeSecrets = async () => {
@@ -337,7 +483,7 @@ export const SecretsSection = memo(function SecretsSection() {
     }
   };
 
-  useEffect(() => { void load(); void loadAi(); void loadEdgeSecrets(); }, []);
+  useEffect(() => { void load(); void loadAi(); void loadEmbeddings(); void loadEdgeSecrets(); }, []);
 
   /* one-click RESEND_API_KEY validation. Defaults to the admin's own
      inbox; a recipient can be supplied because Resend TEST keys only
@@ -374,6 +520,7 @@ export const SecretsSection = memo(function SecretsSection() {
   return (
     <div className="space-y-4">
       <AiPipelineCard status={aiStatus} onLoad={loadAi} onToast={toast} />
+      <EmbeddingsProviderCard status={embStatus} onLoad={loadEmbeddings} onToast={toast} />
       <EdgeSecretsCard statuses={edgeSecrets} onLoad={loadEdgeSecrets} onToast={toast} />
       <div className={`${cardCls} p-5`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
