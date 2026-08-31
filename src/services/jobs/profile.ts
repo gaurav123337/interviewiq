@@ -3,45 +3,44 @@
 import type { CareerProfile } from "../../types";
 import { LEVELS, fieldById } from "../../data";
 import { getCloudState, getSupabaseClient } from "../cloud";
-import { getGoal, getProfile } from "../goal";
-import { STORAGE_KEYS, storageGet, storageSet } from "../storage";
+import { getGoal } from "../goal";
+import { getCanonicalProfile, ingestCareerProfile, toCareerProfile } from "../profileStore";
 
 export function getCareerProfile(): CareerProfile | null {
-  return storageGet<CareerProfile | null>(STORAGE_KEYS.career, null);
+  const p = getCanonicalProfile();
+  /* Preserve the exact legacy null contract: a career profile "exists" only
+     once the user has saved one (origins.career). When it does exist, its
+     skills are DERIVED from the unified graph — so roadmap/diagnostic edits
+     surface here live (the Item 11 bridge). A user who has never created a
+     career profile still gets null → the "Prefill from my skills" CTA shows. */
+  if (!p.origins.career) return null;
+  return toCareerProfile(p);
 }
 
 export function saveCareerProfile(p: CareerProfile): void {
-  storageSet(STORAGE_KEYS.career, { ...p, updatedAt: Date.now() });
-  /* best-effort cloud sync — never blocks the UI */
-  void saveCareerProfileToCloud(p);
+  const saved = { ...p, updatedAt: Date.now() };
+  /* the career profile lives in the one canonical aggregate (skills fold into
+     the graph); origins.career flips true so getCareerProfile() stops returning null */
+  ingestCareerProfile(saved);
+  /* best-effort cloud sync — never blocks the UI (stamped copy, matches local) */
+  void saveCareerProfileToCloud(saved);
 }
 
-/** A fresh profile prefilled from the diagnostic/roadmap skill profile. */
+/** A fresh profile prefilled from the unified skill graph (roadmap / diagnostic
+    / resume, via the canonical store). When no target titles have been saved
+    yet, synthesize the "Senior Frontend Engineer" pattern from the goal so
+    title matching keys on the field, not the seniority word alone. */
 export function defaultCareerProfile(): CareerProfile {
-  const sp = getProfile();
-  const goal = getGoal();
-  const skills = [...new Set((sp?.skills ?? [])
-    .filter(s => (s.measured ?? s.self) >= 2)
-    .map(s => s.skill))]
-    .slice(0, 30);
-  const levelName = LEVELS.find(l => l.id === goal?.targetLevel)?.name;
-  /* target titles = the full "Senior Frontend Engineer" pattern, so title
-     matching keys on the field, not the seniority word alone */
-  const fieldName = fieldById(goal?.fieldId)?.name;
-  const titles = levelName
-    ? [fieldName ? `${levelName} ${fieldName}` : levelName]
-    : fieldName ? [fieldName] : [];
-  return {
-    headline: "",
-    years: 0,
-    location: "",
-    remote: true,
-    workAuth: "",
-    targetTitles: titles,
-    skills,
-    summary: "",
-    updatedAt: Date.now()
-  };
+  const base = toCareerProfile(getCanonicalProfile());
+  if (base.targetTitles.length === 0) {
+    const goal = getGoal();
+    const levelName = LEVELS.find(l => l.id === goal?.targetLevel)?.name;
+    const fieldName = fieldById(goal?.fieldId)?.name;
+    base.targetTitles = levelName
+      ? [fieldName ? `${levelName} ${fieldName}` : levelName]
+      : fieldName ? [fieldName] : [];
+  }
+  return base;
 }
 
 export async function loadCareerProfileFromCloud(): Promise<CareerProfile | null> {

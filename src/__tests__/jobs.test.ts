@@ -2,8 +2,9 @@
    feed mapping, and the refresh trigger. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CareerProfile, JobPosting } from "../types";
+import type { CareerGoal, CareerProfile, JobPosting, SkillProfile } from "../types";
 import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
+import { canonicalize } from "../data/skillVocab";
 
 const from = vi.hoisted(() => vi.fn());
 const rpc = vi.hoisted(() => vi.fn());
@@ -168,12 +169,14 @@ describe("inferDomain", () => {
 });
 
 describe("career profile persistence", () => {
-  it("save then get round-trips through storage", async () => {
+  it("save then get round-trips through storage (skills derived as canonical display names)", async () => {
     const { getCareerProfile, saveCareerProfile } = await import("../services/jobs");
     saveCareerProfile(PROFILE);
     const got = getCareerProfile();
     expect(got?.headline).toBe("Senior Frontend Engineer");
-    expect(got?.skills).toEqual(PROFILE.skills);
+    /* skills are now DERIVED from the one unified graph → canonical display
+       names ("node" → "Node.js"), in first-seen order */
+    expect(got?.skills).toEqual(PROFILE.skills.map(s => canonicalize(s).display));
     expect(got?.updatedAt).toBeGreaterThan(0);
   });
 
@@ -181,9 +184,47 @@ describe("career profile persistence", () => {
     storageSet(STORAGE_KEYS.skills, { goal: {}, skills: [{ skill: "react", self: 4 }, { skill: "kubernetes", self: 1 }] });
     const { defaultCareerProfile } = await import("../services/jobs");
     const p = defaultCareerProfile();
-    expect(p.skills).toContain("react");
-    expect(p.skills).not.toContain("kubernetes");
+    expect(p.skills).toContain(canonicalize("react").display);        // "React" (self 4 ≥ 2)
+    expect(p.skills).not.toContain(canonicalize("kubernetes").display); // self 1 < 2 → excluded
     expect(p.remote).toBe(true);
+  });
+
+  it("defaultCareerProfile synthesizes target titles from the goal when none are saved", async () => {
+    const goal: CareerGoal = {
+      currentLevel: "mid", targetLevel: "senior", fieldId: "frontend", companyId: "general",
+      targetDate: "2026-12-01", hoursPerWeek: 6, createdAt: 1
+    };
+    const { saveGoal } = await import("../services/goal");
+    saveGoal(goal);
+    const { defaultCareerProfile } = await import("../services/jobs");
+    const p = defaultCareerProfile();
+    expect(p.targetTitles.length).toBeGreaterThan(0);
+    expect(p.targetTitles[0]).toMatch(/senior/i);
+  });
+
+  it("live bridge: a roadmap skill edit surfaces in the career profile's skills", async () => {
+    const { saveProfile } = await import("../services/goal");
+    const { getCareerProfile, saveCareerProfile } = await import("../services/jobs");
+    /* the user has a saved career profile … */
+    saveCareerProfile({ ...PROFILE, skills: ["react"] });
+    /* … and then rates a brand-new skill on the roadmap */
+    const goal: CareerGoal = {
+      currentLevel: "mid", targetLevel: "senior", fieldId: "backend", companyId: "general",
+      targetDate: "2026-12-01", hoursPerWeek: 6, createdAt: 1
+    };
+    const sp: SkillProfile = { goal, skills: [{ skill: "Rust", self: 4 }] };
+    saveProfile(sp);
+
+    const skills = getCareerProfile()?.skills ?? [];
+    /* the roadmap edit is visible on the jobs side with no manual re-save … */
+    expect(skills).toContain(canonicalize("Rust").display); // "Rust"
+    /* … and the originally-claimed career skill is retained (additive) */
+    expect(skills).toContain(canonicalize("react").display); // "React"
+    /* the Skill Counselor derives its owned set by canonicalizing these same
+       skills (skillCounselor.ownedIdsOf), so its overlap now counts the roadmap
+       edit too */
+    const ownedByCounselor = new Set(skills.map(s => canonicalize(s).slug));
+    expect(ownedByCounselor.has(canonicalize("Rust").slug)).toBe(true);
   });
 });
 

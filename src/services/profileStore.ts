@@ -11,10 +11,11 @@
    (CanonicalProfile, version 2) plus DERIVED VIEWS that reproduce each legacy
    shape, so existing readers can eventually delegate here without changing.
 
-   PR3 SCOPE (this file): the store + migration + views + merge-writers are
-   built and unit-proven, but NOTHING in the app is wired to them yet — every
-   existing accessor still reads its legacy key, so app behaviour is unchanged.
-   PR4 wires the delegators (the live bridge); PR6 retires the legacy keys.
+   As of PR6 this is the SINGLE physical store: the legacy keys are migrated
+   into `iq.profile` on first read and then DELETED. Every accessor
+   (getGoal / getProfile / getCareerProfile / getUploadedResume) is a derived
+   view over this one aggregate, and the clear* operations are canonical graph
+   teardowns — nothing outside this module reads or writes the retired keys.
 
    FIDELITY DESIGN. The roadmap keys its ratings by *composite* human labels
    ("React · Vue · Angular") and depends on that array round-tripping exactly.
@@ -28,7 +29,7 @@
 import type {
   CareerGoal, CareerProfile, DiagnosticResult, SkillProfile, SkillRating, UploadedResume
 } from "../types";
-import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
+import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./storage";
 import { canonicalize, decomposeCanonical } from "../data/skillVocab";
 
 /* ------------------------------------------------------------------ */
@@ -218,20 +219,97 @@ export function buildCanonicalFromLegacy(): CanonicalProfile {
 /* Read — lazy, idempotent migration                                   */
 /* ------------------------------------------------------------------ */
 
-/** The canonical profile. Migrates from the legacy keys on first access and
-    persists the result; a subsequent call returns the stored v2 aggregate
-    unchanged (legacy keys are kept in parallel — rollback-safe). */
+/* The retired legacy keys — migrated into iq.profile once, then deleted (PR6). */
+const LEGACY_KEYS: string[] = [STORAGE_KEYS.skills, STORAGE_KEYS.goal, STORAGE_KEYS.career, STORAGE_KEYS.resume];
+const MISSING = Symbol("missing");
+
+/** Delete the retired legacy keys once their data lives in iq.profile. Only
+    removes keys that are actually present, so the converged steady state emits
+    no spurious change events. All four are sync policy "local" (absent from
+    SYNC_POLICIES), so removing them never propagates to the cloud. */
+function purgeLegacyKeys(): void {
+  for (const key of LEGACY_KEYS) {
+    if (storageGet<unknown>(key, MISSING) !== MISSING) storageRemove(key);
+  }
+}
+
+/** The canonical profile — the single physical store. On a fresh/pre-migration
+    device it is built from the legacy keys once, persisted, and the legacy keys
+    are DELETED (migrate-and-delete). On every later call the stored v2 aggregate
+    is returned as-is, and any legacy key still lingering from an older build is
+    purged. It is NEVER rebuilt from the legacy keys once a v2 aggregate exists:
+    a cloud-synced device holds a v2 profile with empty legacy keys, and
+    rebuilding would wipe the synced data. */
 export function getCanonicalProfile(): CanonicalProfile {
   const existing = storageGet<CanonicalProfile | null>(STORAGE_KEYS.profile, null);
-  if (existing && existing.version === 2) return existing;
+  if (existing && existing.version === 2) {
+    purgeLegacyKeys();
+    return existing;
+  }
   const migrated = buildCanonicalFromLegacy();
   storageSet(STORAGE_KEYS.profile, migrated);
+  purgeLegacyKeys();
   return migrated;
 }
 
 /** Persist a mutated canonical profile (stamps updatedAt). */
 function saveCanonicalProfile(p: CanonicalProfile): void {
   storageSet(STORAGE_KEYS.profile, { ...p, updatedAt: Date.now() });
+}
+
+/** Remove one provenance source from every node in the graph. A node that
+    existed ONLY because of this source disappears; a node with other sources
+    survives (minus this contribution). When "roadmap" is removed the roadmap-
+    only signals self/measured are cleared too — they have no meaning once no
+    roadmap rating references the node. */
+function stripSource(graph: Record<string, SkillNode>, source: SkillSource): Record<string, SkillNode> {
+  const out: Record<string, SkillNode> = {};
+  for (const [slug, n] of Object.entries(graph)) {
+    if (!n.sources.includes(source)) { out[slug] = n; continue; }
+    const sources = n.sources.filter(s => s !== source);
+    if (sources.length === 0) continue; // node existed only because of this source
+    const kept: SkillNode = { ...n, sources };
+    if (source === "roadmap") { delete kept.self; delete kept.measured; }
+    out[slug] = kept;
+  }
+  return out;
+}
+
+/** Canonical teardown of the roadmap contribution — the replacement for
+    clearGoal()'s old "delete iq.skills/iq.goal then rebuild" dance. Drops the
+    goal, diagnostic and verbatim roadmap ratings, and strips the "roadmap"
+    source from the graph (career/resume-origin nodes survive). The fresh
+    updatedAt stamp (via saveCanonicalProfile) keeps a later last-writer-wins
+    cloud pull from resurrecting the cleared state from an older remote copy. */
+export function clearRoadmapFromCanonical(): CanonicalProfile {
+  const p = getCanonicalProfile();
+  const next: CanonicalProfile = {
+    ...p,
+    goal: null,
+    diagnostic: undefined,
+    diagnosticSkippedAt: undefined,
+    roadmapSkills: [],
+    skills: stripSource(p.skills, "roadmap"),
+    origins: { ...p.origins, skills: false, goal: false }
+  };
+  saveCanonicalProfile(next);
+  return next;
+}
+
+/** Canonical teardown of the resume contribution — the replacement for
+    clearUploadedResume()'s old "delete iq.resume then rebuild". Drops the
+    resume payload and strips the "resume" source from the graph (roadmap/
+    career-origin nodes survive). Restamps for the same LWW reason as above. */
+export function clearResumeFromCanonical(): CanonicalProfile {
+  const p = getCanonicalProfile();
+  const next: CanonicalProfile = {
+    ...p,
+    resume: undefined,
+    skills: stripSource(p.skills, "resume"),
+    origins: { ...p.origins, resume: false }
+  };
+  saveCanonicalProfile(next);
+  return next;
 }
 
 /* ------------------------------------------------------------------ */
@@ -293,6 +371,14 @@ export function toUploadedResume(p: CanonicalProfile = getCanonicalProfile()): U
     extractedAt: p.resume.extractedAt,
     profile: toCareerProfile(p)
   };
+}
+
+/** The canonical slugs the user owns — every node in the unified graph. These
+    are skillCatalog ids when known, which is exactly what resolvePath() compares
+    roadmap prerequisites against, so SkillDetail can mark owned prerequisites
+    directly (replacing its old, always-empty localStorage["iq.skills"] read). */
+export function ownedSkillSlugs(p: CanonicalProfile = getCanonicalProfile()): string[] {
+  return Object.keys(p.skills);
 }
 
 /* ------------------------------------------------------------------ */

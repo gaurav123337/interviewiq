@@ -9,7 +9,7 @@
 import { FIELDS, LEVELS } from "../data";
 import type { CareerProfile, LevelId, SkillRating, UploadedResume } from "../types";
 import { getCloudState, getSupabaseClient } from "./cloud";
-import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./storage";
+import { clearResumeFromCanonical, ingestUploadedResume, toUploadedResume } from "./profileStore";
 import { normalizeResume } from "./resumeParser";
 
 export interface ResumeResult {
@@ -332,18 +332,23 @@ export function resumeToProfile(text: string): CareerProfile {
 /* ------------------------------------------------------------------ */
 
 export function getUploadedResume(): UploadedResume | null {
-  return storageGet<UploadedResume | null>(STORAGE_KEYS.resume, null);
+  /* derived view over the canonical aggregate — null when no resume uploaded */
+  return toUploadedResume();
 }
 
 export function saveUploadedResume(r: UploadedResume): void {
   const capped = { ...r, text: r.text.slice(0, 20000) };
-  storageSet(STORAGE_KEYS.resume, capped);
+  /* the resume + its skills live in the one canonical aggregate */
+  ingestUploadedResume(capped);
   /* best-effort cloud backup — never blocks the UI */
   void saveUploadedResumeToCloud(capped);
 }
 
 export function clearUploadedResume(): void {
-  storageRemove(STORAGE_KEYS.resume);
+  /* canonical teardown: drop the resume payload and strip the "resume" source
+     from the graph (roadmap/career skills survive). Fresh stamp guards a later
+     cloud sync from resurrecting the removed resume. */
+  clearResumeFromCanonical();
 }
 
 /* ------------------------------------------------------------------ */
