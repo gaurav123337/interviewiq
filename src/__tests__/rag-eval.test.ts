@@ -182,7 +182,15 @@ vi.mock("../services/admin", async (importOriginal) => {
 
 vi.mock("../services/embeddings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/embeddings")>();
-  return { ...actual, embed: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]) };
+  /* retrieveContext resolves the query vector via embedQuery; override it too
+     (the real one would take the cloud-proxy branch here, since no key is set,
+     and this mock provides no cloudFnHeaders). embedQuery returns a single
+     number[], not embed()'s number[][]. */
+  return {
+    ...actual,
+    embed: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
+    embedQuery: vi.fn().mockResolvedValue([0.1, 0.2, 0.3])
+  };
 });
 
 afterEach(() => {

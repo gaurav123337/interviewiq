@@ -37,6 +37,8 @@ vi.mock("../services/admin", async (importOriginal) => {
 
 vi.mock("../services/embeddings", () => ({
   embed: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
+  /* rag.ts now resolves the query vector via embedQuery (single number[]) */
+  embedQuery: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
   chunkText: () => [],
   estimateTokens: () => 0,
   embedModel: () => "text-embedding-3-small",

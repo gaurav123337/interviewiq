@@ -11,6 +11,7 @@
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/serviceClient.ts";
+import { embedTexts, resolveEmbedProvider } from "../_shared/embedProvider.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return preflightResponse(req);
@@ -29,6 +30,22 @@ Deno.serve(async (req) => {
     if (!client) {
       return new Response(JSON.stringify({ error: "Server configuration error" }), {
         status: 500,
+        headers: { ...corsHeaders(req), "Content-Type": "application/json" },
+      });
+    }
+
+    /* Resolve the embeddings provider ONCE (shared with functions/embed): the
+       dedicated ai_provider_config key='embeddings' row → the chat provider →
+       env OPENAI_API_KEY. Converges this indexer off its old hardcoded
+       api.openai.com path so it can never drift into a different vector space
+       than the query side. */
+    const provider = await resolveEmbedProvider(async (rowKey) => {
+      const { data } = await client.from("ai_provider_config").select("value").eq("key", rowKey).maybeSingle();
+      return (data as { value?: unknown } | null)?.value ?? null;
+    });
+    if (!provider) {
+      return new Response(JSON.stringify({ error: "Embeddings not configured — set the embeddings provider in Product Config." }), {
+        status: 503,
         headers: { ...corsHeaders(req), "Content-Type": "application/json" },
       });
     }
@@ -153,24 +170,22 @@ Deno.serve(async (req) => {
         // Smaller chunks = more precise RAG retrieval
         const chunks = chunkText(fullContent, 800, 200);
 
-        // Embed and store each chunk
+        // Embed all chunks in ONE batch via the shared provider. embedTexts
+        // throws on any failure (incl. a non-1536 vector), so a document is
+        // either fully indexed or counted as an error — never half-embedded
+        // with silently-dropped chunks (which would leave gaps in the KB).
         let chunkCount = 0;
-        for (const chunk of chunks) {
-          try {
-            const embedding = await getEmbedding(chunk, client);
-            if (!embedding) continue;
-
+        if (chunks.length) {
+          const vectors = await embedTexts(provider, chunks);
+          for (let i = 0; i < chunks.length; i++) {
             const { error: chunkError } = await client.from("pdf_chunks").insert({
               document_id: docId,
-              content: chunk,
-              embedding: JSON.stringify(embedding),
-              chunk_index: chunkCount,
+              content: chunks[i],
+              embedding: JSON.stringify(vectors[i]),
+              chunk_index: i,
             });
-
             if (chunkError) throw chunkError;
             chunkCount++;
-          } catch {
-            // Skip failed chunks
           }
         }
 
@@ -187,7 +202,8 @@ Deno.serve(async (req) => {
           .eq("id", item.id);
 
         indexed++;
-      } catch {
+      } catch (e) {
+        console.error(`[content-index] failed to index item ${item.id}:`, (e as Error).message);
         errors++;
       }
     }
@@ -259,31 +275,4 @@ function extractGlossary(val: unknown): { term: string; definition: string }[] {
       definition: String(g.definition || ""),
     }))
     .filter((g) => g.term.length > 0);
-}
-
-async function getEmbedding(text: string, client: any): Promise<number[] | null> {
-  try {
-    const apiKey = Deno.env.get("OPENAI_API_KEY") ||
-                   Deno.env.get("SUPABASE_SECRET_KEYS")?.match(/"openai":\s*"([^"]+)"/)?.[1];
-
-    if (!apiKey) return null;
-
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "text-embedding-3-small",
-        input: text.slice(0, 8000),
-      }),
-    });
-
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.data?.[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
 }

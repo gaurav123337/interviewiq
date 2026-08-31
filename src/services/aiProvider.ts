@@ -7,6 +7,7 @@
    Actions secret edits. */
 
 import { getCloudState, getSupabaseClient } from "./cloud";
+import { DEFAULT_EMBED_MODEL } from "./embeddings";
 
 export interface AiProviderConfig {
   key: string;
@@ -81,6 +82,120 @@ export async function saveAiProviderConfig(cfg: AiProviderConfig): Promise<void>
     { onConflict: "key" }
   );
   if (error) throw new Error(error.message);
+}
+
+/* ── Embeddings provider (key='embeddings') ──────────────────────────────────
+   A dedicated row because the chat provider and the embeddings provider are
+   often NOT the same service: OpenRouter (the documented chat default) has no
+   /embeddings endpoint at all. Server-side, _shared/embedProvider.ts resolves
+   embeddings row → provider row → env; these three functions are the admin UI
+   for the first tier. */
+
+export interface EmbeddingsProviderStatus extends AiProviderStatus {
+  /** True when there is NO dedicated embeddings row and this status reflects the
+      chat provider (key='provider') being used as the fallback — the UI warns
+      that the chat provider may not speak /embeddings. */
+  inherited: boolean;
+}
+
+/** Reads the embeddings provider config. When no dedicated key='embeddings' row
+    exists, falls back to the chat provider (key='provider') flagged
+    inherited:true — mirroring the server resolver's ladder. In that inherited
+    case the effective model is DEFAULT_EMBED_MODEL (the server never embeds with
+    the provider's CHAT model), so that is what we surface, not prov.model. */
+export async function getEmbeddingsProviderConfig(): Promise<EmbeddingsProviderStatus> {
+  const client = await getSupabaseClient();
+  if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
+  const { data, error } = await client
+    .from("ai_provider_config")
+    .select("value, updated_at")
+    .eq("key", "embeddings")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const v = (data?.value ?? null) as AiProviderConfig | null;
+  if (v && v.key) {
+    return {
+      configured: true,
+      source: "supabase",
+      inherited: false,
+      base: v.base || "",
+      model: v.model || DEFAULT_EMBED_MODEL,
+      keyHint: hint(v.key),
+      updatedAt: typeof data?.updated_at === "number" ? data.updated_at : null
+    };
+  }
+  const prov = await getAiProviderConfig();
+  return {
+    configured: prov.configured,
+    source: prov.source,
+    inherited: prov.configured,
+    base: prov.base,
+    /* server embeds with the default embed model when the row has none — never
+       the chat provider's model — so show that, not prov.model. */
+    model: prov.configured ? DEFAULT_EMBED_MODEL : "",
+    keyHint: prov.keyHint,
+    updatedAt: prov.updatedAt
+  };
+}
+
+/** Saves the dedicated embeddings provider config (key='embeddings'). RLS
+    enforces is_admin() server-side. A blank key keeps the existing dedicated
+    key (so the admin can edit base/model alone); it's only required when
+    creating the row for the first time. */
+export async function saveEmbeddingsProviderConfig(cfg: AiProviderConfig): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client || !getCloudState().user) throw new Error("Sign in to your cloud account first.");
+  let key = cfg.key.trim();
+  if (!key) {
+    /* keep the existing dedicated key — admin RLS lets us read the full row. */
+    const { data } = await client.from("ai_provider_config").select("value").eq("key", "embeddings").maybeSingle();
+    key = ((data?.value ?? null) as AiProviderConfig | null)?.key?.trim() ?? "";
+    if (!key) throw new Error("API key is required");
+  }
+  const value = {
+    key,
+    base: cfg.base.trim().replace(/\/+$/, ""),
+    model: cfg.model.trim()
+  };
+  const { error } = await client.from("ai_provider_config").upsert(
+    { key: "embeddings", value, updated_at: Date.now() },
+    { onConflict: "key" }
+  );
+  if (error) throw new Error(error.message);
+}
+
+/** One live call to the provider's /embeddings endpoint — proves the key + base
+    actually speak embeddings (many chat providers, e.g. OpenRouter, do NOT) and
+    that the model returns 1536-dim vectors to match the pdf_chunks column. Uses
+    /embeddings, NOT /models, precisely because /models passes for providers that
+    can't embed. */
+export async function testEmbeddingsProvider(cfg: { key: string; base: string; model: string }): Promise<{ ok: boolean; note: string }> {
+  const base = (cfg.base.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const model = cfg.model.trim() || DEFAULT_EMBED_MODEL;
+  if (!cfg.key.trim()) return { ok: false, note: "Enter a key first" };
+  try {
+    const res = await fetch(`${base}/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key.trim()}` },
+      body: JSON.stringify({ model, input: ["ping"] })
+    });
+    if (!res.ok) {
+      if (res.status === 401) return { ok: false, note: "HTTP 401 — key rejected by the provider" };
+      if (res.status === 402) return { ok: false, note: "HTTP 402 — provider account out of credits" };
+      if (res.status === 404) return { ok: false, note: `HTTP 404 — ${base} has no /embeddings endpoint (this provider can't embed)` };
+      if (res.status === 429) return { ok: false, note: "HTTP 429 — rate limited, try again shortly" };
+      let note = `HTTP ${res.status} from ${base}`;
+      try { const j = await res.json(); if (j?.error?.message) note = j.error.message; } catch { /* keep status note */ }
+      return { ok: false, note };
+    }
+    const j = await res.json().catch(() => ({}));
+    const dim = ((j?.data?.[0]?.embedding ?? []) as number[]).length;
+    if (dim === 0) return { ok: false, note: "Provider replied but returned no embedding vector" };
+    if (dim !== 1536) return { ok: false, note: `Model returns ${dim}-dim vectors — the KB needs 1536-dim (use text-embedding-3-small).` };
+    return { ok: true, note: "Embeddings OK — 1536-dim vectors returned" };
+  } catch (e) {
+    return { ok: false, note: `Couldn't reach ${base} — ${(e as Error).message}` };
+  }
 }
 
 export interface ModuleModelRow {

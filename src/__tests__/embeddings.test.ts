@@ -1,9 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { changedChunkIndices, chunkText, DEFAULT_EMBED_MODEL, embed, embedModel, estimateTokens } from "../services/embeddings";
-import { STORAGE_KEYS, storageSet } from "../services/storage";
+
+/* embedQuery's keyless path calls into ../services/cloud; mock it (mirrors
+   aiChat.test.ts). A hoisted holder avoids TDZ since embeddings.ts is imported
+   statically below and the factory reads .user/.cloudFnHeaders lazily. */
+const cloud = vi.hoisted(() => ({
+  user: null as { id: string } | null,
+  cloudFnHeaders: vi.fn()
+}));
+vi.mock("../services/cloud", () => ({
+  getCloudState: () => ({ user: cloud.user, configured: true, syncing: false, error: null, oauth: [] }),
+  isCloudConfigured: () => true,
+  getSupabaseClient: vi.fn().mockResolvedValue(null),
+  cloudFnHeaders: cloud.cloudFnHeaders
+}));
+
+import { changedChunkIndices, chunkText, DEFAULT_EMBED_MODEL, embed, embedModel, embedQuery, estimateTokens } from "../services/embeddings";
+import { STORAGE_KEYS, storageRemove, storageSet } from "../services/storage";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  cloud.user = null;
+  storageRemove(STORAGE_KEYS.apiKey);
+  storageRemove(STORAGE_KEYS.apiBase);
   try { localStorage.clear(); } catch { /* jsdom */ }
 });
 
@@ -92,6 +110,72 @@ describe("embed", () => {
       json: async () => ({ error: { message: "bad key" } })
     }));
     await expect(embed(["x"])).rejects.toThrow("bad key");
+  });
+});
+
+describe("embedQuery", () => {
+  it("throws when there is neither a key nor a signed-in user", async () => {
+    cloud.user = null;
+    await expect(embedQuery("what is a b-tree")).rejects.toThrow("No API key");
+  });
+
+  it("embeds with the user's own key (BYOK) via the provider, not the proxy", async () => {
+    storageSet(STORAGE_KEYS.apiKey, "sk-user");
+    storageSet(STORAGE_KEYS.apiBase, "https://example.com/v1");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ embedding: [0.1, 0.2, 0.3] }] })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await embedQuery("what is a b-tree");
+    expect(out).toEqual([0.1, 0.2, 0.3]);
+    /* BYOK talks to the provider's /embeddings directly — never the edge proxy */
+    expect(String(fetchMock.mock.calls[0][0])).toBe("https://example.com/v1/embeddings");
+  });
+
+  it("routes keyless signed-in users through the embed proxy and returns vectors[0]", async () => {
+    cloud.user = { id: "u1" };
+    cloud.cloudFnHeaders.mockResolvedValue({
+      "Content-Type": "application/json",
+      apikey: "anon",
+      Authorization: "Bearer tok-1"
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ vectors: [[0.4, 0.5, 0.6]], model: "text-embedding-3-small", dim: 1536 })
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await embedQuery("what is a b-tree");
+    expect(out).toEqual([0.4, 0.5, 0.6]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/functions/v1/embed");
+    expect((init as RequestInit).method).toBe("POST");
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ input: ["what is a b-tree"] });
+    /* the caller's JWT (from cloudFnHeaders) is forwarded so the function can verify it */
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer tok-1" });
+  });
+
+  it("rejects when the proxy returns an error status", async () => {
+    cloud.user = { id: "u1" };
+    cloud.cloudFnHeaders.mockResolvedValue({ "Content-Type": "application/json" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: "Embeddings not configured" })
+    }));
+    await expect(embedQuery("q")).rejects.toThrow("Embeddings not configured");
+  });
+
+  it("rejects when the proxy returns no vector", async () => {
+    cloud.user = { id: "u1" };
+    cloud.cloudFnHeaders.mockResolvedValue({ "Content-Type": "application/json" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ vectors: [] })
+    }));
+    await expect(embedQuery("q")).rejects.toThrow("no vector");
   });
 });
 

@@ -115,3 +115,9 @@ jobs:
           npx supabase functions deploy pay-tip \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
+          # embed — server-side embeddings proxy for keyless RAG queries.
+          # --no-verify-jwt so the gateway forwards the request and the function
+          # verifies the caller itself (callerFrom → real getUser).
+          npx supabase functions deploy embed \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt

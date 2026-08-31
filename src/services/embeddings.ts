@@ -5,6 +5,8 @@
 
 import { getSettings } from "../ai";
 import { getAiDefaults } from "./remoteConfig";
+import { CONFIG } from "../config";
+import { cloudFnHeaders, getCloudState } from "./cloud";
 
 export const DEFAULT_EMBED_MODEL = "text-embedding-3-small";
 
@@ -112,4 +114,35 @@ export async function embed(texts: string[]): Promise<number[][]> {
   const out: number[][] = ((j.data ?? []) as { embedding?: number[] }[]).map(d => d.embedding ?? []);
   if (out.length !== texts.length) throw new Error("Embeddings response count mismatch");
   return out;
+}
+
+/** Embeds a single QUERY for retrieval, in priority order:
+      1. BYOK — the user's own key, via embed() (exactly as indexing does).
+      2. Keyless but signed in — the shared server-side proxy (functions/embed),
+         so no-key users can still retrieve. Per D2 this path is QUERIES ONLY;
+         indexing stays on embed() (BYOK), which is what keeps bulk embedding
+         off the shared key.
+      3. Neither — throw, same contract/message as embed().
+    ALWAYS throws on failure and NEVER returns an empty vector, so a caller that
+    persists the result can't store a corrupt embedding. retrieveContext turns a
+    throw into an honest checked:false rather than a wrong search. */
+export async function embedQuery(text: string): Promise<number[]> {
+  if (getSettings().key) {
+    const [vec] = await embed([text]);
+    if (!vec?.length) throw new Error("Empty embedding");
+    return vec;
+  }
+  if (getCloudState().user) {
+    const res = await fetch(`${CONFIG.supabase.url}/functions/v1/embed`, {
+      method: "POST",
+      headers: await cloudFnHeaders(),
+      body: JSON.stringify({ input: [text] })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((body as { error?: string }).error ?? `Embeddings failed (${res.status})`);
+    const vec = (body as { vectors?: number[][] }).vectors?.[0];
+    if (!vec?.length) throw new Error("Embeddings proxy returned no vector");
+    return vec;
+  }
+  throw new Error("No API key configured");
 }
