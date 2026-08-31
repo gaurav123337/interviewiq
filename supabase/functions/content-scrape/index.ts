@@ -11,6 +11,9 @@
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { serviceClient } from "../_shared/serviceClient.ts";
+import { safeFetch, readBodyText } from "../_shared/safeFetch.ts";
+import { robotsAllows } from "../_shared/importPage.ts";
+import { extractArticle } from "../_shared/articleExtract.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return preflightResponse(req);
@@ -60,21 +63,38 @@ Deno.serve(async (req) => {
       const sourceType = String(source.source_type);
 
       try {
-        // Fetch the page
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15_000);
-        const res = await fetch(url, {
-          signal: controller.signal,
+        // robots.txt guardrail — honor Disallow before fetching, mirroring
+        // import-job. safeFetch is https/http-to-public-hosts only and blocks
+        // private/metadata IP ranges + re-validates every redirect hop, so this
+        // closes the prior raw-fetch SSRF hole. A reachable robots.txt that
+        // disallows the path skips the source; an unreachable one proceeds
+        // (the source is admin-curated).
+        try {
+          const robotsRes = await safeFetch(new URL("/robots.txt", url).toString(), { timeoutMs: 8000, allowHttp: true });
+          if (robotsRes.ok) {
+            const robotsTxt = await readBodyText(robotsRes, 64_000);
+            if (!robotsAllows(robotsTxt, new URL(url).pathname)) {
+              results.push({ sourceId: String(source.id), url, title: "", success: false, error: "Blocked by robots.txt" });
+              errors++;
+              continue;
+            }
+          }
+        } catch { /* robots unreachable — proceed (admin-curated source) */ }
+
+        // Fetch the page through the SSRF guard. allowHttp preserves any http
+        // curated sources; safeFetch still blocks private/internal targets over
+        // either scheme, and readBodyText caps the body at 2 MB.
+        const res = await safeFetch(url, {
+          timeoutMs: 15_000,
+          allowHttp: true,
           headers: {
             "User-Agent": "InterviewIQ-ContentScraper/1.0 (+https://interviewiq.app)",
             Accept: "text/html,application/xhtml+xml,*/*;q=0.8",
           },
-          redirect: "follow",
         });
-        clearTimeout(timer);
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const html = await res.text();
+        const html = await readBodyText(res, 2_000_000);
 
         // Extract article content
         const { title, content, author } = extractArticle(html, url);
@@ -124,13 +144,13 @@ Deno.serve(async (req) => {
           stored++;
         }
 
-        // Update source last_scraped_at
-        await client
-          .from("content_sources")
-          .update({ last_scraped_at: new Date().toISOString() })
-          .eq("id", String(source.id))
-          .then(() => {})
-          .catch(() => {});
+        // Update source last_scraped_at (best-effort — never fail the scrape on it)
+        try {
+          await client
+            .from("content_sources")
+            .update({ last_scraped_at: new Date().toISOString() })
+            .eq("id", String(source.id));
+        } catch { /* ignore timestamp update errors */ }
       } catch (e) {
         results.push({ sourceId: String(source.id), url, title: "", success: false, error: (e as Error).message });
         errors++;
@@ -150,103 +170,3 @@ Deno.serve(async (req) => {
     });
   }
 });
-
-/* ── Article extraction (server-side, no DOM) ────────────────────────── */
-
-function extractArticle(html: string, url: string): { title: string; content: string; author: string | null } {
-  const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "unknown"; } })();
-
-  // Title
-  const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-  const ogTitleMatch = html.match(/<meta[^>]*property\s*=\s*["']og:title["'][^>]*content\s*=\s*["']([^"']*)["']/i);
-  const title = (ogTitleMatch?.[1] ?? titleMatch?.[1] ?? domain).trim();
-
-  // Author
-  const authorMatch = html.match(/<meta[^>]*(?:name|property)\s*=\s*["'](?:author|article:author)["'][^>]*content\s*=\s*["']([^"']*)["']/i);
-  const author = authorMatch?.[1]?.trim() ?? null;
-
-  // Try common article containers
-  const selectors = ["article", "main", '[role="main"]', ".post-content", ".article-content", ".entry-content", ".content"];
-  let articleHtml = "";
-  for (const sel of selectors) {
-    const tag = sel.split(/[[\s]/)[0];
-    const re = new RegExp(`<${tag.replace(/[[\]]/g, "\\$&")}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i");
-    const m = html.match(re);
-    if (m && m[1].length > articleHtml.length) articleHtml = m[1];
-  }
-
-  if (!articleHtml || articleHtml.length < 200) {
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    articleHtml = bodyMatch?.[1] ?? html;
-  }
-
-  // Clean to text — preserve code blocks before stripping tags
-  // First, wrap <pre> and <code> content in markers so they survive tag stripping
-  let preserved = articleHtml
-    .replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, (_m, inner: string) => {
-      // Decode HTML entities inside code blocks
-      const decoded = inner
-        .replace(/<[^>]+>/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&nbsp;/g, " ")
-        .replace(/&#x27;/g, "'")
-        .replace(/&#x2F;/g, "/")
-        .split("\n")
-        .map((l: string) => l.trim())
-        .filter(Boolean)
-        .join("\n");
-      return `\nCODE_BLOCK_START\n${decoded}\nCODE_BLOCK_END\n`;
-    })
-    .replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, (_m, inner: string) => {
-      // Inline code — keep on one line
-      const decoded = inner
-        .replace(/<[^>]+>/g, " ")
-        .replace(/&amp;/g, "&")
-        .replace(/&lt;/g, "<")
-        .replace(/&gt;/g, ">")
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&nbsp;/g, " ")
-        .trim();
-      return `\`\${decoded}\`\`;
-    })
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
-    .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
-    .replace(/<aside[\s\S]*?<\/aside>/gi, " ")
-    .replace(/<header[\s\S]*?<\/header>/gi, " ")
-    .replace(/<[^>]+>/g, "\n")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#x2F;/g, "/")
-    .split("\n")
-    .map((l: string) => l.trim())
-    .filter(Boolean)
-    .join("\n");
-
-  // Now restore CODE_BLOCK markers as proper markdown code fences
-  const content = preserved
-    .replace(/CODE_BLOCK_START\n([\s\S]*?)\nCODE_BLOCK_END/g, (_m: string, code: string) => {
-      // Detect language from content
-      let lang = "";
-      const sample = code.slice(0, 200).trim();
-      if (/^[{[]/.test(sample) && /[}\]]\s*$/.test(sample.slice(-50))) lang = "json";
-      else if (/^(import|export|const|let|function|class)\b/.test(sample)) lang = "js";
-      else if (/^(SELECT|INSERT|CREATE|ALTER|DROP)\b/i.test(sample)) lang = "sql";
-      else if (/^(def |class |import )/.test(sample)) lang = "python";
-      else if (/^(fn |let mut |pub |struct )/.test(sample)) lang = "rust";
-      return `\n\n\`\`\`${lang}\n${code}\n\`\`\n\n`;
-    });
-
-  return { title, content, author };
-}
