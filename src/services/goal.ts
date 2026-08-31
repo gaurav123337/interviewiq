@@ -3,7 +3,7 @@
 
 import type { CareerGoal, SkillProfile } from "../types";
 import { STORAGE_KEYS, storageGet, storageRemove, storageSet } from "./storage";
-import { ingestGoal, ingestSkillProfile, rebuildCanonicalProfile } from "./profileStore";
+import { clearRoadmapFromCanonical, getCanonicalProfile, ingestGoal, ingestSkillProfile, toSkillProfile } from "./profileStore";
 
 /** Which goal a progress record belongs to (level/field/company identity).
     Changing the substance of the goal resets progress automatically. */
@@ -20,23 +20,24 @@ export interface RoadmapProgress {
 const EMPTY_PROGRESS: RoadmapProgress = { fingerprint: "", completed: [], completedAt: {}, updatedAt: 0 };
 
 export function getGoal(): CareerGoal | null {
-  return storageGet(STORAGE_KEYS.goal, null);
+  /* single home for the goal — the canonical aggregate (iq.profile) */
+  return getCanonicalProfile().goal;
 }
 
 export function saveGoal(g: CareerGoal): void {
-  storageSet(STORAGE_KEYS.goal, g);
-  /* live bridge: the goal also lands in the one canonical aggregate */
+  /* the goal lives only in the one canonical aggregate now */
   ingestGoal(g);
 }
 
 export function getProfile(): SkillProfile | null {
-  return storageGet(STORAGE_KEYS.skills, null);
+  /* derived view over the canonical aggregate — reproduces the iq.skills shape
+     (null when no SkillProfile was ever saved), byte-exact on the roadmap ratings */
+  return toSkillProfile();
 }
 
 export function saveProfile(p: SkillProfile): void {
-  storageSet(STORAGE_KEYS.skills, p);
-  /* live bridge: roadmap ratings fan out into the canonical skill graph, so a
-     roadmap edit surfaces on the jobs/counselor side without a manual re-save */
+  /* roadmap ratings fan out into the canonical skill graph, so a roadmap edit
+     surfaces on the jobs/counselor side without a manual re-save */
   ingestSkillProfile(p);
 }
 
@@ -78,11 +79,9 @@ export function clearProgress(): void {
 }
 
 export function clearGoal(): void {
-  storageRemove(STORAGE_KEYS.goal);
-  storageRemove(STORAGE_KEYS.skills);
   clearProgress();
-  /* the roadmap's legacy keys are gone — rebuild the canonical aggregate from
-     what remains so no stale goal/roadmap skills linger in the cached profile
-     (the fresh stamp keeps a later cloud sync from resurrecting them). */
-  rebuildCanonicalProfile();
+  /* canonical teardown: drop the goal, diagnostic and roadmap ratings and strip
+     the "roadmap" source from the graph (career/resume skills survive). The
+     fresh stamp keeps a later cloud sync from resurrecting the cleared state. */
+  clearRoadmapFromCanonical();
 }

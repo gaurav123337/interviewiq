@@ -5,7 +5,6 @@ import { LEVELS, fieldById } from "../../data";
 import { getCloudState, getSupabaseClient } from "../cloud";
 import { getGoal } from "../goal";
 import { getCanonicalProfile, ingestCareerProfile, toCareerProfile } from "../profileStore";
-import { STORAGE_KEYS, storageSet } from "../storage";
 
 export function getCareerProfile(): CareerProfile | null {
   const p = getCanonicalProfile();
@@ -20,8 +19,8 @@ export function getCareerProfile(): CareerProfile | null {
 
 export function saveCareerProfile(p: CareerProfile): void {
   const saved = { ...p, updatedAt: Date.now() };
-  storageSet(STORAGE_KEYS.career, saved);
-  /* fan out into the one canonical aggregate (skills fold into the graph) */
+  /* the career profile lives in the one canonical aggregate (skills fold into
+     the graph); origins.career flips true so getCareerProfile() stops returning null */
   ingestCareerProfile(saved);
   /* best-effort cloud sync — never blocks the UI (stamped copy, matches local) */
   void saveCareerProfileToCloud(saved);

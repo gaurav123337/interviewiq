@@ -40,9 +40,10 @@ describe("sync policies", () => {
     expect(policyFor(STORAGE_KEYS.notifPrefs)).toBe("local");
     expect(policyFor(STORAGE_KEYS.notifLast)).toBe("local");
     expect(policyFor(STORAGE_KEYS.syncMeta)).toBe("local");
-    /* the legacy shapes the canonical profile subsumes must NOT also sync —
-       syncing both blobs would let two copies of the same data diverge across
-       devices. They stay device-local until Item 11 PR6 retires them. */
+    /* the legacy shapes the canonical profile subsumes are RETIRED as of Item 11
+       PR6 (migrated into iq.profile then deleted). These guards stay as a
+       regression backstop: if an old build ever re-writes one, "local" ensures
+       it never leaks to the cloud alongside the canonical blob. */
     expect(policyFor(STORAGE_KEYS.skills)).toBe("local");
     expect(policyFor(STORAGE_KEYS.goal)).toBe("local");
     expect(policyFor(STORAGE_KEYS.career)).toBe("local");

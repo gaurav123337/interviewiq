@@ -93,11 +93,12 @@ export const SYNC_POLICIES: Record<string, SyncPolicy> = {
      + career fields + resume + diagnostic in a single blob. LWW by the engine's
      per-key iq.syncMeta stamp: every mutation flows through profileStore →
      storageSet(iq.profile), which re-stamps, so the most recently saved profile
-     wins. clearGoal / clearUploadedResume rebuild-and-restamp (see profileStore),
-     so a cleared profile can't be resurrected by a stale-but-higher remote stamp.
-     The legacy iq.skills / iq.goal / iq.career / iq.resume keys stay "local"
-     (absent from this map) on purpose — syncing both blobs would let two shapes
-     of the same data diverge across devices. They are retired in Item 11 PR6. */
+     wins. clearGoal / clearUploadedResume are canonical graph teardowns that
+     restamp (see profileStore), so a cleared profile can't be resurrected by a
+     stale-but-higher remote stamp. The legacy iq.skills / iq.goal / iq.career /
+     iq.resume keys are RETIRED as of Item 11 PR6 (migrated into iq.profile then
+     deleted); they stay "local" (absent from this map) as a regression backstop
+     so that if an old build ever re-writes one, it never leaks to the cloud. */
   [STORAGE_KEYS.profile]: "lww",
   [STORAGE_KEYS.usage]: "local",      // metering belongs server-side eventually
   [STORAGE_KEYS.apiKey]: "local",     // device-private credentials

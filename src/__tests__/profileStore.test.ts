@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
-/* profileStore — the canonical profile aggregate (roadmap Item 11, PR3).
+/* profileStore — the canonical profile aggregate (roadmap Item 11).
 
    Locks the invariants the whole unification rests on:
    1. Migration builds iq.profile from the legacy iq.skills / iq.goal /
-      iq.career / iq.resume keys, LOSING NOTHING and keeping the legacy keys.
+      iq.career / iq.resume keys, LOSING NOTHING, then DELETES them — iq.profile
+      is the single physical store as of PR6.
    2. The derived views reproduce the legacy shapes — toSkillProfile round-trips
       the roadmap SkillRating[] byte-exact (composite labels, self=2 default,
       measured 0..1 all verbatim); toCareerProfile keeps non-skill fields verbatim
       while DERIVING skills from the unified graph; toUploadedResume too.
-   3. Migration is idempotent (pure over storage; run twice → identical).
+   3. Migration is idempotent, and a pre-existing v2 aggregate is NEVER rebuilt
+      from the (now-empty) legacy keys — a cloud-synced device must not be wiped.
    4. The goal double-store is reconciled to the copy that matches roadmap
       progress, so progress is never reset.
    5. The merge-writers are additive: they never overwrite a stronger self/
-      measured signal and never drop career/resume-origin skills. */
+      measured signal and never drop career/resume-origin skills.
+   6. clear*FromCanonical are graph teardowns: they strip one provenance source,
+      keep nodes that other sources still reference, and drop source-only nodes. */
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { CareerGoal, CareerProfile, SkillProfile, UploadedResume } from "../types";
@@ -21,6 +25,7 @@ import {
   buildCanonicalFromLegacy, getCanonicalProfile,
   toSkillProfile, toCareerProfile, toUploadedResume,
   ingestSkillProfile, ingestCareerProfile,
+  clearRoadmapFromCanonical, clearResumeFromCanonical,
   type CanonicalProfile
 } from "../services/profileStore";
 
@@ -69,17 +74,17 @@ function seedLegacy(opts: { embeddedGoal?: CareerGoal; standaloneGoal?: CareerGo
 
 beforeEach(() => localStorage.clear());
 
-describe("migration — builds iq.profile, keeps legacy keys, loses nothing", () => {
-  it("writes a v2 aggregate and preserves every legacy key", () => {
+describe("migration — builds iq.profile, RETIRES the legacy keys, loses nothing", () => {
+  it("writes a v2 aggregate and deletes every legacy key (single physical store)", () => {
     seedLegacy();
     const p = getCanonicalProfile();
     expect(p.version).toBe(2);
     expect(storageGet(STORAGE_KEYS.profile, null)).not.toBeNull();
-    // legacy keys untouched (rollback-safe)
-    expect(storageGet(STORAGE_KEYS.skills, null)).not.toBeNull();
-    expect(storageGet(STORAGE_KEYS.goal, null)).not.toBeNull();
-    expect(storageGet(STORAGE_KEYS.career, null)).not.toBeNull();
-    expect(storageGet(STORAGE_KEYS.resume, null)).not.toBeNull();
+    // legacy keys migrated then DELETED — iq.profile is the one store now (PR6)
+    expect(storageGet(STORAGE_KEYS.skills, null)).toBeNull();
+    expect(storageGet(STORAGE_KEYS.goal, null)).toBeNull();
+    expect(storageGet(STORAGE_KEYS.career, null)).toBeNull();
+    expect(storageGet(STORAGE_KEYS.resume, null)).toBeNull();
   });
 
   it("no-loss: every skill from all three models appears in the unified graph", () => {
@@ -91,6 +96,20 @@ describe("migration — builds iq.profile, keeps legacy keys, loses nothing", ()
     expect(slugs).toEqual(expect.arrayContaining(["graphql", "elasticsearch"]));
     // resume skills
     expect(slugs).toEqual(expect.arrayContaining(["docker", "kubernetes"]));
+  });
+
+  it("cloud-safe: a pre-existing v2 aggregate is returned as-is, never rebuilt from empty legacy keys", () => {
+    /* Models a device that pulled iq.profile via cloud sync: the aggregate is
+       present and rich, but the legacy keys were never written (they're retired).
+       getCanonicalProfile must NOT rebuild from the empty legacy keys, which
+       would wipe the synced skills. */
+    seedLegacy();
+    const synced = getCanonicalProfile();               // migrate-and-delete → legacy gone
+    expect(storageGet(STORAGE_KEYS.skills, null)).toBeNull();
+    const again = getCanonicalProfile();
+    expect(again).toEqual(synced);                       // unchanged, not rebuilt-from-empty
+    expect(Object.keys(again.skills).length).toBeGreaterThan(0);
+    expect(again.goal).not.toBeNull();
   });
 });
 
@@ -219,5 +238,53 @@ describe("merge-writers — additive, non-clobbering", () => {
     const p: CanonicalProfile = storageGet(STORAGE_KEYS.profile, null)!;
     // Terraform aliases to ci-cd in the vocab; roadmap atoms remain.
     expect(Object.keys(p.skills)).toEqual(expect.arrayContaining(["ci-cd", "react", "graphql"]));
+  });
+});
+
+describe("clear*FromCanonical — provenance-aware graph teardowns (PR6)", () => {
+  it("clearRoadmapFromCanonical strips roadmap-only nodes, keeps shared/claimed ones, clears the goal", () => {
+    seedLegacy();
+    getCanonicalProfile();                                  // migrate-and-delete
+    // make "react" a SHARED node (roadmap + manual): claim it on the career side.
+    ingestCareerProfile({ ...careerProfile, skills: ["React"] });
+    const before = getCanonicalProfile();
+    expect(before.skills["react"].sources).toEqual(expect.arrayContaining(["roadmap", "manual"]));
+
+    const after = clearRoadmapFromCanonical();
+
+    // roadmap-only atoms disappear …
+    for (const slug of ["vue", "angular", "javascript", "typescript", "node", "ci-cd"]) {
+      expect(after.skills[slug]).toBeUndefined();
+    }
+    // … the shared node survives, minus its roadmap-only self/measured …
+    expect(after.skills["react"]).toBeDefined();
+    expect(after.skills["react"].sources).toEqual(["manual"]);
+    expect(after.skills["react"].self).toBeUndefined();
+    expect(after.skills["react"].measured).toBeUndefined();
+    // … career/resume nodes are untouched …
+    expect(Object.keys(after.skills)).toEqual(expect.arrayContaining(["graphql", "elasticsearch", "docker", "kubernetes"]));
+    // … the roadmap view collapses to null, the goal and ratings are gone …
+    expect(after.goal).toBeNull();
+    expect(after.roadmapSkills).toEqual([]);
+    expect(after.diagnostic).toBeUndefined();
+    expect(toSkillProfile(after)).toBeNull();
+    // … but the career profile still exists with its claimed skills.
+    expect(toCareerProfile(after).skills).toEqual(expect.arrayContaining(["React", "GraphQL", "Docker"]));
+    // the teardown restamps (LWW: a stale remote copy can't resurrect it).
+    expect(after.updatedAt).toBeGreaterThan(0);
+  });
+
+  it("clearResumeFromCanonical strips resume-only nodes and the resume payload, keeps the rest", () => {
+    seedLegacy();
+    getCanonicalProfile();
+    const after = clearResumeFromCanonical();
+    // resume-only atoms gone; resume view null …
+    expect(after.skills["docker"]).toBeUndefined();
+    expect(after.skills["kubernetes"]).toBeUndefined();
+    expect(after.resume).toBeUndefined();
+    expect(toUploadedResume(after)).toBeNull();
+    // … roadmap + career nodes survive; the roadmap view still round-trips.
+    expect(Object.keys(after.skills)).toEqual(expect.arrayContaining(["react", "node", "graphql", "elasticsearch"]));
+    expect(toSkillProfile(after)).not.toBeNull();
   });
 });

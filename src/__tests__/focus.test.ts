@@ -16,6 +16,10 @@ const sessionWithMissed = (missed: string[]) => ({
 beforeEach(() => {
   storageRemove(STORAGE_KEYS.codingTrack);
   storageRemove(STORAGE_KEYS.skills);
+  /* getProfile() now derives from the canonical aggregate (Item 11 PR6); clear it
+     too, else a v2 profile written by one test's migration short-circuits the
+     re-seeded iq.skills in the next. */
+  storageRemove(STORAGE_KEYS.profile);
   storageRemove(STORAGE_KEYS.remoteConfig);
   storageRemove(STORAGE_KEYS.sessions);
   storageRemove(STORAGE_KEYS.coachTopics);
@@ -45,7 +49,9 @@ describe("focusSignals", () => {
   });
 
   it("flags a problem when a weak skill maps to its topic", () => {
-    storageSet(STORAGE_KEYS.skills, { skills: [{ skill: "Data Structures", self: 1 }] });
+    /* getProfile() is a derived view now (Item 11 PR6): toSkillProfile returns
+       null without a goal, so the fixture carries one. */
+    storageSet(STORAGE_KEYS.skills, { goal: { currentLevel: "mid", targetLevel: "senior", fieldId: "frontend", companyId: "general", targetDate: "2026-12-01", hoursPerWeek: 6, createdAt: 1 }, skills: [{ skill: "Data Structures", self: 1 }] });
     /* two-sum lives in "Arrays & hashing", matched by the data-structures hint */
     expect(focusSignals(CODING_PROBLEMS.find(p => p.id === "two-sum")!).weakSkill).toBe(true);
     /* a classes problem is outside the data-structures hints and stays unflagged */
