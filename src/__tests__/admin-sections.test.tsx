@@ -24,6 +24,7 @@ vi.mock("../services/admin", () => ({
   listPdfDocuments: vi.fn().mockResolvedValue([]),
   updatePdfDocument: vi.fn(),
   listPdfChunks: vi.fn().mockResolvedValue([]),
+  seedKnowledgeBase: vi.fn(),
   getLastJobsFetchReport: vi.fn().mockResolvedValue(null),
   saveRemoteConfig: vi.fn(),
   saveJobSalaryEnrichment: vi.fn(),

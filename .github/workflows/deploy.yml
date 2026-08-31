@@ -127,3 +127,17 @@ jobs:
           npx supabase functions deploy article-fetch \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
+          # content-index — admin bulk-indexer for KB content items. Was missing
+          # from this list (deployed by hand), so it could drift silently; register
+          # it here so it ships every deploy. requireAdmin-gated; --no-verify-jwt so
+          # the function verifies the caller itself.
+          npx supabase functions deploy content-index \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt
+          # seed-rag — admin one-click seed of the RAG starter corpus using the
+          # shared, server-configured embeddings provider (no service-role key in a
+          # shell). requireAdmin-gated; --no-verify-jwt so the function verifies the
+          # caller itself.
+          npx supabase functions deploy seed-rag \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt

@@ -4,6 +4,13 @@
    (source='seed') plus its embedded pdf_chunks, stamped with the embedding
    provider host + model so match_pdf_chunks' p_model filter can find them.
 
+   NOTE: the chunk/token logic here is mirrored in
+   supabase/functions/_shared/ragSeed.ts, which the Admin-UI seed (the seed-rag
+   edge function) runs. Prefer the Admin UI (Quality → RAG health → Seed) — it uses
+   the shared, server-configured embeddings key and needs no service-role key in
+   your shell. Keep this CLI as a break-glass/offline tool, and keep the two chunk
+   implementations in sync.
+
    Idempotent: every run first deletes the existing source='seed' documents
    (chunks cascade) and re-inserts from disk, so editing a doc and re-running
    converges — it never double-seeds.
