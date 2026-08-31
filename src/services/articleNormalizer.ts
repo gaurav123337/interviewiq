@@ -13,6 +13,7 @@
 
 import { chat, type ChatMessage } from "../ai";
 import { getSupabaseClient } from "./cloud";
+import { cleanTextToQuestions } from "./cleaner";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -20,6 +21,15 @@ export interface CodeSection {
   language: string;
   code: string;
   description: string;
+}
+
+/** A likely interview question mined from the article (item 8: interview-targeting).
+    Shape mirrors the question-bank `ImportedQuestion` (minus fieldId/level) so the
+    same extractor can feed both the bank and article backfill. */
+export interface InterviewQuestion {
+  question: string;
+  answer: string;
+  keyPoints: string[];
 }
 
 export interface NormalizedArticle {
@@ -35,6 +45,12 @@ export interface NormalizedArticle {
   readTimeBeginner: number;
   readTimeIntermediate: number;
   readTimeAdvanced: number;
+  /** Likely interview questions for this topic. Optional: absent on rows
+      normalized before this feature; backfilled cheaply via cleanTextToQuestions. */
+  interviewQuestions?: InterviewQuestion[];
+  /** Distinct scoring key points across interviewQuestions — the "you must be able
+      to speak to these" list. Derived (never a separate AI call). */
+  mustKnowConcepts?: string[];
 }
 
 export interface NormalizeResult {
@@ -42,6 +58,26 @@ export interface NormalizeResult {
   normalized?: NormalizedArticle;
   error?: string;
   tokensUsed?: number;
+}
+
+/** Derive the must-know concept list from interview-question key points:
+    union of all keyPoints, de-duplicated case-insensitively (first-seen wins),
+    capped at 8. Pure — no AI call. */
+export function deriveMustKnowConcepts(questions: InterviewQuestion[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const q of questions) {
+    for (const kp of q.keyPoints) {
+      const t = kp.trim();
+      if (!t) continue;
+      const key = t.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(t);
+      if (out.length >= 8) return out;
+    }
+  }
+  return out;
 }
 
 /* ── Prompt Building ───────────────────────────────────────────────────── */
@@ -69,6 +105,7 @@ function buildNormalizationMessages(
     "5. Write a concise 2-3 sentence summary.",
     "6. Identify technical terms for the glossary.",
     "7. List key takeaways as actionable points.",
+    "8. Write 3-6 realistic interview questions this article prepares the reader for, each with a concise model answer and 1-4 scoring key points.",
     "",
     "CODE EXTRACTION RULES:",
     "- Preserve code EXACTLY as written (don't change variable names, logic, etc.)",
@@ -94,6 +131,9 @@ function buildNormalizationMessages(
     '  "advanced": "## Deep dive\\n\\n[content with interview angles]",',
     '  "glossary": [{ "term": "Term", "definition": "Clear definition" }],',
     '  "keyTakeaways": ["Takeaway 1", "Takeaway 2", "Takeaway 3"],',
+    '  "interviewQuestions": [',
+    '    { "question": "A realistic interview question on this topic", "answer": "A concise model answer (2-4 sentences)", "keyPoints": ["scoring point 1", "scoring point 2"] }',
+    '  ],',
     '  "estimatedReadMinutes": 5,',
     '  "readTimeBeginner": 2,',
     '  "readTimeIntermediate": 4,',
@@ -109,6 +149,7 @@ function buildNormalizationMessages(
     "- Include at least 5 keywords",
     "- Include at least 3 key takeaways",
     "- Include at least 2 glossary terms",
+    "- Include 3-6 interview questions with concise model answers and 1-4 key points each",
     "- Extract ALL code sections (don't skip any code in the article)",
   ];
 
@@ -266,6 +307,19 @@ function parseNormalized(raw: string): NormalizedArticle | null {
     ? parsed.keyTakeaways.map(String).filter(t => t.trim())
     : [];
 
+  // Parse interview questions (item 8: interview-targeting — folded into this same call)
+  const rawInterviewQuestions = Array.isArray(parsed.interviewQuestions) ? parsed.interviewQuestions : [];
+  const interviewQuestions: InterviewQuestion[] = rawInterviewQuestions
+    .filter((q: Record<string, unknown>) => q && typeof q.question === "string" && q.question.trim())
+    .slice(0, 8)
+    .map((q: Record<string, unknown>) => ({
+      question: String(q.question || "").trim(),
+      answer: String(q.answer || "").trim(),
+      keyPoints: Array.isArray(q.keyPoints)
+        ? q.keyPoints.map((k: unknown) => String(k).trim()).filter(Boolean).slice(0, 6)
+        : [],
+    }));
+
   // Calculate read times (250 words per minute)
   const wordCount = (text: string) => text.replace(/[#*`[\](){}]/g, "").split(/\s+/).length;
   const readTime = (text: string) => Math.max(1, Math.ceil(wordCount(text) / 250));
@@ -279,6 +333,8 @@ function parseNormalized(raw: string): NormalizedArticle | null {
     advanced: advanced || intermediate || beginner,
     glossary,
     keyTakeaways: keyTakeaways.slice(0, 10),
+    interviewQuestions,
+    mustKnowConcepts: deriveMustKnowConcepts(interviewQuestions),
     estimatedReadMinutes: clamp(parsed.estimatedReadMinutes, readTime(intermediate || beginner)),
     readTimeBeginner: clamp(parsed.readTimeBeginner, readTime(beginner || intermediate)),
     readTimeIntermediate: clamp(parsed.readTimeIntermediate, readTime(intermediate)),
@@ -355,10 +411,44 @@ export async function normalizeAndUpdateContent(contentId: string): Promise<Norm
 
   if (fetchError || !item) return { success: false, error: "Content item not found" };
 
-  // Idempotent: skip if already normalized (has beginner content)
+  // Idempotent: a row counts as "already normalized" once it has a beginner level. This mirrors
+  // the batch stale-query predicate exactly (content_refined->>beginner IS NOT NULL), so every
+  // row that query selects takes the cheap backfill below — never a full re-normalize, and never
+  // a re-charge loop (the backfill always stamps interviewQuestions). (item 8 pt 3-4)
   const existing = (item.content_refined ?? {}) as Record<string, unknown>;
-  if (existing.beginner && String(existing.beginner).length > 50) {
-    return { success: true, normalized: existing as unknown as import("./articleNormalizer").NormalizedArticle };
+  if (existing.beginner != null) {
+    // `interviewQuestions === undefined` ⇒ never attempted; an explicit [] ⇒ attempted but
+    // yielded none (don't re-charge); populated ⇒ done. Only the undefined case triggers ONE
+    // cheap extraction — over the already-distilled text, never the ~8k-token full re-normalize.
+    if (existing.interviewQuestions !== undefined) {
+      return { success: true, normalized: existing as unknown as NormalizedArticle };
+    }
+    // Feed the extractor the COMPACT, already-normalized levels — not the raw ~24k-char body.
+    // Cheaper input than a full normalize (bounded to 6000 chars, so resolveMaxTokens keeps the
+    // output cap small too) and better signal: the advanced level already carries interview angles.
+    const source = [existing.advanced, existing.intermediate, existing.beginner]
+      .map(s => (typeof s === "string" ? s : ""))
+      .filter(Boolean)
+      .join("\n\n")
+      .slice(0, 6000);
+    let interviewQuestions: InterviewQuestion[] = [];
+    try {
+      const drafts = await cleanTextToQuestions(source);
+      interviewQuestions = drafts
+        .map(d => ({ question: d.question, answer: d.answer, keyPoints: d.keyPoints }))
+        .slice(0, 8);
+    } catch { /* stamp [] below so this row is never re-charged */ }
+    const merged = {
+      ...existing,
+      interviewQuestions,
+      mustKnowConcepts: deriveMustKnowConcepts(interviewQuestions),
+    };
+    const { error: backfillError } = await client
+      .from("content_items")
+      .update({ content_refined: merged, updated_at: new Date().toISOString() })
+      .eq("id", contentId);
+    if (backfillError) return { success: false, error: `Database update failed: ${backfillError.message}` };
+    return { success: true, normalized: merged as unknown as NormalizedArticle };
   }
 
   const result = await normalizeArticle({
@@ -403,6 +493,9 @@ export async function normalizeAndUpdateContent(contentId: string): Promise<Norm
         read_time_beginner: n.readTimeBeginner,
         read_time_intermediate: n.readTimeIntermediate,
         read_time_advanced: n.readTimeAdvanced,
+        // Interview-targeting fields (item 8 pt 3-4)
+        interviewQuestions: n.interviewQuestions ?? [],
+        mustKnowConcepts: n.mustKnowConcepts ?? [],
       },
       summary: (() => {
         const raw = n.summary || item.title;
@@ -444,25 +537,38 @@ export async function batchNormalizeContent(): Promise<{
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
 
-  // Find articles that need normalization (approved but no refined content)
-  const { data: items, error: fetchError, count } = await client
+  // (1) Approved but not yet normalized at all → full normalize.
+  const { data: fresh, error: freshError } = await client
     .from("content_items")
-    .select("id", { count: "exact" })
+    .select("id")
     .eq("status", "approved")
     .is("content_refined->>beginner", null)
     .limit(20);
+  if (freshError) throw freshError;
 
-  if (fetchError) throw fetchError;
-  if (!items?.length) return { normalized: 0, errors: 0, total: 0 };
+  // (2) Already normalized but predating the interview-targeting fields → cheap
+  //     cleanTextToQuestions-only backfill (normalizeAndUpdateContent takes that path).
+  const { data: stale, error: staleError } = await client
+    .from("content_items")
+    .select("id")
+    .eq("status", "approved")
+    .not("content_refined->>beginner", "is", null)
+    .is("content_refined->interviewQuestions", null)
+    .limit(20);
+  if (staleError) throw staleError;
 
-  const total = count ?? items.length;
+  // De-dupe (the two sets are mutually exclusive, but be defensive) and cap the batch.
+  const ids = [...new Set([...(fresh ?? []), ...(stale ?? [])].map(r => r.id as string))].slice(0, 20);
+  if (!ids.length) return { normalized: 0, errors: 0, total: 0 };
+
+  const total = ids.length;
   let normalized = 0;
   let errors = 0;
   let firstError: string | undefined;
 
-  for (const item of items) {
+  for (const id of ids) {
     try {
-      const result = await normalizeAndUpdateContent(item.id);
+      const result = await normalizeAndUpdateContent(id);
       if (result.success) normalized++;
       else {
         errors++;
@@ -528,6 +634,8 @@ export async function normalizeUserArticle(params: {
         readTimeBeginner: result.normalized.readTimeBeginner,
         readTimeIntermediate: result.normalized.readTimeIntermediate,
         readTimeAdvanced: result.normalized.readTimeAdvanced,
+        interviewQuestions: result.normalized.interviewQuestions ?? [],
+        mustKnowConcepts: result.normalized.mustKnowConcepts ?? [],
       },
     })
     .select("id")
