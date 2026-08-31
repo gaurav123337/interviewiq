@@ -41,6 +41,46 @@ describe("gapAnalysis", () => {
   });
 });
 
+/* Item 11 PR2 — the Skill Counselor under-count fix. CareerProfile.skills holds
+   display names, not catalog ids. Before this fix gapAnalysis lowercased them
+   and compared to catalog slug-ids with no slugification, so "Node.js",
+   "CI/CD" and "Data structures" silently failed to match node / ci-cd /
+   data-structures and owned skills went uncounted. canonicalize() now folds
+   them, so display-name input matches the path exactly. */
+describe("gapAnalysis — canonical vocabulary (PR2 under-count fix)", () => {
+  it("counts display-name skills that a plain lowercase would have missed", () => {
+    // The catalog ids these display names must resolve to:
+    expect("Node.js".trim().toLowerCase()).not.toBe("node");
+    expect("Data structures".trim().toLowerCase()).not.toBe("data-structures");
+
+    const g = gapAnalysis(profile(4, ["Node.js", "Data structures"]), "backend", "api-engineer");
+    expect(g).not.toBeNull();
+    const owned = g!.owned.map(s => s.id);
+    expect(owned).toContain("node");
+    expect(owned).toContain("data-structures");
+    // …and they are therefore NOT reported as missing.
+    expect(g!.missing.map(s => s.id)).not.toContain("node");
+    expect(g!.missing.map(s => s.id)).not.toContain("data-structures");
+  });
+
+  it("matches 'CI/CD' against the ci-cd catalog id", () => {
+    expect("CI/CD".trim().toLowerCase()).not.toBe("ci-cd");
+    const g = gapAnalysis(profile(6, ["CI/CD"]), "backend", "platform-infra");
+    expect(g!.owned.map(s => s.id)).toContain("ci-cd");
+  });
+
+  it("bare catalog ids still match (no regression for the old id-style input)", () => {
+    const g = gapAnalysis(profile(4, ["node", "data-structures"]), "backend", "api-engineer");
+    expect(g!.owned.map(s => s.id)).toEqual(expect.arrayContaining(["node", "data-structures"]));
+  });
+
+  it("suggestTrack overlap now sees display-name skills", () => {
+    // 3 API-Engineer path skills, all as human display names.
+    const s = suggestTrack(profile(4, ["Node.js", "Data structures", "Authentication"]));
+    expect(s.owned).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe("levelUpDelta", () => {
   it("shows only the delta between current band and target", () => {
     const d = levelUpDelta(profile(1, ["html", "css"]), "frontend", "ui-engineer", "senior");
