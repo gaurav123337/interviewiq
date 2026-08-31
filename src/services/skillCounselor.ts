@@ -11,6 +11,16 @@ import {
   skillsOf, trackById,
   type Band, type CatalogSkill, type CatalogField, type CatalogTrack
 } from "../data/skillCatalog";
+import { canonicalize } from "../data/skillVocab";
+
+/** The user's owned skills as a set of canonical catalog ids. CareerProfile
+    stores display names ("Node.js", "CI/CD", "Data structures"); canonicalize
+    folds each to its catalog id (node / ci-cd / data-structures) so the
+    `ownedIds.has(s.id)` checks below actually match. A plain `.toLowerCase()`
+    left these unmatched and silently under-counted owned skills. */
+function ownedIdsOf(profile: Pick<CareerProfile, "skills"> | null): Set<string> {
+  return new Set((profile?.skills ?? []).map(s => canonicalize(s).slug));
+}
 
 /** Approximate the profile's seniority from years (mirrors the matcher's
     ladder, plus staff/principal so the counselor can show the delta). */
@@ -32,8 +42,8 @@ export interface GapResult {
 }
 
 /** Split a track's path into owned vs missing against the user's skills
-    (canonical ids, lowercased). The "next" skill is the first missing one in
-    path order — the single most actionable step. */
+    (folded to canonical catalog ids via skillVocab). The "next" skill is the
+    first missing one in path order — the single most actionable step. */
 export function gapAnalysis(
   profile: Pick<CareerProfile, "years" | "skills"> | null,
   fieldId: string,
@@ -42,7 +52,7 @@ export function gapAnalysis(
   const track = trackById(fieldId, trackId);
   if (!track) return null;
   const path = skillsOf(track);
-  const ownedIds = new Set((profile?.skills ?? []).map(s => s.trim().toLowerCase()));
+  const ownedIds = ownedIdsOf(profile);
   const currentBand = bandForYears(profile?.years ?? 0);
 
   const owned = path.filter(s => ownedIds.has(s.id));
@@ -77,7 +87,7 @@ export function levelUpDelta(
   const tIdx = BAND_ORDER[targetBand];
   const cIdx = BAND_ORDER[currentBand];
 
-  const ownedIds = new Set((profile?.skills ?? []).map(s => s.trim().toLowerCase()));
+  const ownedIds = ownedIdsOf(profile);
   const newSkills = path.filter(s =>
     BAND_ORDER[s.band] > cIdx && BAND_ORDER[s.band] <= tIdx && !ownedIds.has(s.id)
   );
@@ -136,7 +146,7 @@ export interface TrackSuggestion {
 export function suggestTrack(
   profile: Pick<CareerProfile, "years" | "skills"> | null
 ): TrackSuggestion {
-  const ownedIds = new Set((profile?.skills ?? []).map(s => s.trim().toLowerCase()));
+  const ownedIds = ownedIdsOf(profile);
   let best: TrackSuggestion | null = null;
   for (const field of FIELDS) {
     for (const track of field.tracks) {
