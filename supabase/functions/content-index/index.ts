@@ -6,7 +6,7 @@
    Body: { contentId: string }  — specific content item to index
           OR {} to index all un-indexed approved items
 
-   Returns: { indexed: number, errors: number } */
+   Returns: { indexed: number, errors: number, errorDetails: { id, error }[] } */
 
 import { requireAdmin } from "../_shared/auth.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
@@ -50,34 +50,44 @@ Deno.serve(async (req) => {
       });
     }
 
+    const providerHost = hostOf(provider.base);
+
     const body = await req.json().catch(() => ({}));
     const contentId: string | undefined = body.contentId;
 
-    // Fetch approved content items
-    // For specific contentId: always fetch (for re-indexing)
-    // For bulk: only un-indexed items
+    // Fetch approved content items. For a specific contentId we always (re-)index.
+    // For a bulk run we index only items that don't already have a linked
+    // pdf_documents row — an anti-join on pdf_documents.content_item_id (D5),
+    // replacing the old content_items.rag_document_id flag.
     let query = client
       .from("content_items")
-      .select("id, title, content, summary, source_name, source_url, domain, field_id, content_refined, rag_document_id")
+      .select("id, title, content, summary, source_name, source_url, content_refined")
       .eq("status", "approved");
+    if (contentId) query = query.eq("id", contentId);
 
-    if (contentId) {
-      query = query.eq("id", contentId);
-    } else {
-      // Only un-indexed items (skip already indexed)
-      query = query.is("rag_document_id", null);
+    const { data: allItems, error: fetchError } = await query;
+    if (fetchError) throw fetchError;
+
+    let items = allItems ?? [];
+    if (!contentId && items.length) {
+      const { data: linked, error: linkError } = await client
+        .from("pdf_documents")
+        .select("content_item_id")
+        .not("content_item_id", "is", null);
+      if (linkError) throw linkError;
+      const indexedIds = new Set((linked ?? []).map((d: { content_item_id: string }) => d.content_item_id));
+      items = items.filter((it) => !indexedIds.has(it.id));
     }
 
-    const { data: items, error: fetchError } = await query;
-    if (fetchError) throw fetchError;
-    if (!items?.length) {
-      return new Response(JSON.stringify({ indexed: 0, errors: 0, message: "No items to index" }), {
+    if (!items.length) {
+      return new Response(JSON.stringify({ indexed: 0, errors: 0, errorDetails: [], message: "No items to index" }), {
         headers: { ...corsHeaders(req), "Content-Type": "application/json" },
       });
     }
 
     let indexed = 0;
     let errors = 0;
+    const errorDetails: { id: string; error: string }[] = [];
 
     for (const item of items) {
       try {
@@ -85,7 +95,6 @@ Deno.serve(async (req) => {
         const rawContent = String(item.content);
         const sourceName = String(item.source_name);
         const sourceUrl = String(item.source_url);
-        const fieldId = String(item.field_id);
 
         // Parse normalized content (content_refined JSONB)
         const refined = (typeof item.content_refined === "object" && item.content_refined !== null)
@@ -142,23 +151,20 @@ Deno.serve(async (req) => {
         // Join all parts with clear separators for better chunking
         const fullContent = enrichedParts.join("\n\n---\n\n").slice(0, 50000);
 
-        // ── Idempotent: delete old document + chunks if re-indexing ──
-        const existingDocId = (item as Record<string, unknown>).rag_document_id;
-        if (existingDocId) {
-          // Delete old chunks first (foreign key dependency)
-          await client.from("pdf_chunks").delete().eq("document_id", existingDocId);
-          // Delete old document
-          await client.from("pdf_documents").delete().eq("id", existingDocId);
-        }
+        // ── Idempotent: drop any existing document for this item (chunks cascade) ──
+        await client.from("pdf_documents").delete().eq("content_item_id", item.id);
 
-        // Create new pdf_documents entry
+        // Register the document, linked back to its content_item (D5). Only real
+        // columns — the old insert wrote non-existent `content`/`indexed` fields and
+        // failed with PGRST204 before a single chunk was ever embedded.
         const { data: doc, error: docError } = await client
           .from("pdf_documents")
           .insert({
             title: `[Article] ${title}`,
-            content: fullContent,
+            source: sourceUrl || sourceName || "content-item",
+            char_count: fullContent.length,
             chunk_count: 0,
-            indexed: false,
+            content_item_id: item.id,
           })
           .select("id")
           .single();
@@ -166,8 +172,8 @@ Deno.serve(async (req) => {
         if (docError) throw docError;
         const docId = doc.id;
 
-        // Chunk the enriched content (~800 chars per chunk with 200 char overlap)
-        // Smaller chunks = more precise RAG retrieval
+        // Chunk the enriched content (~800 chars per chunk with 200 char overlap).
+        // Smaller chunks = more precise RAG retrieval.
         const chunks = chunkText(fullContent, 800, 200);
 
         // Embed all chunks in ONE batch via the shared provider. embedTexts
@@ -177,38 +183,39 @@ Deno.serve(async (req) => {
         let chunkCount = 0;
         if (chunks.length) {
           const vectors = await embedTexts(provider, chunks);
-          for (let i = 0; i < chunks.length; i++) {
-            const { error: chunkError } = await client.from("pdf_chunks").insert({
+          const { error: chunkError } = await client.from("pdf_chunks").insert(
+            chunks.map((content, i) => ({
               document_id: docId,
-              content: chunks[i],
-              embedding: JSON.stringify(vectors[i]),
               chunk_index: i,
-            });
-            if (chunkError) throw chunkError;
-            chunkCount++;
-          }
+              content,
+              // Stringify so PostgREST hands pgvector its `[..]` text literal (a raw
+              // JSON array would bind as a Postgres `{..}` array and fail the cast).
+              embedding: JSON.stringify(vectors[i]),
+              // Stamp provenance so match_pdf_chunks can scope to this vector space.
+              embedding_provider: providerHost,
+              embedding_model: provider.model,
+            })),
+          );
+          if (chunkError) throw chunkError;
+          chunkCount = chunks.length;
         }
 
-        // Update document with chunk count
+        // Record the final chunk count on the document.
         await client
           .from("pdf_documents")
-          .update({ chunk_count: chunkCount, indexed: true })
+          .update({ chunk_count: chunkCount })
           .eq("id", docId);
-
-        // Link back to content_item
-        await client
-          .from("content_items")
-          .update({ rag_document_id: docId })
-          .eq("id", item.id);
 
         indexed++;
       } catch (e) {
-        console.error(`[content-index] failed to index item ${item.id}:`, (e as Error).message);
+        const message = (e as Error).message || String(e);
+        console.error(`[content-index] failed to index item ${item.id}:`, message);
         errors++;
+        errorDetails.push({ id: String(item.id), error: message });
       }
     }
 
-    return new Response(JSON.stringify({ indexed, errors }), {
+    return new Response(JSON.stringify({ indexed, errors, errorDetails }), {
       headers: { ...corsHeaders(req), "Content-Type": "application/json" },
     });
   } catch (e) {
@@ -220,6 +227,13 @@ Deno.serve(async (req) => {
 });
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
+
+/** Host of the /embeddings base URL, used to stamp pdf_chunks.embedding_provider
+    (e.g. "https://api.openai.com/v1" -> "api.openai.com"). Falls back to the raw
+    string when it isn't a parseable URL. */
+function hostOf(base: string): string {
+  try { return new URL(base).host; } catch { return base; }
+}
 
 function chunkText(text: string, chunkSize: number, overlap: number): string[] {
   const chunks: string[] = [];

@@ -6,7 +6,7 @@
    embed only the new/changed chunks, and replace the document's rows in one
    round-trip pair. Identical content short-circuits before touching the DB. */
 
-import { changedChunkIndices, chunkText, contentHash, embed, sectionChunkText, type TextChunk } from "./embeddings";
+import { changedChunkIndices, chunkText, contentHash, embed, embedModel, embedProviderHost, sectionChunkText, type TextChunk } from "./embeddings";
 import {
   deletePdfChunks, insertPdfChunks, listPdfChunks, setPdfChunkCount, type PdfChunkRow
 } from "./admin";
@@ -55,9 +55,14 @@ export async function reindexDocument(
     fresh = toEmbedIdx.length;
   }
   await deletePdfChunks(docId);
+  // Stamp the current embeddings provider+model on every chunk so match_pdf_chunks'
+  // p_model filter finds them (unstamped chunks are excluded from model-scoped
+  // retrieval). Reused vectors are stamped with the current model too — correct
+  // in the common case; if the admin switches embedding models between re-indexes
+  // of the same doc, a re-index re-embeds changed chunks and re-stamps the rest.
   await insertPdfChunks(chunks.map((c, i) => ({
     documentId: docId, index: c.index, content: c.content, tokens: c.tokens, embedding: vectors[i]
-  })));
+  })), { provider: embedProviderHost(), model: embedModel() });
   await setPdfChunkCount(docId, chunks.length);
   return { changed: changedIdx.length, reused: chunks.length - fresh, fresh };
 }

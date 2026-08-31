@@ -155,11 +155,12 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ contentId }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.indexed > 0) toast("🧠 Indexed to AI knowledge base");
-      }
-    } catch { /* silent — background task */ }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast("Index failed: " + (data.error || res.status)); return; }
+      if (data.errorDetails?.length) console.error("[content-index] errors:", data.errorDetails);
+      if (data.indexed > 0) { toast("🧠 Indexed to AI knowledge base"); await load(); }
+      else if (data.errors > 0) toast("Index failed — see console");
+    } catch (e) { toast("Index failed: " + ((e as Error).message || "Unknown")); }
   };
 
   /** Index all approved, un-indexed items */
@@ -178,8 +179,12 @@ export function ContentCuration({ busy, setBusy }: { busy: boolean; setBusy: (b:
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({}),
       });
-      const data = await res.json();
-      if (data.indexed > 0) toast(`🧠 Indexed ${data.indexed} items to AI knowledge base`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { toast("Index failed: " + (data.error || res.status)); return; }
+      if (data.errorDetails?.length) console.error("[content-index] errors:", data.errorDetails);
+      if (data.indexed > 0 && data.errors > 0) toast(`🧠 Indexed ${data.indexed}, ${data.errors} failed — see console`);
+      else if (data.indexed > 0) toast(`🧠 Indexed ${data.indexed} items to AI knowledge base`);
+      else if (data.errors > 0) toast(`Indexing failed for ${data.errors} item(s) — see console`);
       else toast("All approved items are already indexed");
       await load();
     } catch (e) { toast("Index failed: " + ((e as Error).message || "Unknown")); }

@@ -184,12 +184,12 @@ vi.mock("../services/embeddings", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/embeddings")>();
   /* retrieveContext resolves the query vector via embedQuery; override it too
      (the real one would take the cloud-proxy branch here, since no key is set,
-     and this mock provides no cloudFnHeaders). embedQuery returns a single
-     number[], not embed()'s number[][]. */
+     and this mock provides no cloudFnHeaders). embedQuery returns { vector, model }
+     so retrieval can scope the KB search to the query's embedding space. */
   return {
     ...actual,
     embed: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
-    embedQuery: vi.fn().mockResolvedValue([0.1, 0.2, 0.3])
+    embedQuery: vi.fn().mockResolvedValue({ vector: [0.1, 0.2, 0.3], model: "text-embedding-3-small" })
   };
 });
 
@@ -206,7 +206,7 @@ describe("retrieveContext", () => {
     /* hybrid re-rank promotes the relevant chunk over the higher-sim distractor */
     expect(result.hits[0].content).toContain("microtasks");
     expect(result.hits[0].grounded).toBe(true);
-    expect(searchPdfChunks).toHaveBeenCalledWith([0.1, 0.2, 0.3], CANDIDATE_POOL);
+    expect(searchPdfChunks).toHaveBeenCalledWith([0.1, 0.2, 0.3], CANDIDATE_POOL, "text-embedding-3-small");
     /* health analytics queued offline-first */
     const outbox = storageGet<{ kind: string; meta: Record<string, unknown> }[]>(STORAGE_KEYS.eventOutbox, []);
     const ev = outbox.find(e => e.kind === "rag_event");
