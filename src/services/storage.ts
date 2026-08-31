@@ -23,6 +23,10 @@ export const STORAGE_KEYS = {
   syncMeta: "iq.syncMeta",
   goal: "iq.goal",
   skills: "iq.skills",
+  /* iq.profile — the single canonical profile aggregate (roadmap Item 11).
+     Derived views reproduce the legacy iq.skills / iq.goal / iq.career /
+     iq.resume shapes; legacy keys are kept in parallel until they are retired. */
+  profile: "iq.profile",
   roadmapProg: "iq.roadmapProg",
   theme: "iq.theme",
   notifLastWeekly: "iq.notifLastWeekly",

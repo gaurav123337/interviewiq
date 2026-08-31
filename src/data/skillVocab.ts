@@ -199,20 +199,26 @@ export function canonicalize(raw: string): Canonical {
 }
 
 /** Split a composite label ("React · Vue · Angular", "CSS & accessibility")
-    into canonical atomic slugs, order-preserving and de-duped. Splits ONLY on
+    into canonical atoms, order-preserving and de-duped by slug. Splits ONLY on
     space-padded separators (· / & + , "and") so tight tokens like "CI/CD" and
-    "Node.js" survive intact. A label with no separator canonicalizes whole. */
-export function decompose(compositeLabel: string): string[] {
+    "Node.js" survive intact. A label with no separator canonicalizes whole.
+    Returns full Canonical objects so callers can keep each atom's display. */
+export function decomposeCanonical(compositeLabel: string): Canonical[] {
   const parts = compositeLabel.split(/\s+(?:[·/&+,]|and)\s+/i);
-  const out: string[] = [];
+  const out: Canonical[] = [];
   const seen = new Set<string>();
   for (const p of parts) {
     const t = p.trim();
     if (!t) continue;
-    const { slug } = canonicalize(t);
-    if (slug && !seen.has(slug)) { seen.add(slug); out.push(slug); }
+    const c = canonicalize(t);
+    if (c.slug && !seen.has(c.slug)) { seen.add(c.slug); out.push(c); }
   }
   return out;
+}
+
+/** Split a composite label into canonical atomic slugs (see decomposeCanonical). */
+export function decompose(compositeLabel: string): string[] {
+  return decomposeCanonical(compositeLabel).map(c => c.slug);
 }
 
 /** Best-effort human label for a slug: the catalog name when known, else the

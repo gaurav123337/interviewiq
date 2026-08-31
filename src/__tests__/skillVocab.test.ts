@@ -11,7 +11,7 @@
       round-trips from its display name — so the canonical store never drifts. */
 
 import { describe, expect, it } from "vitest";
-import { canonicalize, decompose, slugify, displayName } from "../data/skillVocab";
+import { canonicalize, decompose, decomposeCanonical, slugify, displayName } from "../data/skillVocab";
 import { SKILLS } from "../data/skillCatalog";
 
 describe("slugify", () => {
@@ -86,6 +86,21 @@ describe("decompose — composite FIELDS labels → atomic slugs", () => {
   it("de-dupes atomics that collapse to the same slug", () => {
     // "SRE" and "observability" both resolve to the observability node.
     expect(decompose("SRE & observability")).toEqual(["observability"]);
+  });
+});
+
+describe("decomposeCanonical — atoms with their display names", () => {
+  it("returns full Canonicals so callers keep display + catalogId", () => {
+    const atoms = decomposeCanonical("React · Node.js · Elasticsearch");
+    expect(atoms.map(a => a.slug)).toEqual(["react", "node", "elasticsearch"]);
+    expect(atoms.map(a => a.display)).toEqual(["React", "Node.js", "Elasticsearch"]);
+    expect(atoms[0].catalogId).toBe("react");
+    expect(atoms[2].catalogId).toBeUndefined(); // Elasticsearch is not in the catalog
+  });
+
+  it("decompose() slugs stay in lockstep with decomposeCanonical()", () => {
+    const label = "CSS & accessibility";
+    expect(decompose(label)).toEqual(decomposeCanonical(label).map(a => a.slug));
   });
 });
 
