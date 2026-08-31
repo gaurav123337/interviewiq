@@ -234,6 +234,18 @@ function saveCanonicalProfile(p: CanonicalProfile): void {
   storageSet(STORAGE_KEYS.profile, { ...p, updatedAt: Date.now() });
 }
 
+/** Rebuild the canonical aggregate from the CURRENT legacy keys and persist it
+    with a fresh updatedAt stamp. Used by the clear* delegators: deleting a
+    legacy key (iq.skills / iq.goal / iq.resume) must not leave that source's
+    skills stranded in the cached aggregate. The fresh stamp also lets a later
+    last-writer-wins cloud sync keep the cleared state instead of resurrecting
+    it from an older remote copy. */
+export function rebuildCanonicalProfile(): CanonicalProfile {
+  const rebuilt = buildCanonicalFromLegacy();
+  saveCanonicalProfile(rebuilt);
+  return rebuilt;
+}
+
 /* ------------------------------------------------------------------ */
 /* Derived views — reproduce the legacy shapes                         */
 /* ------------------------------------------------------------------ */
@@ -293,6 +305,14 @@ export function toUploadedResume(p: CanonicalProfile = getCanonicalProfile()): U
     extractedAt: p.resume.extractedAt,
     profile: toCareerProfile(p)
   };
+}
+
+/** The canonical slugs the user owns — every node in the unified graph. These
+    are skillCatalog ids when known, which is exactly what resolvePath() compares
+    roadmap prerequisites against, so SkillDetail can mark owned prerequisites
+    directly (replacing its old, always-empty localStorage["iq.skills"] read). */
+export function ownedSkillSlugs(p: CanonicalProfile = getCanonicalProfile()): string[] {
+  return Object.keys(p.skills);
 }
 
 /* ------------------------------------------------------------------ */

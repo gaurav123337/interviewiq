@@ -9,6 +9,7 @@ import { useApp } from "../store";import { getRoadmapBySlug,
   type SkillRoadmap,
 } from "../services/skillRoadmapService";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
+import { ownedSkillSlugs } from "../services/profileStore";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
 
 const BAND_LABELS: Record<string, string> = {
@@ -31,20 +32,11 @@ export function SkillDetail() {
   const slug = localStorage.getItem("iq.learnSlug") ?? "";
   const [roadmap, setRoadmap] = useState<SkillRoadmap | null>(null);
   const [loading, setLoading] = useState(true);
-  const [knownSkills] = useState<string[]>(() => {
-    try {
-      const raw = localStorage.getItem("iq.skills");
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      // iq.skills stores SkillRating[] = {skill: string, self: number}[]
-      if (Array.isArray(parsed)) {
-        return parsed.map((s: { skill?: string; self?: number } | string) =>
-          typeof s === "string" ? s : (s.skill ?? "")
-        ).filter(Boolean);
-      }
-      return [];
-    } catch { return []; }
-  });
+  /* Owned skills come from the ONE canonical graph (Item 11). Its keys are
+     catalog slugs, which is exactly what resolvePath() compares roadmap
+     prerequisites against. (Previously this read localStorage["iq.skills"] and
+     tested Array.isArray on a SkillProfile object, so it was always empty.) */
+  const [knownSkills] = useState<string[]>(() => ownedSkillSlugs());
   const [showAllResources, setShowAllResources] = useState(false);
 
   useEffect(() => {
