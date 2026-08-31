@@ -34,6 +34,8 @@ interface RefinedContent {
   read_time_beginner?: number;
   read_time_intermediate?: number;
   read_time_advanced?: number;
+  interviewQuestions?: { question: string; answer: string; keyPoints: string[] }[];
+  mustKnowConcepts?: string[];
 }
 
 interface Article {
@@ -131,6 +133,16 @@ function parseRefined(raw: unknown): RefinedContent | null {
       read_time_beginner: Number(obj.read_time_beginner) || undefined,
       read_time_intermediate: Number(obj.read_time_intermediate) || undefined,
       read_time_advanced: Number(obj.read_time_advanced) || undefined,
+      interviewQuestions: Array.isArray(obj.interviewQuestions)
+        ? obj.interviewQuestions
+            .map((q: Record<string, unknown>) => ({
+              question: decodeText(String(q.question || "")),
+              answer: decodeText(String(q.answer || "")),
+              keyPoints: Array.isArray(q.keyPoints) ? q.keyPoints.map(String).filter(Boolean) : [],
+            }))
+            .filter((q: { question: string }) => q.question)
+        : [],
+      mustKnowConcepts: Array.isArray(obj.mustKnowConcepts) ? obj.mustKnowConcepts.map(String).filter(Boolean) : [],
     };
   } catch {
     return null;
@@ -778,6 +790,65 @@ function Glossary({ terms }: { terms: { term: string; definition: string }[] }) 
   );
 }
 
+/** Interview-targeting block (item 8): must-know concepts + collapsible likely
+    interview questions with model answers and scoring key points. Renders nothing
+    when both are empty (e.g. articles normalized before this feature). */
+function InterviewPrep({
+  questions,
+  concepts,
+}: {
+  questions: { question: string; answer: string; keyPoints: string[] }[];
+  concepts: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  if (!questions.length && !concepts.length) return null;
+  return (
+    <div className="rounded-lg border border-purple-400/30 bg-purple-400/10 p-4">
+      <h4 className="mb-2 text-[13px] font-extrabold text-purple-400">🎯 Interview Prep</h4>
+      {concepts.length > 0 && (
+        <div className="mb-3">
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-mut">Must-know concepts</p>
+          <div className="flex flex-wrap gap-1.5">
+            {concepts.map((c, i) => (
+              <span key={i} className="rounded bg-purple-400/15 px-2 py-0.5 text-[11px] font-bold text-purple-400">{c}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {questions.length > 0 && (
+        <>
+          <button
+            onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+            className="text-[12px] font-bold text-purple-400 hover:underline"
+          >
+            {open ? "▾ Hide" : "▸ Show"} {questions.length} likely interview question{questions.length > 1 ? "s" : ""}
+          </button>
+          {open && (
+            <ol className="mt-2 space-y-2.5">
+              {questions.map((q, i) => (
+                <li key={i} className="rounded-lg bg-panel2 p-3">
+                  <p className="text-[12.5px] font-bold text-ink">Q{i + 1}. {q.question}</p>
+                  {q.answer && <p className="mt-1 text-[12px] leading-relaxed text-ink">{q.answer}</p>}
+                  {q.keyPoints.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5">
+                      {q.keyPoints.map((kp, j) => (
+                        <li key={j} className="flex gap-1.5 text-[11.5px] text-mut">
+                          <span className="shrink-0 text-purple-400">✓</span>
+                          <span>{kp}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function DifficultySelector({ level, onChange }: { level: DifficultyLevel; onChange: (l: DifficultyLevel) => void }) {
   return (
     <div className="flex gap-1 rounded-lg bg-panel2 p-1">
@@ -940,6 +1011,7 @@ function ArticleCard({ article }: { article: Article }) {
                   {showGlossary && <Glossary terms={refined!.glossary} />}
                 </div>
               )}
+              <InterviewPrep questions={refined!.interviewQuestions ?? []} concepts={refined!.mustKnowConcepts ?? []} />
             </>
           ) : (
             <div className="space-y-3">
@@ -1246,6 +1318,7 @@ function UserArticleCard({ article, onDelete }: { article: { id: string; title: 
               {showGlossary && <Glossary terms={n.glossary} />}
             </div>
           )}
+          <InterviewPrep questions={n.interviewQuestions ?? []} concepts={n.mustKnowConcepts ?? []} />
         </div>
       )}
     </div>
