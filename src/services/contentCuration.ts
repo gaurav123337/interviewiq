@@ -44,7 +44,10 @@ export interface ContentItemRow {
   fieldId: string;
   tags: string[];
   contentType: string;
-  ragDocumentId: string | null;
+  /** pdf_documents.id of the KB doc indexed from this item, or null. Resolved by a
+      reverse lookup on pdf_documents.content_item_id (D5) — the item no longer stores
+      the link itself (the legacy content_items.rag_document_id is deprecated). */
+  ragDocumentId: number | null;
   createdAt: string;
 }
 
@@ -141,8 +144,26 @@ export async function listContentItems(params: {
   const { data, error, count } = await query;
   if (error) return { items: [], total: 0 };
 
+  /* Resolve the RAG link with a reverse lookup on pdf_documents.content_item_id
+     (D5) rather than reading a column off the item. A separate query keeps the
+     list resilient: if the FK/columns aren't migrated yet the lookup just yields
+     no links (no badges) instead of failing the whole page, which a PostgREST
+     embed on an unknown relationship would. */
+  const rows = data ?? [];
+  const linkByItem = new Map<string, number>();
+  if (rows.length) {
+    const ids = rows.map(r => String(r.id));
+    const { data: docs } = await client
+      .from("pdf_documents")
+      .select("id, content_item_id")
+      .in("content_item_id", ids);
+    for (const d of (docs ?? []) as { id: number; content_item_id: string | null }[]) {
+      if (d.content_item_id) linkByItem.set(String(d.content_item_id), d.id);
+    }
+  }
+
   return {
-    items: (data ?? []).map(r => ({
+    items: rows.map(r => ({
       id: String(r.id),
       sourceId: String(r.source_id),
       sourceUrl: String(r.source_url),
@@ -168,7 +189,7 @@ export async function listContentItems(params: {
       fieldId: String(r.field_id),
       tags: Array.isArray(r.tags) ? r.tags : [],
       contentType: String(r.content_type),
-      ragDocumentId: r.rag_document_id ?? null,
+      ragDocumentId: linkByItem.get(String(r.id)) ?? null,
       createdAt: r.created_at,
     })),
     total: count ?? 0,

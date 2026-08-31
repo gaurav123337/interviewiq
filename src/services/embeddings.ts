@@ -16,6 +16,15 @@ export function embedModel(): string {
   return getAiDefaults().embeddingsModel || DEFAULT_EMBED_MODEL;
 }
 
+/** Host of the configured embeddings base URL (e.g. "api.openai.com"), stamped
+    onto pdf_chunks.embedding_provider alongside embedModel() so retrieval can
+    scope the KB search to this vector space. Mirrors content-index's hostOf so
+    BYOK-uploaded chunks and server-indexed chunks stamp the same way. */
+export function embedProviderHost(): string {
+  const base = getSettings().base;
+  try { return new URL(base).host; } catch { return base; }
+}
+
 /** Rough token estimate (chars / 4) for chunk sizing and display. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.replace(/\s+/g, " ").length / 4);
@@ -116,6 +125,13 @@ export async function embed(texts: string[]): Promise<number[][]> {
   return out;
 }
 
+/** A query vector plus the embedding model that produced it, so retrieval can
+    scope the KB search to the same vector space (match_pdf_chunks' p_model). */
+export interface QueryEmbedding {
+  vector: number[];
+  model: string;
+}
+
 /** Embeds a single QUERY for retrieval, in priority order:
       1. BYOK — the user's own key, via embed() (exactly as indexing does).
       2. Keyless but signed in — the shared server-side proxy (functions/embed),
@@ -123,14 +139,17 @@ export async function embed(texts: string[]): Promise<number[][]> {
          indexing stays on embed() (BYOK), which is what keeps bulk embedding
          off the shared key.
       3. Neither — throw, same contract/message as embed().
-    ALWAYS throws on failure and NEVER returns an empty vector, so a caller that
-    persists the result can't store a corrupt embedding. retrieveContext turns a
-    throw into an honest checked:false rather than a wrong search. */
-export async function embedQuery(text: string): Promise<number[]> {
+    Returns the vector AND the model that produced it (BYOK: the configured model;
+    keyless: whatever the proxy reports it used) so the caller can filter the KB to
+    the matching embedding space. ALWAYS throws on failure and NEVER returns an empty
+    vector, so a caller that persists the result can't store a corrupt embedding.
+    retrieveContext turns a throw into an honest checked:false rather than a wrong
+    search. */
+export async function embedQuery(text: string): Promise<QueryEmbedding> {
   if (getSettings().key) {
     const [vec] = await embed([text]);
     if (!vec?.length) throw new Error("Empty embedding");
-    return vec;
+    return { vector: vec, model: embedModel() };
   }
   if (getCloudState().user) {
     const res = await fetch(`${CONFIG.supabase.url}/functions/v1/embed`, {
@@ -142,7 +161,8 @@ export async function embedQuery(text: string): Promise<number[]> {
     if (!res.ok) throw new Error((body as { error?: string }).error ?? `Embeddings failed (${res.status})`);
     const vec = (body as { vectors?: number[][] }).vectors?.[0];
     if (!vec?.length) throw new Error("Embeddings proxy returned no vector");
-    return vec;
+    const model = (body as { model?: string }).model || DEFAULT_EMBED_MODEL;
+    return { vector: vec, model };
   }
   throw new Error("No API key configured");
 }

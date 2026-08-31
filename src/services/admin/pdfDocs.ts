@@ -33,14 +33,25 @@ export async function createPdfDocument(input: { title: string; source?: string;
   return (data as { id: number }).id;
 }
 
-/** Stores embedded chunks for a document. */
+/** Stores embedded chunks for a document. `meta` stamps the embedding provider
+    host + model onto each chunk so match_pdf_chunks' p_model filter can scope
+    retrieval to this vector space — without it these chunks get a NULL model and
+    are invisible to model-scoped queries. Omitted (legacy callers) → unstamped. */
 export async function insertPdfChunks(rows: {
   documentId: number; index: number; content: string; tokens: number; embedding: number[];
-}[]): Promise<void> {
+}[], meta?: { provider?: string; model?: string }): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("Cloud not configured");
   const { error } = await client.from("pdf_chunks").insert(
-    rows.map(r => ({ document_id: r.documentId, chunk_index: r.index, content: r.content, token_count: r.tokens, embedding: r.embedding }))
+    rows.map(r => ({
+      document_id: r.documentId,
+      chunk_index: r.index,
+      content: r.content,
+      token_count: r.tokens,
+      embedding: r.embedding,
+      ...(meta?.provider ? { embedding_provider: meta.provider } : {}),
+      ...(meta?.model ? { embedding_model: meta.model } : {}),
+    }))
   );
   if (error) throw new Error(error.message);
 }
@@ -101,11 +112,17 @@ export interface PdfHit {
   similarity: number;
 }
 
-/** Vector search over the knowledge base — the RAG retrieval step. */
-export async function searchPdfChunks(embedding: number[], matchCount = 4): Promise<PdfHit[]> {
+/** Vector search over the knowledge base — the RAG retrieval step. When `model`
+    is given it scopes results to chunks embedded by that model (match_pdf_chunks'
+    p_model filter), so a query vector is never compared against chunks from a
+    different embedding space. Omitted → no filter (back-compatible with the 2-arg
+    RPC on installs that predate the model column). */
+export async function searchPdfChunks(embedding: number[], matchCount = 4, model?: string): Promise<PdfHit[]> {
   const client = await getSupabaseClient();
   if (!client) return [];
-  const { data, error } = await client.rpc("match_pdf_chunks", { query_embedding: embedding, match_count: matchCount });
+  const args: Record<string, unknown> = { query_embedding: embedding, match_count: matchCount };
+  if (model) args.p_model = model;
+  const { data, error } = await client.rpc("match_pdf_chunks", args);
   if (error || !data) return [];
   return (data as { document_id: number; content: string; similarity: number }[])
     .map(d => ({ documentId: d.document_id, content: d.content, similarity: d.similarity }));

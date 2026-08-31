@@ -205,7 +205,13 @@ create table if not exists public.pdf_chunks (
   chunk_index integer not null,
   content text not null,
   token_count integer not null default 0,
-  embedding vector(1536)
+  embedding vector(1536),
+  /* the provider host + model that produced this vector — match_pdf_chunks filters
+     on embedding_model so a query is never compared across vector spaces. Existing
+     installs get these columns via migrations/20260831_rag_corpus.sql (a create-if-
+     not-exists here only helps fresh installs). */
+  embedding_provider text,
+  embedding_model text
 );
 
 create index if not exists pdf_chunks_document_id_idx on public.pdf_chunks (document_id);
@@ -230,16 +236,24 @@ do $$ begin
 end $$;
 
 /* Vector search used once embeddings are populated. Requires pgvector
-   (enable it in Supabase: Database → Extensions → vector). */
+   (enable it in Supabase: Database → Extensions → vector).
+   p_model scopes results to chunks embedded by that model, so a query vector is
+   never compared against a chunk from a different embedding space. The drop-first
+   is required because CREATE OR REPLACE cannot change an existing function's
+   argument list (an old 2-arg version would otherwise survive as an overload). */
+drop function if exists public.match_pdf_chunks(vector(1536), integer);
+
 create or replace function public.match_pdf_chunks(
   query_embedding vector(1536),
-  match_count integer default 5
+  match_count integer default 5,
+  p_model text default null
 )
 returns table (document_id bigint, content text, similarity double precision)
 language sql stable security definer set search_path = public as $$
   select p.document_id, p.content, 1 - (p.embedding <=> query_embedding) as similarity
   from public.pdf_chunks p
   where p.embedding is not null
+    and (p_model is null or p.embedding_model = p_model)
   order by p.embedding <=> query_embedding
   limit match_count;
 $$;

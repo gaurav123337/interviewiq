@@ -82,6 +82,20 @@ describe("reindexDocument", () => {
     expect(embed).toHaveBeenCalledTimes(1);
     expect(adminMocks.deletePdfChunks).toHaveBeenCalledWith(9);
   });
+
+  it("stamps the embedding provider + model so chunks survive the p_model filter", async () => {
+    const text = "one section about closures\n\ntwo sections about the event loop";
+    const chunks = prepareChunks(text);
+    vi.mocked(embed).mockResolvedValue(chunks.map((_, i) => fakeVec(i + 1)));
+    await reindexDocument(11, text, []);
+    /* insertPdfChunks(rows, meta) — meta must carry a non-empty model, else these
+       chunks get a NULL embedding_model and match_pdf_chunks' p_model filter hides them */
+    const meta = adminMocks.insertPdfChunks.mock.calls[0][1];
+    expect(meta).toBeTruthy();
+    expect(typeof meta.model).toBe("string");
+    expect(meta.model.length).toBeGreaterThan(0);
+    expect("provider" in meta).toBe(true);
+  });
 });
 
 describe("prepareChunks", () => {

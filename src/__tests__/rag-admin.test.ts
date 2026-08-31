@@ -37,8 +37,8 @@ function makeClient() {
   };
   const client = {
     from: (t: string) => { calls.push(`from:${t}`); return chain(t); },
-    rpc: (name: string, _args?: unknown) => {
-      calls.push(`rpc:${name}`);
+    rpc: (name: string, args?: unknown) => {
+      calls.push(`rpc:${name}:${JSON.stringify(args ?? {})}`);
       if (name === "is_admin") return Promise.resolve({ data: true, error: null });
       if (name === "match_pdf_chunks") return Promise.resolve({
         data: [{ document_id: 1, content: "relevant chunk", similarity: 0.9 }], error: null
@@ -123,6 +123,16 @@ describe("RAG knowledge base ops", () => {
     const hits = await searchPdfChunks([0.1, 0.2, 0.3], 4);
     expect(fake!.calls.some(c => c.startsWith("rpc:match_pdf_chunks"))).toBe(true);
     expect(hits).toEqual([{ documentId: 1, content: "relevant chunk", similarity: 0.9 }]);
+    /* no model → no p_model arg (back-compatible with the 2-arg RPC) */
+    const call = fake!.calls.find(c => c.startsWith("rpc:match_pdf_chunks"))!;
+    expect(call).not.toContain("p_model");
+  });
+
+  it("scopes the search to an embedding model when one is given", async () => {
+    await searchPdfChunks([0.1, 0.2, 0.3], 4, "text-embedding-3-small");
+    const call = fake!.calls.find(c => c.startsWith("rpc:match_pdf_chunks"))!;
+    expect(call).toContain('"p_model":"text-embedding-3-small"');
+    expect(call).toContain('"match_count":4');
   });
 });
 

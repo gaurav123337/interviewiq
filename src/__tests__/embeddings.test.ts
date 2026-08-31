@@ -129,7 +129,8 @@ describe("embedQuery", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await embedQuery("what is a b-tree");
-    expect(out).toEqual([0.1, 0.2, 0.3]);
+    expect(out.vector).toEqual([0.1, 0.2, 0.3]);
+    expect(out.model).toBe(DEFAULT_EMBED_MODEL);
     /* BYOK talks to the provider's /embeddings directly — never the edge proxy */
     expect(String(fetchMock.mock.calls[0][0])).toBe("https://example.com/v1/embeddings");
   });
@@ -148,7 +149,8 @@ describe("embedQuery", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const out = await embedQuery("what is a b-tree");
-    expect(out).toEqual([0.4, 0.5, 0.6]);
+    expect(out.vector).toEqual([0.4, 0.5, 0.6]);
+    expect(out.model).toBe("text-embedding-3-small");
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain("/functions/v1/embed");
     expect((init as RequestInit).method).toBe("POST");
