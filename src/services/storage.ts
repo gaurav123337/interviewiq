@@ -42,6 +42,7 @@ export const STORAGE_KEYS = {
   jobs: "iq.jobs",
   jobsRefreshedAt: "iq.jobsRefreshedAt",
   gapPlans: "iq.gapPlans",
+  jdScans: "iq.jdScans",
   applyKit: "iq.applyKit",
   lastKit: "iq.lastKit",
   lastCompare: "iq.lastCompare",

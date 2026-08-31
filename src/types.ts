@@ -216,6 +216,26 @@ export interface JobMatch {
   blockers: string[];
 }
 
+/** A saved resume-vs-JD scan — a pasted job description turned into a synthetic
+    JobPosting the existing matcher (services/jobs/match.ts) scores against the
+    career profile, reusing the exact verdict vocabulary the live feed uses.
+    The synthetic posting is persisted so re-opening a scan reproduces the same
+    verdict without re-mining the text; the JobMatch itself is recomputed live
+    from job + current profile, so adding a missing skill updates the verdict. */
+export interface JdScan {
+  /** `scan:<contentHash>` — stable across identical JD text, so re-scanning
+      the same description replaces (not duplicates) the earlier scan. */
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  /** The pasted JD (capped). */
+  jdText: string;
+  /** Synthetic posting built from the JD (its id === this scan's id). */
+  job: JobPosting;
+  /** What analyzeJd detected, surfaced in the UI ("Senior · Frontend"). */
+  detected: { fieldId: string; levelId: LevelId; companyId: string | null };
+}
+
 export interface CatStat {
   label: string;
   score: number;
