@@ -35,6 +35,7 @@ import { SalaryBenchmarkCard } from "./jobs/SalaryBenchmarkCard";
 import { ApplyTrackerCard } from "./jobs/ApplyTrackerCard";
 import { ResumeCard } from "./jobs/ResumeCard";
 import { CareerProfileCard } from "./jobs/CareerProfileCard";
+import { JdScanCard } from "./jobs/JdScanCard";
 import { CompanyRankingCard } from "./jobs/CompanyRankingCard";
 import { FeedFilters } from "./jobs/FeedFilters";
 import { MatchFeedCard } from "./jobs/MatchFeedCard";
@@ -410,6 +411,14 @@ export function Jobs() {
         setProfile={setProfile}
         save={save}
         addSuggestedSkill={addSuggestedSkill}
+      />
+
+      <JdScanCard
+        profile={profile}
+        locked={proGated}
+        onAddSkill={addSkillToProfile}
+        onUpgrade={setUpgrade}
+        onGapPlan={(job, missing) => setGapJob({ job, missing })}
       />
 
       <CompanyRankingCard

@@ -5,3 +5,4 @@ export * from "./profile";
 export * from "./feed";
 export * from "./match";
 export * from "./ranking";
+export * from "./jdScan";
