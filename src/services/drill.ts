@@ -1,6 +1,7 @@
 import type { LevelId } from "../types";
 import { FIELDS } from "../data";
 import { deepDiveCards } from "../data/deepDive";
+import { canonicalize } from "../data/skillVocab";
 import { bankItems, pickRelevant, shuffle, tokenize } from "../engine";
 import { storageGet, storageSet } from "./storage";
 import { codingDrillCards } from "./codingTrack";
@@ -106,6 +107,14 @@ export function practiceForRound(
 ): DrillCard[] {
   /* meaningful keywords: tokens of length > 2, deduped, capped */
   const keywords = [...new Set(tokenize(roundNotes).filter(w => w.length > 2))].slice(0, 12);
+  return deckFromKeywords(keywords, fieldSel, count);
+}
+
+/* Core relevance sweep shared by practiceForRound and deckForSkills: given
+   already-extracted keywords, match them against the question bank (own field
+   first for highest relevance, then the other fields) and return up to `count`
+   deduped drill cards. No keywords → empty deck. Pure + testable. */
+function deckFromKeywords(keywords: string[], fieldSel: string, count: number): DrillCard[] {
   if (!keywords.length) return [];
 
   const seen = new Set<string>();
@@ -127,4 +136,28 @@ export function practiceForRound(
     }
   }
   return out;
+}
+
+/* Skill-driven practice (Item 12 gap prep-loop) — turns a job's missing
+   skills into a targeted drill deck. Labels are canonicalized (so "Node.js" /
+   "CI/CD" fold to stable forms) and de-duped by slug. The relevance sweep
+   matches on `tokenize`d display strings, and tokenize's regex is stricter
+   than the slugifier: a label like "C++" / "C#" / "R" has a non-empty slug but
+   tokenizes to nothing (the '+' / '#' are stripped and the lone letter is
+   dropped). Such a label carries no searchable keyword, so we skip it here —
+   otherwise a set of only-untokenizable labels would reach pickRelevant with an
+   empty keyword set and hit its random fallback, serving unrelated cards as if
+   they were the user's gap drill. If nothing survives, deckFromKeywords returns
+   []. Ephemeral — the deck is never persisted (only per-card SRS is, and this
+   runner never rates). */
+export function deckForSkills(labels: string[], fieldSel: string, count = 6): DrillCard[] {
+  const seen = new Set<string>();
+  const keywords: string[] = [];
+  for (const label of labels) {
+    const c = canonicalize(label);
+    if (!c.slug || seen.has(c.slug) || !tokenize(c.display).length) continue;
+    seen.add(c.slug);
+    keywords.push(c.display);
+  }
+  return deckFromKeywords(keywords, fieldSel, count);
 }

@@ -6,6 +6,8 @@
 
 import type { JobPosting } from "../types";
 import { getTopicInfo } from "../data/resources";
+import { canonicalize } from "../data/skillVocab";
+import { JD_KEYWORD_LIMIT } from "./roadmap/phases";
 import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 
 export interface GapItem {
@@ -77,4 +79,43 @@ export function saveGapPlan(plan: GapPlan): void {
   const plans = storageGet<Record<string, GapPlan>>(STORAGE_KEYS.gapPlans, {});
   plans[plan.jobId] = plan;
   storageSet(STORAGE_KEYS.gapPlans, plans);
+}
+
+/* ------------------------------------------------------------------ */
+/* Roadmap write-back (Item 12 gap prep-loop)                          */
+/* ------------------------------------------------------------------ */
+
+/** Merge a job's missing-skill labels into a goal's existing `jdKeywords` for
+    the Roadmap write-back. Preserves `existing` verbatim and in order (never
+    drops a keyword the user already has — some carry roadmap progress), appends
+    only skills not already present (matched by canonical slug, so "Node.js"
+    won't double up with "node"), and caps additions at `cap`. `cap` defaults to
+    `JD_KEYWORD_LIMIT` — the same limit `buildPhases` slices `jdKeywords` to when
+    rendering "Job description fit" topics — so at the default the stored array
+    stays aligned with what the Roadmap shows. (A caller passing `cap` > that
+    limit could store `added` keywords the Roadmap won't render; callers should
+    keep the default unless they have a reason not to.) Returns the merged list
+    plus the canonical display names `added` and any `dropped` by the cap, so the
+    caller can report the outcome. Pure. */
+export function mergeGapKeywords(
+  existing: string[],
+  missingLabels: string[],
+  cap = JD_KEYWORD_LIMIT
+): { next: string[]; added: string[]; dropped: string[] } {
+  const seen = new Set(existing.map(k => canonicalize(k).slug));
+  const next = [...existing];
+  const added: string[] = [];
+  const dropped: string[] = [];
+  for (const label of missingLabels) {
+    const c = canonicalize(label);
+    if (!c.slug || seen.has(c.slug)) continue;
+    seen.add(c.slug);
+    if (next.length < cap) {
+      next.push(c.display);
+      added.push(c.display);
+    } else {
+      dropped.push(c.display);
+    }
+  }
+  return { next, added, dropped };
 }
