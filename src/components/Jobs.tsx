@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CareerProfile, JobPosting, UploadedResume } from "../types";
+import type { CareerProfile, JobPosting, LevelId, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { isCloudConfigured } from "../services/cloud";
 import { toast } from "../toast";
@@ -51,7 +51,7 @@ export function Jobs() {
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [upgrade, setUpgrade] = useState<string | null>(null);
-  const [gapJob, setGapJob] = useState<{ job: JobPosting; missing: string[] } | null>(null);
+  const [gapJob, setGapJob] = useState<{ job: JobPosting; missing: string[]; detected?: { fieldId: string; levelId: LevelId } } | null>(null);
   const [kitJob, setKitJob] = useState<JobPosting | null>(null);
   const [tracks, setTracks] = useState<Record<string, ApplyTrack>>(() => {
     const m: Record<string, ApplyTrack> = {};
@@ -418,7 +418,7 @@ export function Jobs() {
         locked={proGated}
         onAddSkill={addSkillToProfile}
         onUpgrade={setUpgrade}
-        onGapPlan={(job, missing) => setGapJob({ job, missing })}
+        onGapPlan={(job, missing, detected) => setGapJob({ job, missing, detected })}
       />
 
       <CompanyRankingCard
@@ -558,7 +558,7 @@ export function Jobs() {
       </div>
 
       {upgrade && <UpgradeModal onClose={() => setUpgrade(null)} reason={upgrade} />}
-      {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} onClose={() => setGapJob(null)} />}
+      {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} detected={gapJob.detected} onClose={() => setGapJob(null)} />}
       {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} originalResumeText={resume?.text} onAddSkill={addSkillToProfile} onClose={() => setKitJob(null)} />}
       {reportOpen && <ReportModal onClose={() => setReportOpen(false)} />}
       {importOpen && (
