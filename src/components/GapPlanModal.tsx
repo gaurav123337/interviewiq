@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { JobPosting, LevelId } from "../types";
 import { getGoal, saveGoal } from "../services/goal";
 import { buildGapPlan, getGapPlan, mergeGapKeywords, saveGapPlan, type GapPlan } from "../services/gapPlan";
+import { deckForSkills, type DrillCard } from "../services/drill";
 import { JD_KEYWORD_LIMIT } from "../services/roadmap/phases";
 import { canonicalize } from "../data/skillVocab";
 import { useApp } from "../store";
@@ -23,6 +24,10 @@ export function GapPlanModal({ job, missing, detected, onClose }: {
      mirror of goal.jdKeywords. Drives the per-item "On Roadmap ✓" markers and
      the primary button, and updates in place after a write-back. */
   const [jdKeywords, setJdKeywords] = useState<string[]>(() => getGoal()?.jdKeywords ?? []);
+  /* Ephemeral quick-drill deck (Item 12 PR3) — flip-cards built from the gap
+     skills, never persisted. Lives and dies with the modal. */
+  const [drill, setDrill] = useState<DrillCard[] | null>(null);
+  const [flipped, setFlipped] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!plan) {
@@ -87,6 +92,18 @@ export function GapPlanModal({ job, missing, detected, onClose }: {
     onClose();
   };
 
+  /* Inline quick-drill — turns the gap skills into flip-cards from the question
+     bank (deckForSkills). Ephemeral: no store write, no navigation; the deck is
+     discarded when the panel or modal closes. deckForSkills skips labels with no
+     searchable token and returns [] if nothing matches (never a random deck). */
+  const startDrill = () => {
+    const fieldId = detected?.fieldId ?? getGoal()?.fieldId ?? state.ob.field ?? "frontend";
+    const cards = deckForSkills(plan.items.map(it => it.skill), fieldId);
+    if (!cards.length) { toast("No drill cards for these skills yet — try the practice session instead."); return; }
+    setDrill(cards);
+    setFlipped({});
+  };
+
   return (
     <Modal onClose={onClose} title="📈 Close the gap" desc={`A study plan for ${job.title} at ${job.company} — built from the ${plan.items.length} skills this role needs that your profile doesn't list yet.`}>
       <div className="mb-4 flex flex-wrap gap-2">
@@ -126,8 +143,37 @@ export function GapPlanModal({ job, missing, detected, onClose }: {
 
       <p className="mt-4 text-[11.5px] text-mut">
         Tackle <b>#{plan.items[0]?.skill}</b> first — it's listed first in the role's requirements. Adding these to your
-        Roadmap files them as <b>P0</b> "Job description fit" topics, and a practice session drills them right away.
+        Roadmap files them as <b>P0</b> "Job description fit" topics, and a practice session or quick-drill starts right away.
       </p>
+
+      {drill && (
+        <div className="mt-4 rounded-xl border border-ok/25 bg-ok/5 p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] font-extrabold text-ok">⚡ Quick-drill — {drill.length} card{drill.length === 1 ? "" : "s"}</p>
+            <button className="text-[11.5px] font-bold text-mut hover:text-ink" onClick={() => setDrill(null)}>✕ Close</button>
+          </div>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Flashcards pulled from the question bank for these skills — tap to reveal. Nothing is saved; this deck is just a quick warm-up.</p>
+          <div className="mt-3 space-y-2">
+            {drill.map(c => {
+              const show = flipped[c.q];
+              return (
+                <div key={c.q} className="rounded-xl border border-line/15 bg-deep/30 p-3">
+                  <button className="w-full text-left" onClick={() => setFlipped(f => ({ ...f, [c.q]: !f[c.q] }))}>
+                    <span className="text-[12.5px] font-bold text-ink">{c.q}</span>
+                    {show && (
+                      <span className="mt-1.5 block whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">
+                        <span className="font-bold text-ok">Answer:</span> {c.a}
+                        {c.kp?.length ? <span className="mt-1 block text-[11px] text-mut">Key points: {c.kp.join(" · ")}</span> : null}
+                      </span>
+                    )}
+                  </button>
+                  <p className="mt-1 text-[10.5px] font-bold uppercase tracking-wider text-mut">{show ? "Tap question to hide" : "Tap to reveal the answer"}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 space-y-2">
         <button className={`${btnPrimary} w-full`} onClick={addToRoadmap} disabled={addCount === 0}>
@@ -137,9 +183,10 @@ export function GapPlanModal({ job, missing, detected, onClose }: {
               ? `🗺️ Roadmap is full (${JD_KEYWORD_LIMIT}) — trim it to add more`
               : `✓ All ${plan.items.length} skill${plan.items.length === 1 ? "" : "s"} on your Roadmap`}
         </button>
-        <button className={`${btnSoft} w-full`} onClick={startPractice}>
-          🎯 Start a practice session on these
-        </button>
+        <div className="flex gap-2">
+          <button className={`${btnSoft} flex-1 leading-tight`} onClick={startPractice}>🎤 Practice</button>
+          <button className={`${btnSoft} flex-1 leading-tight`} onClick={startDrill}>⚡ Quick-drill</button>
+        </div>
         <button className="w-full rounded-xl bg-deep/40 py-2.5 text-[13px] font-bold text-mut hover:text-ink" onClick={onClose}>
           Done — close
         </button>
