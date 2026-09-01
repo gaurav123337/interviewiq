@@ -26,6 +26,11 @@ function qaAsTopic(q: QA, pool: PhaseTopic["pool"]): PhaseTopic {
   return { label: q.q, pool, practice: q };
 }
 
+/** Max `goal.jdKeywords` rendered as "Job description fit" topics. The single
+    source of truth for this limit: `mergeGapKeywords` (gapPlan.ts) defaults its
+    cap here so the stored keyword array never exceeds what the Roadmap shows. */
+export const JD_KEYWORD_LIMIT = 10;
+
 /** Builds the phase list for a goal: foundations → field → company → design → behavioral → exec. */
 export function buildPhases(goal: CareerGoal): Phase[] {
   const field = fieldById(goal.fieldId);
@@ -57,7 +62,7 @@ export function buildPhases(goal: CareerGoal): Phase[] {
       label: "Job description fit",
       goal: `Tailored to your posting: ${goal.jdKeywords.slice(0, 4).join(" · ")}${goal.jdKeywords.length > 4 ? "…" : ""}`,
       weight: 14,
-      topics: goal.jdKeywords.slice(0, 10).map(k => ({ label: k }))
+      topics: goal.jdKeywords.slice(0, JD_KEYWORD_LIMIT).map(k => ({ label: k }))
     });
   }
 
