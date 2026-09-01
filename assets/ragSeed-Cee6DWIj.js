@@ -1,1 +1,0 @@
-import{aw as s,aC as o}from"./index-DMBFycck.js";async function t(){const e=await fetch(`${s.supabase.url}/functions/v1/seed-rag`,{method:"POST",headers:await o(),body:"{}"}),a=await e.json().catch(()=>({}));if(!e.ok)throw new Error(a.error??`Seed failed (${e.status})`);return a}export{t as s};
