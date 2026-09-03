@@ -14,6 +14,9 @@ import { getCareerProfile } from "../services/jobs";
 import { myResources, submitResource, type ResourceRow } from "../services/resources";
 import { build90DayPlan, buildPlan, gapAnalysis, levelUpDelta, suggestTrack } from "../services/skillCounselor";
 import { openSkillsReport } from "../services/skillsReport";
+import { getGoal, saveGoal } from "../services/goal";
+import { mergeGapKeywords } from "../services/gapPlan";
+import { JD_KEYWORD_LIMIT } from "../services/roadmap/phases";
 import {
   clearStudyPlan, getPlanProgress, getSavedStudyPlan, planProgressKey, saveStudyPlan, setWeekDone
 } from "../services/studyPlan";
@@ -49,6 +52,9 @@ export function Counselor() {
     const p = getSavedStudyPlan();
     return p ? getPlanProgress(planProgressKey(p)) : {};
   });
+  /* Live mirror of goal.jdKeywords — drives the "Add to Roadmap" button's count
+     and disabled state, updated in place after a write-back. */
+  const [jdKeywords, setJdKeywords] = useState<string[]>(() => getGoal()?.jdKeywords ?? []);
 
   const field = FIELDS.find(f => f.id === fieldId)!;
   const track = field.tracks.find(t => t.id === trackId) ?? field.tracks[0];
@@ -65,6 +71,34 @@ export function Counselor() {
     setStudy(p);
     setProgress(getPlanProgress(planProgressKey(p)));
     toast(`📅 Plan built — ${p.milestones.length} weeks, ~${p.totalHours}h`);
+  };
+
+  /* Feed the 90-day plan's skills into the Career Roadmap as P0 "Job description
+     fit" topics — the same mergeGapKeywords seam the Job Gap Plan uses (Item 12).
+     Appends the canonical skill labels to goal.jdKeywords only: it never touches
+     the skill graph (so these stay gaps in the Counselor until genuinely earned)
+     and never touches the goal's identity fields (so roadmap progress, keyed by
+     the goal fingerprint, is preserved). */
+  const addToRoadmap = (p: NonNullable<typeof study>) => {
+    const names = p.milestones.flatMap(m => m.skillIds).map(id => SKILLS[id]?.name ?? id);
+    const g = getGoal();
+    if (!g) {
+      toast("Set up your Roadmap goal first, then add these skills to it.");
+      nav("roadmap");
+      return;
+    }
+    const { next, added, dropped } = mergeGapKeywords(g.jdKeywords ?? [], names);
+    if (added.length) {
+      saveGoal({ ...g, jdKeywords: next });
+      setJdKeywords(next);
+      toast(dropped.length
+        ? `🗺️ Added ${added.length} to your Roadmap · ${dropped.length} over the ${JD_KEYWORD_LIMIT}-skill limit — trim some in Roadmap`
+        : `🗺️ Added ${added.length} skill${added.length === 1 ? "" : "s"} to your Roadmap — now P0 in “Job description fit”`);
+    } else if (dropped.length) {
+      toast(`Your Roadmap already lists ${JD_KEYWORD_LIMIT} job-fit skills — remove some in Roadmap to add more`);
+    } else {
+      toast("✓ These skills are already on your Roadmap");
+    }
   };
 
   const toggleWeek = (p: NonNullable<typeof study>, week: number) => {
@@ -142,6 +176,14 @@ export function Counselor() {
   };
 
   const bands = BANDS.filter(b => BAND_ORDER[b] <= BAND_ORDER[track.maxBand]);
+
+  /* Preview of the Roadmap write-back (mergeGapKeywords is pure) so the button's
+     count/disabled state mirrors the click precisely — it folds slug-aliased
+     skills into one add and respects the JD_KEYWORD_LIMIT cap. Empty labels when
+     no plan is built yet, so the button only renders (with study) once there is one. */
+  const roadmapNames = study ? study.milestones.flatMap(m => m.skillIds).map(id => SKILLS[id]?.name ?? id) : [];
+  const roadmapPreview = mergeGapKeywords(jdKeywords, roadmapNames);
+  const roadmapAddCount = roadmapPreview.added.length;
 
   return (
     <div className="anim-view mx-auto max-w-[980px]">
@@ -269,7 +311,19 @@ export function Counselor() {
             </p>
           </div>
           {study && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button
+                className={btnPrimary + btnSm}
+                disabled={roadmapAddCount === 0}
+                onClick={() => addToRoadmap(study)}
+                title="Add these skills to your Career Roadmap as P0 job-fit topics"
+              >
+                {roadmapAddCount > 0
+                  ? `🗺️ Add ${roadmapAddCount} to Roadmap`
+                  : roadmapPreview.dropped.length > 0
+                    ? `🗺️ Roadmap full (${JD_KEYWORD_LIMIT})`
+                    : "🗺️ On Roadmap ✓"}
+              </button>
               <button className={btnGhost + btnSm} onClick={() => nav("planner")} title="Open the interview-date Planner">🗓️ Open Planner</button>
               <button className={btnGhost + btnSm} onClick={() => { clearStudyPlan(); setStudy(null); setProgress({}); }}>Clear</button>
             </div>

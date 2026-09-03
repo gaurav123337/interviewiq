@@ -4,7 +4,7 @@
    uses. All logic lives in services/jobs/jdScan.ts; this is presentation. */
 
 import { useMemo, useState } from "react";
-import type { CareerProfile, JdScan, JobPosting } from "../../types";
+import type { CareerProfile, JdScan, JobPosting, LevelId } from "../../types";
 import {
   VERDICT_META, deleteJdScan, listJdScans, matchScan, saveJdScan, scanResumeAgainstJd
 } from "../../services/jobs";
@@ -21,7 +21,7 @@ interface JdScanCardProps {
   locked: boolean;
   onAddSkill: (s: string) => void;
   onUpgrade: (msg: string) => void;
-  onGapPlan: (job: JobPosting, missing: string[]) => void;
+  onGapPlan: (job: JobPosting, missing: string[], detected?: { fieldId: string; levelId: LevelId }) => void;
 }
 
 export function JdScanCard({ profile, locked, onAddSkill, onUpgrade, onGapPlan }: JdScanCardProps) {
@@ -125,7 +125,7 @@ export function JdScanCard({ profile, locked, onAddSkill, onUpgrade, onGapPlan }
               {match.missing.length > 0 && (
                 <button
                   className="rounded-full border border-acc1/30 bg-acc1/5 px-2.5 py-0.5 text-[11.5px] font-bold text-acctxt transition-all hover:bg-acc1/15"
-                  onClick={() => onGapPlan(active.job, match.missing)}
+                  onClick={() => onGapPlan(active.job, match.missing, active.detected)}
                 >
                   📈 Gap plan
                 </button>
