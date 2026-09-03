@@ -4,6 +4,8 @@
 
 import { getSupabaseClient } from "./cloud";
 import { storageGet, storageSet, STORAGE_KEYS } from "./storage";
+import { fieldById } from "../data";
+import type { CareerGoal, LevelId } from "../types";
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -260,4 +262,47 @@ export function resolvePath(roadmap: SkillRoadmap, knownSkills: string[]): Resol
 
 export function isAvailable(roadmap: SkillRoadmap, userTier: "free" | "pro"): boolean {
   return roadmap.tier === "free" || userTier === "pro";
+}
+
+/* ------------------------------------------------------------------ */
+/* Prep-loop adapters (Item 14 — wire SkillDetail actions)             */
+/* ------------------------------------------------------------------ */
+
+export interface RoadmapPrepSel {
+  fieldId: string;
+  levelId: LevelId;
+  keywords: string[];
+}
+
+/** Turn an admin-authored skill roadmap into a selection for the shared prep
+    loop (`startWeakSession` → `composeRelevantSession`). A roadmap has no
+    interview field of its own, so we take the first `tag` that names a real
+    field (`fieldById`), else the user's goal/onboarding field, else "frontend".
+    Level prefers the user's own target (their prep context) over the skill's
+    band. Keywords ALWAYS lead with `roadmap.name` — a real, tokenizable word —
+    so `composeRelevantSession` never reaches `pickRelevant`'s empty-keyword
+    random fallback; an optional `step` adds its slug as a secondary signal so a
+    per-step "Start →" biases toward that step while staying anchored on the
+    skill. Pure. */
+export function roadmapPrepSel(
+  roadmap: SkillRoadmap,
+  goal: CareerGoal | null,
+  ob: { field: string | null; level: LevelId | null },
+  step?: string,
+): RoadmapPrepSel {
+  const fieldId = roadmap.tags.find(t => fieldById(t)) ?? goal?.fieldId ?? ob.field ?? "frontend";
+  const levelId = goal?.targetLevel ?? ob.level ?? roadmap.band ?? "mid";
+  const keywords = step ? [roadmap.name, step] : [roadmap.name];
+  return { fieldId, levelId, keywords };
+}
+
+/** Deterministic plain-text summary of a roadmap for the Share action (there is
+    no per-skill route to link to, so we share text, mirroring the career
+    roadmap's markdown export). Pure. */
+export function skillRoadmapShareText(roadmap: SkillRoadmap): string {
+  const path = roadmap.learningPath.length
+    ? "\n\nLearning path:\n" + roadmap.learningPath.map((s, i) => `${i + 1}. ${s}`).join("\n")
+    : "";
+  const n = roadmap.resources.length;
+  return `${roadmap.icon} ${roadmap.name} — learning roadmap\n\n${roadmap.why}\n\n~${roadmap.estimatedHours}h · ${n} curated resource${n === 1 ? "" : "s"}${path}\n\nvia InterviewIQ`;
 }
