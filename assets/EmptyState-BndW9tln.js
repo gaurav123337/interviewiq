@@ -1,1 +1,0 @@
-import{v as t,x as l}from"./index-9U4m1nlC.js";function r({icon:e,title:s,children:x}){return t.jsxs("div",{className:`${l} flex flex-col items-center px-5 py-16 text-center text-fnt`,children:[t.jsx("div",{className:"mb-3 text-[42px]",children:e}),t.jsx("h3",{className:"mb-1 text-lg font-bold text-ink",children:s}),x]})}export{r as E};
