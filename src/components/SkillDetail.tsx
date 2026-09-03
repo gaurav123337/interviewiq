@@ -6,10 +6,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useApp } from "../store";import { getRoadmapBySlug,
   resolvePath,
   isAvailable,
+  roadmapPrepSel,
+  skillRoadmapShareText,
   type SkillRoadmap,
 } from "../services/skillRoadmapService";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { ownedSkillSlugs } from "../services/profileStore";
+import { getGoal, saveGoal } from "../services/goal";
+import { mergeGapKeywords } from "../services/gapPlan";
+import { JD_KEYWORD_LIMIT } from "../services/roadmap/phases";
+import { toast } from "../toast";
 import { btnGhost, btnPrimary, btnSm, cardCls, Chip } from "./ui";
 
 const BAND_LABELS: Record<string, string> = {
@@ -28,7 +34,7 @@ function qualityBadge(score: number): { label: string; color: string } {
 }
 
 export function SkillDetail() {
-  const { nav } = useApp();
+  const { nav, state, startWeakSession } = useApp();
   const slug = localStorage.getItem("iq.learnSlug") ?? "";
   const [roadmap, setRoadmap] = useState<SkillRoadmap | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,6 +79,56 @@ export function SkillDetail() {
   const visibleResources = showAllResources ? roadmap.resources : roadmap.resources.slice(0, 3);
   const hiddenResources = roadmap.resources.length - visibleResources.length;
 
+  /* Add to Roadmap — single-skill version of GapPlanModal.addToRoadmap. Files the
+     skill under goal.jdKeywords, which buildPhases renders as a P0 "Job description
+     fit" topic. Never touches the skill graph (the Item 12 invariant), so the skill
+     stays a gap in the Counselor until genuinely earned. */
+  const addToRoadmap = () => {
+    const g = getGoal();
+    if (!g) {
+      toast("Set up your Roadmap goal first, then add this skill to it.");
+      nav("roadmap");
+      return;
+    }
+    const { next, added, dropped } = mergeGapKeywords(g.jdKeywords ?? [], [roadmap.name]);
+    if (added.length) {
+      saveGoal({ ...g, jdKeywords: next });
+      toast(`🗺️ Added ${roadmap.name} to your Roadmap — now P0 in “Job description fit”`);
+    } else if (dropped.length) {
+      toast(`Your Roadmap already lists ${JD_KEYWORD_LIMIT} job-fit skills — remove some in Roadmap to add ${roadmap.name}`);
+    } else {
+      toast(`✓ ${roadmap.name} is already on your Roadmap`);
+    }
+  };
+
+  /* Start Practice — the shared weak-topic seam. roadmapPrepSel resolves the
+     field/level/keywords (see its docs); startWeakSession dispatches SET_SESSION,
+     which navigates to the interview view. A `step` focuses the session on one
+     learning-path step while staying anchored on the skill. */
+  const startPractice = (step?: string) => {
+    const { fieldId, levelId, keywords } = roadmapPrepSel(roadmap, getGoal(), state.ob, step);
+    startWeakSession(fieldId, levelId, keywords, {
+      count: 6, mode: "standard", timing: "relaxed", voice: state.config.voice
+    });
+  };
+
+  /* Share — the repo's navigator.share → clipboard idiom (Results/ShareView).
+     There's no per-skill route, so we share a text summary. A dismissed share
+     sheet rejects the promise; the catch makes that a no-op. */
+  const shareRoadmap = async () => {
+    const text = skillRoadmapShareText(roadmap);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `${roadmap.name} — learning roadmap`, text });
+      } else {
+        await navigator.clipboard.writeText(text);
+        toast("📋 Roadmap copied to clipboard");
+      }
+    } catch {
+      /* user dismissed the share sheet — no-op */
+    }
+  };
+
   return (
     <div className="anim-view mx-auto max-w-[860px]">
       {/* Back link */}
@@ -100,9 +156,9 @@ export function SkillDetail() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2 border-t border-line/10 bg-wht/[.03] px-6 py-3">
-          <button className={btnPrimary + btnSm}>📅 Add to Study Plan</button>
-          <button className={btnGhost + btnSm}>▶ Start Practice</button>
-          <button className={btnGhost + btnSm}>📤 Share</button>
+          <button className={btnPrimary + btnSm} onClick={addToRoadmap}>🗺️ Add to Roadmap</button>
+          <button className={btnGhost + btnSm} onClick={() => startPractice()}>▶ Start Practice</button>
+          <button className={btnGhost + btnSm} onClick={shareRoadmap}>📤 Share</button>
         </div>
       </div>
 
@@ -150,7 +206,7 @@ export function SkillDetail() {
                 <div className="min-w-0 flex-1">
                   <span className="text-[13.5px] font-bold">{step}</span>
                 </div>
-                <button className={btnPrimary + btnSm}>Start →</button>
+                <button className={btnPrimary + btnSm} onClick={() => startPractice(step)}>Start →</button>
               </div>
             ))}
           </div>
