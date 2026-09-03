@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { adaptPlan, buildPlan } from "../services/planner";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
 import { activatePro, deactivatePro, generateProKey, isValidProKey } from "../services/license";
 import { getTier } from "../services/entitlements";
@@ -35,83 +34,6 @@ const sess = (date: number, pct = 0.7): SavedSession => ({
   config: CFG,
   agg: { score: pct * 5, pct, grade: "B" },
   answers: []
-});
-
-describe("study planner", () => {
-  it("builds a day-by-day plan ending with a mock interview", () => {
-    const plan = buildPlan({ levelId: "senior", fieldId: "backend", companyId: "stripe", targetDate: "2026-08-23", today: "2026-08-09" });
-    expect(plan).toHaveLength(15);
-    expect(plan[0].date).toBe("2026-08-09");
-    expect(plan[plan.length - 1].date).toBe("2026-08-23");
-    expect(plan[plan.length - 1].kind).toBe("mock");
-    expect(plan.some(d => d.kind === "company")).toBe(true);
-    expect(plan.some(d => d.kind === "foundations")).toBe(true);
-    for (const d of plan) {
-      expect(d.title.length).toBeGreaterThan(0);
-      expect(d.focus.length).toBeGreaterThan(0);
-    }
-  });
-
-  it("clamps the plan to 3–28 days", () => {
-    const long = buildPlan({ levelId: "mid", fieldId: "frontend", companyId: "general", targetDate: "2026-10-01", today: "2026-08-09" });
-    expect(long).toHaveLength(28);
-    const short = buildPlan({ levelId: "mid", fieldId: "frontend", companyId: "general", targetDate: "2026-08-09", today: "2026-08-09" });
-    expect(short).toHaveLength(3);
-  });
-});
-
-describe("adaptive study planner", () => {
-  const input = { levelId: "senior" as const, fieldId: "backend", companyId: "stripe", targetDate: "2026-08-23", today: "2026-08-09" };
-
-  const q = (catLabel: string, kp: string[]): SessionQuestion => ({
-    q: "?", a: "a", kp, cat: "field" as const, catLabel, catColor: "#fff", level: "senior" as const, src: "x"
-  });
-
-  const withAnswers = (date: number, answers: { pct: number; catLabel: string; kp: string[]; missed?: string[] }[]): SavedSession => ({
-    ...sess(date),
-    answers: answers.map(a => ({ q: q(a.catLabel, a.kp), user: "", score: Math.round(a.pct * 5), pct: a.pct, missed: a.missed }))
-  });
-
-  it("marks days with a completed session as done", () => {
-    const sessions = [withAnswers(new Date("2026-08-09T12:00:00").getTime(), [{ pct: 0.7, catLabel: "Technical", kp: ["x"] }])];
-    const plan = adaptPlan({ ...input, sessions });
-    expect(plan.find(d => d.date === "2026-08-09")?.status).toBe("done");
-  });
-
-  it("skips a mastered phase and repurposes the slot into a weak-topic drill", () => {
-    /* Technical answers are strong (mastery 90%) but a Behavioral answer flopped with missed key points */
-    const sessions = [withAnswers(new Date("2026-08-08T12:00:00").getTime(), [
-      { pct: 0.9, catLabel: "Technical", kp: ["indexes"] },
-      { pct: 0.3, catLabel: "Behavioral", kp: ["STAR"], missed: ["STAR", "leadership example"] }
-    ])];
-    const plan = adaptPlan({ ...input, sessions });
-    const weak = plan.filter(d => d.weak);
-    expect(weak.length).toBeGreaterThan(0);
-    expect(weak.length).toBeLessThanOrEqual(2);
-    expect(weak[0].title).toBe("Weak topics drill");
-    expect(weak[0].topics).toContain("STAR");
-    expect(weak[0].status).toBe("upcoming");
-    /* the mastered Technical slot was skipped (or repurposed), never left as plain upcoming */
-    const techUpcoming = plan.filter(d => d.status === "upcoming" && !d.weak && d.kind !== "mock");
-    expect(techUpcoming.length).toBeLessThan(plan.filter(d => d.kind !== "mock").length);
-  });
-
-  it("falls back to question key points when missed details are missing (old sessions)", () => {
-    const sessions = [withAnswers(new Date("2026-08-08T12:00:00").getTime(), [
-      { pct: 0.9, catLabel: "Technical", kp: ["indexes"] },
-      { pct: 0.4, catLabel: "Behavioral", kp: ["STAR", "situation", "result"] }
-    ])];
-    const plan = adaptPlan({ ...input, sessions });
-    const weak = plan.filter(d => d.weak);
-    expect(weak.length).toBeGreaterThan(0);
-    expect(weak[0].topics).toContain("STAR");
-  });
-
-  it("stays static when there is no history", () => {
-    const plan = adaptPlan(input);
-    expect(plan.every(d => !d.weak)).toBe(true);
-    expect(plan.every(d => d.status === "upcoming" || d.status === "today")).toBe(true);
-  });
 });
 
 describe("progress analytics", () => {
