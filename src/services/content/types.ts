@@ -190,13 +190,3 @@ export interface InterviewContent {
   furtherReading: { title: string; url: string }[];
 }
 
-export interface IContentProvider {
-  getArticle(id: string, level?: "beginner" | "intermediate" | "advanced"): Promise<ArticleContent | null>;
-  searchArticles(request: ContentRequest): Promise<ArticleHit[]>;
-  getCoachContent(field: string, level?: string): Promise<CoachContent>;
-  getSystemDesignContent(topic: string): Promise<SystemDesignContent>;
-  getRoadmapContent(field: string): Promise<RoadmapContent>;
-  getInterviewContent(field: string, level?: string): Promise<InterviewContent>;
-  getAllKeywords(): Promise<string[]>;
-}
-
