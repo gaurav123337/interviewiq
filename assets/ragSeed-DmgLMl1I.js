@@ -1,0 +1,1 @@
+import{ar as s,aA as r}from"./index-CzPpMRAW.js";async function t(){const e=await fetch(`${s.supabase.url}/functions/v1/seed-rag`,{method:"POST",headers:await r(),body:"{}"}),a=await e.json().catch(()=>({}));if(!e.ok)throw new Error(a.error??`Seed failed (${e.status})`);return a}export{t as s};
