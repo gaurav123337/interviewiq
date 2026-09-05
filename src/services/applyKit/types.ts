@@ -9,6 +9,10 @@ export interface ApplyKit {
   /** True when AI-tailored, false when template-generated. */
   ai: boolean;
   createdAt: number;
+  /** Last-write timestamp, stamped by saveApplyKit on every save. Distinct from
+      createdAt (which edits preserve): updatedAt reflects the true most-recent
+      edit, so cross-device sync can honestly tie-break same-job kits. */
+  updatedAt?: number;
   /** The last AI-polished version of each document — the baseline for the
       "vs AI" diff after the user hand-edits the text. */
   aiResume?: string;

@@ -124,4 +124,18 @@ describe("persistence", () => {
     expect(kit?.coverLetter).toBe("letter body");
     expect(getApplyKit("other:id")).toBeNull();
   });
+
+  it("stamps updatedAt on every save — the honest cross-device merge tie-break", () => {
+    /* mergeApplyKit (services/sync.ts) tie-breaks same-job kits on updatedAt with
+       no createdAt fallback, so saveApplyKit MUST stamp it. If the stamp is ever
+       dropped, updatedAt is undefined and the merge silently keeps the local kit,
+       dropping a more-recently-edited remote one. This test guards that. */
+    saveApplyKit({ jobId: "stamp:job", jobTitle: "T", company: "C", resume: "r1", coverLetter: "c1", ai: false, createdAt: 2 });
+    const first = getApplyKit("stamp:job");
+    expect(typeof first?.updatedAt).toBe("number");
+    /* a later save bumps updatedAt above the earlier one (real wall clock) */
+    saveApplyKit({ jobId: "stamp:job", jobTitle: "T", company: "C", resume: "r2", coverLetter: "c2", ai: false, createdAt: 2 });
+    const second = getApplyKit("stamp:job");
+    expect(second?.updatedAt).toBeGreaterThanOrEqual(first!.updatedAt!);
+  });
 });

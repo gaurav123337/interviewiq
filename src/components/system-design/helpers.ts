@@ -68,6 +68,12 @@ export interface FlashcardData {
   interval: number;
   nextReview: number;
   streak: number;
+  /** Wall-clock of the last review, stamped on every save. Monotonic in review
+      time (unlike nextReview, which moves BACKWARD on a lapse when interval
+      resets to 1) — so cross-device sync can honestly keep the most-recently
+      reviewed card state. Optional: cards written before this field existed
+      fall back to nextReview in the merge (see SYNC_POLICIES.sysDesignFlashcards). */
+  reviewedAt?: number;
 }
 export type FlashcardMap = Record<string, FlashcardData>;
 export function loadFlashcards(): FlashcardMap {

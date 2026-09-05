@@ -28,10 +28,31 @@ describe("sync policies", () => {
     expect(policyFor(STORAGE_KEYS.applyTrack)).toBe("merge");
     expect(policyFor(STORAGE_KEYS.settings)).toBe("lww");
     expect(policyFor(STORAGE_KEYS.onboard)).toBe("lww");
-    expect(policyFor(STORAGE_KEYS.tier)).toBe("lww");
-    expect(policyFor(STORAGE_KEYS.licenseKey)).toBe("lww");
+    /* tier + licenseKey are server-authoritative (Item 15): device value is
+       forgeable, so it must never sync and clobber the server-resolved tier. */
+    expect(policyFor(STORAGE_KEYS.tier)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.licenseKey)).toBe("local");
     /* the one canonical profile aggregate syncs as a single blob (Item 11) */
     expect(policyFor(STORAGE_KEYS.profile)).toBe("lww");
+    /* Item 15 — feature-progress coverage. Accumulate-only / monotonic maps
+       merge (union never resurrects a deletion); whole blobs where un-tick /
+       un-bookmark is a real action are lww (predictable, never resurrect). */
+    expect(policyFor(STORAGE_KEYS.codingTrack)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.gapPlans)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.applyKit)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.sysDesignProgress)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.sysDesignHistory)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.sysDesignFlashcards)).toBe("merge");
+    expect(policyFor(STORAGE_KEYS.counselorPlan)).toBe("lww");
+    expect(policyFor(STORAGE_KEYS.counselorProgress)).toBe("lww");
+    expect(policyFor(STORAGE_KEYS.sysDesignBookmarks)).toBe("lww");
+    expect(policyFor(STORAGE_KEYS.sysDesignTimer)).toBe("lww");
+    /* deliberately NOT synced — LWW would resurrect intentionally-cleared /
+       un-set state, or the value is ephemeral / device-private. */
+    expect(policyFor(STORAGE_KEYS.roadmapProg)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.sysDesignQuiz)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.lastKit)).toBe("local");
+    expect(policyFor(STORAGE_KEYS.lastCompare)).toBe("local");
     /* device-private keys must never sync */
     expect(policyFor(STORAGE_KEYS.apiKey)).toBe("local");
     expect(policyFor(STORAGE_KEYS.apiBase)).toBe("local");
@@ -277,5 +298,220 @@ describe("sync engine — canonical profile (Item 11)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/* ─── Item 15: feature-progress merge policies ───────────────────────────────
+   Each test proves A ∪ B loses nothing and the tie-break is correct. The core
+   hazard being guarded: an unwired "merge" key silently degrades to remote-wins
+   LWW in mergeFor() and drops entries touched only on the losing device. */
+describe("sync engine — Item 15 feature-progress merges", () => {
+  it("codingTrack: unions by problem; fails=max, solved latches", async () => {
+    storageSet(STORAGE_KEYS.codingTrack, {
+      pA: { fails: 3, solved: false },   // local-only
+      pShared: { fails: 1, solved: true } // solved locally
+    });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.codingTrack]: {
+        value: {
+          pShared: { fails: 4, solved: false }, // more fails remotely, not solved there
+          pB: { fails: 2, solved: false }        // remote-only
+        },
+        updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const t = storageGet<Record<string, { fails: number; solved: boolean }>>(STORAGE_KEYS.codingTrack, {});
+    expect(Object.keys(t).sort()).toEqual(["pA", "pB", "pShared"]);
+    expect(t.pA).toEqual({ fails: 3, solved: false });
+    expect(t.pB).toEqual({ fails: 2, solved: false });
+    expect(t.pShared).toEqual({ fails: 4, solved: true }); // max fails, solve latched
+  });
+
+  it("gapPlans: unions by job; larger createdAt wins a same-job tie", async () => {
+    /* The LOCAL side holds the larger createdAt for the shared job, so this
+       discriminates the createdAt tie-break from a plain remote-wins LWW degrade:
+       if mergeGapPlans silently became "remote wins", jobShared.company would flip
+       to "remote" and this test would fail. */
+    storageSet(STORAGE_KEYS.gapPlans, {
+      jobA: { jobId: "jobA", createdAt: 100 },        // local-only
+      jobShared: { jobId: "jobShared", createdAt: 200, company: "local" } // local built it LATER
+    });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.gapPlans]: {
+        value: {
+          jobShared: { jobId: "jobShared", createdAt: 50, company: "remote" }, // stale remote plan
+          jobB: { jobId: "jobB", createdAt: 300 }      // remote-only
+        },
+        updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const g = storageGet<Record<string, { company?: string }>>(STORAGE_KEYS.gapPlans, {});
+    expect(Object.keys(g).sort()).toEqual(["jobA", "jobB", "jobShared"]);
+    expect(g.jobShared.company).toBe("local"); // createdAt 200 > 50 — later local plan wins, not remote
+  });
+
+  it("applyKit: unions by job; newer updatedAt wins", async () => {
+    storageSet(STORAGE_KEYS.applyKit, {
+      jobA: { jobId: "jobA", resume: "localA", updatedAt: 100 },        // local-only
+      jobShared: { jobId: "jobShared", resume: "localEdit", updatedAt: 500 }
+    });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.applyKit]: {
+        value: {
+          jobShared: { jobId: "jobShared", resume: "remoteEdit", updatedAt: 200 }, // older edit
+          jobB: { jobId: "jobB", resume: "remoteB", updatedAt: 300 }               // remote-only
+        },
+        updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const k = storageGet<Record<string, { resume: string }>>(STORAGE_KEYS.applyKit, {});
+    expect(Object.keys(k).sort()).toEqual(["jobA", "jobB", "jobShared"]);
+    expect(k.jobShared.resume).toBe("localEdit"); // updatedAt 500 > 200
+  });
+
+  it("sysDesignProgress: unions caseId→ts, keeping the later completion", async () => {
+    storageSet(STORAGE_KEYS.sysDesignProgress, { caseA: 100, caseShared: 999 });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.sysDesignProgress]: { value: { caseShared: 500, caseB: 300 }, updatedAt: T0 }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const p = storageGet<Record<string, number>>(STORAGE_KEYS.sysDesignProgress, {});
+    expect(p).toEqual({ caseA: 100, caseB: 300, caseShared: 999 }); // max ts wins
+  });
+
+  it("sysDesignFlashcards: unions by key, keeping the most-recently-REVIEWED (not furthest-scheduled) card", async () => {
+    /* The honesty crux: nextReview is NOT monotonic — a lapse ("Again") resets
+       interval to 1, so the newer review has a SMALLER nextReview. Tie-breaking
+       on nextReview would keep the stale success and drop the recent failure.
+       We tie-break on reviewedAt, which is monotonic. Here caseS|2 was reviewed
+       correctly on the local device long ago (nextReview far out, reviewedAt
+       old), then FAILED more recently on the remote device (nextReview soon,
+       reviewedAt newer). The recent lapse must win. */
+    storageSet(STORAGE_KEYS.sysDesignFlashcards, {
+      "caseA|1": { caseId: "caseA", number: "1", nextReview: 100, reviewedAt: 50 },
+      "caseS|2": { caseId: "caseS", number: "2", nextReview: 9000, streak: 5, reviewedAt: 100 } // old success, far-out schedule
+    });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.sysDesignFlashcards]: {
+        value: {
+          "caseS|2": { caseId: "caseS", number: "2", nextReview: 500, streak: 0, reviewedAt: 800 }, // newer lapse, sooner schedule
+          "caseB|3": { caseId: "caseB", number: "3", nextReview: 300, reviewedAt: 60 }
+        },
+        updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const f = storageGet<Record<string, { nextReview: number; streak: number; reviewedAt: number }>>(STORAGE_KEYS.sysDesignFlashcards, {});
+    expect(Object.keys(f).sort()).toEqual(["caseA|1", "caseB|3", "caseS|2"]);
+    /* reviewedAt 800 > 100 → the recent lapse wins even though its nextReview (500)
+       is SMALLER. A nextReview tie-break would wrongly keep streak 5 / nextReview 9000. */
+    expect(f["caseS|2"].reviewedAt).toBe(800);
+    expect(f["caseS|2"].streak).toBe(0);
+    expect(f["caseS|2"].nextReview).toBe(500);
+  });
+
+  it("sysDesignFlashcards: falls back to nextReview for legacy cards without reviewedAt", async () => {
+    /* Cards written before reviewedAt existed have only nextReview — the merge
+       must still union them and use nextReview as a best-effort recency proxy. */
+    storageSet(STORAGE_KEYS.sysDesignFlashcards, { "caseL|1": { caseId: "caseL", number: "1", nextReview: 200 } });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.sysDesignFlashcards]: {
+        value: { "caseL|1": { caseId: "caseL", number: "1", nextReview: 700 } }, updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const f = storageGet<Record<string, { nextReview: number }>>(STORAGE_KEYS.sysDesignFlashcards, {});
+    expect(f["caseL|1"].nextReview).toBe(700); // no reviewedAt on either side → larger nextReview wins
+  });
+
+  it("sysDesignHistory: unions by date, newest first, capped at 50", async () => {
+    storageSet(STORAGE_KEYS.sysDesignHistory, [
+      { date: 5, completed: 1 }, { date: 3, completed: 1 }
+    ]);
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.sysDesignHistory]: {
+        value: [{ date: 4, completed: 1 }, { date: 3, completed: 9 }], updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const h = storageGet<{ date: number; completed: number }[]>(STORAGE_KEYS.sysDesignHistory, []);
+    expect(h.map(e => e.date)).toEqual([5, 4, 3]); // union, desc, no dup date
+    expect(h.length).toBe(3);
+    /* the date-3 collision resolves local-wins (merge orders [...remote,...local]
+       so the local entry overwrites in the by-date map) — locks the dedup order */
+    expect(h.find(e => e.date === 3)?.completed).toBe(1);
+  });
+
+  it("counselorProgress: lww whole-blob — a newer un-tick is NOT resurrected", async () => {
+    /* the honesty guard: if this key ever silently became "merge", an un-ticked
+       week on the newer device would be re-ticked from the stale remote blob. */
+    vi.useFakeTimers();
+    try {
+      const remote = new InMemoryRemoteStore();
+      const engine = new SyncEngine(() => T0);
+      await engine.signIn(remote);
+      /* user ticks two weeks, syncs, then un-ticks week 2 (newer local write) */
+      storageSet(STORAGE_KEYS.counselorProgress, { planX: { 1: true, 2: true } });
+      await vi.advanceTimersByTimeAsync(1000);
+      storageSet(STORAGE_KEYS.counselorProgress, { planX: { 1: true, 2: false } });
+      await vi.advanceTimersByTimeAsync(1000);
+      /* a stale remote row still holds week 2 ticked (older stamp) */
+      await remote.push({ [STORAGE_KEYS.counselorProgress]: { value: { planX: { 1: true, 2: true } }, updatedAt: T0 - 5000 } });
+      await engine.pull();
+      expect(storageGet(STORAGE_KEYS.counselorProgress, {})).toEqual({ planX: { 1: true, 2: false } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cross-device honesty: two devices with disjoint data converge to the union", async () => {
+    /* Device A signs in with its data, then device B (fresh local, same remote)
+       signs in with disjoint data. Both must end up with the full union and
+       nothing either device created may be dropped. */
+    const remote = new InMemoryRemoteStore();
+
+    // Device A
+    storageSet(STORAGE_KEYS.codingTrack, { pA: { fails: 2, solved: true } });
+    storageSet(STORAGE_KEYS.gapPlans, { jobA: { jobId: "jobA", createdAt: 10 } });
+    storageSet(STORAGE_KEYS.sysDesignProgress, { caseA: 111 });
+    const engineA = new SyncEngine(() => T0);
+    await engineA.signIn(remote);
+    await engineA.signOut();
+
+    // Device B — fresh localStorage, disjoint data
+    localStorage.clear();
+    storageSet(STORAGE_KEYS.codingTrack, { pB: { fails: 1, solved: false } });
+    storageSet(STORAGE_KEYS.gapPlans, { jobB: { jobId: "jobB", createdAt: 20 } });
+    storageSet(STORAGE_KEYS.sysDesignProgress, { caseB: 222 });
+    const engineB = new SyncEngine(() => T0 + 1000);
+    await engineB.signIn(remote);
+
+    // Device B now holds the union
+    expect(Object.keys(storageGet(STORAGE_KEYS.codingTrack, {})).sort()).toEqual(["pA", "pB"]);
+    expect(Object.keys(storageGet(STORAGE_KEYS.gapPlans, {})).sort()).toEqual(["jobA", "jobB"]);
+    expect(storageGet(STORAGE_KEYS.sysDesignProgress, {})).toEqual({ caseA: 111, caseB: 222 });
+
+    // …and so does the remote, so device A converges on its next pull
+    const snap = await remote.pull();
+    expect(Object.keys(snap[STORAGE_KEYS.codingTrack].value as object).sort()).toEqual(["pA", "pB"]);
+    expect(Object.keys(snap[STORAGE_KEYS.gapPlans].value as object).sort()).toEqual(["jobA", "jobB"]);
+    expect(snap[STORAGE_KEYS.sysDesignProgress].value).toEqual({ caseA: 111, caseB: 222 });
   });
 });

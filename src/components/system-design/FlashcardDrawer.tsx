@@ -52,9 +52,11 @@ export function FlashcardDrawer({ onClose }: { onClose: () => void }) {
       ease = Math.max(1.3, ease - 0.2);
     }
 
+    const now = Date.now();
     const updated: FlashcardData = {
       ...existing, ease, interval, streak,
-      nextReview: Date.now() + interval * 24 * 60 * 60 * 1000
+      nextReview: now + interval * 24 * 60 * 60 * 1000,
+      reviewedAt: now
     };
 
     const newCards = { ...cards, [key]: updated };

@@ -87,8 +87,13 @@ export const SYNC_POLICIES: Record<string, SyncPolicy> = {
   [STORAGE_KEYS.applyTrack]: "merge", // apply tracker — per-job latest wins
   [STORAGE_KEYS.onboard]: "lww",
   [STORAGE_KEYS.settings]: "lww",
-  [STORAGE_KEYS.tier]: "lww",
-  [STORAGE_KEYS.licenseKey]: "lww",
+  /* tier + licenseKey are SERVER-authoritative (services/entitlement.ts):
+     refreshEntitlement() resolves the account's entitlement from Supabase and
+     mirrors it locally, and getTier() fails closed to "free" for guests. The
+     device value is forgeable, so syncing it would let a stale device clobber
+     the server-resolved tier — Item 15 makes both device-private ("local"). */
+  [STORAGE_KEYS.tier]: "local",
+  [STORAGE_KEYS.licenseKey]: "local",
   /* The one canonical profile aggregate (roadmap Item 11) — goal + skill graph
      + career fields + resume + diagnostic in a single blob. LWW by the engine's
      per-key iq.syncMeta stamp: every mutation flows through profileStore →
@@ -100,6 +105,39 @@ export const SYNC_POLICIES: Record<string, SyncPolicy> = {
      deleted); they stay "local" (absent from this map) as a regression backstop
      so that if an old build ever re-writes one, it never leaks to the cloud. */
   [STORAGE_KEYS.profile]: "lww",
+  /* ---- Item 15: feature-progress coverage ----
+     merge  — accumulate-only / monotonic maps; union never resurrects a deletion
+              because these shapes have no deletion path. Each MUST have a branch
+              in mergeFor() (an unwired "merge" key silently degrades to remote-
+              wins LWW and drops entries touched only on the losing device). */
+  [STORAGE_KEYS.codingTrack]: "merge",         // Record<problemId,{fails,solved}> — max fails, OR solved
+  [STORAGE_KEYS.gapPlans]: "merge",            // Record<jobId,GapPlan> write-once — keep larger createdAt
+  [STORAGE_KEYS.applyKit]: "merge",            // Record<jobId,ApplyKit> — keep larger updatedAt
+  [STORAGE_KEYS.sysDesignProgress]: "merge",   // Record<caseId,ts> completion log — keep max ts
+  [STORAGE_KEYS.sysDesignHistory]: "merge",    // QuizHistoryEntry[] append-only — union by date, cap 50
+  [STORAGE_KEYS.sysDesignFlashcards]: "merge", // Record<caseId|n,FlashcardData> SRS — keep most-recently-reviewed (reviewedAt)
+  /* lww — whole-blob replace; the newest write is the intended state. Chosen
+           over merge where un-ticking / un-bookmarking is a real user action a
+           key-union merge would dishonestly resurrect (no per-entry tombstone). */
+  [STORAGE_KEYS.counselorPlan]: "lww",         // single StudyPlan blob
+  /* counselorProgress is a MULTI-plan map (Record<planProgressKey, Record<week,
+     boolean>>). Whole-blob lww is a CONSCIOUS trade-off: on concurrent offline
+     edits to DIFFERENT plans the losing device's blob is dropped (cross-plan
+     loss). We accept it because the inner week-map is pure booleans with NO
+     per-plan/per-week timestamp (setWeekDone writes cur[week]=done), so a
+     plan-keyed union has no honest tie-break for a plan edited on both sides —
+     and an OR-union would resurrect a deliberate un-tick, the exact dishonesty
+     the un-tick guard test forbids. Predictable most-recent-device-wins beats a
+     dishonest merge. */
+  [STORAGE_KEYS.counselorProgress]: "lww",     // weekly checkboxes — un-tick must not resurrect
+  [STORAGE_KEYS.sysDesignBookmarks]: "lww",    // Record<caseId,ts> — un-bookmark deletes the key (no tombstone)
+  [STORAGE_KEYS.sysDesignTimer]: "lww",        // per-case duration preset scalar
+  /* roadmapProg stays "local" (absent): clearGoal hard-removes it with no
+     restamp, and the fingerprint that would reject a stale copy lives INSIDE
+     the blob, so LWW would resurrect intentionally-cleared progress. The goal
+     itself already syncs via iq.profile. sysDesignQuiz (ephemeral in-progress
+     session) and lastKit/lastCompare (device-private "last viewed" pointers)
+     likewise stay local. */
   [STORAGE_KEYS.usage]: "local",      // metering belongs server-side eventually
   [STORAGE_KEYS.apiKey]: "local",     // device-private credentials
   [STORAGE_KEYS.apiBase]: "local",
@@ -162,10 +200,105 @@ function mergeTracks(local: unknown, remote: unknown): unknown {
   return out;
 }
 
+/** Number-valued map (Record<string, number>): union by key, keep the larger
+    value. Used by sysDesignProgress (caseId → completion ts) — both a later
+    completion and a remote-only case survive; nothing is ever lowered or lost. */
+function mergeMaxNumberMap(local: unknown, remote: unknown): unknown {
+  const l = (local && typeof local === "object") ? local as Record<string, number> : {};
+  const r = (remote && typeof remote === "object") ? remote as Record<string, number> : {};
+  const out: Record<string, number> = { ...l };
+  for (const [k, v] of Object.entries(r)) {
+    const cur = out[k];
+    if (typeof cur !== "number" || v > cur) out[k] = v;
+  }
+  return out;
+}
+
+/** Coding track: union by problemId — fails = max (monotonic attempt count),
+    solved = OR (a solve on either device latches). No deletion path, so a
+    problem touched on only one device always survives. */
+function mergeCodingTrack(local: unknown, remote: unknown): unknown {
+  const l = (local && typeof local === "object") ? local as Record<string, { fails?: number; solved?: boolean }> : {};
+  const r = (remote && typeof remote === "object") ? remote as Record<string, { fails?: number; solved?: boolean }> : {};
+  const out: Record<string, { fails: number; solved: boolean }> = {};
+  for (const k of new Set([...Object.keys(l), ...Object.keys(r)])) {
+    const a = l[k] ?? {}; const b = r[k] ?? {};
+    out[k] = { fails: Math.max(a.fails ?? 0, b.fails ?? 0), solved: Boolean(a.solved) || Boolean(b.solved) };
+  }
+  return out;
+}
+
+/** Gap plans: union by jobId, keep the entry with the larger createdAt. Plans
+    are write-once (no edit path), so this only decides ties when both devices
+    built a plan for the same job — the later one wins; neither job is dropped. */
+function mergeGapPlans(local: unknown, remote: unknown): unknown {
+  const l = (local && typeof local === "object") ? local as Record<string, { createdAt?: number }> : {};
+  const r = (remote && typeof remote === "object") ? remote as Record<string, { createdAt?: number }> : {};
+  const out: Record<string, unknown> = { ...l };
+  for (const [jobId, e] of Object.entries(r)) {
+    const cur = out[jobId] as { createdAt?: number } | undefined;
+    if (!cur || (e.createdAt ?? 0) > (cur.createdAt ?? 0)) out[jobId] = e;
+  }
+  return out;
+}
+
+/** Apply kits: union by jobId, keep the entry with the larger updatedAt (stamped
+    by saveApplyKit on every save). A kit edited on either device wins by recency;
+    a kit that exists on only one device always survives. */
+function mergeApplyKit(local: unknown, remote: unknown): unknown {
+  const l = (local && typeof local === "object") ? local as Record<string, { updatedAt?: number }> : {};
+  const r = (remote && typeof remote === "object") ? remote as Record<string, { updatedAt?: number }> : {};
+  const out: Record<string, unknown> = { ...l };
+  for (const [jobId, e] of Object.entries(r)) {
+    const cur = out[jobId] as { updatedAt?: number } | undefined;
+    if (!cur || (e.updatedAt ?? 0) > (cur.updatedAt ?? 0)) out[jobId] = e;
+  }
+  return out;
+}
+
+/** System-design flashcards: union by composite key (caseId|number), keep the
+    MOST-RECENTLY-REVIEWED entry. The tie-break is `reviewedAt` (stamped on every
+    save by FlashcardDrawer), NOT `nextReview`: nextReview is not monotonic in
+    review time — a lapse ("Again") resets interval to 1, pushing nextReview
+    BACKWARD, so "larger nextReview" would keep a stale success and silently drop
+    the user's most recent failed review (rescheduling the very card they're
+    struggling with weeks out). Cards written before `reviewedAt` existed fall
+    back to nextReview as a best-effort recency proxy. No deletion path, so a
+    card studied on only one device always survives. */
+function mergeFlashcards(local: unknown, remote: unknown): unknown {
+  const l = (local && typeof local === "object") ? local as Record<string, { reviewedAt?: number; nextReview?: number }> : {};
+  const r = (remote && typeof remote === "object") ? remote as Record<string, { reviewedAt?: number; nextReview?: number }> : {};
+  const recency = (e: { reviewedAt?: number; nextReview?: number } | undefined) => e?.reviewedAt ?? e?.nextReview ?? 0;
+  const out: Record<string, unknown> = { ...l };
+  for (const [k, e] of Object.entries(r)) {
+    const cur = out[k] as { reviewedAt?: number; nextReview?: number } | undefined;
+    if (!cur || recency(e) > recency(cur)) out[k] = e;
+  }
+  return out;
+}
+
+/** System-design quiz history: append-only QuizHistoryEntry[]. Union by `date`
+    (the run timestamp, unique per run), newest first, re-capped at 50 like the
+    local writer (helpers.ts saveHistoryEntry). No entry is dropped that both
+    devices didn't already cap away. */
+function mergeSysDesignHistory(local: unknown, remote: unknown): unknown {
+  const l = Array.isArray(local) ? local as { date: number }[] : [];
+  const r = Array.isArray(remote) ? remote as { date: number }[] : [];
+  const byDate = new Map<number, { date: number }>();
+  for (const e of [...r, ...l]) if (e && typeof e.date === "number") byDate.set(e.date, e);
+  return [...byDate.values()].sort((a, b) => b.date - a.date).slice(0, 50);
+}
+
 function mergeFor(key: string, local: unknown, remote: unknown): unknown {
   if (key === STORAGE_KEYS.sessions) return mergeSessions(local, remote);
   if (key === STORAGE_KEYS.drillSrs) return mergeSrs(local, remote);
   if (key === STORAGE_KEYS.applyTrack) return mergeTracks(local, remote);
+  if (key === STORAGE_KEYS.codingTrack) return mergeCodingTrack(local, remote);
+  if (key === STORAGE_KEYS.gapPlans) return mergeGapPlans(local, remote);
+  if (key === STORAGE_KEYS.applyKit) return mergeApplyKit(local, remote);
+  if (key === STORAGE_KEYS.sysDesignProgress) return mergeMaxNumberMap(local, remote);
+  if (key === STORAGE_KEYS.sysDesignHistory) return mergeSysDesignHistory(local, remote);
+  if (key === STORAGE_KEYS.sysDesignFlashcards) return mergeFlashcards(local, remote);
   return remote; /* lww default: remote wins a tie */
 }
 

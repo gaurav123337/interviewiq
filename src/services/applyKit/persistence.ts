@@ -11,6 +11,8 @@ export function getApplyKit(jobId: string): ApplyKit | null {
 
 export function saveApplyKit(kit: ApplyKit): void {
   const map = storageGet<ApplyKitMap>(STORAGE_KEYS.applyKit, {});
-  map[kit.jobId] = kit;
+  /* Stamp updatedAt at write time so it always reflects the true last edit —
+     the honest tie-break for cross-device sync (see SYNC_POLICIES.applyKit). */
+  map[kit.jobId] = { ...kit, updatedAt: Date.now() };
   storageSet(STORAGE_KEYS.applyKit, map);
 }
