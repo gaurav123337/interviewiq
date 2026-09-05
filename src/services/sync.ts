@@ -115,11 +115,20 @@ export const SYNC_POLICIES: Record<string, SyncPolicy> = {
   [STORAGE_KEYS.applyKit]: "merge",            // Record<jobId,ApplyKit> — keep larger updatedAt
   [STORAGE_KEYS.sysDesignProgress]: "merge",   // Record<caseId,ts> completion log — keep max ts
   [STORAGE_KEYS.sysDesignHistory]: "merge",    // QuizHistoryEntry[] append-only — union by date, cap 50
-  [STORAGE_KEYS.sysDesignFlashcards]: "merge", // Record<caseId|n,FlashcardData> SRS — keep larger nextReview
+  [STORAGE_KEYS.sysDesignFlashcards]: "merge", // Record<caseId|n,FlashcardData> SRS — keep most-recently-reviewed (reviewedAt)
   /* lww — whole-blob replace; the newest write is the intended state. Chosen
            over merge where un-ticking / un-bookmarking is a real user action a
            key-union merge would dishonestly resurrect (no per-entry tombstone). */
   [STORAGE_KEYS.counselorPlan]: "lww",         // single StudyPlan blob
+  /* counselorProgress is a MULTI-plan map (Record<planProgressKey, Record<week,
+     boolean>>). Whole-blob lww is a CONSCIOUS trade-off: on concurrent offline
+     edits to DIFFERENT plans the losing device's blob is dropped (cross-plan
+     loss). We accept it because the inner week-map is pure booleans with NO
+     per-plan/per-week timestamp (setWeekDone writes cur[week]=done), so a
+     plan-keyed union has no honest tie-break for a plan edited on both sides —
+     and an OR-union would resurrect a deliberate un-tick, the exact dishonesty
+     the un-tick guard test forbids. Predictable most-recent-device-wins beats a
+     dishonest merge. */
   [STORAGE_KEYS.counselorProgress]: "lww",     // weekly checkboxes — un-tick must not resurrect
   [STORAGE_KEYS.sysDesignBookmarks]: "lww",    // Record<caseId,ts> — un-bookmark deletes the key (no tombstone)
   [STORAGE_KEYS.sysDesignTimer]: "lww",        // per-case duration preset scalar
@@ -248,15 +257,22 @@ function mergeApplyKit(local: unknown, remote: unknown): unknown {
 }
 
 /** System-design flashcards: union by composite key (caseId|number), keep the
-    entry with the larger nextReview — the most-recently-scheduled SRS state.
-    No deletion path, so a card studied on only one device survives. */
+    MOST-RECENTLY-REVIEWED entry. The tie-break is `reviewedAt` (stamped on every
+    save by FlashcardDrawer), NOT `nextReview`: nextReview is not monotonic in
+    review time — a lapse ("Again") resets interval to 1, pushing nextReview
+    BACKWARD, so "larger nextReview" would keep a stale success and silently drop
+    the user's most recent failed review (rescheduling the very card they're
+    struggling with weeks out). Cards written before `reviewedAt` existed fall
+    back to nextReview as a best-effort recency proxy. No deletion path, so a
+    card studied on only one device always survives. */
 function mergeFlashcards(local: unknown, remote: unknown): unknown {
-  const l = (local && typeof local === "object") ? local as Record<string, { nextReview?: number }> : {};
-  const r = (remote && typeof remote === "object") ? remote as Record<string, { nextReview?: number }> : {};
+  const l = (local && typeof local === "object") ? local as Record<string, { reviewedAt?: number; nextReview?: number }> : {};
+  const r = (remote && typeof remote === "object") ? remote as Record<string, { reviewedAt?: number; nextReview?: number }> : {};
+  const recency = (e: { reviewedAt?: number; nextReview?: number } | undefined) => e?.reviewedAt ?? e?.nextReview ?? 0;
   const out: Record<string, unknown> = { ...l };
   for (const [k, e] of Object.entries(r)) {
-    const cur = out[k] as { nextReview?: number } | undefined;
-    if (!cur || (e.nextReview ?? 0) > (cur.nextReview ?? 0)) out[k] = e;
+    const cur = out[k] as { reviewedAt?: number; nextReview?: number } | undefined;
+    if (!cur || recency(e) > recency(cur)) out[k] = e;
   }
   return out;
 }

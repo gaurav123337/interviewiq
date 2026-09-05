@@ -331,15 +331,19 @@ describe("sync engine — Item 15 feature-progress merges", () => {
   });
 
   it("gapPlans: unions by job; larger createdAt wins a same-job tie", async () => {
+    /* The LOCAL side holds the larger createdAt for the shared job, so this
+       discriminates the createdAt tie-break from a plain remote-wins LWW degrade:
+       if mergeGapPlans silently became "remote wins", jobShared.company would flip
+       to "remote" and this test would fail. */
     storageSet(STORAGE_KEYS.gapPlans, {
       jobA: { jobId: "jobA", createdAt: 100 },        // local-only
-      jobShared: { jobId: "jobShared", createdAt: 50, company: "local" }
+      jobShared: { jobId: "jobShared", createdAt: 200, company: "local" } // local built it LATER
     });
     const remote = new InMemoryRemoteStore();
     await remote.push({
       [STORAGE_KEYS.gapPlans]: {
         value: {
-          jobShared: { jobId: "jobShared", createdAt: 200, company: "remote" },
+          jobShared: { jobId: "jobShared", createdAt: 50, company: "remote" }, // stale remote plan
           jobB: { jobId: "jobB", createdAt: 300 }      // remote-only
         },
         updatedAt: T0
@@ -349,7 +353,7 @@ describe("sync engine — Item 15 feature-progress merges", () => {
     await engine.signIn(remote);
     const g = storageGet<Record<string, { company?: string }>>(STORAGE_KEYS.gapPlans, {});
     expect(Object.keys(g).sort()).toEqual(["jobA", "jobB", "jobShared"]);
-    expect(g.jobShared.company).toBe("remote"); // createdAt 200 > 50
+    expect(g.jobShared.company).toBe("local"); // createdAt 200 > 50 — later local plan wins, not remote
   });
 
   it("applyKit: unions by job; newer updatedAt wins", async () => {
@@ -386,26 +390,53 @@ describe("sync engine — Item 15 feature-progress merges", () => {
     expect(p).toEqual({ caseA: 100, caseB: 300, caseShared: 999 }); // max ts wins
   });
 
-  it("sysDesignFlashcards: unions by composite key, keeping later nextReview", async () => {
+  it("sysDesignFlashcards: unions by key, keeping the most-recently-REVIEWED (not furthest-scheduled) card", async () => {
+    /* The honesty crux: nextReview is NOT monotonic — a lapse ("Again") resets
+       interval to 1, so the newer review has a SMALLER nextReview. Tie-breaking
+       on nextReview would keep the stale success and drop the recent failure.
+       We tie-break on reviewedAt, which is monotonic. Here caseS|2 was reviewed
+       correctly on the local device long ago (nextReview far out, reviewedAt
+       old), then FAILED more recently on the remote device (nextReview soon,
+       reviewedAt newer). The recent lapse must win. */
     storageSet(STORAGE_KEYS.sysDesignFlashcards, {
-      "caseA|1": { caseId: "caseA", number: "1", nextReview: 100 },
-      "caseS|2": { caseId: "caseS", number: "2", nextReview: 900 }
+      "caseA|1": { caseId: "caseA", number: "1", nextReview: 100, reviewedAt: 50 },
+      "caseS|2": { caseId: "caseS", number: "2", nextReview: 9000, streak: 5, reviewedAt: 100 } // old success, far-out schedule
     });
     const remote = new InMemoryRemoteStore();
     await remote.push({
       [STORAGE_KEYS.sysDesignFlashcards]: {
         value: {
-          "caseS|2": { caseId: "caseS", number: "2", nextReview: 400 },
-          "caseB|3": { caseId: "caseB", number: "3", nextReview: 300 }
+          "caseS|2": { caseId: "caseS", number: "2", nextReview: 500, streak: 0, reviewedAt: 800 }, // newer lapse, sooner schedule
+          "caseB|3": { caseId: "caseB", number: "3", nextReview: 300, reviewedAt: 60 }
         },
         updatedAt: T0
       }
     });
     const engine = new SyncEngine(() => T0);
     await engine.signIn(remote);
-    const f = storageGet<Record<string, { nextReview: number }>>(STORAGE_KEYS.sysDesignFlashcards, {});
+    const f = storageGet<Record<string, { nextReview: number; streak: number; reviewedAt: number }>>(STORAGE_KEYS.sysDesignFlashcards, {});
     expect(Object.keys(f).sort()).toEqual(["caseA|1", "caseB|3", "caseS|2"]);
-    expect(f["caseS|2"].nextReview).toBe(900); // later review wins
+    /* reviewedAt 800 > 100 → the recent lapse wins even though its nextReview (500)
+       is SMALLER. A nextReview tie-break would wrongly keep streak 5 / nextReview 9000. */
+    expect(f["caseS|2"].reviewedAt).toBe(800);
+    expect(f["caseS|2"].streak).toBe(0);
+    expect(f["caseS|2"].nextReview).toBe(500);
+  });
+
+  it("sysDesignFlashcards: falls back to nextReview for legacy cards without reviewedAt", async () => {
+    /* Cards written before reviewedAt existed have only nextReview — the merge
+       must still union them and use nextReview as a best-effort recency proxy. */
+    storageSet(STORAGE_KEYS.sysDesignFlashcards, { "caseL|1": { caseId: "caseL", number: "1", nextReview: 200 } });
+    const remote = new InMemoryRemoteStore();
+    await remote.push({
+      [STORAGE_KEYS.sysDesignFlashcards]: {
+        value: { "caseL|1": { caseId: "caseL", number: "1", nextReview: 700 } }, updatedAt: T0
+      }
+    });
+    const engine = new SyncEngine(() => T0);
+    await engine.signIn(remote);
+    const f = storageGet<Record<string, { nextReview: number }>>(STORAGE_KEYS.sysDesignFlashcards, {});
+    expect(f["caseL|1"].nextReview).toBe(700); // no reviewedAt on either side → larger nextReview wins
   });
 
   it("sysDesignHistory: unions by date, newest first, capped at 50", async () => {
@@ -420,9 +451,12 @@ describe("sync engine — Item 15 feature-progress merges", () => {
     });
     const engine = new SyncEngine(() => T0);
     await engine.signIn(remote);
-    const h = storageGet<{ date: number }[]>(STORAGE_KEYS.sysDesignHistory, []);
+    const h = storageGet<{ date: number; completed: number }[]>(STORAGE_KEYS.sysDesignHistory, []);
     expect(h.map(e => e.date)).toEqual([5, 4, 3]); // union, desc, no dup date
     expect(h.length).toBe(3);
+    /* the date-3 collision resolves local-wins (merge orders [...remote,...local]
+       so the local entry overwrites in the by-date map) — locks the dedup order */
+    expect(h.find(e => e.date === 3)?.completed).toBe(1);
   });
 
   it("counselorProgress: lww whole-blob — a newer un-tick is NOT resurrected", async () => {
