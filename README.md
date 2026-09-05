@@ -104,7 +104,7 @@ Dated migrations under `supabase/migrations/` (e.g. tip payments, article normal
 
 ### 3. Deploy the Edge Functions
 
-Payments, AI proxying, RAG indexing, job ingestion, digests and admin actions run as Edge Functions (`supabase/functions/`, e.g. `pay-checkout` / `pay-verify` / `pay-webhook`, `ai-chat`, `content-index` / `content-scrape` / `content-refine`, `import-job` / `jobs-fetch`, the `send-*-digest` jobs). The deploy workflow ships them automatically (see below), or deploy manually:
+Payments, AI proxying, RAG indexing, job ingestion, digests and admin actions run as Edge Functions (`supabase/functions/`, e.g. `pay-checkout` / `pay-verify` / `pay-webhook`, `ai-chat`, `content-index` / `content-scrape`, `import-job` / `jobs-fetch`, the `send-*-digest` jobs). The deploy workflow ships them automatically (see below), or deploy manually:
 
 ```bash
 npx supabase functions deploy pay-webhook --project-ref <ref> --no-verify-jwt
