@@ -132,6 +132,12 @@ export const SYNC_POLICIES: Record<string, SyncPolicy> = {
   [STORAGE_KEYS.counselorProgress]: "lww",     // weekly checkboxes — un-tick must not resurrect
   [STORAGE_KEYS.sysDesignBookmarks]: "lww",    // Record<caseId,ts> — un-bookmark deletes the key (no tombstone)
   [STORAGE_KEYS.sysDesignTimer]: "lww",        // per-case duration preset scalar
+  /* xp holds claimedAchievements + the leaderboard opt-in flag/name. Whole-blob
+     lww because leaderboardOptIn is a REAL toggle: opting OUT must win, and a
+     key-union merge would dishonestly resurrect a withdrawn opt-in (same
+     doctrine as counselorProgress / sysDesignBookmarks). No mergeFor() branch —
+     lww is engine-generic via the iq.syncMeta stamp. */
+  [STORAGE_KEYS.xp]: "lww",                    // claimed achievements + leaderboard opt-in — opt-out must win
   /* roadmapProg stays "local" (absent): clearGoal hard-removes it with no
      restamp, and the fingerprint that would reject a stale copy lives INSIDE
      the blob, so LWW would resurrect intentionally-cleared progress. The goal

@@ -47,6 +47,10 @@ describe("sync policies", () => {
     expect(policyFor(STORAGE_KEYS.counselorProgress)).toBe("lww");
     expect(policyFor(STORAGE_KEYS.sysDesignBookmarks)).toBe("lww");
     expect(policyFor(STORAGE_KEYS.sysDesignTimer)).toBe("lww");
+    /* Item 17 — XpData (claimed achievements + leaderboard opt-in). lww because
+       leaderboardOptIn is a real toggle: opting OUT must win, and a key-union
+       merge would dishonestly resurrect a withdrawn opt-in. */
+    expect(policyFor(STORAGE_KEYS.xp)).toBe("lww");
     /* deliberately NOT synced — LWW would resurrect intentionally-cleared /
        un-set state, or the value is ephemeral / device-private. */
     expect(policyFor(STORAGE_KEYS.roadmapProg)).toBe("local");
@@ -476,6 +480,29 @@ describe("sync engine — Item 15 feature-progress merges", () => {
       await remote.push({ [STORAGE_KEYS.counselorProgress]: { value: { planX: { 1: true, 2: true } }, updatedAt: T0 - 5000 } });
       await engine.pull();
       expect(storageGet(STORAGE_KEYS.counselorProgress, {})).toEqual({ planX: { 1: true, 2: false } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("xp: lww whole-blob — a withdrawn leaderboard opt-in is NOT resurrected", async () => {
+    /* the honesty guard for Item 17: leaving the leaderboard writes
+       leaderboardOptIn:false locally; a stale remote blob that still holds
+       opt-in:true must NOT re-enrol the user on the next pull. */
+    vi.useFakeTimers();
+    try {
+      const remote = new InMemoryRemoteStore();
+      const engine = new SyncEngine(() => T0);
+      await engine.signIn(remote);
+      /* user opts in, syncs, then opts back out (newer local write) */
+      storageSet(STORAGE_KEYS.xp, { claimedAchievements: ["first_session"], leaderboardName: "Ada", leaderboardOptIn: true });
+      await vi.advanceTimersByTimeAsync(1000);
+      storageSet(STORAGE_KEYS.xp, { claimedAchievements: ["first_session"], leaderboardName: "Ada", leaderboardOptIn: false });
+      await vi.advanceTimersByTimeAsync(1000);
+      /* a stale remote row still holds the opt-in (older stamp) */
+      await remote.push({ [STORAGE_KEYS.xp]: { value: { claimedAchievements: ["first_session"], leaderboardName: "Ada", leaderboardOptIn: true }, updatedAt: T0 - 5000 } });
+      await engine.pull();
+      expect(storageGet(STORAGE_KEYS.xp, {})).toEqual({ claimedAchievements: ["first_session"], leaderboardName: "Ada", leaderboardOptIn: false });
     } finally {
       vi.useRealTimers();
     }

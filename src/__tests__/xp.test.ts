@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { xpLevel, xpFromSession, totalXPFromSessions, computeStats, ACHIEVEMENTS, generateLeaderboard } from "../services/xp";
+import { describe, it, expect, beforeEach } from "vitest";
+import { xpLevel, xpFromSession, totalXPFromSessions, computeStats, ACHIEVEMENTS, loadXp, claimAchievement } from "../services/xp";
 import type { SavedSession } from "../types";
 
 const mkQ = (overrides: Record<string, unknown> = {}) => ({
@@ -110,21 +110,32 @@ describe("achievements", () => {
   });
 });
 
-describe("generateLeaderboard", () => {
-  it("returns sorted entries with user included", () => {
-    const lb = generateLeaderboard([mkSession()], "Test User");
-    expect(lb.length).toBeGreaterThan(5);
-    expect(lb[0].rank).toBe(1);
-    // XP should be descending
-    for (let i = 1; i < lb.length; i++) {
-      expect(lb[i - 1].xp).toBeGreaterThanOrEqual(lb[i].xp);
-    }
+describe("claimAchievement", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("adds a known achievement id to claimed and persists it", () => {
+    expect(loadXp().claimedAchievements).toEqual([]);
+    const after = claimAchievement("first_session");
+    expect(after.claimedAchievements).toContain("first_session");
+    expect(loadXp().claimedAchievements).toContain("first_session"); // survived a reload
   });
 
-  it("marks user entry", () => {
-    const lb = generateLeaderboard([mkSession()], "Test User");
-    const you = lb.find(e => e.isYou);
-    expect(you).toBeDefined();
-    expect(you!.name).toBe("Test User");
+  it("is idempotent — claiming twice keeps a single entry", () => {
+    claimAchievement("first_session");
+    const after = claimAchievement("first_session");
+    expect(after.claimedAchievements.filter(id => id === "first_session")).toHaveLength(1);
+  });
+
+  it("rejects unknown achievement ids (no phantom claims)", () => {
+    const after = claimAchievement("not_a_real_achievement");
+    expect(after.claimedAchievements).toEqual([]);
+    expect(loadXp().claimedAchievements).toEqual([]);
+  });
+
+  it("preserves leaderboard opt-in fields when claiming", () => {
+    claimAchievement("first_session");
+    const data = loadXp();
+    expect(data.leaderboardOptIn).toBe(false);
+    expect(data.leaderboardName).toBeNull();
   });
 });
