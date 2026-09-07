@@ -96,6 +96,7 @@ SUPABASE_ACCESS_TOKEN=sb_secret_... SUPABASE_ORG_ID=<org-id> node scripts/setup-
 | System-design RAG | `rag.sql`, `content.sql`, `content-sourcing.sql`, `content-curation.sql`, `quality.sql`, `resources.sql` |
 | Jobs | `jobs.sql`, `jobs-fetch-cron.sql`, `jobs-fetch-reports.sql`, `trends.sql`, `trends-refresh-cron.sql` |
 | Roadmaps | `skill_roadmaps.sql` |
+| Progress / leaderboard | `leaderboard.sql` (opt-in, self-reported XP; public read + owner-only write) |
 | AI cost/quotas | `ai-provider.sql`, `ai-user-quotas.sql`, `ai-cost-controls.sql` |
 | Admin / security / auth | `admin.sql`, `security.sql`, `recovery-codes.sql`, `edge-secrets.sql`, `dashboard-setup.sql` |
 | Digest cron jobs | `send-apply-digest-cron.sql`, `send-recommendations-digest-cron.sql`, `send-security-digest-cron.sql`, `revalidate-resources-cron.sql` |

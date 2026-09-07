@@ -1,8 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useApp } from "../store";
 import { avgScore, cardsDueToday, categoryMastery, scoresOverTime, streaks } from "../services/progress";
-import { computeStats, xpLevel, generateLeaderboard, ACHIEVEMENTS } from "../services/xp";
+import { computeStats, xpLevel, ACHIEVEMENTS, loadXp, saveXp, claimAchievement, type XpData } from "../services/xp";
+import { fetchLeaderboard, uploadMyLeaderboardRow, removeMyLeaderboardRow, type LeaderboardEntry, type LeaderboardSnapshot } from "../services/leaderboard";
+import { roadmapCompletion, counselorCompletion } from "../services/completion";
+import { getCloudState, subscribeCloud } from "../services/cloud";
 import { cardCls, Chip, ProgressBar } from "./ui";
 import { toast } from "../toast";
 
@@ -17,6 +20,29 @@ export function Progress() {
   const { state, nav } = useApp();
   const sessions = state.sessions;
   const [showPrintView, setShowPrintView] = useState(false);
+
+  /* achievement-claim + opt-in leaderboard state (item 17) */
+  const [xpData, setXpData] = useState<XpData>(() => loadXp());
+  const [cloud, setCloud] = useState(() => getCloudState());
+  const [board, setBoard] = useState<LeaderboardEntry[]>([]);
+  const [lbLoading, setLbLoading] = useState(false);
+  const [nameInput, setNameInput] = useState(() => loadXp().leaderboardName ?? "");
+  const [lbBusy, setLbBusy] = useState(false);
+  useEffect(() => subscribeCloud(setCloud), []);
+
+  const uid = cloud.user?.id ?? null;
+  const optedIn = xpData.leaderboardOptIn;
+  /* fetch the real board only in the opted-in state; clear it otherwise */
+  useEffect(() => {
+    if (!uid || !optedIn) { setBoard([]); setLbLoading(false); return; }
+    let alive = true;
+    setLbLoading(true);
+    void fetchLeaderboard(10)
+      .then(rows => { if (alive) setBoard(rows); })
+      .catch(() => { if (alive) setBoard([]); })
+      .finally(() => { if (alive) setLbLoading(false); });
+    return () => { alive = false; };
+  }, [uid, optedIn]);
 
   const stats = useMemo(() => {
     const st = streaks(sessions);
@@ -33,7 +59,9 @@ export function Progress() {
     /* days with a session for the calendar */
     const activeDays = new Set(sessions.map(s => dayOf(s.date)));
     const xpStats = computeStats(sessions);
-    return { st, cats, trend, weak, activeDays, due: cardsDueToday(), xpStats };
+    const rmComplete = roadmapCompletion(sessions);
+    const cnComplete = counselorCompletion();
+    return { st, cats, trend, weak, activeDays, due: cardsDueToday(), xpStats, rmComplete, cnComplete };
   }, [sessions]);
 
   if (!sessions.length) {
@@ -51,9 +79,36 @@ export function Progress() {
     );
   }
 
-  const { st, cats, trend, weak, activeDays, due, xpStats } = stats;
+  const { st, cats, trend, weak, activeDays, due, xpStats, rmComplete, cnComplete } = stats;
   const best = cats[0];
   const lv = xpLevel(xpStats.totalXP);
+
+  /* ---- achievement-claim + leaderboard handlers (item 17) ---- */
+  const persistXp = (next: XpData) => { saveXp(next); setXpData(next); };
+  const claim = (id: string) => setXpData(claimAchievement(id));
+  const joinLeaderboard = async () => {
+    const name = nameInput.trim().slice(0, 24);
+    if (!name) { toast("Enter a display name first"); return; }
+    setLbBusy(true);
+    try {
+      const snap: LeaderboardSnapshot = { name, xp: xpStats.totalXP, level: lv.level, streak: xpStats.currentStreak, sessions: xpStats.totalSessions };
+      const res = await uploadMyLeaderboardRow(snap);
+      if (!res.ok) { toast("✗ " + (res.error ?? "Couldn't join the leaderboard")); return; }
+      persistXp({ ...xpData, leaderboardOptIn: true, leaderboardName: name });
+      setBoard(await fetchLeaderboard(10));
+      toast("🏅 You're on the leaderboard");
+    } finally { setLbBusy(false); }
+  };
+  const leaveLeaderboard = async () => {
+    setLbBusy(true);
+    try {
+      const res = await removeMyLeaderboardRow();
+      if (!res.ok) { toast("✗ " + (res.error ?? "Couldn't leave the leaderboard")); return; }
+      persistXp({ ...xpData, leaderboardOptIn: false });
+      setBoard([]);
+      toast("Left the leaderboard");
+    } finally { setLbBusy(false); }
+  };
 
   /* build streak badge SVG */
   const badgeSvg = makeStreakBadge(st.current, st.longest, sessions.length, avgScore(sessions), best?.label ?? "");
@@ -113,7 +168,7 @@ export function Progress() {
         <Stat label="Current streak" value={st.current + " 🔥"} icon="🔥" sub={`longest ${st.longest}`} />
         <Stat label="Drill due" value={due} icon="🎴" sub={due ? "cards to review" : "all caught up"} />
         <Stat label="Top category" value={best?.label ?? "—"} icon="🏆" sub={best ? `${Math.round(best.pct * 100)}% mastered` : ""} />
-        <div className="${cardCls} p-4">
+        <div className={`${cardCls} p-4`}>
           <div className="flex items-center justify-between text-[11.5px] font-extrabold uppercase tracking-wider text-mut">
             <span>Level</span><span>⚡</span>
           </div>
@@ -132,6 +187,7 @@ export function Progress() {
           <div className="space-y-1.5">
             {ACHIEVEMENTS.map(a => {
               const unlocked = xpStats.unlockedAchievements.includes(a.id);
+              const claimed = xpData.claimedAchievements.includes(a.id);
               return (
                 <div key={a.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${unlocked ? "border-ok/30 bg-ok/10" : "border-line/10 bg-wht/[.03] opacity-50"}`}>
                   <span className="text-[18px]">{a.icon}</span>
@@ -139,26 +195,113 @@ export function Progress() {
                     <span className="text-[13px] font-bold">{a.label}</span>
                     <span className="ml-2 text-[11px] text-fnt">{a.description}</span>
                   </div>
-                  {unlocked && <span className="text-[11px] font-bold text-ok">✓</span>}
+                  {unlocked && !claimed && (
+                    <button
+                      onClick={() => claim(a.id)}
+                      className="flex-none rounded-full border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[10.5px] font-extrabold text-amber-300 hover:bg-amber-400/25"
+                      title="New achievement — click to dismiss"
+                    >
+                      🎉 New
+                    </button>
+                  )}
+                  {unlocked && claimed && <span className="flex-none text-[11px] font-bold text-ok">✓</span>}
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Leaderboard */}
+        {/* Leaderboard — real, opt-in, Supabase-backed (item 17) */}
         <div className={`${cardCls} p-5`}>
           <h2 className="mb-1 text-[15px] font-extrabold">🏅 Leaderboard</h2>
-          <p className="mb-3 text-[12.5px] text-mut">Top performers by XP (this week).</p>
-          <div className="space-y-1">
-            {generateLeaderboard(sessions, "You").slice(0, 10).map(e => (
-              <div key={e.rank} className={`flex items-center gap-3 rounded-lg px-3 py-2 ${e.isYou ? "border border-acc1/30 bg-acc1/10" : "border border-transparent bg-wht/[.03]"}`}>
-                <span className={`w-6 flex-none text-center text-[13px] font-extrabold ${e.rank <= 3 ? "text-amber-400" : "text-mut"}`}>{e.rank <= 3 ? ["🥇", "🥈", "🥉"][e.rank - 1] : e.rank}</span>
-                <span className="min-w-0 flex-1 truncate text-[13px] font-bold">{e.name}</span>
-                <span className="text-[11px] font-bold text-fnt">Lv.{e.level}</span>
-                <span className="text-[12px] font-extrabold tabular-nums text-acctxt">{e.xp.toLocaleString()} XP</span>
+          <p className="mb-3 text-[12.5px] text-mut">Opt-in · self-reported XP.</p>
+          {!uid ? (
+            <p className="rounded-lg border border-line/10 bg-wht/[.03] px-3 py-4 text-center text-[12.5px] text-mut">
+              Sign in with cloud sync (Settings) to join the leaderboard.
+            </p>
+          ) : !optedIn ? (
+            <div className="rounded-lg border border-line/10 bg-wht/[.03] p-3">
+              <p className="mb-2 text-[12.5px] text-mut">Publish your display name + stats to the public board. You can leave anytime.</p>
+              <input
+                value={nameInput}
+                onChange={e => setNameInput(e.target.value.slice(0, 24))}
+                maxLength={24}
+                placeholder="Display name"
+                className="mb-2 w-full rounded-lg border border-line/20 bg-deep/40 px-3 py-2 text-[13px] outline-none focus:border-acc1/50"
+              />
+              <button
+                onClick={joinLeaderboard}
+                disabled={lbBusy}
+                className="w-full rounded-lg grad-bg px-4 py-2 text-[13px] font-extrabold text-white disabled:opacity-50"
+              >
+                {lbBusy ? "Joining…" : "Show me on the leaderboard"}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1">
+                {lbLoading ? (
+                  <p className="px-3 py-2 text-[12.5px] text-mut">Loading the leaderboard…</p>
+                ) : board.length === 0 ? (
+                  <p className="px-3 py-2 text-[12.5px] text-mut">Couldn't load the leaderboard right now — check your connection and try again.</p>
+                ) : board.map(e => {
+                  const podium = !e.appended && e.rank <= 3;
+                  return (
+                    <div key={e.user_id} className={`flex items-center gap-3 rounded-lg px-3 py-2 ${e.isYou ? "border border-acc1/30 bg-acc1/10" : "border border-transparent bg-wht/[.03]"}`}>
+                      <span className={`w-6 flex-none text-center text-[13px] font-extrabold ${podium ? "text-amber-400" : "text-mut"}`}>{podium ? ["🥇", "🥈", "🥉"][e.rank - 1] : e.rank}</span>
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-bold">{e.name}{e.isYou ? " (you)" : ""}</span>
+                      <span className="text-[11px] font-bold text-fnt">Lv.{e.level}</span>
+                      <span className="text-[12px] font-extrabold tabular-nums text-acctxt">{e.xp.toLocaleString()} XP</span>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
+              <button
+                onClick={leaveLeaderboard}
+                disabled={lbBusy}
+                className="mt-2 text-[11.5px] font-bold text-mut underline hover:text-fnt disabled:opacity-50"
+              >
+                {lbBusy ? "…" : "Leave the leaderboard"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Learning plans — real Roadmap + Counselor completion (item 17) */}
+      <div className="mt-5">
+        <div className={`${cardCls} p-5`}>
+          <h2 className="mb-1 text-[15px] font-extrabold">🧭 Learning plans</h2>
+          <p className="mb-3 text-[12.5px] text-mut">Your progress across the roadmap and the counselor's 90-day plan.</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <button onClick={() => nav("roadmap")} className="rounded-lg border border-line/10 bg-wht/[.03] p-3 text-left hover:bg-wht/[.06]">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[13px] font-extrabold">📍 Roadmap</span>
+                <span className="text-[11px] font-bold text-acctxt">Open →</span>
+              </div>
+              {rmComplete ? (
+                <>
+                  <p className="text-[12px] font-bold text-fnt">{rmComplete.topicsDone}/{rmComplete.topicsTotal} topics · {rmComplete.weeksDone}/{rmComplete.weeksTotal} weeks</p>
+                  <ProgressBar widthPct={rmComplete.topicsTotal ? Math.round((rmComplete.topicsDone / rmComplete.topicsTotal) * 100) : 0} height="h-1.5" className="mt-1.5 bg-deep/60" />
+                </>
+              ) : (
+                <p className="text-[12px] text-mut">No roadmap yet — build one.</p>
+              )}
+            </button>
+            <button onClick={() => nav("counselor")} className="rounded-lg border border-line/10 bg-wht/[.03] p-3 text-left hover:bg-wht/[.06]">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="text-[13px] font-extrabold">🧑‍🏫 Skill counselor</span>
+                <span className="text-[11px] font-bold text-acctxt">Open →</span>
+              </div>
+              {cnComplete ? (
+                <>
+                  <p className="text-[12px] font-bold text-fnt">{cnComplete.weeksDone}/{cnComplete.weeksTotal} weeks done</p>
+                  <ProgressBar widthPct={cnComplete.weeksTotal ? Math.round((cnComplete.weeksDone / cnComplete.weeksTotal) * 100) : 0} height="h-1.5" className="mt-1.5 bg-deep/60" />
+                </>
+              ) : (
+                <p className="text-[12px] text-mut">No study plan yet.</p>
+              )}
+            </button>
           </div>
         </div>
       </div>

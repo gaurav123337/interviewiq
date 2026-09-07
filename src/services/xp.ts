@@ -1,16 +1,15 @@
-/* XP engine — experience points, levels, achievements, and leaderboard.
+/* XP engine — experience points, levels, and achievements.
 
-   XP is derived from session history + streaks — no server required for
-   the core calculation. Leaderboard is opt-in and anonymized; the
-   localStorage snapshot can be synced to Supabase when the user signs in. */
+   XP is derived from session history + streaks — no server required. The only
+   persisted state is XpData (claimed achievements + the leaderboard opt-in flag
+   and display name), synced as a whole-blob lww key. The opt-in leaderboard
+   itself lives in services/leaderboard.ts (real, Supabase-backed). */
 
 import type { SavedSession } from "../types";
 import { streaks } from "./progress";
-import { storageGet, storageSet } from "./storage";
+import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 
 // ─── XP Constants ────────────────────────────────────────────────────
-
-const XP_STORAGE_KEY = "iq.xp";
 
 /** Base XP per question answered, scaled by score */
 const BASE_XP_PER_Q = 10;
@@ -154,73 +153,24 @@ export interface XpData {
 const DEFAULT_XP: XpData = { claimedAchievements: [], leaderboardName: null, leaderboardOptIn: false };
 
 export function loadXp(): XpData {
-  return storageGet<XpData>(XP_STORAGE_KEY, DEFAULT_XP);
+  return storageGet<XpData>(STORAGE_KEYS.xp, DEFAULT_XP);
 }
 
 export function saveXp(data: XpData): void {
-  storageSet(XP_STORAGE_KEY, data);
-}
-
-// ─── Leaderboard (local mock + Supabase-ready) ───────────────────────
-
-export interface LeaderboardEntry {
-  rank: number;
-  name: string;
-  xp: number;
-  level: number;
-  streak: number;
-  sessions: number;
-  isYou?: boolean;
+  storageSet(STORAGE_KEYS.xp, data);
 }
 
 /**
- * Generates a leaderboard by combining the user's stats with simulated
- * anonymous peers. When Supabase is wired, replace this with a real RPC.
+ * Marks a newly-earned achievement as claimed (dismisses its "New!" badge).
+ * Idempotent and validated: unknown ids and already-claimed ids are no-ops
+ * that return the current blob unchanged. Persists + syncs via saveXp.
  */
-export function generateLeaderboard(sessions: SavedSession[], myName: string | null): LeaderboardEntry[] {
-  const stats = computeStats(sessions);
-  const lv = xpLevel(stats.totalXP);
-
-  // Simulated peers (diverse skill levels)
-  const peers: { name: string; xp: number; sessions: number; streak: number }[] = [
-    { name: "Alex K.", xp: 12400, sessions: 87, streak: 21 },
-    { name: "Priya S.", xp: 9800, sessions: 64, streak: 14 },
-    { name: "Marcus T.", xp: 7200, sessions: 52, streak: 7 },
-    { name: "Sofia L.", xp: 5600, sessions: 38, streak: 5 },
-    { name: "Chen W.", xp: 4100, sessions: 29, streak: 3 },
-    { name: "Jordan R.", xp: 3200, sessions: 22, streak: 2 },
-    { name: "Aisha M.", xp: 2100, sessions: 15, streak: 1 },
-    { name: "Liam O.", xp: 1400, sessions: 10, streak: 1 },
-    { name: "Yuki N.", xp: 800, sessions: 6, streak: 0 },
-    { name: "Diego F.", xp: 350, sessions: 3, streak: 0 },
-  ];
-
-  // Add the user
-  const all = [...peers.map(p => ({
-    rank: 0,
-    name: p.name,
-    xp: p.xp,
-    level: xpLevel(p.xp).level,
-    streak: p.streak,
-    sessions: p.sessions,
-    isYou: false,
-  }))];
-  
-  if (myName) {
-    all.push({
-      rank: 0,
-      name: myName,
-      xp: stats.totalXP,
-      level: lv.level,
-      streak: stats.currentStreak,
-      sessions: stats.totalSessions,
-      isYou: true,
-    });
-  }
-
-  // Sort by XP descending, assign ranks
-  all.sort((a, b) => b.xp - a.xp);
-  all.forEach((e, i) => { e.rank = i + 1; });
-
-  return all;
+export function claimAchievement(id: string): XpData {
+  const data = loadXp();
+  const known = ACHIEVEMENTS.some(a => a.id === id);
+  if (!known || data.claimedAchievements.includes(id)) return data;
+  const next: XpData = { ...data, claimedAchievements: [...data.claimedAchievements, id] };
+  saveXp(next);
+  return next;
 }
+

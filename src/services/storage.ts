@@ -78,7 +78,8 @@ export const STORAGE_KEYS = {
   sysDesignFlashcards: "iq.sysDesignFlashcards",
   sysDesignTimer: "iq.sysDesignTimer",
   skillRoadmaps: "iq.skillRoadmaps",
-  skillRoadmapCache: "iq.skillRoadmapCache"
+  skillRoadmapCache: "iq.skillRoadmapCache",
+  xp: "iq.xp"
 } as const;
 
 export function storageGet<T>(key: string, fallback: T): T {
