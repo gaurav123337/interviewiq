@@ -52,6 +52,7 @@ const SOURCE_LABELS: Record<string, string> = {
   lever: "Lever",
   rss: "RSS",
   remoteok: "RemoteOK",
+  seed: "Sample",
   "imported:naukri": "Naukri",
   "imported:linkedin": "LinkedIn",
   "imported:indeed": "Indeed",
@@ -99,6 +100,13 @@ export function trustOf(source: string): SourceTrust {
       label: "Curated feed",
       icon: "📡",
       title: "Published via a public RSS feed from a vetted board (We Work Remotely, Himalayas) — the board screens the postings, but details come from the feed itself."
+    };
+  }
+  if (source === "seed") {
+    return {
+      label: "Sample",
+      icon: "🧪",
+      title: "Example posting shown until the live feed loads — not a real opening. Refresh (signed in) or wait for the scheduled fetch to replace it."
     };
   }
   if (source.startsWith("imported:")) {

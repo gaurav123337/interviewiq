@@ -103,6 +103,14 @@ SUPABASE_ACCESS_TOKEN=sb_secret_... SUPABASE_ORG_ID=<org-id> node scripts/setup-
 
 Dated migrations under `supabase/migrations/` (e.g. tip payments, article normalizer) apply on top.
 
+**One-command alternative — `scripts/setup-live.js`.** Once the base project + `admin.sql` are in place (via `setup-supabase.js` then `setup-admin.js`), one command applies the remaining feature schema (`jobs.sql`, `jobs-fetch-reports.sql`, etc. — all idempotent), generates the Edge-Function secrets, and schedules the pg_cron refresh jobs. Every placeholder — project URL, anon key, and shared secrets — is substituted automatically, so no cron SQL needs hand-editing:
+
+```bash
+SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<ref> node scripts/setup-live.js
+```
+
+**Jobs feed out of the box.** The Job Match portal ships a small bundled sample feed, so it's never empty on a fresh or offline install. Each posting carries a **🧪 Sample** chip and an estimated/omitted salary — never presented as a live opening — and it shows only until the first live fetch: the scheduled cron (or a signed-in **🔄 Refresh feed**) replaces it with real ATS/RSS listings.
+
 ### 3. Deploy the Edge Functions
 
 Payments, AI proxying, RAG indexing, job ingestion, digests and admin actions run as Edge Functions (`supabase/functions/`, e.g. `pay-checkout` / `pay-verify` / `pay-webhook`, `ai-chat`, `content-index` / `content-scrape`, `import-job` / `jobs-fetch`, the `send-*-digest` jobs). The deploy workflow ships them automatically (see below), or deploy manually:

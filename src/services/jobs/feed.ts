@@ -1,7 +1,9 @@
-/* Job feed — local cache, cloud fetch with round-robin per source,
+/* Jobs feed — local cache, cloud fetch with round-robin per source,
    cross-source dedup, filters, and sort. */
 
 import type { JobPosting } from "../../types";
+import { CONFIG } from "../../config";
+import { SEED_JOBS } from "../../data/seedJobs";
 import { getSupabaseClient } from "../cloud";
 import { STORAGE_KEYS, storageGet, storageSet } from "../storage";
 import { sourceLabel } from "../importJob";
@@ -12,8 +14,22 @@ import { fmtAmount } from "../salaryBench";
 /* Local cache                                                         */
 /* ------------------------------------------------------------------ */
 
-export function listJobs(): JobPosting[] {
+/** The raw stored feed (may be empty). Read this — not listJobs() — anywhere
+    that reads-then-writes the feed, so the seed fallback below is never
+    persisted into iq.jobs. */
+function readStoredJobs(): JobPosting[] {
   return storageGet<JobPosting[]>(STORAGE_KEYS.jobs, []);
+}
+
+/** The feed consumers see. When the stored feed is empty (fresh install,
+    offline, or before the first cloud refresh) we return the bundled seed
+    postings so the portal — and the rankings + salary bands downstream of it —
+    isn't dead out-of-the-box. The seed is a READ-TIME fallback only: it is
+    never written, so lastJobsRefresh() stays 0 (auto-refresh still fires) and
+    the first real fetch/import cleanly supersedes it. */
+export function listJobs(): JobPosting[] {
+  const stored = readStoredJobs();
+  return stored.length ? stored : SEED_JOBS;
 }
 
 function setJobs(jobs: JobPosting[]): void {
@@ -64,7 +80,9 @@ const isImported = (j: JobPosting): boolean => j.source.startsWith("imported:");
 /** Add a user-imported job to the local feed (deduped by apply URL).
     Imported jobs sit at the front so the 80-job cap can't evict them. */
 export function addImportedJob(job: JobPosting): JobPosting[] {
-  const next = [job, ...listJobs().filter(j => j.url !== job.url && !(isImported(j) && j.id === job.id))];
+  /* read the RAW store, not listJobs() — otherwise the seed fallback would be
+     folded into iq.jobs on the user's first import and never evicted. */
+  const next = [job, ...readStoredJobs().filter(j => j.url !== job.url && !(isImported(j) && j.id === job.id))];
   setJobs(next);
   return next;
 }
@@ -104,7 +122,9 @@ export async function loadJobsFromCloud(): Promise<JobPosting[]> {
     pass++;
   }
   const jobs = picked.slice(0, JOBS_CAP).map(toJobPosting);
-  const imported = listJobs().filter(isImported);
+  /* preserve only user-imported jobs across a refresh; read the RAW store so a
+     seed fallback is dropped (never persisted) rather than merged in. */
+  const imported = readStoredJobs().filter(isImported);
   setJobs([...imported, ...jobs]);
   return [...imported, ...jobs];
 }
@@ -129,7 +149,7 @@ export async function refreshJobs(): Promise<{ added: number; updated: number; t
   const { data: session } = await client.auth.getSession();
   const token = session?.session?.access_token;
   if (!token) throw new Error("Sign in to refresh the job feed");
-  const res = await fetch("https://ndrusywvceojsoirhkhl.supabase.co/functions/v1/jobs-fetch", {
+  const res = await fetch(`${CONFIG.supabase.url}/functions/v1/jobs-fetch`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
   });
