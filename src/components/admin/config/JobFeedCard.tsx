@@ -87,7 +87,10 @@ export function JobFeedCard({ config }: JobFeedCardProps) {
 
   const previewRecs = () => {
     const p = getCareerProfile();
-    const jobs = listJobs();
+    /* digest text is unlabelled outbound email — exclude the bundled sample
+       feed so the "refresh first" hint fires on a fresh project instead of
+       naming seed companies as if they were real recommendations. */
+    const jobs = listJobs().filter(j => j.source !== "seed");
     if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
     if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
     setRecsPreview(recommendationsDigest(p, rankCompanies(p, jobs)));
@@ -117,7 +120,8 @@ export function JobFeedCard({ config }: JobFeedCardProps) {
 
   const previewIndiaRecs = () => {
     const p = getCareerProfile();
-    const jobs = listJobs();
+    /* exclude the bundled sample feed from the (unlabelled) digest text */
+    const jobs = listJobs().filter(j => j.source !== "seed");
     if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
     if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
     setIndiaRecsPreview(indiaDigest(p, jobs));

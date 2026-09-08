@@ -373,7 +373,8 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
   const recsHeaders = (): Promise<Record<string, string>> => cloudFnHeaders();
   const _previewRecs = () => {
     const p = getCareerProfile();
-    const jobs = listJobs();
+    /* exclude the bundled sample feed from the (unlabelled) digest text */
+    const jobs = listJobs().filter(j => j.source !== "seed");
     if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
     if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
     setRecsPreview(recommendationsDigest(p, rankCompanies(p, jobs)));
@@ -401,7 +402,8 @@ export const ConfigSection = memo(function ConfigSection({ config, setConfig, bu
   };
   const _previewIndiaRecs = () => {
     const p = getCareerProfile();
-    const jobs = listJobs();
+    /* exclude the bundled sample feed from the (unlabelled) digest text */
+    const jobs = listJobs().filter(j => j.source !== "seed");
     if (!p) { toast("No career profile in this browser — upload a resume or save the profile first"); return; }
     if (!jobs.length) { toast("No jobs cached — refresh the feed first"); return; }
     setIndiaRecsPreview(indiaDigest(p, jobs));

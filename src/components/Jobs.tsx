@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CareerProfile, JobPosting, LevelId, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
-import { isCloudConfigured } from "../services/cloud";
+import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { toast } from "../toast";
 import { btnGhost, btnSm, cardCls, Chip } from "./ui"
 import { UpgradeModal } from "./Upgrade";
@@ -95,11 +95,20 @@ export function Jobs() {
 
   const proGated = isPaywallEnabled() && getTier() !== "pro";
   const cloud = isCloudConfigured();
+  /* Refreshing calls the jobs-fetch Edge Function with the user's JWT, so it
+     needs a signed-in session — not merely a configured project. CONFIG ships
+     credentials, so `cloud` (isCloudConfigured) is always true and can't gate
+     the button honestly. Track the live auth state instead, so a signed-out
+     user sees a disabled button rather than one that throws on click. */
+  const [signedIn, setSignedIn] = useState<boolean>(() => !!getCloudState().user);
+  useEffect(() => subscribeCloud(s => setSignedIn(!!s.user)), []);
 
   /* pull the latest feed + cloud profile when signed in */
   useEffect(() => {
     if (!cloud) return;
-    void loadJobsFromCloud().then(setJobs).catch(() => {});
+    /* keep the bundled seed feed visible when the cloud feed is empty (fresh
+       project, cron hasn't run yet) — only replace it when real jobs return */
+    void loadJobsFromCloud().then(cloudJobs => { if (cloudJobs.length) setJobs(cloudJobs); }).catch(() => {});
     void import("../services/jobs").then(({ loadCareerProfileFromCloud }) =>
       loadCareerProfileFromCloud().then(p => { if (p) { setProfile(p); saveCareerProfile(p); } }).catch(() => {})
     );
@@ -505,8 +514,8 @@ export function Jobs() {
             <button className={btnGhost + btnSm} onClick={() => setImportOpen(true)} title="Paste a job URL from Naukri, LinkedIn, Indeed or any site — it joins your match feed">
               ➕ Add job from a link
             </button>
-            <button className={btnGhost + btnSm} onClick={refresh} disabled={refreshing || !cloud}>
-              {refreshing ? "⏳ Refreshing…" : "🔄 Refresh feed"} {!cloud && "(sign in)"}
+            <button className={btnGhost + btnSm} onClick={refresh} disabled={refreshing || !signedIn} title={!signedIn ? "Sign in to pull the live feed — sample jobs are shown until then" : undefined}>
+              {refreshing ? "⏳ Refreshing…" : "🔄 Refresh feed"} {!signedIn && "(sign in)"}
             </button>
           </div>
         </div>
@@ -516,7 +525,7 @@ export function Jobs() {
             <div className="text-[26px]">🕳️</div>
             <p className="mt-2 text-[13.5px] font-bold">No jobs yet</p>
             <p className="mx-auto mt-1 max-w-[380px] text-[12.5px] text-mut">
-              {cloud ? "Tap “Refresh feed” to pull live jobs from Greenhouse and Ashby boards." : "Sign in to fetch the live feed (jobs come from public ATS boards)."}
+              {signedIn ? "Tap “Refresh feed” to pull live jobs from Greenhouse and Ashby boards." : "Sign in to fetch the live feed (jobs come from public ATS boards)."}
             </p>
           </div>
         ) : (

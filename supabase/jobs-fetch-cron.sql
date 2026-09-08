@@ -11,9 +11,13 @@
       without it.
    2. Replace <YOUR_JOBS_FETCH_SECRET> below with that same value.
    3. Replace <YOUR_ANON_KEY> with the project's anon (publishable) key.
-   4. Run this file. Verify with:
-      select jobid, jobname, schedule, active from cron.job where jobname = 'hourly-jobs-fetch';
-   Idempotent — re-running replaces the schedule. */
+   4. Replace <YOUR_PROJECT_URL> with your project URL (https://<ref>.supabase.co).
+   5. Run this file. Verify with:
+      select jobid, jobname, schedule, active from cron.job where jobname = '6h-jobs-fetch';
+   Idempotent — re-running replaces the schedule.
+
+   NOTE: scripts/setup-live.js stamps all four placeholders automatically —
+   run that instead of hand-editing this file. */
 
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
@@ -23,7 +27,7 @@ where exists (select 1 from cron.job where jobname = '6h-jobs-fetch');
 
 select cron.schedule('6h-jobs-fetch', '0 */6 * * *', $$
   select net.http_post(
-    url := 'https://ndrusywvceojsoirhkhl.supabase.co/functions/v1/jobs-fetch',
+    url := '<YOUR_PROJECT_URL>/functions/v1/jobs-fetch',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'Authorization', 'Bearer <YOUR_ANON_KEY>',

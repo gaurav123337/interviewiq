@@ -323,3 +323,77 @@ describe("dedupeJobs (cross-source collapse)", () => {
     expect(dedupeJobs([j({})])[0].alsoSources).toBeUndefined();
   });
 });
+
+describe("seed feed (out-of-the-box fallback)", () => {
+  it("listJobs falls back to the bundled seed when the store is empty", async () => {
+    /* beforeEach clears storage, so this is the fresh-install / offline case */
+    const { listJobs, lastJobsRefresh } = await import("../services/jobs");
+    const { SEED_JOBS } = await import("../data/seedJobs");
+    const out = listJobs();
+    expect(out).toEqual(SEED_JOBS);
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.every(s => s.source === "seed")).toBe(true);
+    /* H1: the seed is a read-time fallback only — reading it must NOT stamp a
+       refresh time, so the mount auto-refresh still fires and a real fetch
+       cleanly supersedes the seed. */
+    expect(lastJobsRefresh()).toBe(0);
+  });
+
+  it("every seed posting is honest: seed source, skills present, salary null-or-estimate", async () => {
+    const { SEED_JOBS } = await import("../data/seedJobs");
+    expect(SEED_JOBS.length).toBeGreaterThanOrEqual(5);
+    for (const s of SEED_JOBS) {
+      expect(s.source).toBe("seed");
+      expect(s.id.startsWith("seed:")).toBe(true);
+      expect(s.skills.length).toBeGreaterThan(0);
+      /* never masquerade as a live posting: salary is omitted or an estimate */
+      expect(s.salary === null || s.salary.source === "estimate").toBe(true);
+      /* apply link points at a real, public search/board page over https —
+         never a fabricated posting URL that would 404 or impersonate an ATS */
+      expect(typeof s.url).toBe("string");
+      expect(s.url.startsWith("https://")).toBe(true);
+      expect(s.url).toMatch(/google\.com\/search|linkedin\.com|indeed\.com|\/jobs/i);
+    }
+  });
+
+  it("the seed source renders an honest 'Sample' label + trust chip", async () => {
+    const { trustOf, sourceLabel } = await import("../services/importJob");
+    expect(sourceLabel("seed")).toBe("Sample");
+    const t = trustOf("seed");
+    expect(t.label).toBe("Sample");
+    expect(t.title).toMatch(/not a real opening/i);
+  });
+
+  it("a first import on a seed-only feed persists ONLY the import, never the seed", async () => {
+    const { addImportedJob, listJobs } = await import("../services/jobs");
+    const imported = job({ id: "imported:naukri:abc", source: "imported:naukri", url: "https://naukri.com/x" });
+    const next = addImportedJob(imported);
+    /* if addImportedJob had read listJobs() (seed) instead of the raw store,
+       the 10 seed rows would be folded into iq.jobs permanently — assert not */
+    expect(next).toHaveLength(1);
+    expect(next[0].id).toBe("imported:naukri:abc");
+    expect(listJobs()).toHaveLength(1);
+    expect(listJobs().every(s => s.source !== "seed")).toBe(true);
+  });
+
+  it("loadJobsFromCloud drops any seed row while preserving imported jobs", async () => {
+    /* Force a seed row into storage (normally impossible — the seed is
+       read-time only) alongside an imported job, then load: seed is neither a
+       FEED_SOURCE nor an imported job, so the refresh must evict only it. */
+    storageSet(STORAGE_KEYS.jobs, [
+      { ...job(), id: "seed:1", source: "seed" },
+      { ...job(), id: "imported:naukri:z", source: "imported:naukri", url: "https://naukri.com/z" }
+    ]);
+    const rowsFor = (source: string) => ({
+      eq: vi.fn().mockReturnValue({ order: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: source === "greenhouse" ? [
+        { source: "greenhouse", external_id: "9", title: "Staff Engineer", company: "Lyft", location: "SF", remote: false, description: "x", url: "u", skills: ["python"], level: "staff", posted_at: "2026-01-01T00:00:00Z" }
+      ] : [], error: null }) }) })
+    });
+    from.mockReturnValue({ select: vi.fn().mockReturnValue({ eq: vi.fn((_col: string, s: string) => rowsFor(s).eq()) }) });
+    const { loadJobsFromCloud } = await import("../services/jobs");
+    const jobs = await loadJobsFromCloud();
+    expect(jobs.some(s => s.source === "seed")).toBe(false);
+    expect(jobs.some(s => s.id === "imported:naukri:z")).toBe(true);
+    expect(jobs.some(s => s.id === "greenhouse:9")).toBe(true);
+  });
+});

@@ -7,6 +7,7 @@ export { FIELDS_PART1 } from "./fields1";
 export { FIELDS_PART2 } from "./fields2";
 export { COMPANIES, GENERAL_COMPANY, companyById } from "./companies";
 export { BEHAVIORAL, SYSTEM_DESIGN, CTO_POOL, CEO_POOL } from "./pools";
+export { SEED_JOBS } from "./seedJobs";
 
 export const FIELDS: Field[] = [...FIELDS_PART1, ...FIELDS_PART2];
 
