@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 
-const LANGUAGES = [
+// Display metadata for the switcher. A language appears in the dropdown ONLY if
+// it also has a registered i18next resource bundle (see the filter below) — this
+// array is presentation only, i18n.options.resources is the source of truth.
+export const LANGUAGES = [
   { code: "en", label: "English", flag: "🇬🇧" },
   { code: "hi", label: "हिन्दी", flag: "🇮🇳" },
   { code: "es", label: "Español", flag: "🇪🇸" },
@@ -19,7 +22,13 @@ export function LanguageSwitcher() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const current = LANGUAGES.find(l => l.code === i18n.language) ?? LANGUAGES[0];
+  // Render only languages that have a registered i18next resource bundle — the
+  // switcher must never advertise a language that silently falls back to English.
+  // (LANGUAGES is display metadata; i18n.options.resources is the source of truth.)
+  const registered = Object.keys(i18n.options.resources ?? {});
+  const languages = LANGUAGES.filter(l => registered.includes(l.code));
+
+  const current = languages.find(l => l.code === i18n.language) ?? languages[0] ?? LANGUAGES[0];
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -46,7 +55,7 @@ export function LanguageSwitcher() {
       </button>
       {open && (
         <div className="absolute right-0 top-full z-50 mt-2 w-44 rounded-2xl border border-line/10 bg-deep/95 p-1.5 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl">
-          {LANGUAGES.map(l => (
+          {languages.map(l => (
             <button
               key={l.code}
               onClick={() => switchLang(l.code)}
