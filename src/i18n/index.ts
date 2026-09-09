@@ -4,16 +4,21 @@ import LanguageDetector from "i18next-browser-languagedetector";
 import en from "./locales/en.json";
 import hi from "./locales/hi.json";
 
-const supportedLngs = ["en", "hi", "es", "fr", "de", "ja", "zh", "pt", "ar", "ko"];
+// Single source of truth: a language is offered ONLY if it has a full resource
+// bundle here. supportedLngs and the LanguageSwitcher both derive from this, so
+// the UI can never advertise a language that silently falls back to English.
+const resources = {
+  en: { translation: en },
+  hi: { translation: hi },
+};
+
+const supportedLngs = Object.keys(resources);
 
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
-    resources: {
-      en: { translation: en },
-      hi: { translation: hi },
-    },
+    resources,
     fallbackLng: "en",
     supportedLngs,
     interpolation: { escapeValue: false },
