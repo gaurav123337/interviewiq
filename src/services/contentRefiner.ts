@@ -91,8 +91,9 @@ export interface ParsedRefinement {
   qualityScore: number;
 }
 
-/** Parse raw AI response into structured content + quality score */
-function parseRefinedContent(raw: string): ParsedRefinement {
+/** Parse raw AI response into structured content + quality score.
+ *  Exported for unit testing (Item 20) — the module's deterministic core. */
+export function parseRefinedContent(raw: string): ParsedRefinement {
   if (!raw || raw.trim().length < 50) {
     return { refined: null, qualityScore: 0 };
   }
@@ -278,8 +279,9 @@ export async function batchRefineContent(): Promise<{ refined: number; errors: n
 
 /* ── Retroactive Quality Scoring ──────────────────────────────────────── */
 
-/** Calculate quality score from existing refined content (no AI call needed) */
-function calculateQualityFromRefined(refined: Record<string, unknown>): number {
+/** Calculate quality score from existing refined content (no AI call needed).
+ *  Exported for unit testing (Item 20) — pure 0–100 rubric. */
+export function calculateQualityFromRefined(refined: Record<string, unknown>): number {
   let score = 0;
 
   // Check required keys
