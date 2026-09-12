@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { CareerGoal } from "../types";
 import { CODING_PROBLEMS } from "../data/coding";
 import { COMPANIES } from "../data/companies";
 import {
@@ -9,11 +10,14 @@ import {
   companiesForProblem,
   companyFrequency,
   companyInterviewPlan,
+  focusSignals,
   freqForProblem,
+  hasPersonalSignals,
   problemsForCompany,
   problemIsForCompany,
   untaggedCodingProblems
 } from "../data/codingCompanies";
+import { saveProfile } from "../services/goal";
 
 const COMPANY_IDS = new Set(COMPANIES.map(c => c.id));
 const PROBLEM_IDS = new Set(CODING_PROBLEMS.map(p => p.id));
@@ -163,5 +167,57 @@ describe("company frequency", () => {
     const b = companyFrequency("google");
     expect(a).toEqual(b);
     expect(a.byTopic.map(t => t.topic)).toEqual(b.byTopic.map(t => t.topic));
+  });
+});
+
+/* Personal focus signals — the weak-skill filter. `self` is a 0-5 self-rating;
+   `measured` is a 0..1 diagnostic coverage ratio (getProfile() returns it
+   verbatim). They live on different scales, so a skill is "weak" below 60% on a
+   COMMON 0..1 scale: measured < 0.6, else self/5 < 0.6. Regression guard for the
+   old `(measured ?? self) < 3`, which compared the 0..1 ratio against 3 and so
+   marked EVERY diagnostic-measured skill weak regardless of its real strength. */
+describe("focusSignals / hasPersonalSignals — weak-skill scale (0..1 vs 0-5)", () => {
+  const GOAL: CareerGoal = {
+    currentLevel: "mid", targetLevel: "senior", fieldId: "frontend", companyId: "general",
+    targetDate: "2026-12-01", hoursPerWeek: 6, createdAt: 1000
+  };
+  // two-sum lives in the "Arrays & hashing" bucket, which the DSA skill hint
+  // (/algorith|data struct|dsa|problem solving/) targets — so a weak "Data
+  // Structures" skill maps onto it and fires weakSrc:"skill".
+  const TWO_SUM = CODING_PROBLEMS.find(p => p.id === "two-sum")!;
+
+  beforeEach(() => localStorage.clear());
+
+  it("fixture check: two-sum sits in the topic the DSA hint targets", () => {
+    expect(codingTopicFor(TWO_SUM)).toBe("Arrays & hashing");
+  });
+
+  it("does NOT flag a strongly-measured skill as weak (0.9 = 90%, not < 3)", () => {
+    // The core regression: 90% coverage must clear the bar. Under the old
+    // formula 0.9 < 3 was true, wrongly flagging this strong skill as a gap.
+    saveProfile({ goal: GOAL, skills: [{ skill: "Data Structures", self: 5, measured: 0.9 }] });
+    expect(focusSignals(TWO_SUM).weakSkill).toBe(false);
+    expect(hasPersonalSignals()).toBe(false);
+  });
+
+  it("flags a poorly-measured skill even when the self-rating is high", () => {
+    // measured overrides self: a 30%-measured skill is a real gap the strong
+    // self-rating must not mask.
+    saveProfile({ goal: GOAL, skills: [{ skill: "Data Structures", self: 5, measured: 0.3 }] });
+    const sig = focusSignals(TWO_SUM);
+    expect(sig.weakSkill).toBe(true);
+    expect(sig.weakSrc).toBe("skill");
+    expect(hasPersonalSignals()).toBe(true);
+  });
+
+  it("preserves the self-only branch: self < 3 weak, self >= 3 not (no measured)", () => {
+    // ingestSkillProfile replaces roadmapSkills wholesale, so each save fully
+    // supersedes the last — the two cases don't accumulate.
+    saveProfile({ goal: GOAL, skills: [{ skill: "Data Structures", self: 2 }] }); // 2/5 = 0.4 < 0.6
+    expect(focusSignals(TWO_SUM).weakSkill).toBe(true);
+
+    saveProfile({ goal: GOAL, skills: [{ skill: "Data Structures", self: 4 }] }); // 4/5 = 0.8 ≥ 0.6
+    expect(focusSignals(TWO_SUM).weakSkill).toBe(false);
+    expect(hasPersonalSignals()).toBe(false);
   });
 });
