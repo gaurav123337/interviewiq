@@ -282,6 +282,17 @@ export function suggestNextProblem(companyId: string | null, text: string, probl
   return scored[0]?.p ?? null;
 }
 
+/** A skill is "weak" when its strength is below 60%. `self` is a 0–5
+    self-rating; `measured` is a 0..1 diagnostic coverage ratio (KEPT verbatim by
+    the profile store — see profileStore.ts / types.ts perSkill). They live on
+    DIFFERENT scales, so both must be normalized to 0..1 before thresholding —
+    the same rule DiagnosticResults.tsx and roadmap/prioritize.ts already use.
+    (The old `(measured ?? self) < 3` compared a 0..1 ratio against 3, flagging
+    EVERY diagnostic-measured skill as weak.) */
+function skillIsWeak(s: { self: number; measured?: number }): boolean {
+  return (s.measured !== undefined ? s.measured : s.self / 5) < 0.6;
+}
+
 /** Personal signals for a problem: how often it was failed in the playground,
     and whether a weak self/diagnostic skill, a missed session key point, or a
     saved coach discussion maps to its topic. `weakSrc` says which fired. */
@@ -289,7 +300,7 @@ export function focusSignals(p: CodingProblem): { misses: number; weakSkill: boo
   const misses = getCodingTrack()[p.id]?.fails ?? 0;
   const topic = codingTopicFor(p);
   const profile = getProfile();
-  const weak = profile?.skills.filter(s => (s.measured ?? s.self) < 3).map(s => s.skill.toLowerCase()) ?? [];
+  const weak = profile?.skills.filter(skillIsWeak).map(s => s.skill.toLowerCase()) ?? [];
   if (SKILL_TOPIC_HINTS.some(h => weak.some(w => h.re.test(w)) && h.topics.includes(topic))) {
     return { misses, weakSkill: true, weakSrc: "skill" };
   }
@@ -308,7 +319,7 @@ export function hasPersonalSignals(): boolean {
   const track = getCodingTrack();
   const anyMiss = Object.values(track).some(e => (e?.fails ?? 0) > 0);
   const profile = getProfile();
-  const anyWeak = !!profile?.skills.some(s => (s.measured ?? s.self) < 3);
+  const anyWeak = !!profile?.skills.some(skillIsWeak);
   return anyMiss || anyWeak || missedSessionTopics().size > 0 || coachDiscussionTopics().size > 0;
 }
 

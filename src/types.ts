@@ -123,11 +123,11 @@ export interface CareerGoal {
   jdKeywords?: string[];
 }
 
-/** One skill with the self-assessed level (0-5) and optional diagnostic measurement (0-5). */
+/** One skill with the self-assessed level (0-5) and optional diagnostic measurement (0..1 coverage). */
 export interface SkillRating {
   skill: string;
   self: number; // 0-5 (novice → strong)
-  measured?: number; // 0-5 from the diagnostic, when taken
+  measured?: number; // 0..1 diagnostic coverage (perSkill ratio), when the diagnostic was taken
 }
 
 /** Outcome of the optional skill-gap diagnostic quiz. */
