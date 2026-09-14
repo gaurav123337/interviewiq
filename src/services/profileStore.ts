@@ -327,26 +327,47 @@ export function toSkillProfile(p: CanonicalProfile = getCanonicalProfile()): Ski
   return out;
 }
 
-/** Whether a graph node should surface as a claimed career skill: manually
-    claimed / resume skills always count; roadmap-only skills count once they
-    clear the same (measured ?? self) >= 2 bar that defaultCareerProfile used. */
+/** A skill the user explicitly claimed — career form / resume / JD / seed — as
+    opposed to one derived from roadmap self-ratings or the diagnostic. Claimed
+    skills always qualify AND take priority under toCareerProfile's skills cap. */
+function isClaimed(n: SkillNode): boolean {
+  return n.sources.some(s => s === "manual" || s === "resume" || s === "jd" || s === "seed");
+}
+
+/** Whether a graph node should surface as a claimed career skill: claimed skills
+    (see isClaimed) always count; a roadmap/diagnostic-only skill counts once its
+    strength clears 40% (= the old self >= 2). `self` is a 0–5 self-rating,
+    `measured` a 0..1 diagnostic coverage ratio (kept verbatim by the store) —
+    DIFFERENT scales, so both normalize to 0..1 before thresholding, `measured`
+    authoritative when present. (The old `(measured ?? self) >= 2` tested the 0..1
+    ratio against 2, so ANY diagnostic-measured roadmap skill was excluded even at
+    100% — taking the diagnostic demoted the skill. Same normalization the
+    skillIsWeak / DiagnosticResults / prioritize paths use.) */
 function qualifiesForCareer(n: SkillNode): boolean {
-  const claimed = n.sources.some(s => s === "manual" || s === "resume" || s === "jd" || s === "seed");
-  if (claimed) return true;
-  const level = n.measured ?? n.self;
-  return level !== undefined && level >= 2;
+  if (isClaimed(n)) return true;
+  const level = n.measured !== undefined ? n.measured : (n.self !== undefined ? n.self / 5 : undefined);
+  return level !== undefined && level >= 0.4;
 }
 
 /** CareerProfile view (iq.career shape). Non-skill fields are verbatim; skills
     are DERIVED from the unified graph (the unification — this is what makes
     roadmap edits surface on the jobs side once wired in PR4). */
 export function toCareerProfile(p: CanonicalProfile = getCanonicalProfile()): CareerProfile {
-  const skills: string[] = [];
+  // Claimed skills (manual/resume/jd/seed) take priority over roadmap/diagnostic-
+  // derived ones under the 30 cap: a rich diagnostic must never evict a skill the
+  // user explicitly put on their resume/profile — that would also mislabel it as a
+  // "missing" gap in job matching. Graph insertion order is roadmap atoms first,
+  // claimed skills last, so an unprioritised slice(0,30) would drop the claimed
+  // tail once measured roadmap atoms began qualifying. Stable within each group.
+  const claimed: string[] = [];
+  const derived: string[] = [];
   const seen = new Set<string>();
   for (const n of Object.values(p.skills)) {
     if (!qualifiesForCareer(n)) continue;
     const label = n.display;
-    if (!seen.has(label)) { seen.add(label); skills.push(label); }
+    if (seen.has(label)) continue;
+    seen.add(label);
+    (isClaimed(n) ? claimed : derived).push(label);
   }
   return {
     headline: p.headline,
@@ -355,7 +376,7 @@ export function toCareerProfile(p: CanonicalProfile = getCanonicalProfile()): Ca
     remote: p.remote,
     workAuth: p.workAuth,
     targetTitles: [...p.targetTitles],
-    skills: skills.slice(0, 30),
+    skills: [...claimed, ...derived].slice(0, 30),
     summary: p.summary,
     updatedAt: p.careerUpdatedAt
   };

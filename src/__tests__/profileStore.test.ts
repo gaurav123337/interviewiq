@@ -26,7 +26,7 @@ import {
   toSkillProfile, toCareerProfile, toUploadedResume,
   ingestSkillProfile, ingestCareerProfile,
   clearRoadmapFromCanonical, clearResumeFromCanonical,
-  type CanonicalProfile
+  type CanonicalProfile, type SkillNode, type SkillSource
 } from "../services/profileStore";
 
 const GOAL_A: CareerGoal = {
@@ -71,6 +71,18 @@ function seedLegacy(opts: { embeddedGoal?: CareerGoal; standaloneGoal?: CareerGo
   if (opts.progFp) storageSet(STORAGE_KEYS.roadmapProg, { fingerprint: opts.progFp, completed: [], completedAt: {}, updatedAt: 0 });
   return sp;
 }
+
+/** Build a raw v2 aggregate with an explicit skill graph — bypasses migration to
+    exercise toCareerProfile / qualifiesForCareer on a precise node set. */
+const node = (slug: string, source: SkillSource, extra: Partial<SkillNode> = {}): SkillNode =>
+  ({ slug, display: slug, sources: [source], updatedAt: 1, ...extra });
+
+const withGraph = (skills: Record<string, SkillNode>): CanonicalProfile => ({
+  version: 2, goal: null,
+  headline: "", years: 0, location: "", remote: true, workAuth: "", targetTitles: [], summary: "",
+  careerUpdatedAt: 0, roadmapSkills: [], skills,
+  origins: { skills: true, goal: false, career: true, resume: true }, updatedAt: 0
+});
 
 beforeEach(() => localStorage.clear());
 
@@ -146,15 +158,106 @@ describe("toCareerProfile — non-skill fields verbatim, skills derived", () => 
     expect(getCanonicalProfile().updatedAt).toBe(5000);
     // career + resume claimed skills always surface (display names)
     expect(cp.skills).toEqual(expect.arrayContaining(["GraphQL", "Elasticsearch", "Docker", "Kubernetes"]));
-    // Roadmap-origin skills obey the preserved (measured ?? self) >= 2 quirk:
-    // JavaScript/TypeScript (self 2, no measured) qualify…
+    // Roadmap-origin skills qualify once their strength clears 40% on a COMMON
+    // 0..1 scale (= the old self >= 2): self/5 >= 0.4, or measured >= 0.4.
+    // JavaScript/TypeScript (self 2 → 0.4) qualify…
     expect(cp.skills).toEqual(expect.arrayContaining(["JavaScript", "TypeScript"]));
-    // …but React (measured 0.8) and Node.js (measured 0.5) do NOT — measured is
-    // 0..1 so it never clears the >=2 bar (verbatim legacy quirk), and CI/CD
-    // (self 1) is below the bar too.
-    expect(cp.skills).not.toContain("React");
-    expect(cp.skills).not.toContain("Node.js");
+    // …and so now do React·Vue·Angular (measured 0.8) and Node.js (measured 0.5)
+    // — measured is normalized to 0..1, not shadowed against the old 0-5 bar, so
+    // a diagnostic no longer silently drops a strong skill.
+    expect(cp.skills).toEqual(expect.arrayContaining(["React", "Vue", "Angular", "Node.js"]));
+    // …but CI/CD (self 1 → 0.2) stays below the 0.4 bar.
     expect(cp.skills).not.toContain("CI/CD");
+  });
+});
+
+describe("qualifiesForCareer — normalized measured/self bar (0..1 vs 0-5)", () => {
+  // A roadmap-only node (source "roadmap", not manually claimed) surfaces as a
+  // career skill once its strength clears 40% on a COMMON 0..1 scale: measured
+  // >= 0.4 when present (authoritative), else self/5 >= 0.4 (= the old self>=2).
+  // The two UPWARD tests (a strong measurement promotes; the inclusive 0.4
+  // boundary) are the discriminators for the old `(measured ?? self) >= 2` bug,
+  // which shadowed self with the 0..1 measured and tested it against 2 — so a
+  // diagnostic-measured roadmap skill was excluded even at 100%, silently
+  // dropping a strong skill from job matching. The DOWNWARD test does NOT catch
+  // that revert (a 0.3 measurement is excluded under both old and new); it locks
+  // the separate measured-over-self authority against a self-first / max() mis-
+  // fix. Unique slug ("Rust") isolates the assertion; the cold store (top-level
+  // beforeEach clears localStorage) leaves only this node.
+  const careerSkills = () => toCareerProfile(getCanonicalProfile()).skills;
+
+  it("a strong MEASUREMENT promotes a skill a weak self-rating alone would not", () => {
+    // self 1 → 0.2 (below the bar) but measured 0.8 → qualifies. The PRIMARY
+    // discriminator: the old bug excludes it (0.8 shadows self, 0.8 >= 2 false),
+    // AND a naive self-only fix excludes it (self 1 → 0.2 < 0.4). Only the
+    // normalized measured-authoritative bar includes it.
+    ingestSkillProfile({ goal: GOAL_A, skills: [{ skill: "Rust", self: 1, measured: 0.8 }] });
+    expect(careerSkills()).toContain("Rust");
+  });
+
+  it("measured is authoritative DOWNWARD: a weak measurement excludes a high self-rating", () => {
+    // self 5 clears any self-only bar, but measured 0.3 < 0.4 is the real signal
+    // — the deliberate owner choice that the diagnostic overrides self-report.
+    // (Semantics lock only: 0.3 is excluded under the old >=2 bar too, so this
+    // guards a self-first / max() mis-fix, not the reverted bug — see block note.)
+    ingestSkillProfile({ goal: GOAL_A, skills: [{ skill: "Rust", self: 5, measured: 0.3 }] });
+    expect(careerSkills()).not.toContain("Rust");
+  });
+
+  it("includes the 0.4 boundary (inclusive), even at a zero self-rating", () => {
+    ingestSkillProfile({ goal: GOAL_A, skills: [{ skill: "Rust", self: 0, measured: 0.4 }] });
+    expect(careerSkills()).toContain("Rust");
+  });
+});
+
+describe("toCareerProfile — claimed skills survive the 30-cap (never evicted by roadmap atoms)", () => {
+  // Regression guard for the eviction the normalized bar could otherwise cause:
+  // toCareerProfile iterates the graph in insertion order (roadmap atoms first,
+  // claimed skills last) then slices to 30. Once many diagnostic-MEASURED roadmap
+  // atoms qualify (measured >= 0.4), an unprioritised slice(0,30) drops the
+  // tail-inserted CLAIMED skills — silently removing a resume skill AND then
+  // listing it as a "missing" gap in job matching. Claimed skills must win.
+  // (node / withGraph are the shared raw-graph builders defined at module scope.)
+
+  it("prioritises a tail-inserted resume skill over 30+ front-inserted measured roadmap atoms", () => {
+    const graph: Record<string, SkillNode> = {};
+    // 35 diagnostic-measured roadmap atoms inserted FIRST — all qualify (0.9 >= 0.4).
+    for (let i = 0; i < 35; i++) graph[`road${i}`] = node(`road${i}`, "roadmap", { self: 5, measured: 0.9 });
+    // one resume-claimed skill inserted LAST (the natural roadmap→resume order).
+    graph["terraform"] = node("terraform", "resume");
+
+    const skills = toCareerProfile(withGraph(graph)).skills;
+    expect(skills).toContain("terraform");   // claimed skill NOT evicted by the cap
+    expect(skills).toHaveLength(30);          // cap still honoured
+  });
+
+  it("keeps every claimed skill and fills the remainder with derived ones, up to the cap", () => {
+    const graph: Record<string, SkillNode> = {};
+    for (let i = 0; i < 40; i++) graph[`road${i}`] = node(`road${i}`, "roadmap", { measured: 0.9 });
+    for (const s of ["terraform", "jenkins", "kafka"]) graph[s] = node(s, "resume");
+
+    const skills = toCareerProfile(withGraph(graph)).skills;
+    // all three tail-inserted claimed skills survive …
+    expect(skills).toEqual(expect.arrayContaining(["terraform", "jenkins", "kafka"]));
+    // … the remaining 27 slots are derived roadmap atoms; total still capped at 30.
+    expect(skills).toHaveLength(30);
+    expect(skills.filter(s => s.startsWith("road"))).toHaveLength(27);
+  });
+});
+
+describe("qualifiesForCareer — a claimed node short-circuits the 0.4 bar (precedence)", () => {
+  // The fix's core invariant: `if (isClaimed(n)) return true` runs BEFORE the
+  // level bar, so a skill the user explicitly claimed (manual/resume/jd/seed)
+  // qualifies even when the diagnostic scored it BELOW 0.4. This pins the check
+  // ORDER: a "signal-first" refactor (test the 0.4 bar first, fall back to
+  // isClaimed) passes every other test yet silently drops a claimed-but-weakly-
+  // measured skill — re-dropping it from the career profile AND mislabeling it
+  // as a "missing" gap in job matching, the exact harm the fix removed.
+  it("keeps a resume-claimed skill whose diagnostic measurement is below the bar", () => {
+    const skills = toCareerProfile(withGraph({
+      cobol: node("cobol", "resume", { self: 1, measured: 0.1 })
+    })).skills;
+    expect(skills).toContain("cobol"); // claimed → qualifies despite 0.1 < 0.4
   });
 });
 

@@ -184,8 +184,8 @@ describe("career profile persistence", () => {
     storageSet(STORAGE_KEYS.skills, { goal: {}, skills: [{ skill: "react", self: 4 }, { skill: "kubernetes", self: 1 }] });
     const { defaultCareerProfile } = await import("../services/jobs");
     const p = defaultCareerProfile();
-    expect(p.skills).toContain(canonicalize("react").display);        // "React" (self 4 ≥ 2)
-    expect(p.skills).not.toContain(canonicalize("kubernetes").display); // self 1 < 2 → excluded
+    expect(p.skills).toContain(canonicalize("react").display);        // "React" (self 4 → 0.8 ≥ 0.4)
+    expect(p.skills).not.toContain(canonicalize("kubernetes").display); // self 1 → 0.2 < 0.4 → excluded
     expect(p.remote).toBe(true);
   });
 
