@@ -8,6 +8,7 @@ import { canonicalize } from "../data/skillVocab";
 import { useApp } from "../store";
 import { toast } from "../toast";
 import { btnPrimary, btnSoft, Chip, Modal } from "./ui";
+import { DrillCards } from "./DrillCards";
 
 export function GapPlanModal({ job, missing, detected, onClose }: {
   job: JobPosting;
@@ -27,7 +28,6 @@ export function GapPlanModal({ job, missing, detected, onClose }: {
   /* Ephemeral quick-drill deck (Item 12 PR3) — flip-cards built from the gap
      skills, never persisted. Lives and dies with the modal. */
   const [drill, setDrill] = useState<DrillCard[] | null>(null);
-  const [flipped, setFlipped] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!plan) {
@@ -101,7 +101,6 @@ export function GapPlanModal({ job, missing, detected, onClose }: {
     const cards = deckForSkills(plan.items.map(it => it.skill), fieldId);
     if (!cards.length) { toast("No drill cards for these skills yet — try the practice session instead."); return; }
     setDrill(cards);
-    setFlipped({});
   };
 
   return (
@@ -147,32 +146,13 @@ export function GapPlanModal({ job, missing, detected, onClose }: {
       </p>
 
       {drill && (
-        <div className="mt-4 rounded-xl border border-ok/25 bg-ok/5 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[13px] font-extrabold text-ok">⚡ Quick-drill — {drill.length} card{drill.length === 1 ? "" : "s"}</p>
-            <button className="text-[11.5px] font-bold text-mut hover:text-ink" onClick={() => setDrill(null)}>✕ Close</button>
-          </div>
-          <p className="mt-0.5 text-[11.5px] text-fnt">Flashcards pulled from the question bank for these skills — tap to reveal. Nothing is saved; this deck is just a quick warm-up.</p>
-          <div className="mt-3 space-y-2">
-            {drill.map(c => {
-              const show = flipped[c.q];
-              return (
-                <div key={c.q} className="rounded-xl border border-line/15 bg-deep/30 p-3">
-                  <button className="w-full text-left" onClick={() => setFlipped(f => ({ ...f, [c.q]: !f[c.q] }))}>
-                    <span className="text-[12.5px] font-bold text-ink">{c.q}</span>
-                    {show && (
-                      <span className="mt-1.5 block whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">
-                        <span className="font-bold text-ok">Answer:</span> {c.a}
-                        {c.kp?.length ? <span className="mt-1 block text-[11px] text-mut">Key points: {c.kp.join(" · ")}</span> : null}
-                      </span>
-                    )}
-                  </button>
-                  <p className="mt-1 text-[10.5px] font-bold uppercase tracking-wider text-mut">{show ? "Tap question to hide" : "Tap to reveal the answer"}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <DrillCards
+          className="mt-4"
+          title={`⚡ Quick-drill — ${drill.length} card${drill.length === 1 ? "" : "s"}`}
+          description="Flashcards pulled from the question bank for these skills — tap to reveal. Nothing is saved; this deck is just a quick warm-up."
+          cards={drill}
+          onClose={() => setDrill(null)}
+        />
       )}
 
       <div className="mt-4 space-y-2">

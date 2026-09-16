@@ -3,6 +3,7 @@ import type { InterviewRound } from "../../services/applyTrack";
 import type { ApplyTrack } from "../../services/applyTrack";
 import { toast } from "../../toast";
 import { btnGhost, btnPrimary, btnSm, Chip, Modal } from "../ui";
+import { DrillCards } from "../DrillCards";
 import { saveRound, removeRound } from "../../services/applyTrack";
 import { bankFromRound, listBank, removeFromBank, type BankEntry } from "../../services/questionBank";
 import { practiceForRound, type DrillCard } from "../../services/drill";
@@ -19,7 +20,6 @@ export function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
   const [bank, setBank] = useState<BankEntry[]>(() => listBank());
   const [bankOpen, setBankOpen] = useState(false);
   const [practice, setPractice] = useState<{ round: InterviewRound; cards: DrillCard[] } | null>(null);
-  const [flipped, setFlipped] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<InterviewRound | null>(null);
   const [label, setLabel] = useState("");
   const [at, setAt] = useState(() => new Date().toISOString().slice(0, 10));
@@ -75,7 +75,6 @@ export function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
     const cards = practiceForRound(r.questions || r.label, field);
     if (!cards.length) { toast("No practice cards found for those topics — try more specific round notes."); return; }
     setPractice({ round: r, cards });
-    setFlipped({});
   };
 
   return (
@@ -117,32 +116,13 @@ export function RoundModal({ track, jobTitle, company, onClose, onChanged }: {
       )}
 
       {practice && (
-        <div className="mt-3 rounded-xl border border-ok/25 bg-ok/5 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[13px] font-extrabold text-ok">🎯 Practice deck — “{practice.round.label}”</p>
-            <button className="text-[11.5px] font-bold text-mut hover:text-ink" onClick={() => setPractice(null)}>✕ Close</button>
-          </div>
-          <p className="mt-0.5 text-[11.5px] text-fnt">Rehearse exactly what this round covered — {practice.cards.length} cards pulled from the question bank by your round's notes.</p>
-          <div className="mt-3 space-y-2">
-            {practice.cards.map(c => {
-              const show = flipped[c.q];
-              return (
-                <div key={c.q} className="rounded-xl border border-line/15 bg-deep/30 p-3">
-                  <button className="w-full text-left" onClick={() => setFlipped(f => ({ ...f, [c.q]: !f[c.q] }))}>
-                    <span className="text-[12.5px] font-bold text-ink">{c.q}</span>
-                    {show && (
-                      <span className="mt-1.5 block whitespace-pre-wrap text-[12px] leading-relaxed text-fnt">
-                        <span className="font-bold text-ok">Answer:</span> {c.a}
-                        {c.kp?.length ? <span className="mt-1 block text-[11px] text-mut">Key points: {c.kp.join(" · ")}</span> : null}
-                      </span>
-                    )}
-                  </button>
-                  <p className="mt-1 text-[10.5px] font-bold uppercase tracking-wider text-mut">{show ? "Tap question to hide" : "Tap to reveal the answer"}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <DrillCards
+          className="mt-3"
+          title={`🎯 Practice deck — “${practice.round.label}”`}
+          description={`Rehearse exactly what this round covered — ${practice.cards.length} cards pulled from the question bank by your round's notes.`}
+          cards={practice.cards}
+          onClose={() => setPractice(null)}
+        />
       )}
 
       {editing && (
