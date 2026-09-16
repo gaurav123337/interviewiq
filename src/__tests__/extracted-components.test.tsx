@@ -267,3 +267,76 @@ describe("OutputPanel", () => {
     expect(container.textContent).not.toContain("Custom input");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* DrillCards tests                                                    */
+/* ------------------------------------------------------------------ */
+
+import { fireEvent } from "@testing-library/react";
+import { DrillCards } from "../components/DrillCards";
+import type { DrillCard } from "../services/drill";
+
+describe("DrillCards", () => {
+  /* Two cards: one with key points, one with an empty kp[] — DrillCards is
+     purely presentational (no service deps), so a fabricated deck suffices. */
+  const cards: DrillCard[] = [
+    { q: "What is a closure?", a: "A function bundled with its lexical scope.", kp: ["scope", "captured variables"], lvl: "mid" },
+    { q: "Explain event delegation.", a: "Attach one listener to a parent for its children.", kp: [], lvl: "mid" },
+  ];
+  const cardButtons = (container: HTMLElement) => container.querySelectorAll("button.text-left");
+
+  it("renders title, description and every question, with answers hidden until tapped", () => {
+    const { container } = render(<DrillCards title="🎯 Practice deck" description="Rehearse the round." cards={cards} onClose={vi.fn()} />);
+    expect(container.textContent).toContain("🎯 Practice deck");
+    expect(container.textContent).toContain("Rehearse the round.");
+    for (const c of cards) expect(container.textContent).toContain(c.q);
+    /* nothing revealed initially — no answer text, every card shows the collapsed hint */
+    for (const c of cards) expect(container.textContent).not.toContain(c.a);
+    expect(container.textContent).toContain("Tap to reveal the answer");
+    expect(container.textContent).not.toContain("Tap question to hide");
+  });
+
+  it("reveals that card's answer and key points on tap, flipping only its label", () => {
+    const { container } = render(<DrillCards title="t" description="d" cards={cards} onClose={vi.fn()} />);
+    const btns = cardButtons(container);
+    expect(btns.length).toBe(cards.length);
+    fireEvent.click(btns[0] as HTMLElement);
+    expect(container.textContent).toContain(cards[0].a);
+    expect(container.textContent).toContain("Key points: scope · captured variables");
+    expect(container.textContent).toContain("Tap question to hide");
+    /* the untapped card stays collapsed */
+    expect(container.textContent).not.toContain(cards[1].a);
+  });
+
+  it("shows the answer but no key-points line for a card with empty kp", () => {
+    const { container } = render(<DrillCards title="t" description="d" cards={cards} onClose={vi.fn()} />);
+    fireEvent.click(cardButtons(container)[1] as HTMLElement);
+    expect(container.textContent).toContain(cards[1].a);
+    expect(container.textContent).not.toContain("Key points:");
+  });
+
+  it("calls onClose when the ✕ Close button is clicked", () => {
+    const onClose = vi.fn();
+    const { container } = render(<DrillCards title="t" description="d" cards={cards} onClose={onClose} />);
+    const closeBtn = [...container.querySelectorAll("button")].find(b => b.textContent?.includes("Close"));
+    expect(closeBtn).toBeTruthy();
+    fireEvent.click(closeBtn as HTMLElement);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapses every card when handed a new deck (array reference changes)", () => {
+    const { container, rerender } = render(<DrillCards title="t" description="d" cards={cards} onClose={vi.fn()} />);
+    fireEvent.click(cardButtons(container)[0] as HTMLElement);
+    expect(container.textContent).toContain(cards[0].a); // revealed before the swap
+
+    /* a freshly-built deck (new array ref) that happens to reuse a question slug
+       must start collapsed — guards the deckRef reset the extraction relies on. */
+    const nextDeck: DrillCard[] = [
+      { q: cards[0].q, a: "A completely different answer.", kp: ["x"], lvl: "mid" },
+    ];
+    rerender(<DrillCards title="t" description="d" cards={nextDeck} onClose={vi.fn()} />);
+    expect(container.textContent).not.toContain("A completely different answer.");
+    expect(container.textContent).toContain("Tap to reveal the answer");
+    expect(container.textContent).not.toContain("Tap question to hide");
+  });
+});
