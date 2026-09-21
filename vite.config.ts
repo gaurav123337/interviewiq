@@ -45,8 +45,12 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "vendor-react": ["react", "react-dom"],
+        /* vite 8 (Rolldown) removed the OBJECT form of manualChunks; the
+           function form still works (deprecated alias of rolldownOptions).
+           Keep react + react-dom — but NOT react-i18next — in one stable
+           vendor chunk. */
+        manualChunks(id: string) {
+          if (/[\\/]node_modules[\\/]react(-dom)?[\\/]/.test(id)) return "vendor-react";
         },
       },
     },
@@ -60,6 +64,10 @@ export default defineConfig({
   preview: { port: 8138, host: "127.0.0.1" },
   test: {
     environment: "jsdom",
+    /* vitest 5 flipped the clearMocks default to true (clears mock call history
+       before every test). Restore the pre-5 default so this major bump stays
+       behavior-neutral across the mock-heavy suite. */
+    clearMocks: false,
     setupFiles: ["./src/__tests__/setup.ts"],
     /* hard cap so a hung test (e.g. a network fetch) fails instead of stalling the suite */
     testTimeout: 30_000,
