@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setTestClient } from "../services/cloud";
 import {
-  deleteScraperSource, getScraperSchedule, listScraperSources, runScraperNow,
+  deleteScraperSource, getScraperSchedule, listScraperRuns, listScraperSources,
+  recordScraperRun, runFilterClauses, runScraperNow,
   saveScraperSchedule, saveScraperSource, setScraperSourceEnabled
 } from "../services/scraper";
 
@@ -13,13 +14,19 @@ function makeClient() {
     scraper_sources: [
       { id: "backend-arialdo-questions", url: "https://example.com/backend.md", type: "markdown", field_id: "backend", level: "senior", max_items: 30, enabled: true, note: "note" }
     ],
-    scraper_config: [{ key: "schedule", value: { days: [1, 3], hour: 5, minute: 30 } }]
+    scraper_config: [{ key: "schedule", value: { days: [1, 3], hour: 5, minute: 30 } }],
+    scraper_runs: []
   };
   const chain = (table: string) => {
     const c = {
       select: (cols: string) => { calls.push(`select:${cols}`); return c; },
       order: (col: string) => { calls.push(`order:${col}`); return c; },
+      limit: (n: number) => { calls.push(`limit:${n}`); return c; },
       eq: (k: string, v: unknown) => { calls.push(`eq:${k}=${String(v)}`); return c; },
+      gte: (k: string, v: unknown) => { calls.push(`gte:${k}=${String(v)}`); return c; },
+      lte: (k: string, v: unknown) => { calls.push(`lte:${k}=${String(v)}`); return c; },
+      ilike: (k: string, v: unknown) => { calls.push(`ilike:${k}=${String(v)}`); return c; },
+      insert: (r: unknown) => { calls.push(`insert:${JSON.stringify(r).slice(0, 500)}`); return c; },
       maybeSingle: async () => ({ data: rows.scraper_config[0] ?? null, error: null }),
       upsert: (r: unknown, opts?: unknown) => { calls.push(`upsert:${JSON.stringify(opts)}:${JSON.stringify(r).slice(0, 400)}`); return Promise.resolve({ error: null }); },
       update: (r: unknown) => { calls.push(`update:${JSON.stringify(r)}`); return c; },
@@ -118,5 +125,87 @@ describe("runScraperNow", () => {
     expect(report).toHaveLength(1); /* disabled source excluded */
     expect(report[0]).toMatchObject({ sourceId: "bad", extracted: 0, inserted: 0 });
     expect(report[0].error).toContain("CORS blocked");
+  });
+
+  it("records a manual scraper_runs report after a run", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => "# JS\n\n1. ### What is hoisting?\n\nVariables are moved to the top.\n"
+    }));
+    await runScraperNow([{
+      id: "js", url: "https://example.com/js.md", type: "markdown",
+      fieldId: "frontend", level: "mid", maxItems: 5, enabled: true, note: ""
+    }]);
+    const ins = fake!.calls.find(c => c.startsWith("insert:") && c.includes("scraper_runs") === false && c.includes('"trigger":"manual"'));
+    expect(ins).toBeTruthy();
+    expect(ins).toContain('"status":"ok"');
+    expect(ins).toContain('"inserted":1');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Phase 4 Item B — run reports                                        */
+/* ------------------------------------------------------------------ */
+
+describe("runFilterClauses (pure)", () => {
+  it("maps filter fields onto supabase clauses", () => {
+    expect(runFilterClauses({})).toEqual([]);
+    expect(runFilterClauses({ status: "partial", trigger: "cron" })).toEqual([
+      { key: "eq", args: ["status", "partial"] },
+      { key: "eq", args: ["trigger", "cron"] }
+    ]);
+    expect(runFilterClauses({ from: "2026-09-01T00:00:00Z", to: "2026-09-30T00:00:00Z" })).toEqual([
+      { key: "gte", args: ["ran_at", "2026-09-01T00:00:00Z"] },
+      { key: "lte", args: ["ran_at", "2026-09-30T00:00:00Z"] }
+    ]);
+    expect(runFilterClauses({ q: "example.com" })).toEqual([
+      { key: "ilike", args: ["per_source::text", "%example.com%"] }
+    ]);
+  });
+});
+
+describe("recordScraperRun / listScraperRuns", () => {
+  it("writes one row with derived status, per-source detail and totals", async () => {
+    await recordScraperRun(fake!.client as never, [
+      { sourceId: "a", url: "https://a.example.com", extracted: 3, inserted: 2 },
+      { sourceId: "b", url: "https://b.example.com", extracted: 0, inserted: 0, error: "HTTP 500" }
+    ], "cron");
+    const ins = fake!.calls.find(c => c.startsWith("insert:"));
+    expect(ins).toContain('"trigger":"cron"');
+    expect(ins).toContain('"status":"partial"');
+    expect(ins).toContain('"inserted":2');
+    expect(ins).toContain('"errors":1');
+    expect(ins).toContain("per_source");
+    expect(ins).toContain('"error":"HTTP 500"');
+    expect(ins).toContain('"extracted":3');
+  });
+
+  it("maps snake_case rows and tolerates a missing table (→ [])", async () => {
+    fake!.rows.scraper_runs = [
+      { id: 7, ran_at: "2026-09-22T03:00:00Z", trigger: "cron", status: "ok", per_source: { js: { url: "https://x", extracted: 4, inserted: 4 } }, inserted: 4, errors: 0 }
+    ];
+    const runs = await listScraperRuns({ trigger: "cron" }, 10, fake!.client as never);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: 7, trigger: "cron", status: "ok", inserted: 4, errors: 0 });
+    expect(runs[0].perSource.js).toEqual({ url: "https://x", extracted: 4, inserted: 4 });
+
+    /* missing table → select resolves with an error → [] (app must not crash) */
+    const broken = makeClient();
+    broken.client.from = (t: string) => {
+      const base = broken.client.from(t);
+      return t === "scraper_runs"
+        ? { ...base, then: (resolve: (v: unknown) => void) => resolve({ data: null, error: { message: "relation does not exist" } }) }
+        : base;
+    };
+    const none = await listScraperRuns({}, 10, broken.client as never);
+    expect(none).toEqual([]);
+  });
+
+  it("listScraperRuns applies filter clauses against the client chain", async () => {
+    await listScraperRuns({ status: "failed", trigger: "manual", q: "github" }, 20, fake!.client as never);
+    expect(fake!.calls).toContain("eq:status=failed");
+    expect(fake!.calls).toContain("eq:trigger=manual");
+    expect(fake!.calls).toContain("ilike:per_source::text=%github%");
+    expect(fake!.calls).toContain("limit:20");
   });
 });

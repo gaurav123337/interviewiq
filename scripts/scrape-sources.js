@@ -22,6 +22,30 @@ const projectRef = process.env.SUPABASE_PROJECT_REF;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 
+/** JSON-encodes into a SQL-safe string literal (mirrors scrape-lib.sqlStr). */
+function sqlStr(v) {
+  return "'" + String(v).replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
+}
+
+/** Writes one scraper_runs row (Phase 4 Item B) so the Admin dashboard shows
+ * what the cron did. Values are counts + error strings — never secrets.
+ * Best-effort: a missing table (pre-migration) logs a warning, never fails
+ * the run. perSource: { [sourceId]: { url, extracted, inserted, error? } }. */
+async function recordRunReport(perSource, inserted, errors, startedAt) {
+  try {
+    const status = errors > 0
+      ? (Object.values(perSource).every((p) => p.error) ? "failed" : "partial")
+      : "ok";
+    const sql =
+      `insert into public.scraper_runs (ran_at, trigger, status, per_source, inserted, errors)\n` +
+      `values (${sqlStr(new Date(startedAt).toISOString())}, 'cron', ${sqlStr(status)}, ` +
+      `${sqlStr(JSON.stringify(perSource))}::jsonb, ${Number(inserted) || 0}, ${Number(errors) || 0});`;
+    await runSql(sql);
+  } catch (e) {
+    console.warn(red(`  (run report not saved: ${e.message.slice(0, 160)})`));
+  }
+}
+
 async function runSql(sql) {
   const res = await fetch(`${API}/projects/${projectRef}/database/query`, {
     method: "POST",
@@ -88,12 +112,15 @@ async function main() {
 
   const sources = await loadSources();
   console.log(`Scraping ${sources.length} enabled source(s) → ${projectRef} (drafts)...`);
+  const startedAt = Date.now();
 
   const all = [];
   let errors = 0;
+  const perSource = {};
   for (const source of sources) {
+    const key = String(source.id ?? source.url);
     try {
-      console.log(`  ↳ ${source.id ?? source.url} — ${source.url}`);
+      console.log(`  ↳ ${key} — ${source.url}`);
       /* polite fetching: single 429 backoff, then a small inter-source delay */
       let res = await fetch(source.url, { headers: { "User-Agent": "interviewiq-scraper/1.0 (+github.com/gaurav123337/interviewiq)" } });
       if (res.status === 429) {
@@ -108,10 +135,12 @@ async function main() {
       const items = extractItems(body, source).slice(0, source.maxItems ?? 20);
       console.log(`     extracted ${items.length} item(s)`);
       all.push(...items);
+      perSource[key] = { url: source.url, extracted: items.length, inserted: 0 };
       await new Promise((r) => setTimeout(r, 500));
     } catch (e) {
       errors++;
-      console.error(red(`  ✗ ${source.id ?? source.url}: ${e.message}`));
+      perSource[key] = { url: source.url, error: e.message };
+      console.error(red(`  ✗ ${key}: ${e.message}`));
     }
   }
 
@@ -126,6 +155,7 @@ async function main() {
 
   if (!rows.length) {
     console.log(errors ? red(`\nNo items extracted (${errors} source error(s)).`) : green("\nNothing new — no items extracted."));
+    await recordRunReport(perSource, 0, errors, startedAt);
     process.exit(errors ? 1 : 0);
   }
 
@@ -134,9 +164,30 @@ async function main() {
     await runSql(sql);
   } catch (e) {
     console.error(red(`\nUpsert failed: ${e.message}`));
+    await recordRunReport(perSource, 0, errors + 1, startedAt);
     process.exit(1);
   }
 
+  /* distribute the upserted count across sources proportionally to what each
+     extracted — per-source `inserted` is what the run-log card shows. The last
+     successful source absorbs the rounding remainder (buildUpsertSql dedupes
+     across sources, so exact attribution is approximate). */
+  const okIds = Object.keys(perSource).filter((k) => !perSource[k].error);
+  const extractionTotal = okIds.reduce((n, k) => n + (perSource[k].extracted ?? 0), 0);
+  let insertedLeft = rows.length;
+  okIds.forEach((k, i) => {
+    const p = perSource[k];
+    if (i === okIds.length - 1) {
+      p.inserted = insertedLeft;
+    } else {
+      const share = extractionTotal > 0 ? (p.extracted ?? 0) / extractionTotal : 1 / okIds.length;
+      const n = Math.min(insertedLeft, Math.floor(rows.length * share));
+      p.inserted = n;
+      insertedLeft -= n;
+    }
+  });
+
+  await recordRunReport(perSource, rows.length, errors, startedAt);
   console.log(green(`\n✓ Upserted ${rows.length} new draft question(s). Review them in Admin → Review inbox.`));
   if (errors) process.exit(1);
 }

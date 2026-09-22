@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { FIELDS, LEVELS } from "../../data";
 import { listScraperSources, getScraperSchedule, saveScraperSchedule, saveScraperSource, setScraperSourceEnabled, deleteScraperSource, saveScraperSourceSchedule, runScraperNow, type ScraperSourceRow, type ScraperSchedule, type RunResult } from "../../services/scraper";
+import { ScraperRunLog } from "./ScraperRunLog";
+import { CronJobLog } from "./CronJobLog";
 import { toast } from "../../toast";
 import { btnPrimary, btnSm, btnOk, btnDanger, btnGhost, cardCls, Chip, Switch } from "../ui";
 
@@ -18,6 +20,8 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
   const [loading, setLoading] = useState(true);
   const [runReport, setRunReport] = useState<RunResult[] | null>(null);
   const [runBusy, setRunBusy] = useState(false);
+  /* Bump to re-query the run log after a fresh run (also fired on mount) */
+  const [runLogKey, setRunLogKey] = useState(0);
   const [fUrl, setFUrl] = useState("");
   const [fType, setFType] = useState<ScraperSourceRow["type"]>("markdown");
   const [fField, setFField] = useState(FIELDS[0]?.id ?? "frontend");
@@ -93,6 +97,7 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
       const added = report.reduce((n, r) => n + r.inserted, 0);
       const errors = report.filter(r => r.error).length;
       saveRunHistory({ timestamp: new Date().toISOString(), sources: ok.length, inserted: added, errors, details: report });
+      setRunLogKey(k => k + 1);
       toast(`🕷️ Ran ${ok.length}/${report.length} source(s) — ${added} draft(s) landed in the Review inbox`);
     } catch (e) { toast("✗ " + ((e as Error).message || "Run failed")); }
     finally { setRunBusy(false); }
@@ -167,9 +172,13 @@ export function ScraperSection({ busy, setBusy }: { busy: boolean; setBusy: (b: 
         )}
       </div>
 
+      <ScraperRunLog lastLocalRun={runReport} refreshKey={runLogKey} />
+
+      <CronJobLog />
+
       {runHistory.length > 0 && (
         <div className={`${cardCls} p-5`}>
-          <h2 className="mb-3 text-[16px] font-extrabold">📋 Run History ({runHistory.length})</h2>
+          <h2 className="mb-3 text-[16px] font-extrabold">📋 Run History ({runHistory.length}) (local)</h2>
           <div className="space-y-2">
             {runHistory.slice(0, 10).map((h, idx) => {
               const ts = new Date(h.timestamp);
