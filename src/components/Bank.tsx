@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { FIELDS, LEVELS, levelById } from "../data";
 import type { LevelId } from "../types";
-import { bankItems } from "../engine";
+import { bankItems, bankSkillChips, addedLabel } from "../engine";
 import { useApp } from "../store";
 import { listBank, practiceDeck, removeFromBank, weakestBankEntries, type BankEntry } from "../services/questionBank";
 import { getSrs, learnedCount, practiceForRound, rate, type DrillCard, type Rating } from "../services/drill";
@@ -15,6 +15,7 @@ const THINK_SECONDS = 45;
 export function Bank() {
   const { state, practice } = useApp();
   const [q, setQ] = useState("");
+  const [skillSel, setSkillSel] = useState("");
   const [fieldSel, setFieldSel] = useState(state.ob.field ?? FIELDS[0].id);
   const [lvlSel, setLvlSel] = useState<LevelId | "all">("all");
   /* personal bank (Apply Kit) — questions collected from your interview rounds */
@@ -30,7 +31,11 @@ export function Bank() {
   const [learned, setLearned] = useState(learnedCount(getSrs()));
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const { field, items } = useMemo(() => bankItems(fieldSel, q), [fieldSel, q]);
+  const { field, items } = useMemo(() => bankItems(fieldSel, q, skillSel), [fieldSel, q, skillSel]);
+  const skillChips = useMemo(
+    () => bankSkillChips(field?.skills, bankItems(fieldSel, "").items),
+    [fieldSel, field?.skills]
+  );
   const shown = lvlSel === "all" ? items : items.filter(i => i.lvl === lvlSel);
   const bankShown = useMemo(() => (weakOnly ? weakestBankEntries() : listBank()), [weakOnly, bank]);
   const weakCount = useMemo(() => weakestBankEntries().length, [bank]);
@@ -124,6 +129,16 @@ export function Bank() {
           <FilterChip key={l.id} active={lvlSel === l.id} onClick={() => setLvlSel(l.id)}>{l.icon} {l.name}</FilterChip>
         ))}
       </div>
+
+      {/* skill filter — field skills ∪ published-question tags */}
+      {skillChips.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <FilterChip active={skillSel === ""} onClick={() => setSkillSel("")}>All skills</FilterChip>
+          {skillChips.map(s => (
+            <FilterChip key={s} active={skillSel.toLowerCase() === s.toLowerCase()} onClick={() => setSkillSel(s)}>🛠 {s}</FilterChip>
+          ))}
+        </div>
+      )}
 
       {shown.length > 0 && (
         <div className="mb-3 mt-4"><Chip>{shown.length} question{shown.length === 1 ? "" : "s"} · {field?.name ?? ""}</Chip></div>
@@ -263,6 +278,7 @@ export function Bank() {
             <details key={idx2} className={`${cardCls} group px-5 py-4`}>
               <summary className="flex cursor-pointer list-none items-center gap-2.5">
                 <Chip tone="lvl">{levelById(i.lvl).icon} {levelById(i.lvl).name}</Chip>
+                {addedLabel(i.addedAt) && <Chip>Added {addedLabel(i.addedAt)}</Chip>}
                 <span className="min-w-[140px] flex-1 text-[14.5px] font-bold leading-snug">{i.q}</span>
                 <span className="text-mut transition-transform group-open:rotate-90">▸</span>
               </summary>
@@ -271,6 +287,11 @@ export function Bank() {
                   <div className="mb-1 text-[12.5px] font-bold uppercase tracking-wider text-acc3">Model answer</div>
                   <p className="whitespace-pre-wrap text-[14px] leading-[1.7] text-ink">{i.a}</p>
                 </div>
+                {(i.skills ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {(i.skills ?? []).map(s => <Chip key={s} tone="cat">🛠 {s}</Chip>)}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-2">
                   {(i.kp || []).map(k => <KpNeutral key={k}>{k}</KpNeutral>)}
                 </div>

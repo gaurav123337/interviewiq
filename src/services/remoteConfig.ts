@@ -249,6 +249,11 @@ export interface PublishedQuestion {
   published: boolean;
   /** Last edit/review time (ISO) — drives staleness in the Quality Center. */
   updatedAt: string | null;
+  /** When the question was created (epoch ms, from created_at) — null when unknown
+      (rows cached before Phase 4 Item A, or without a server timestamp). */
+  addedAt?: number | null;
+  /** Skill tags (Phase 4 Item A, e.g. ["React","Java"]) — absent/empty for untagged. */
+  skills?: string[];
 }
 
 export function getPublishedQuestions(): PublishedQuestion[] {
@@ -259,9 +264,10 @@ export function setPublishedQuestions(qs: PublishedQuestion[]): void {
   storageSet(STORAGE_KEYS.publishedQ, qs);
 }
 
-/** Published questions for one field+level, as plain QA (mergeable into pools). */
-export function publishedFor(fieldId: string, level: LevelId): QA[] {
+/** Published questions for one field+level. Plain-QA assignable (coach/compose
+    pools keep working); `addedAt`/`skills` ride along for the bank UI. */
+export function publishedFor(fieldId: string, level: LevelId): (QA & { addedAt: number | null; skills: string[] })[] {
   return getPublishedQuestions()
     .filter(p => p.published && p.fieldId === fieldId && p.level === level)
-    .map(p => ({ q: p.question, a: p.answer, kp: p.keyPoints }));
+    .map(p => ({ q: p.question, a: p.answer, kp: p.keyPoints, addedAt: p.addedAt ?? null, skills: p.skills ?? [] }));
 }

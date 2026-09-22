@@ -45,10 +45,14 @@ export function subscribeAdmin(fn: AdminListener): () => void {
 /* ------------------------------------------------------------------ */
 
 async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof getSupabaseClient>>>): Promise<void> {
-  const [{ data: cfg }, { data: ann }, { data: qs }] = await Promise.all([
+  /* `skills` is fetched separately from the main select so a pre-migration
+     database (missing the column) only skips the merge — the primary fetch,
+     which powers every read, stays intact (graceful-degradation contract). */
+  const [{ data: cfg }, { data: ann }, { data: qs }, { data: skillRows, error: skillsErr }] = await Promise.all([
     client.from("app_config").select("key, value"),
     client.from("announcements").select("id, title, body, badge, published, created_at").order("created_at", { ascending: false }),
-    client.from("published_questions").select("id, field_id, level, question, answer, key_points, published, updated_at")
+    client.from("published_questions").select("id, field_id, level, question, answer, key_points, published, updated_at, created_at"),
+    client.from("published_questions").select("id, skills")
   ]);
   if (cfg) {
     const merged: RemoteConfig = { features: {}, ai: {}, limits: {} };
@@ -69,8 +73,19 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
       .map(a => ({ id: a.id, title: a.title, body: a.body, badge: a.badge, published: a.published, createdAt: new Date(a.created_at).getTime() })));
   }
   if (qs) {
-    setPublishedQuestions((qs as unknown as { id: number; field_id: string; level: string; question: string; answer: string; key_points: string[]; published: boolean; updated_at: string | null }[])
-      .map(q => ({ id: q.id, fieldId: q.field_id, level: q.level as LevelId, question: q.question, answer: q.answer, keyPoints: q.key_points ?? [], published: q.published, updatedAt: q.updated_at ?? null })));
+    const skillMap = new Map<number, string[]>();
+    if (!skillsErr && Array.isArray(skillRows)) {
+      for (const s of skillRows as { id: number; skills: unknown }[]) {
+        skillMap.set(s.id, Array.isArray(s.skills) ? (s.skills as string[]) : []);
+      }
+    }
+    setPublishedQuestions((qs as unknown as { id: number; field_id: string; level: string; question: string; answer: string; key_points: string[]; published: boolean; updated_at: string | null; created_at: string | null }[])
+      .map(q => ({
+        id: q.id, fieldId: q.field_id, level: q.level as LevelId, question: q.question, answer: q.answer,
+        keyPoints: q.key_points ?? [], published: q.published, updatedAt: q.updated_at ?? null,
+        addedAt: q.created_at ? new Date(q.created_at).getTime() : null,
+        skills: skillMap.get(q.id) ?? []
+      })));
   }
 }
 

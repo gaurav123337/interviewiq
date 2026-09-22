@@ -16,3 +16,9 @@ create index if not exists published_questions_source_id_idx
 
 alter table public.scraper_sources
   add column if not exists config jsonb not null default '{}'::jsonb;
+
+-- Phase 4 Item A: per-question skill tags (e.g. ["React","Java"]) — drive the
+-- public-bank skill filter and discovery skill-routing (Item D). [] = untagged;
+-- untagged questions still match the skill filter via q/a/key-points text.
+alter table public.published_questions
+  add column if not exists skills jsonb not null default '[]'::jsonb;
