@@ -1,0 +1,1 @@
+import{D as e,T as t,w as n}from"./cloud-Be_vI-RX.js";function r(){return t(n.theme,`dark`)}function i(e){document.documentElement.classList.toggle(`light`,e===`light`),document.querySelector(`meta[name="theme-color"]`)?.setAttribute(`content`,e===`light`?`#eef1f8`:`#0a0e1a`)}function a(t){e(n.theme,t),i(t)}function o(){i(r())}export{o as n,a as r,r as t};
