@@ -7,6 +7,12 @@
 import { getSupabaseClient } from "./cloud";
 import { extractItems } from "../../scripts/scrape-lib.js";
 
+/** Minimal client surface for the run-report helpers — the real
+    SupabaseClient satisfies it; tests pass fakes cast `as never`. */
+export interface SupabaseClientLike {
+  from(table: string): unknown;
+}
+
 export interface ScraperSourceRow {
   id: string;
   url: string;
@@ -27,6 +33,104 @@ export interface RunResult {
   extracted: number;
   inserted: number;
   error?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* Run reports (Phase 4 Item B) — one scraper_runs row per run          */
+/* ------------------------------------------------------------------ */
+
+export type ScraperRunTrigger = "cron" | "manual";
+
+export interface ScraperRunRow {
+  id: number;
+  ranAt: string;
+  trigger: ScraperRunTrigger;
+  status: "ok" | "partial" | "failed";
+  perSource: Record<string, { url?: string; extracted?: number; inserted?: number; error?: string }>;
+  inserted: number;
+  errors: number;
+}
+
+export interface ScraperRunFilter {
+  status?: ScraperRunRow["status"];
+  trigger?: ScraperRunTrigger;
+  /** ran_at >= from (ISO string) */
+  from?: string;
+  /** ran_at <= to (ISO string) */
+  to?: string;
+  /** ILIKE search over the per-source URLs */
+  q?: string;
+}
+
+function runStatus(results: RunResult[]): ScraperRunRow["status"] {
+  if (results.some(r => r.error)) return results.every(r => r.error) ? "failed" : "partial";
+  return "ok";
+}
+
+/** Pure: maps a ScraperRunFilter onto Supabase query clauses — (call, args)
+    pairs recorded against a chain so tests can assert clause mapping without
+    a live client. Returns null when the filter would change nothing. */
+export function runFilterClauses(f: ScraperRunFilter): { key: string; args: unknown[] }[] {
+  const out: { key: string; args: unknown[] }[] = [];
+  if (f.status) out.push({ key: "eq", args: ["status", f.status] });
+  if (f.trigger) out.push({ key: "eq", args: ["trigger", f.trigger] });
+  if (f.from) out.push({ key: "gte", args: ["ran_at", f.from] });
+  if (f.to) out.push({ key: "lte", args: ["ran_at", f.to] });
+  if (f.q) out.push({ key: "ilike", args: ["per_source::text", `%${f.q}%`] });
+  return out;
+}
+
+/** Persists one run report. Tolerant of a pre-migration database (missing
+    table → resolves false, never throws): run-reporting must never make the
+    scrape itself look failed. */
+export async function recordScraperRun(client: SupabaseClientLike, results: RunResult[], trigger: ScraperRunTrigger): Promise<boolean> {
+  const perSource: ScraperRunRow["perSource"] = {};
+  for (const r of results) {
+    perSource[r.sourceId] = r.error
+      ? { url: r.url, error: r.error }
+      : { url: r.url, extracted: r.extracted, inserted: r.inserted };
+  }
+  try {
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    const res = (await (client.from("scraper_runs") as any).insert({
+      trigger,
+      status: runStatus(results),
+      per_source: perSource,
+      inserted: results.reduce((n, r) => n + r.inserted, 0),
+      errors: results.filter(r => r.error).length
+    })) as { error: { message: string } | null };
+    return !res.error;
+  } catch {
+    return false;
+  }
+}
+
+/** Reads run reports newest-first. All filters are optional; `limit` pages
+    through the accordion ("Load more"). Tolerant of a missing table → []. */
+export async function listScraperRuns(filter: ScraperRunFilter = {}, limit = 10, client?: SupabaseClientLike): Promise<ScraperRunRow[]> {
+  const c = (client ?? await getSupabaseClient()) as SupabaseClientLike | null;
+  if (!c) return [];
+  try {
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    let q: any = (c.from("scraper_runs") as any)
+      .select("id, ran_at, trigger, status, per_source, inserted, errors")
+      .order("ran_at", { ascending: false })
+      .limit(limit);
+    for (const clause of runFilterClauses(filter)) q = q[clause.key](...clause.args);
+    const { data, error } = await q as { data: Record<string, unknown>[] | null; error: { message: string } | null };
+    if (error) return []; /* pre-migration DB (missing table/column) → empty, not a crash */
+    return (data ?? []).map((r) => ({
+      id: Number(r.id),
+      ranAt: String(r.ran_at),
+      trigger: (String(r.trigger) === "cron" ? "cron" : "manual") as ScraperRunTrigger,
+      status: (String(r.status) === "partial" || String(r.status) === "failed" ? String(r.status) : "ok") as ScraperRunRow["status"],
+      perSource: (r.per_source && typeof r.per_source === "object" ? r.per_source : {}) as ScraperRunRow["perSource"],
+      inserted: Number(r.inserted ?? 0),
+      errors: Number(r.errors ?? 0)
+    }));
+  } catch {
+    return []; /* same graceful-degradation contract as every other new read */
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,5 +300,8 @@ export async function runScraperNow(sources: ScraperSourceRow[]): Promise<RunRes
     }
     results.push(report);
   }
+  /* Run reports are fire-and-forget: a missing scraper_runs table (or an RLS
+     hiccup) must not make the scrape itself look failed. */
+  await recordScraperRun(client, results, "manual").catch(() => false);
   return results;
 }
