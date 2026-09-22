@@ -54,6 +54,11 @@ create table if not exists public.jobs (
 alter table public.jobs add column if not exists salary jsonb;
 alter table public.jobs add column if not exists company_size text;
 
+-- Phase 4 Item C: free-form per-source metadata for the Playwright pipeline
+-- (targetId, host, extractedAt) — the source value stays the single exact-match
+-- "playwright"; the host/target ride in external_id + meta.
+alter table public.jobs add column if not exists meta jsonb not null default '{}'::jsonb;
+
 alter table public.jobs enable row level security;
 drop policy if exists "jobs public read" on public.jobs;
 create policy "jobs public read" on public.jobs for select using (true);

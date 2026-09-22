@@ -1,7 +1,16 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
-  ghFilterQuery, ghRangeToCreated, ghRunToRow, listWorkflowRuns, pairRunToScraperRow
+  ghFilterQuery, ghRangeToCreated, ghRunToRow, listWorkflowRuns, pairRunToScraperRow, WORKFLOWS
 } from "../services/ghActions";
+
+describe("WORKFLOWS", () => {
+  it("covers the pipelines that report into the cron log", () => {
+    const ids = WORKFLOWS.map(w => w.id);
+    expect(ids).toContain("scrape-weekly.yml");
+    expect(ids).toContain("jobs-playwright.yml"); /* Phase 4 Item C */
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
 
 describe("ghFilterQuery (pure)", () => {
   it("builds GitHub-native params, omitting empty ones", () => {

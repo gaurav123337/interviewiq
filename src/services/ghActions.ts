@@ -54,8 +54,9 @@ export interface WorkflowDef {
 /** The cron workflows the card covers — one shared card, the select re-queries. */
 export const WORKFLOWS: WorkflowDef[] = [
   { id: "scrape-weekly.yml", label: "🕷️ Question scraper (scrape-weekly)" },
-  { id: "ai-problems.yml", label: "🧠 AI problem drafts (ai-problems)" }
-  /* jobs-playwright.yml / discover-weekly.yml join here when Items C/D land */
+  { id: "ai-problems.yml", label: "🧠 AI problem drafts (ai-problems)" },
+  { id: "jobs-playwright.yml", label: "💼 Playwright job boards (jobs-playwright)" }
+  /* discover-weekly.yml joins here when Item D lands */
 ];
 
 /* ------------------------------------------------------------------ */

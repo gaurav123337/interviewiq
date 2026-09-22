@@ -1,0 +1,70 @@
+{
+  "_readme": "Curated PUBLIC, JS-heavy job-board targets for the Playwright scraper (Phase 4 Item C). Anti-bot/ToS-protected sites are excluded by policy. Adding a target is a data-only change — scripts/jobs-playwright-lib.js validates shape (kind ∈ html-listing | html-listing-paginated | json-api | remoteok-html-fallback; selectors.item/title/company required; maxItems 1-100 default 25; delayMs default 1200; enabled false to pause). Selectors are best-effort: the scraper marks a target failed ('0 postings matched') instead of crashing, and the Cron job log surfaces it.",
+  "targets": [
+    {
+      "id": "himalayas",
+      "kind": "html-listing",
+      "url": "https://himalayas.app/jobs",
+      "maxItems": 25,
+      "delayMs": 1200,
+      "selectors": {
+        "item": "a[href^='/jobs/']",
+        "title": "[data-v-] h2, .text-lg, h2",
+        "company": ".text-sm, .font-medium",
+        "location": "[class*='location'], .text-gray-500",
+        "link": null,
+        "description": null,
+        "postedAt": null
+      }
+    },
+    {
+      "id": "yc-work-at-a-startup",
+      "kind": "html-listing",
+      "url": "https://www.workatastartup.com/jobs",
+      "maxItems": 25,
+      "delayMs": 1500,
+      "selectors": {
+        "item": "a[href^='/companies/'][href*='/jobs']",
+        "title": "div[class*='title'], .font-semibold, h3",
+        "company": "div[class*='company'], .text-sm",
+        "location": "span[class*='location'], .text-gray-600",
+        "link": null,
+        "description": null,
+        "postedAt": null
+      }
+    },
+    {
+      "id": "remoteok-html",
+      "kind": "remoteok-html-fallback",
+      "url": "https://remoteok.com/remote-dev-jobs",
+      "maxItems": 20,
+      "delayMs": 2000,
+      "selectors": {
+        "item": "tr.job",
+        "title": "h2",
+        "company": "h3 [itemprop='name'], h3",
+        "location": "[class*='location'], .location",
+        "link": "a.preventLink",
+        "description": "div[class*='description'], .description",
+        "postedAt": "time"
+      }
+    },
+    {
+      "id": "weworkremotely-programming",
+      "kind": "html-listing",
+      "id-note": "server-rendered but included as a resilient fallback",
+      "url": "https://weworkremotely.com/categories/remote-programming-jobs",
+      "maxItems": 20,
+      "delayMs": 1000,
+      "selectors": {
+        "item": "section article li",
+        "title": "span.title",
+        "company": "span.company",
+        "location": "span.region.company",
+        "link": "a",
+        "description": null,
+        "postedAt": null
+      }
+    }
+  ]
+}
