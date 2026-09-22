@@ -7,7 +7,7 @@ export type { ScoreResult } from "./scoring";
 export { buildFeedback } from "./feedback";
 export { grade, aggregate, topicSuggestions, verdict } from "./aggregate";
 export type { Verdict } from "./aggregate";
-export { bankItems } from "./bank";
+export { bankItems, matchesSkill, bankSkillChips, addedLabel } from "./bank";
 export type { BankItem } from "./bank";
 export { pickRelevant } from "./relevance";
 export { shuffle, pickN } from "./random";

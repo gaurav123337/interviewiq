@@ -10,7 +10,9 @@ import {
   BASE_LIMITS, aiEnabled, featureOn, getLimits, paywallOn, publishedFor,
   setAnnouncements, setPublishedQuestions, setRemoteConfig, markAnnouncementSeen, nextUnseenAnnouncement
 } from "../services/remoteConfig";
-import { bankItems } from "../engine/bank";
+import { addedLabel, bankItems, bankSkillChips, matchesSkill } from "../engine/bank";
+import { statusFilterPasses } from "../services/admin/questions";
+import type { QA } from "../types";
 import { queueEvent } from "../services/events";
 import { STORAGE_KEYS, storageGet } from "../services/storage";
 
@@ -76,6 +78,66 @@ describe("published questions", () => {
     ]);
     const { items } = bankItems("backend", "Admin question");
     expect(items.some(i => i.q === "Admin question")).toBe(true);
+  });
+});
+
+describe("phase4 item A — added date, skills, status filter", () => {
+  beforeEach(() => {
+    setPublishedQuestions([
+      { id: 10, fieldId: "frontend", level: "senior", question: "React reconciliation", answer: "Fiber diff", keyPoints: ["fiber"], published: true, updatedAt: null, addedAt: Date.parse("2026-09-01T10:00:00Z"), skills: ["React"] },
+      { id: 11, fieldId: "frontend", level: "senior", question: "Draft JVM tuning", answer: "", keyPoints: [], published: false, updatedAt: null, addedAt: null, skills: ["Java"] }
+    ]);
+  });
+
+  it("publishedFor carries addedAt and skills while staying QA-assignable", () => {
+    const out = publishedFor("frontend", "senior");
+    expect(out).toHaveLength(1); /* drafts stay out */
+    expect(out[0].addedAt).toBe(Date.parse("2026-09-01T10:00:00Z"));
+    expect(out[0].skills).toEqual(["React"]);
+    const qa: QA[] = out; /* plain-QA pools (coach/compose) keep compiling */
+    expect(qa[0].q).toBe("React reconciliation");
+    expect(publishedFor("frontend", "junior")).toEqual([]);
+  });
+
+  it("matchesSkill — tag match wins, untagged items fall back to text", () => {
+    expect(matchesSkill({ q: "x", a: "", kp: [], skills: ["React"] }, "react")).toBe(true);
+    expect(matchesSkill({ q: "x", a: "", kp: [], skills: ["React"] }, "java")).toBe(false);
+    /* static core-bank item (no skills) matches via question text */
+    expect(matchesSkill({ q: "How does the JVM garbage collector work", a: "", kp: [] }, "jvm")).toBe(true);
+    expect(matchesSkill({ q: "Explain CSS specificity", a: "", kp: [] }, "java")).toBe(false);
+    expect(matchesSkill({ q: "x", a: "", kp: [], skills: [] }, "")).toBe(true);
+  });
+
+  it("bankItems filters by skill; drafts never surface", () => {
+    expect(bankItems("frontend", "", "React").items.map(i => i.q)).toContain("React reconciliation");
+    /* tagged React item has no Java tag and no Java text → filtered out */
+    expect(bankItems("frontend", "", "Java").items.map(i => i.q)).not.toContain("React reconciliation");
+    expect(bankItems("frontend", "", "Java").items.map(i => i.q)).not.toContain("Draft JVM tuning");
+    const withDate = bankItems("frontend", "React reconciliation").items.find(i => i.q === "React reconciliation");
+    expect(withDate?.addedAt).toBe(Date.parse("2026-09-01T10:00:00Z"));
+  });
+
+  it("bankSkillChips unions field skills with published tags, deduped case-insensitively", () => {
+    expect(bankSkillChips(["React", "CSS"], [{ skills: ["react", "Vite"] }, { skills: [] }])).toEqual(["React", "CSS", "Vite"]);
+    expect(bankSkillChips(undefined, [{ skills: ["Go"] }])).toEqual(["Go"]);
+    expect(bankSkillChips(["React"], [{ skills: [""] }])).toEqual(["React"]);
+  });
+
+  it("statusFilterPasses implements all/draft/live", () => {
+    expect(statusFilterPasses(true, "all")).toBe(true);
+    expect(statusFilterPasses(false, "all")).toBe(true);
+    expect(statusFilterPasses(true, "draft")).toBe(false);
+    expect(statusFilterPasses(false, "draft")).toBe(true);
+    expect(statusFilterPasses(true, "live")).toBe(true);
+    expect(statusFilterPasses(false, "live")).toBe(false);
+  });
+
+  it("addedLabel formats a date and hides missing/invalid timestamps", () => {
+    expect(addedLabel(null)).toBeNull();
+    expect(addedLabel(undefined)).toBeNull();
+    expect(addedLabel(0)).toBeNull();
+    expect(addedLabel(NaN)).toBeNull();
+    expect(addedLabel(Date.parse("2026-09-01T10:00:00Z"))).toMatch(/2026/);
   });
 });
 

@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
-import { createQuestion, deleteQuestion, setQuestionPublished } from "../../services/admin";
+import { createQuestion, deleteQuestion, setQuestionPublished, statusFilterPasses, type QuestionStatusFilter } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
+import { addedLabel } from "../../engine";
 import { toast } from "../../toast";
 import { btnPrimary, btnSm, btnDanger, btnGhost, cardCls, Chip, Modal } from "../ui";
 
@@ -21,21 +22,25 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [keyPoints, setKeyPoints] = useState("");
+  const [skills, setSkills] = useState("");
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
   const [search, setSearch] = useState("");
   const [filterField, setFilterField] = useState("");
   const [filterLevel, setFilterLevel] = useState("");
+  const [filterStatus, setFilterStatus] = useState<QuestionStatusFilter>("all");
   const filteredList = useMemo(() => {
     let out = list;
     const q = search.toLowerCase().trim();
     if (q) out = out.filter(d => d.question.toLowerCase().includes(q) || (d.answer && d.answer.toLowerCase().includes(q)));
     if (filterField) out = out.filter(d => d.fieldId === filterField);
     if (filterLevel) out = out.filter(d => d.level === filterLevel);
+    if (filterStatus !== "all") out = out.filter(d => statusFilterPasses(d.published, filterStatus));
     return out;
-  }, [list, search, filterField, filterLevel]);
-  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, list.length]);
+  }, [list, search, filterField, filterLevel, filterStatus]);
+  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterStatus, list.length]);
+  const filtersActive = !!(search || filterField || filterLevel || filterStatus !== "all");
 
   const publish = async () => {
     if (!question.trim()) { toast("Question is required"); return; }
@@ -43,10 +48,11 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
     try {
       await createQuestion({
         fieldId, level, question: question.trim(), answer: answer.trim(),
+        skills: skills.split(",").map(s => s.trim()).filter(Boolean),
         keyPoints: keyPoints.split(/[,\\n]/).map(k => k.trim()).filter(Boolean)
       });
       toast("📚 Question published — appears in sessions and the bank");
-      setQuestion(""); setAnswer(""); setKeyPoints("");
+      setQuestion(""); setAnswer(""); setKeyPoints(""); setSkills("");
       await onChanged();
     } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
     finally { setBusy(false); }
@@ -69,6 +75,7 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
           <input value={question} onChange={e => setQuestion(e.target.value)} placeholder="Interview question…" className="inp w-full" />
           <textarea value={answer} onChange={e => setAnswer(e.target.value)} rows={3} placeholder="Model answer…" className="inp w-full resize-y" />
           <input value={keyPoints} onChange={e => setKeyPoints(e.target.value)} placeholder="Key points, comma-separated (drives scoring)" className="inp w-full" />
+          <input value={skills} onChange={e => setSkills(e.target.value)} placeholder="Skills, comma-separated — React, Java (drives the bank skill filter)" className="inp w-full" />
           <button className={btnPrimary + btnSm} onClick={publish} disabled={busy}>Publish question</button>
         </div>
       </div>
@@ -86,12 +93,17 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
               <option value="">All levels</option>
               {LEVELS.map(l => <option key={l.id} value={l.id}>{l.icon} {l.name}</option>)}
             </select>
-            {(search || filterField || filterLevel) && (
-              <button className={btnGhost + btnSm} onClick={() => { setSearch(""); setFilterField(""); setFilterLevel(""); }}>Clear</button>
+            <select value={filterStatus} onChange={ev => setFilterStatus(ev.target.value as QuestionStatusFilter)} className="inp text-[11px]">
+              <option value="all">All statuses</option>
+              <option value="draft">🔴 Draft</option>
+              <option value="live">🟢 Live</option>
+            </select>
+            {filtersActive && (
+              <button className={btnGhost + btnSm} onClick={() => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterStatus("all"); }}>Clear</button>
             )}
           </div>
         )}
-        {(search || filterField || filterLevel) && (
+        {filtersActive && (
           <p className="mt-2 text-[11px] text-mut font-bold">Showing {filteredList.length} of {list.length}</p>
         )}
         {filteredList.length > 0 && (
@@ -118,9 +130,13 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
                   <Chip tone="lvl">{LEVELS.find(l => l.id === q.level)?.icon} {LEVELS.find(l => l.id === q.level)?.name}</Chip>
                   <Chip tone="cat">{FIELDS.find(f => f.id === q.fieldId)?.name ?? q.fieldId}</Chip>
                   <Chip tone={q.published ? "ok" : "default"}>{q.published ? "LIVE" : "DRAFT"}</Chip>
+                  {addedLabel(q.addedAt) && <Chip>Added {addedLabel(q.addedAt)}</Chip>}
                 </div>
                 <div className="mt-1.5 text-[14px] font-bold">{q.question}</div>
                 {q.answer && <p className="mt-1 text-[13px] text-mut line-clamp-2">{q.answer}</p>}
+                {(q.skills ?? []).length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">{(q.skills ?? []).slice(0, 6).map(s => <Chip key={s} tone="cat">🛠 {s}</Chip>)}</div>
+                )}
                 {q.keyPoints.length > 0 && <div className="mt-1.5 flex flex-wrap gap-1.5">{q.keyPoints.slice(0, 5).map(k => <Chip key={k}>{k}</Chip>)}</div>}
               </div>
               <div className="flex flex-none gap-2">
