@@ -254,6 +254,9 @@ export interface PublishedQuestion {
   addedAt?: number | null;
   /** Skill tags (Phase 4 Item A, e.g. ["React","Java"]) — absent/empty for untagged. */
   skills?: string[];
+  /** Takedown state (Phase 4 Item D3) — absent on pre-migration caches. Taken-down
+      questions are excluded from every public read (publishedFor) and badged in admin. */
+  status?: "active" | "taken_down";
 }
 
 export function getPublishedQuestions(): PublishedQuestion[] {
@@ -265,9 +268,10 @@ export function setPublishedQuestions(qs: PublishedQuestion[]): void {
 }
 
 /** Published questions for one field+level. Plain-QA assignable (coach/compose
-    pools keep working); `addedAt`/`skills` ride along for the bank UI. */
+    pools keep working); `addedAt`/`skills` ride along for the bank UI.
+    Taken-down questions never surface here (takedown engine, Item D3). */
 export function publishedFor(fieldId: string, level: LevelId): (QA & { addedAt: number | null; skills: string[] })[] {
   return getPublishedQuestions()
-    .filter(p => p.published && p.fieldId === fieldId && p.level === level)
+    .filter(p => p.published && p.status !== "taken_down" && p.fieldId === fieldId && p.level === level)
     .map(p => ({ q: p.question, a: p.answer, kp: p.keyPoints, addedAt: p.addedAt ?? null, skills: p.skills ?? [] }));
 }

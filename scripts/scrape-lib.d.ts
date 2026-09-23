@@ -41,4 +41,11 @@ export function partitionOversizeQuestions(
   rows: ScrapeItem[] | null | undefined,
   maxChars?: number
 ): [ScrapeItem[], ScrapeItem[]];
-export function buildUpsertSql(rows: ScrapeItem[]): string;
+export function buildSuppressionClause(
+  suppressions: (string | { question_text?: string | null })[] | null | undefined,
+  questionCol?: string
+): string;
+export function buildUpsertSql(
+  rows: ScrapeItem[],
+  suppressions?: (string | { question_text?: string | null })[]
+): string;

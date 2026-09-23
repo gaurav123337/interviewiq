@@ -34,6 +34,94 @@ export async function deleteQuestion(id: number): Promise<void> {
   await refreshAdminData();
 }
 
+/* ------------------------------------------------------------------ */
+/* Takedown engine (Phase 4 Item D3)                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Soft-delete: marks the question taken down. The DB trigger records the
+ * takedown audit row + suppression automatically (discovery.sql), so one
+ * update is the whole transaction. The row stays for restore/purge and for
+ * the admin badge; every public read filters it out.
+ */
+export async function takeDownQuestion(id: number, question: string, reason: string, note = ""): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { data, error } = await client.from("takedowns").insert({
+    target_kind: "question",
+    target_id: String(id),
+    question_text: question,
+    reason,
+    note,
+    action: "soft"
+  }).select("id");
+  if (error) throw new Error(error.message);
+  /* suppressions are best-effort pre-migration (missing table → the row still
+     lands and the status update below still filters the question out) */
+  const { error: stErr } = await client.from("published_questions")
+    .update({ status: "taken_down", published: false })
+    .eq("id", id);
+  if (stErr) {
+    /* pre-migration DB: no status column — fall back to unpublish so the
+       content still disappears from public reads (graceful degradation) */
+    const { error: fbErr } = await client.from("published_questions").update({ published: false }).eq("id", id);
+    if (fbErr) throw new Error(fbErr.message);
+  }
+  await refreshAdminData();
+}
+
+/** Restores a taken-down question: clears status, unpins the suppression. */
+export async function restoreQuestion(id: number, question: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("published_questions")
+    .update({ status: "active", taken_down_at: null })
+    .eq("id", id);
+  if (error) throw new Error(error.message);
+  /* clearing the suppression requires an update on the matching takedown row
+     (the DB trigger deletes the suppression when restored_at is set) */
+  await client.from("takedowns")
+    .update({ restored_at: new Date().toISOString() })
+    .eq("target_kind", "question")
+    .eq("target_id", String(id))
+    .is("restored_at", null);
+  await refreshAdminData();
+}
+
+/** Hard purge — explicit second step. The question_audit trigger logs the delete. */
+export async function purgeQuestion(id: number): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("Cloud not configured");
+  const { error } = await client.from("published_questions").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+  await refreshAdminData();
+}
+
+/** Takedown audit rows (newest first) for the admin UI. */
+export async function listTakedowns(limit = 50): Promise<TakedownRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) return [];
+  const { data, error } = await client.from("takedowns")
+    .select("id, target_kind, target_id, question_text, reason, note, actor, action, restored_at, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return []; /* pre-migration → empty (graceful degradation) */
+  return (data ?? []) as unknown as TakedownRow[];
+}
+
+export interface TakedownRow {
+  id: number;
+  target_kind: string;
+  target_id: string;
+  question_text: string | null;
+  reason: string;
+  note: string;
+  actor: string;
+  action: string;
+  restored_at: string | null;
+  created_at: string;
+}
+
 /** Edits an existing question (used by the review inbox to clean up drafts). */
 export async function updateQuestion(id: number, patch: {
   fieldId?: string; level?: LevelId; question?: string; answer?: string; keyPoints?: string[]; skills?: string[];

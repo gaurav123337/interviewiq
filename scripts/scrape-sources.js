@@ -174,7 +174,22 @@ async function main() {
     process.exit(errors ? 1 : 0);
   }
 
-  const sql = buildUpsertSql(rows);
+  /* taken-down questions (Phase 4 Item D3) must never re-enter the bank.
+     Best-effort read: pre-migration DBs lack the table → undefined → the
+     upsert is byte-identical to pre-D3 (graceful degradation). */
+  let suppressions;
+  try {
+    suppressions = await runSql(
+      `select question_text from public.takedown_suppressions where question_text is not null`
+    );
+  } catch {
+    suppressions = undefined;
+  }
+  if (Array.isArray(suppressions) && suppressions.length) {
+    console.log(`  applying ${suppressions.length} takedown suppression(s)`);
+  }
+
+  const sql = buildUpsertSql(rows, suppressions);
   try {
     await runSql(sql);
   } catch (e) {
