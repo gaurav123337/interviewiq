@@ -93,8 +93,10 @@ const JOB_SELECT = "source, external_id, title, company, location, remote, descr
 const JOBS_PER_SOURCE = 40;
 const JOBS_CAP = 80;
 
-/** The feed's source types (the `source` column values jobs-fetch writes). */
-const FEED_SOURCES = ["greenhouse", "ashby", "lever", "remoteok", "rss"];
+/** The feed's source types — the `source` column values jobs-fetch writes,
+    plus "playwright" from the Playwright pipeline (Phase 4 Item C; the host
+    rides in external_id/meta so the exact-match reads work). */
+export const FEED_SOURCES = ["greenhouse", "ashby", "lever", "remoteok", "rss", "playwright"];
 
 /** Pull the latest feed from the cloud (jobs are public-read) with one
     newest-first query PER source, so every board gets a fair share. */

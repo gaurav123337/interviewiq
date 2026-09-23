@@ -269,6 +269,19 @@ describe("feed services", () => {
     expect(jobs.some(j => j.company === "cred")).toBe(true);
   });
 
+  it("playwright jobs enter the feed round-robin (Phase 4 Item C)", async () => {
+    const rowsFor = (source: string) => ({
+      eq: vi.fn().mockReturnValue({ order: vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue({ data: source === "playwright" ? [
+        { source: "playwright", external_id: "playwright:boards.x/j/1#react-dev", title: "React Dev", company: "Acme", location: "Remote", remote: true, description: "", url: "https://boards.x/j/1", skills: ["react"], level: null, salary: null, company_size: null, posted_at: "2026-09-20T00:00:00Z" }
+      ] : [], error: null }) }) })
+    });
+    from.mockReturnValue({ select: vi.fn().mockReturnValue({ eq: vi.fn((_col: string, s: string) => rowsFor(s).eq()) }) });
+    const { loadJobsFromCloud, FEED_SOURCES } = await import("../services/jobs");
+    expect(FEED_SOURCES).toContain("playwright");
+    const jobs = await loadJobsFromCloud();
+    expect(jobs.some(j => j.source === "playwright" && j.company === "Acme")).toBe(true);
+  });
+
   it("refreshJobs posts to jobs-fetch with the auth token and reloads the feed", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ added: 3, updated: 1, total: 12 }) });
     vi.stubGlobal("fetch", fetchMock);
