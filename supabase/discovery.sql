@@ -143,3 +143,87 @@ create or replace view public.takedown_summary as
     (select count(*) from public.published_questions where status = 'taken_down') as questions_taken_down,
     (select count(*) from public.takedown_suppressions) as suppressions,
     (select count(*) from public.takedowns where restored_at is null) as open_takedowns;
+
+/* ================================================================== */
+/*  Phase 4 Item D2 — discovery storage                                */
+/*  crawl-sources.js writes pending seeds (nothing crawls unless a     */
+/*  seed is approved) and discovered resources (surfaced only after    */
+/*  admin approval + the resource-safety-guard in D4).                 */
+/* ================================================================== */
+
+/* ------------------------------------------------------------------ */
+/* 6. discovery_seeds — URLS the crawler may start from                */
+/*    origin: manual (admin "Discover from URL") | skill-auto (D5)     */
+/*    status: pending → approved | rejected                            */
+/*    Nothing is crawled while a seed is pending — the approval gate   */
+/*    is the crawl trigger, not a filter after the fact.               */
+/* ------------------------------------------------------------------ */
+
+create table if not exists public.discovery_seeds (
+  id bigint generated always as identity primary key,
+  url text not null,
+  -- discover-lib.classifySeed kinds: github-topic | github-repo | json | sitemap | html
+  kind text not null,
+  origin text not null default 'manual' check (origin in ('manual', 'skill-auto')),
+  -- manual = actor; skill-auto = the skill name that triggered the search
+  origin_detail text not null default '',
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  -- for rejected seeds
+  note text not null default '',
+  -- which skill the seed targets (D5 gap-filling; free text)
+  skill text,
+  actor text not null default '',
+  created_at timestamptz not null default now(),
+  decided_at timestamptz,
+  unique (url)
+);
+
+alter table public.discovery_seeds enable row level security;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'discovery_seeds' and policyname = 'discovery seeds admin all') then
+    create policy "discovery seeds admin all" on public.discovery_seeds
+      for all using (public.is_admin()) with check (public.is_admin());
+  end if;
+end $$;
+
+create index if not exists discovery_seeds_status_idx on public.discovery_seeds (status, created_at desc);
+create index if not exists discovery_seeds_skill_idx on public.discovery_seeds (skill) where skill is not null;
+
+/* ------------------------------------------------------------------ */
+/* 7. discovered_resources — candidate learning links found by the     */
+/*    crawl. Attribution is mandatory; approved rows are what D4's     */
+/*    credits UI renders. A no-license GitHub seed's resources stay    */
+/*    pending until a human decides (never auto-enter rotation).       */
+/* ------------------------------------------------------------------ */
+
+create table if not exists public.discovered_resources (
+  id bigint generated always as identity primary key,
+  url text not null,
+  title text not null,
+  -- resource | qa | problem (what the crawler thinks the link is)
+  kind text not null default 'resource' check (kind in ('resource', 'qa', 'problem')),
+  -- attribution captured free from GitHub/HTML payloads
+  attribution jsonb not null default '{}'::jsonb,
+  -- MIT | Apache-2.0 | CC-BY-4.0 | no-license | unknown | …
+  license text not null default 'unknown',
+  -- pending → approved | rejected (resources only surface after approval)
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  seed_id bigint references public.discovery_seeds (id) on delete set null,
+  meta jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  decided_at timestamptz,
+  unique (url)
+);
+
+alter table public.discovered_resources enable row level security;
+
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'discovered_resources' and policyname = 'discovered resources admin all') then
+    create policy "discovered resources admin all" on public.discovered_resources
+      for all using (public.is_admin()) with check (public.is_admin());
+  end if;
+end $$;
+
+create index if not exists discovered_resources_status_idx on public.discovered_resources (status, created_at desc);
+create index if not exists discovered_resources_seed_idx on public.discovered_resources (seed_id) where seed_id is not null;
