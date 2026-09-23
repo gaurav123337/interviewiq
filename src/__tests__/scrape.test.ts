@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildUpsertSql, extractCompanyList, extractFromHn, extractFromHtml,
-  extractFromJson, extractFromMarkdown, sqlStr
+  extractFromJson, extractFromMarkdown, sqlStr,
+  partitionOversizeQuestions, MAX_QUESTION_CHARS
 } from "../../scripts/scrape-lib.js";
 
 const source = { fieldId: "frontend", level: "senior", keyPoints: [] };
@@ -99,6 +100,18 @@ describe("scraper extraction", () => {
     expect(sql).toContain("source_url");
     expect(sql).toContain("meta");
     expect(sqlStr("it's fine")).toBe("'it''s fine'");
+  });
+
+  it("drops oversize questions that would poison the whole batch (btree 8191-byte limit)", () => {
+    /* regression for the 2026-09-23 cron failure: one 28KB question made the
+       entire multi-row insert fail with "index row requires 28456 bytes" */
+    const ok = { fieldId: "frontend", level: "senior", question: "What is hoisting?", answer: "A", keyPoints: [] };
+    const huge = { ...ok, question: "x".repeat(MAX_QUESTION_CHARS + 1) };
+    const [kept, dropped] = partitionOversizeQuestions([ok, huge]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toHaveLength(1);
+    expect(buildUpsertSql([ok, huge])).not.toContain("xxxxx"); /* oversize filtered */
+    expect(buildUpsertSql([huge])).toBe(""); /* all-oversize → no sql, no crash */
   });
 
   it("extracts company-grouped problem titles from bullets (facts only)", () => {

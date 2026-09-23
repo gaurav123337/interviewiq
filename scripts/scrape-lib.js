@@ -260,10 +260,31 @@ export function sqlStr(v) {
   return "'" + String(v).replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
 }
 
-/** Builds an idempotent upsert statement (new rows only — ON CONFLICT by question text). */
+/* Postgres btree index entries are capped at ~2700 chars (8191 bytes); the
+   unique index on published_questions.question is a btree, so an item whose
+   question exceeds that cannot be inserted at all and would poison the whole
+   multi-row batch ("index row requires N bytes, maximum size is 8191").
+   Question TEXT (was the whole README section — content-scrape gone wrong). */
+export const MAX_QUESTION_CHARS = 2000;
+
+/** Drops items whose question could never survive the unique btree index.
+    Returns [kept, dropped] so the caller can report what it skipped. */
+export function partitionOversizeQuestions(rows, maxChars = MAX_QUESTION_CHARS) {
+  const kept = [];
+  const dropped = [];
+  for (const r of rows ?? []) {
+    (String(r?.question ?? "").length > maxChars ? dropped : kept).push(r);
+  }
+  return [kept, dropped];
+}
+
+/** Builds an idempotent upsert statement (new rows only — ON CONFLICT by question text).
+    Oversize questions are filtered defensively here too (see MAX_QUESTION_CHARS). */
 export function buildUpsertSql(rows) {
   if (!rows.length) return "";
-  const values = rows
+  const [kept] = partitionOversizeQuestions(rows);
+  if (!kept.length) return "";
+  const values = kept
     .map((r) => `(${sqlStr(r.fieldId)}, ${sqlStr(r.level)}, ${sqlStr(r.question)}, ${sqlStr(r.answer)}, '${JSON.stringify(r.keyPoints).replace(/'/g, "''")}'::jsonb, ${sqlStr(r.sourceId ?? "")}, ${sqlStr(r.sourceUrl ?? "")}, '${JSON.stringify(r.meta ?? {}).replace(/'/g, "''")}'::jsonb, false)`)
     .join(",\n  ");
   return `insert into public.published_questions (field_id, level, question, answer, key_points, source_id, source_url, meta, published)
