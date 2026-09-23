@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
-import { createQuestion, deleteQuestion, setQuestionPublished, statusFilterPasses, type QuestionStatusFilter } from "../../services/admin";
+import { createQuestion, deleteQuestion, restoreQuestion, setQuestionPublished, takeDownQuestion, statusFilterPasses, type QuestionStatusFilter } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
 import { addedLabel } from "../../engine";
 import { toast } from "../../toast";
@@ -24,6 +24,9 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
   const [keyPoints, setKeyPoints] = useState("");
   const [skills, setSkills] = useState("");
   const [confirmDel, setConfirmDel] = useState<number | null>(null);
+  const [takedownFor, setTakedownFor] = useState<{ id: number; question: string } | null>(null);
+  const [takedownReason, setTakedownReason] = useState("owner-request");
+  const [takedownNote, setTakedownNote] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
   const [search, setSearch] = useState("");
@@ -129,7 +132,9 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
                 <div className="flex flex-wrap items-center gap-2">
                   <Chip tone="lvl">{LEVELS.find(l => l.id === q.level)?.icon} {LEVELS.find(l => l.id === q.level)?.name}</Chip>
                   <Chip tone="cat">{FIELDS.find(f => f.id === q.fieldId)?.name ?? q.fieldId}</Chip>
-                  <Chip tone={q.published ? "ok" : "default"}>{q.published ? "LIVE" : "DRAFT"}</Chip>
+                  {q.status === "taken_down"
+                    ? <Chip tone="bad">⛔ TAKEN DOWN</Chip>
+                    : <Chip tone={q.published ? "ok" : "default"}>{q.published ? "LIVE" : "DRAFT"}</Chip>}
                   {addedLabel(q.addedAt) && <Chip>Added {addedLabel(q.addedAt)}</Chip>}
                 </div>
                 <div className="mt-1.5 text-[14px] font-bold">{q.question}</div>
@@ -140,15 +145,53 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
                 {q.keyPoints.length > 0 && <div className="mt-1.5 flex flex-wrap gap-1.5">{q.keyPoints.slice(0, 5).map(k => <Chip key={k}>{k}</Chip>)}</div>}
               </div>
               <div className="flex flex-none gap-2">
-                <button className={btnGhost + btnSm} onClick={async () => { setBusy(true); try { await setQuestionPublished(q.id, !q.published); await onChanged(); } catch (e) { toast("✗ " + (e as Error).message); } finally { setBusy(false); } }} disabled={busy}>
-                  {q.published ? "Unpublish" : "Publish"}
-                </button>
+                {q.status === "taken_down" ? (
+                  <button className={btnGhost + btnSm} onClick={async () => { setBusy(true); try { await restoreQuestion(q.id, q.question); await onChanged(); toast("Question restored"); } catch (e) { toast("✗ " + (e as Error).message); } finally { setBusy(false); } }} disabled={busy}>
+                    Restore
+                  </button>
+                ) : (
+                  <>
+                    <button className={btnGhost + btnSm} onClick={async () => { setBusy(true); try { await setQuestionPublished(q.id, !q.published); await onChanged(); } catch (e) { toast("✗ " + (e as Error).message); } finally { setBusy(false); } }} disabled={busy}>
+                      {q.published ? "Unpublish" : "Publish"}
+                    </button>
+                    <button className={btnGhost + btnSm} onClick={() => { setTakedownFor({ id: q.id, question: q.question }); setTakedownReason("owner-request"); setTakedownNote(""); }} disabled={busy}>
+                      ⛔ Take down
+                    </button>
+                  </>
+                )}
                 <button className={btnDanger + btnSm} onClick={() => setConfirmDel(q.id)} disabled={busy}>Delete</button>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {takedownFor !== null && (
+        <Modal onClose={() => setTakedownFor(null)} title="Take down this question?" desc="Soft-deletes it everywhere (public reads exclude taken-down content) and blocks re-scraping. Reversible via Restore; the Delete button is the hard purge.">
+          <div className="space-y-3">
+            <p className="text-[12px] text-mut">{takedownFor.question.slice(0, 140)}</p>
+            <select value={takedownReason} onChange={e => setTakedownReason(e.target.value)} className="inp w-full">
+              <option value="owner-request">Owner request</option>
+              <option value="dmca">DMCA / copyright</option>
+              <option value="license">License problem</option>
+              <option value="inaccurate">Inaccurate content</option>
+              <option value="offensive">Offensive content</option>
+              <option value="duplicate">Duplicate</option>
+              <option value="other">Other</option>
+            </select>
+            <input value={takedownNote} onChange={e => setTakedownNote(e.target.value)} placeholder="Note (optional)" className="inp w-full" />
+            <div className="flex gap-3">
+              <button className={btnGhost} onClick={() => setTakedownFor(null)}>Cancel</button>
+              <button className={btnDanger} onClick={async () => {
+                setBusy(true);
+                try { await takeDownQuestion(takedownFor.id, takedownFor.question, takedownReason, takedownNote); await onChanged(); toast("⛔ Question taken down and suppressed from re-scraping"); }
+                catch (e) { toast("✗ " + (e as Error).message); }
+                finally { setBusy(false); setTakedownFor(null); }
+              }}>Take down</button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {confirmDel !== null && (
         <Modal onClose={() => setConfirmDel(null)} title="Delete this question?" desc="It will disappear from every client on next sync.">

@@ -260,8 +260,27 @@ export function sqlStr(v) {
   return "'" + String(v).replace(/\\/g, "\\\\").replace(/'/g, "''") + "'";
 }
 
-/** Builds an idempotent upsert statement (new rows only — ON CONFLICT by question text). */
-export function buildUpsertSql(rows) {
+/**
+ * SQL `lower(trim(col)) NOT IN (...)` clause over taken-down question texts
+ * (Phase 4 Item D3). Empty/absent suppressions → "" so callers stay
+ * backward-compatible. Texts are lower-trim'd to match the DB-side
+ * md5(lower(trim(question_text))) suppression hashes in discovery.sql.
+ */
+export function buildSuppressionClause(suppressions, questionCol = "question") {
+  const texts = (suppressions ?? [])
+    .map((s) => (typeof s === "string" ? s : s?.question_text))
+    .filter((t) => typeof t === "string" && t.trim().length > 0)
+    .map((t) => t.trim().toLowerCase());
+  if (!texts.length) return "";
+  const literals = texts.map((t) => sqlStr(t));
+  return ` and lower(trim(${questionCol})) not in (${literals.join(", ")})`;
+}
+
+/** Builds an idempotent upsert statement (new rows only — ON CONFLICT by question text).
+    `suppressions` (optional, Phase 4 Item D3): taken-down question texts —
+    they get a NOT IN exclusion so takedowns can never re-enter the bank via
+    a re-scrape. Omitting it produces byte-identical SQL to pre-D3. */
+export function buildUpsertSql(rows, suppressions) {
   if (!rows.length) return "";
   const values = rows
     .map((r) => `(${sqlStr(r.fieldId)}, ${sqlStr(r.level)}, ${sqlStr(r.question)}, ${sqlStr(r.answer)}, '${JSON.stringify(r.keyPoints).replace(/'/g, "''")}'::jsonb, ${sqlStr(r.sourceId ?? "")}, ${sqlStr(r.sourceUrl ?? "")}, '${JSON.stringify(r.meta ?? {}).replace(/'/g, "''")}'::jsonb, false)`)
@@ -269,5 +288,5 @@ export function buildUpsertSql(rows) {
   return `insert into public.published_questions (field_id, level, question, answer, key_points, source_id, source_url, meta, published)
 values
   ${values}
-on conflict (question) do nothing;`;
+on conflict (question)${buildSuppressionClause(suppressions, "question")} do nothing;`;
 }
