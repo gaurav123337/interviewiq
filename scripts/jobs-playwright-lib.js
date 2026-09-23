@@ -96,6 +96,10 @@ export function extractJob(node, target, q) {
     const a = q(node, s.link);
     const href = a ? (a.getAttribute ? a.getAttribute("href") : String(a.href ?? "")) : "";
     if (href) link = normalizeUrl(href, target.url);
+  } else if (node && typeof node.getAttribute === "function") {
+    /* the item node itself may be the job anchor (e.g. YC's a[href^='/jobs/'] cards) */
+    const href = node.getAttribute("href");
+    if (href) link = normalizeUrl(href, target.url);
   }
   const postedRaw = text(s.postedAt);
   return {
@@ -175,11 +179,13 @@ set title = excluded.title,
     error strings only — never secrets, mirroring jobs-fetch's report row). */
 export function buildReport(perTarget, startedAt) {
   const added = perTarget.reduce((n, p) => n + (p.added ?? 0), 0);
+  const found = perTarget.reduce((n, p) => n + (p.found ?? 0), 0);
   const errors = Object.fromEntries(perTarget.filter(p => p.error).map(p => [p.targetId, p.error]));
   return {
     added,
     updated: 0,
-    total: added,
+    /* total counts what the pipeline SAW (the classic feed's semantics), not what it added */
+    total: found,
     per_target: perTarget.map(p => ({ targetId: p.targetId, host: p.host, found: p.found ?? 0, added: p.added ?? 0, error: p.error })),
     errors
   };
