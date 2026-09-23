@@ -34,14 +34,21 @@ const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 
 async function runSql(sql) {
-  const res = await fetch(`${API}/projects/${projectRef}/database/query`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query: sql })
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`SQL ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
-  return body;
+  if (!sql) return [];
+  try {
+    const res = await fetch(`${API}/projects/${projectRef}/database/query`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query: sql })
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`SQL ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
+    return body;
+  } catch (e) {
+    /* network blips must not escape as unhandled rejections — the report row
+       (and the cron log) still get a chance to be written downstream */
+    throw new Error(`SQL unreachable: ${e.message}`);
+  }
 }
 
 /* ----------------------------- AI normalize ----------------------------- */
@@ -94,6 +101,30 @@ async function aiNormalize(jobs, ai) {
 
 /* ------------------------------ extraction ------------------------------ */
 
+/**
+ * Adapts Playwright's async element handles to the sync element views that
+ * extractJob expects ({ textContent, getAttribute }). Resolves each selector
+ * once per item node — extractJob's `q` contract is a synchronous lookup,
+ * and a raw ElementHandle (whose textContent/getAttribute return Promises)
+ * would silently extract nothing.
+ */
+async function resolveViews(node, selectors) {
+  const views = new Map();
+  for (const css of Object.values(selectors)) {
+    if (!css || views.has(css)) continue;
+    const el = await node.$(css);
+    if (!el) { views.set(css, null); continue; }
+    const text = (await el.textContent().catch(() => null)) ?? "";
+    const view = { textContent: String(text), getAttribute: () => null };
+    if (css === selectors.link) {
+      const href = await el.getAttribute("href").catch(() => null);
+      view.getAttribute = (a) => (a === "href" ? href : null);
+    }
+    views.set(css, view);
+  }
+  return views;
+}
+
 /** Renders one target in the shared browser and extracts postings. */
 async function scrapeTarget(browser, target) {
   const { chromium } = await import("playwright");
@@ -113,17 +144,26 @@ async function scrapeTarget(browser, target) {
     await page.mouse.wheel(0, 1200);
     await page.waitForTimeout(800);
     const nodes = await page.$$(target.selectors.item);
-    const q = (node, css) => node.$(css);
     for (const node of nodes.slice(0, target.maxItems)) {
-      const job = extractJob(node, target, q);
+      const views = await resolveViews(node, target.selectors);
+      const q = (_node, css) => views.get(css) ?? null;
+      /* the item node itself may be the job anchor (e.g. YC's card links) —
+         expose its href through the same sync shim extractJob expects */
+      const selfHref = await node.getAttribute("href").catch(() => null);
+      const self = { getAttribute: (a) => (a === "href" ? selfHref : null) };
+      const job = extractJob(self, target, q);
       if (job) jobs.push({ ...job, pageText: "" });
     }
     report.found = jobs.length;
     if (!jobs.length) report.error = "0 postings matched the selectors";
   } catch (e) {
-    report.error = String(e.message || e).slice(0, 200);
+    const msg = String(e.message || e).slice(0, 200);
+    report.error = /Timeout .*exceeded/i.test(msg)
+      ? `selector timeout (bot protection or stale selectors): ${msg}`
+      : msg;
   } finally {
-    await ctx.close();
+    /* a context that dies mid-page used to crash the whole run via this close() */
+    await ctx.close().catch(() => {});
   }
   return { jobs, report };
 }
@@ -197,8 +237,11 @@ async function main() {
   } catch (e) {
     console.warn(yellow(`  (report not saved: ${e.message.slice(0, 160)})`));
   }
-  console.log(green(`\n✓ ${report.total} playwright job(s) upserted. They enter the feed round-robin via FEED_SOURCES.`));
-  if (sqlError) process.exit(1);
+  const failed = perTarget.filter((p) => p.error).length;
+  console.log(green(`\n✓ ${capped.length} extracted / ${report.added} upserted across ${targets.length} target(s) — enters the feed round-robin via FEED_SOURCES.`));
+  /* surface failures so Actions shows red: all targets failed (or the upsert
+     broke) → exit 1; partial failures stay green — the report row carries the detail */
+  process.exit(failed === targets.length || sqlError ? 1 : 0);
 }
 
 main().catch((e) => {

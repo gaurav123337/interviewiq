@@ -41,9 +41,11 @@ jobs:
         run: |
           npm i --no-save playwright@latest
           npx playwright install --with-deps chromium
+      # No continue-on-error: the script handles per-target failures itself
+      # (report row is always written) and exits 1 when everything failed,
+      # so Actions surfaces red instead of silently hiding a dead pipeline.
       - name: Scrape job boards → Supabase (source "playwright")
         if: steps.check-secrets.outputs.configured == 'true'
-        continue-on-error: true
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}

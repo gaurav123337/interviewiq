@@ -3,6 +3,7 @@ import {
   validateTarget, loadTargets, extractJob, jobIdentity, dedupeJobs,
   buildJobsUpsertSql, buildReport, buildReportSql, normalizeUrl, parseRelativeDate, sqlStr
 } from "../../scripts/jobs-playwright-lib.js";
+import targetsJson from "../../content/job-playwright-targets.json";
 
 const okTarget = {
   id: "himalayas", kind: "html-listing", url: "https://himalayas.app/jobs",
@@ -92,6 +93,35 @@ describe("extractJob (fixture DOM)", () => {
     const empty = { query: () => null };
     expect(extractJob(empty, target!, (n: any, css: string) => n.query(css))).toBeNull();
   });
+
+  it("falls back to the item anchor's own href when selectors.link is null", () => {
+    const t = validateTarget({
+      ...okTarget,
+      id: "yc-cards",
+      selectors: { item: "a[href^='/jobs/']", title: "h3 span", company: "p.font-semibold", link: null }
+    });
+    const node = { getAttribute: (a: string) => (a === "href" ? "/jobs/13302" : null) };
+    const q = (_n: any, css: string) => {
+      const map: Record<string, { textContent: string }> = {
+        "h3 span": { textContent: "Software Engineer" },
+        "p.font-semibold": { textContent: "Mason" }
+      };
+      return map[css] ?? null;
+    };
+    const job = extractJob(node, t.ok ? t.target! : null!, q);
+    expect(job).not.toBeNull();
+    expect(job!.title).toBe("Software Engineer");
+    expect(job!.company).toBe("Mason");
+    expect(job!.url).toBe("https://himalayas.app/jobs/13302");
+  });
+
+  it("pins the sync q contract: a Promise-returning lookup extracts nothing", () => {
+    /* regression guard for the first live run's silent failure — Playwright
+       handles are async, so the scraper must adapt them to sync views */
+    const node = { textContent: "", getAttribute: () => null };
+    const asyncQ = (_n: unknown, _css: string) => Promise.resolve({ textContent: "Async Title", getAttribute: () => null });
+    expect(extractJob(node, target!, asyncQ as any)).toBeNull();
+  });
 });
 
 describe("jobIdentity / dedupeJobs", () => {
@@ -146,10 +176,11 @@ describe("SQL builders", () => {
   it("report row carries per-target detail and error strings only", () => {
     const r = buildReport([
       { targetId: "a", host: "a.x", found: 3, added: 3 },
-      { targetId: "b", host: "b.x", found: 0, added: 0, error: "0 postings matched the selectors" }
+      { targetId: "b", host: "b.x", found: 0, added: 0, error: "0 postings matched the selectors" },
+      { targetId: "c", host: "c.x", found: 10, added: 1 }
     ], Date.parse("2026-09-22T00:00:00Z"));
-    expect(r.added).toBe(3);
-    expect(r.total).toBe(3);
+    expect(r.added).toBe(4);
+    expect(r.total).toBe(13); /* total = seen (classic-feed semantics), added = new */
     expect(r.errors).toEqual({ b: "0 postings matched the selectors" });
     const sql = buildReportSql(r, Date.parse("2026-09-22T00:00:00Z"));
     expect(sql).toContain("insert into public.jobs_fetch_reports");
@@ -178,5 +209,14 @@ describe("helpers", () => {
 
   it("sqlStr escapes backslashes and quotes", () => {
     expect(sqlStr("it's \\ fine")).toBe("'it''s \\\\ fine'");
+  });
+
+  it("shipped targets file validates and keeps ≥1 enabled target", () => {
+    const raw = targetsJson as { targets: Record<string, unknown>[] };
+    const { targets, skipped } = loadTargets(raw);
+    expect(skipped).toEqual([]);
+    expect(targets.length).toBeGreaterThanOrEqual(1);
+    expect(targets.some((t: { id: string }) => t.id === "yc-work-at-a-startup")).toBe(true);
+    expect(targets.every((t: { enabled: boolean }) => t.enabled)).toBe(true);
   });
 });
