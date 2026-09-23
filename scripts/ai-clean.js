@@ -45,6 +45,13 @@ async function runSql(sql) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* AI provider config lives at module scope because cleanOne() reads it per
+   item — main() assigns these (and the auth-fallback reassigns them mid-run). */
+let aiKey;
+let aiBase;
+let aiModel;
+let aiCfg;
+
 /** One chat completion → parsed strict JSON (or null). */
 async function cleanOne(item) {
   /* free-tier providers can hang indefinitely — cap the call so a stuck
@@ -89,10 +96,10 @@ async function main() {
   }
   /* provider config is editable from the Admin dashboard (Supabase row);
      env AI_CLEAN_* are the legacy fallback */
-  const aiCfg = await loadAiProviderConfig({ token, projectRef });
-  let aiKey = aiCfg.key;
-  let aiBase = aiCfg.base;
-  let aiModel = aiCfg.model;
+  aiCfg = await loadAiProviderConfig({ token, projectRef });
+  aiKey = aiCfg.key;
+  aiBase = aiCfg.base;
+  aiModel = aiCfg.model;
   if (aiCfg.source === "supabase") console.log(green(`AI provider from Supabase (model ${aiModel}, base ${aiBase}).`));
   if (!aiKey) {
     console.log("No AI key configured — skipping AI cleaning (optional step). Set it in Admin → Secrets → AI pipeline.");
