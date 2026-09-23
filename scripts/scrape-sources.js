@@ -21,6 +21,7 @@ const projectRef = process.env.SUPABASE_PROJECT_REF;
 
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
+const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 
 /** JSON-encodes into a SQL-safe string literal (mirrors scrape-lib.sqlStr). */
 function sqlStr(v) {
