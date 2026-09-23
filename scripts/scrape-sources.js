@@ -32,11 +32,11 @@ function sqlStr(v) {
  * what the cron did. Values are counts + error strings — never secrets.
  * Best-effort: a missing table (pre-migration) logs a warning, never fails
  * the run. perSource: { [sourceId]: { url, extracted, inserted, error? } }. */
-async function recordRunReport(perSource, inserted, errors, startedAt) {
+async function recordRunReport(perSource, inserted, errors, dropped, startedAt) {
   try {
     const status = errors > 0
       ? (Object.values(perSource).every((p) => p.error) ? "failed" : "partial")
-      : "ok";
+      : dropped > 0 ? "partial" : "ok";
     const sql =
       `insert into public.scraper_runs (ran_at, trigger, status, per_source, inserted, errors)\n` +
       `values (${sqlStr(new Date(startedAt).toISOString())}, 'cron', ${sqlStr(status)}, ` +
@@ -117,6 +117,7 @@ async function main() {
 
   const all = [];
   let errors = 0;
+  let dropped = 0;
   const perSource = {};
   for (const source of sources) {
     const key = String(source.id ?? source.url);
@@ -162,8 +163,10 @@ async function main() {
   for (const r of oversize) {
     const k = r.sourceId || r.sourceUrl || "unknown";
     perSource[k] = perSource[k] ?? { url: r.sourceUrl ?? "" };
-    perSource[k].error = `question too long (${String(r.question).length} chars) — skipped`;
-    errors++;
+    /* a guarded drop is a data-quality notice, not a pipeline error — it must
+       not fail the run (the source keeps yielding the same long README item) */
+    perSource[k].oversize = `question too long (${String(r.question).length} chars) — skipped`;
+    dropped++;
   }
   if (oversize.length) {
     console.warn(yellow(`  dropped ${oversize.length} oversize question(s) (> ${MAX_QUESTION_CHARS} chars) — index limit`));
@@ -171,7 +174,7 @@ async function main() {
 
   if (!rows.length) {
     console.log(errors ? red(`\nNo items extracted (${errors} source error(s)).`) : green("\nNothing new — no items extracted."));
-    await recordRunReport(perSource, 0, errors, startedAt);
+    await recordRunReport(perSource, 0, errors, dropped, startedAt);
     process.exit(errors ? 1 : 0);
   }
 
@@ -195,7 +198,7 @@ async function main() {
     await runSql(sql);
   } catch (e) {
     console.error(red(`\nUpsert failed: ${e.message}`));
-    await recordRunReport(perSource, 0, errors + 1, startedAt);
+    await recordRunReport(perSource, 0, errors + 1, dropped, startedAt);
     process.exit(1);
   }
 
@@ -218,7 +221,7 @@ async function main() {
     }
   });
 
-  await recordRunReport(perSource, rows.length, errors, startedAt);
+  await recordRunReport(perSource, rows.length, errors, dropped, startedAt);
   console.log(green(`\n✓ Upserted ${rows.length} new draft question(s). Review them in Admin → Review inbox.`));
   if (errors) process.exit(1);
 }
