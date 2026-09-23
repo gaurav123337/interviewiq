@@ -36,6 +36,11 @@ export function extractFromHn(body: unknown, source: ScrapeSource): ScrapeItem[]
 export function cleanMarkdown(md: string): string[];
 export function extractItems(body: unknown, source: ScrapeSource): ScrapeItem[];
 export function sqlStr(v: string | number): string;
+export const MAX_QUESTION_CHARS: number;
+export function partitionOversizeQuestions(
+  rows: ScrapeItem[] | null | undefined,
+  maxChars?: number
+): [ScrapeItem[], ScrapeItem[]];
 export function buildSuppressionClause(
   suppressions: (string | { question_text?: string | null })[] | null | undefined,
   questionCol?: string

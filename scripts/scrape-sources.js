@@ -13,7 +13,7 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { extractItems, buildUpsertSql } from "./scrape-lib.js";
+import { extractItems, buildUpsertSql, partitionOversizeQuestions, MAX_QUESTION_CHARS } from "./scrape-lib.js";
 
 const API = "https://api.supabase.com/v1";
 const token = process.env.SUPABASE_ACCESS_TOKEN;
@@ -146,12 +146,27 @@ async function main() {
 
   /* dedupe within the batch by question text */
   const seen = new Set();
-  const rows = all.filter((r) => {
+  let rows = all.filter((r) => {
     const k = r.question.toLowerCase();
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
+
+  /* one oversized question poisoned the 2026-09-23 run (index row > 8191 bytes
+     rejected the entire multi-row insert) — drop them up front, mark the
+     source, and let the report show it */
+  const [kept, oversize] = partitionOversizeQuestions(rows);
+  rows = kept;
+  for (const r of oversize) {
+    const k = r.sourceId || r.sourceUrl || "unknown";
+    perSource[k] = perSource[k] ?? { url: r.sourceUrl ?? "" };
+    perSource[k].error = `question too long (${String(r.question).length} chars) — skipped`;
+    errors++;
+  }
+  if (oversize.length) {
+    console.warn(yellow(`  dropped ${oversize.length} oversize question(s) (> ${MAX_QUESTION_CHARS} chars) — index limit`));
+  }
 
   if (!rows.length) {
     console.log(errors ? red(`\nNo items extracted (${errors} source error(s)).`) : green("\nNothing new — no items extracted."));
