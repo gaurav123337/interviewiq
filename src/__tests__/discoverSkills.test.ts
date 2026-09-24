@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  budgetCap, dedupeProposals, findSkillGaps, parseCatalogSkillNames,
+  budgetCap, buildSeedValuesSql, dedupeProposals, findSkillGaps, parseCatalogSkillNames,
   proposeSkillSeeds, sourceKey, skillNames, GAP_MIN
 } from "../../scripts/discover-skills-lib.js";
 
@@ -110,6 +110,32 @@ describe("dedupe + budget", () => {
     expect(budgetCap(props, 3)).toHaveLength(3);
     expect(budgetCap(props, 99)).toHaveLength(4);
     expect(budgetCap(null)).toEqual([]);
+  });
+});
+
+describe("buildSeedValuesSql — insert regression (live run 35992437395)", () => {
+  it("emits one pending expression per target column: 6 = 6", () => {
+    const cols = 6; /* (url, kind, origin, origin_detail, skill, status) */
+    const rows = proposeSkillSeeds(["React", "CSS"]);
+    const values = buildSeedValuesSql(rows);
+    expect(values.split("'", -1).length - 1).toBe(rows.length * 2 * cols); // 2 quotes per column per row
+    for (const row of values.split("), (")) {
+      expect(row.split(",")).toHaveLength(cols);
+    }
+  });
+
+  it("every row is status='pending' — the human approval gate", () => {
+    const values = buildSeedValuesSql(proposeSkillSeeds(["React"]));
+    expect(values.endsWith("'pending')")).toBe(true);
+    expect(values).not.toContain("'approved'");
+  });
+
+  it("escapes quotes (doubled, per SQL) and tolerates null/empty input", () => {
+    const values = buildSeedValuesSql([{ url: "https://x.dev/a'b", kind: "html", origin: "skill-auto", origin_detail: "o", skill: "SQL'ish" }]);
+    expect(values).toContain("a''b");
+    expect(values).toContain("SQL''ish");
+    expect(buildSeedValuesSql([])).toBe("");
+    expect(buildSeedValuesSql(null)).toBe("");
   });
 });
 
