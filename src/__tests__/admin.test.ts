@@ -10,7 +10,7 @@ import {
   BASE_LIMITS, aiEnabled, featureOn, getLimits, paywallOn, publishedFor,
   setAnnouncements, setPublishedQuestions, setRemoteConfig, markAnnouncementSeen, nextUnseenAnnouncement
 } from "../services/remoteConfig";
-import { addedLabel, bankItems, bankSkillChips, matchesSkill } from "../engine/bank";
+import { addedLabel, bankItems, bankSkillChips, matchesAllSkills, matchesSkill } from "../engine/bank";
 import { statusFilterPasses } from "../services/admin/questions";
 import type { QA } from "../types";
 import { queueEvent } from "../services/events";
@@ -130,6 +130,32 @@ describe("phase4 item A — added date, skills, status filter", () => {
     expect(statusFilterPasses(false, "draft")).toBe(true);
     expect(statusFilterPasses(true, "live")).toBe(true);
     expect(statusFilterPasses(false, "live")).toBe(false);
+  });
+
+  it("matchesAllSkills ANDs each selected skill; empty selection matches all", () => {
+    const reactTs = { q: "How do React hooks interact with TypeScript generics", a: "", kp: [], skills: ["React", "TypeScript"] };
+    expect(matchesAllSkills(reactTs, ["React"])).toBe(true);
+    expect(matchesAllSkills(reactTs, ["react", "typescript"])).toBe(true); /* case-insensitive */
+    expect(matchesAllSkills(reactTs, ["React", "Java"])).toBe(false); /* AND — one miss fails */
+    expect(matchesAllSkills(reactTs, [])).toBe(true);
+    /* text fallback covers untagged items per-skill */
+    expect(matchesAllSkills({ q: "How does the JVM garbage collector work", a: "", kp: [] }, ["jvm"])).toBe(true);
+    expect(matchesAllSkills({ q: "How does the JVM garbage collector work", a: "", kp: [] }, ["jvm", "react"])).toBe(false);
+  });
+
+  it("bankItems intersects across multiple skills; single-string skill arg stays compatible", () => {
+    setPublishedQuestions([
+      { id: 20, fieldId: "frontend", level: "senior", question: "React hooks with TS generics", answer: "", keyPoints: [], published: true, updatedAt: null, skills: ["React", "TypeScript"] },
+      { id: 21, fieldId: "frontend", level: "senior", question: "React reconciliation", answer: "", keyPoints: [], published: true, updatedAt: null, skills: ["React"] }
+    ]);
+    const both = bankItems("frontend", "", "", ["React", "TypeScript"]).items.map(i => i.q);
+    expect(both).toContain("React hooks with TS generics");
+    expect(both).not.toContain("React reconciliation"); /* only tagged React */
+    const one = bankItems("frontend", "", "", ["React"]).items.map(i => i.q);
+    expect(one).toContain("React hooks with TS generics");
+    expect(one).toContain("React reconciliation");
+    expect(bankItems("frontend", "", "", []).items.length).toBeGreaterThan(one.length); /* no filter = all */
+    expect(bankItems("frontend", "", "React").items.map(i => i.q)).toContain("React hooks with TS generics"); /* legacy arg */
   });
 
   it("addedLabel formats a date and hides missing/invalid timestamps", () => {

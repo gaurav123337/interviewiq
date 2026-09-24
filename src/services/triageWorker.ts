@@ -9,6 +9,8 @@
      { type: 'result', triage: Record<number, TriageResult> }
 */
 
+import { looksTruncated } from "../../scripts/draft-quality-lib.js";
+
 interface Draft {
   id: number;
   question: string;
@@ -74,6 +76,7 @@ function draftIssues(d: Draft): string[] {
   else if (q.length < 12) issues.push("question too short");
   else if (!q.includes("?") && !/^(how|what|why|when|where|who|describe|tell|design|explain|walk|build)/i.test(q))
     issues.push("looks like a statement, not a question");
+  if (looksTruncated(q)) issues.push("truncated title — review first");
   if (!a) issues.push("missing model answer");
   else if (a.length < 60) issues.push("answer too short");
   if (!d.keyPoints.length) issues.push("no key points");
@@ -82,6 +85,7 @@ function draftIssues(d: Draft): string[] {
 }
 
 function triageLevel(issues: string[]): "ready" | "needs-work" | "review-first" {
+  if (issues.some(i => i.startsWith("truncated title"))) return "review-first"; // fail-closed on fragments
   const n = issues.length;
   return n === 0 ? "ready" : n <= 2 ? "needs-work" : "review-first";
 }

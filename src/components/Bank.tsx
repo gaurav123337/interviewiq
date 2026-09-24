@@ -15,7 +15,7 @@ const THINK_SECONDS = 45;
 export function Bank() {
   const { state, practice } = useApp();
   const [q, setQ] = useState("");
-  const [skillSel, setSkillSel] = useState("");
+  const [skillsSel, setSkillsSel] = useState<string[]>([]);
   const [fieldSel, setFieldSel] = useState(state.ob.field ?? FIELDS[0].id);
   const [lvlSel, setLvlSel] = useState<LevelId | "all">("all");
   /* personal bank (Apply Kit) — questions collected from your interview rounds */
@@ -31,7 +31,7 @@ export function Bank() {
   const [learned, setLearned] = useState(learnedCount(getSrs()));
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const { field, items } = useMemo(() => bankItems(fieldSel, q, skillSel), [fieldSel, q, skillSel]);
+  const { field, items } = useMemo(() => bankItems(fieldSel, q, "", skillsSel), [fieldSel, q, skillsSel]);
   const skillChips = useMemo(
     () => bankSkillChips(field?.skills, bankItems(fieldSel, "").items),
     [fieldSel, field?.skills]
@@ -130,12 +130,16 @@ export function Bank() {
         ))}
       </div>
 
-      {/* skill filter — field skills ∪ published-question tags */}
+      {/* skill filter — multi-select (AND); field skills ∪ published-question tags */}
       {skillChips.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <FilterChip active={skillSel === ""} onClick={() => setSkillSel("")}>All skills</FilterChip>
+          <FilterChip active={skillsSel.length === 0} onClick={() => setSkillsSel([])}>All skills</FilterChip>
           {skillChips.map(s => (
-            <FilterChip key={s} active={skillSel.toLowerCase() === s.toLowerCase()} onClick={() => setSkillSel(s)}>🛠 {s}</FilterChip>
+            <FilterChip
+              key={s}
+              active={skillsSel.some(x => x.toLowerCase() === s.toLowerCase())}
+              onClick={() => setSkillsSel(sel => sel.some(x => x.toLowerCase() === s.toLowerCase()) ? sel.filter(x => x.toLowerCase() !== s.toLowerCase()) : [...sel, s])}
+            >🛠 {s}</FilterChip>
           ))}
         </div>
       )}

@@ -5,8 +5,9 @@ import { publishedFor } from "../services/remoteConfig";
 export type BankItem = QA & { lvl: LevelId; addedAt?: number | null; skills?: string[]; via?: string | null; viaUrl?: string | null };
 
 /** Flattens one field's questions across all levels, optionally filtered by search text
-    and/or skill. Includes admin-published question-bank updates. */
-export function bankItems(fieldSel: string, q: string, skill = ""): { field: ReturnType<typeof fieldById>; items: BankItem[] } {
+    and/or one skill string and/or a set of skills. Includes admin-published
+    question-bank updates. */
+export function bankItems(fieldSel: string, q: string, skill = "", skills: readonly string[] = []): { field: ReturnType<typeof fieldById>; items: BankItem[] } {
   const field = fieldById(fieldSel);
   let items: BankItem[] = [];
   for (const l of LEVELS) {
@@ -14,6 +15,7 @@ export function bankItems(fieldSel: string, q: string, skill = ""): { field: Ret
   }
   const s = skill.trim();
   if (s) items = items.filter(i => matchesSkill(i, s));
+  if (skills.length) items = items.filter(i => matchesAllSkills(i, skills));
   if (q) {
     const t = q.toLowerCase();
     items = items.filter(i =>
@@ -37,6 +39,12 @@ export function matchesSkill(item: Pick<BankItem, "q" | "a" | "kp" | "skills">, 
     (item.a ?? "").toLowerCase().includes(s) ||
     (item.kp ?? []).some(k => k.toLowerCase().includes(s))
   );
+}
+
+/** True when an item matches EVERY selected skill (AND — picking React + TypeScript
+    narrows to questions tagged/covering both). One selected skill ≡ matchesSkill. */
+export function matchesAllSkills(item: Pick<BankItem, "q" | "a" | "kp" | "skills">, skills: readonly string[]): boolean {
+  return skills.every(s => matchesSkill(item, s));
 }
 
 /** Skill chips for the public-bank filter: the field's own skills first, then any
