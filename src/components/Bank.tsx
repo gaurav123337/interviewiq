@@ -279,6 +279,11 @@ export function Bank() {
               <summary className="flex cursor-pointer list-none items-center gap-2.5">
                 <Chip tone="lvl">{levelById(i.lvl).icon} {levelById(i.lvl).name}</Chip>
                 {addedLabel(i.addedAt) && <Chip>Added {addedLabel(i.addedAt)}</Chip>}
+                {i.via && (
+                  i.viaUrl
+                    ? <a href={i.viaUrl} target="_blank" rel="noopener noreferrer"><Chip title={`via ${i.via}`}>via {i.via} ↗</Chip></a>
+                    : <Chip>via {i.via}</Chip>
+                )}
                 <span className="min-w-[140px] flex-1 text-[14.5px] font-bold leading-snug">{i.q}</span>
                 <span className="text-mut transition-transform group-open:rotate-90">▸</span>
               </summary>

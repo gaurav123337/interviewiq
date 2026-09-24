@@ -45,6 +45,7 @@ const SkillDetail      = lazy(() => import("./SkillDetail").then(m => ({ default
 const SystemDesign     = lazy(() => import("./SystemDesign").then(m => ({ default: m.SystemDesign })));
 const Articles         = lazy(() => import("./Articles").then(m => ({ default: m.Articles })));
 const Legal            = lazy(() => import("./Legal").then(m => ({ default: m.Legal })));             
+const SourcesPage      = lazy(() => import("./SourcesPage").then(m => ({ default: m.SourcesPage })));
 const ShareView        = lazy(() => import("./ShareView").then(m => ({ default: m.ShareView })));
 
 const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
@@ -193,7 +194,7 @@ export function App() {
       planner: "planner", roadmap: "roadmap", playground: "playground", admin: "admin",
       progress: "progress", team: "team", account: "account", legal: "legal",
       jobs: "jobs", articles: "articles", resources: "resources", counselor: "counselor",
-      "system-design": "systemDesign", learn: "learn",
+      "system-design": "systemDesign", learn: "learn", sources: "sources",
     };
     const onHashChange = () => {
       const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
@@ -338,6 +339,7 @@ export function App() {
           {view === "admin" && <Admin />}
           {view === "team" && <Team />}
           {view === "legal" && <Legal />}
+          {view === "sources" && <SourcesPage />}
           {view === "jobs" && <Jobs />}
           {view === "articles" && <Articles />}
           {view === "resources" && <Resources />}
@@ -360,6 +362,7 @@ export function App() {
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("privacy")}>Privacy</button>
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("refunds")}>Refunds</button>
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("shipping")}>Shipping</button>
+              <button className="transition-colors hover:text-ink" onClick={() => { window.location.hash = "sources"; nav("sources"); }}>Sources</button>
             </span>
           </div>
         </footer>

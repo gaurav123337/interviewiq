@@ -12,6 +12,7 @@ import { BAND_LABEL, BAND_ORDER, FIELDS, SKILLS, type Band } from "../data/skill
 import { applyManifestDiff, markManifestSeen, resourceQuality } from "../services/catalogMeta";
 import { getCareerProfile } from "../services/jobs";
 import { myResources, submitResource, type ResourceRow } from "../services/resources";
+import { communityDiscovered, type DiscoveredResourceRow } from "../services/discovery";
 import { build90DayPlan, buildPlan, gapAnalysis, levelUpDelta, suggestTrack } from "../services/skillCounselor";
 import { openSkillsReport } from "../services/skillsReport";
 import { getGoal, saveGoal } from "../services/goal";
@@ -40,6 +41,7 @@ export function Counselor() {
   const [target, setTarget] = useState<Band>("senior");
   const [gapsOnly, setGapsOnly] = useState(false);
   const [saved, setSaved] = useState<ResourceRow[]>([]);
+  const [community, setCommunity] = useState<DiscoveredResourceRow[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
   const { nav } = useApp();
   const [signals, setSignals] = useState<Record<string, SkillSignal>>({});
@@ -62,6 +64,9 @@ export function Counselor() {
   useEffect(() => subscribeCloud(setCloud), []);
 
   useEffect(() => { void myResources().then(setSaved).catch(() => {}); }, []);
+  /* Community-discovered strip (Item D4): approved crawler finds only — the
+     same L4-approved rows that power Sources & credits. Empty on any error. */
+  useEffect(() => { void communityDiscovered(4).then(setCommunity).catch(() => {}); }, []);
   useEffect(() => { void latestSignals().then(setSignals).catch(() => {}); }, []);
 
   const makePlan = () => {
@@ -438,6 +443,25 @@ export function Counselor() {
           </section>
         );
       })}
+
+      {community.length > 0 && (
+        <section className={`${cardCls} mt-4 p-6`}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-[15px] font-extrabold">🤝 Community discovered</h3>
+            <button className="text-[12px] font-bold text-acc hover:underline" onClick={() => { window.location.hash = "sources"; nav("legal"); }}>Sources & credits ↗</button>
+          </div>
+          <p className="mt-0.5 text-[12.5px] text-mut">Recently approved finds from the discovery engine — every link human-reviewed.</p>
+          <div className="mt-3 space-y-1.5">
+            {community.map(r => (
+              <a key={r.id} href={r.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 rounded-lg border border-line/10 bg-wht/[.03] px-3 py-2 text-[12px] transition-colors hover:border-line/25 hover:bg-wht/[.06]">
+                <span className="min-w-0 flex-1 truncate font-semibold text-acctxt hover:underline">{r.title}</span>
+                {r.attribution?.owner && r.attribution?.repo && <Chip>via {r.attribution.owner}/{r.attribution.repo}</Chip>}
+                {r.license && r.license !== "unknown" && r.license !== "no-license" && <Chip tone="ok">{r.license}</Chip>}
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="pb-4 pt-6 text-center text-[12px] text-fnt">
         The catalog is curated (docs/skill-counselor.md) — app-suggested links are reviewed, and personal saves pass the same safety guard as the Resources view.
