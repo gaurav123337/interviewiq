@@ -57,7 +57,8 @@ export const WORKFLOWS: WorkflowDef[] = [
   { id: "ai-problems.yml", label: "🧠 AI problem drafts (ai-problems)" },
   { id: "jobs-playwright.yml", label: "💼 Playwright job boards (jobs-playwright)" },
   { id: "discover-weekly.yml", label: "🔎 Skill-gap discovery (discover-weekly)" },
-  { id: "crawl-weekly.yml", label: "🕸️ Discovery crawl (manual dispatch)" }
+  { id: "crawl-weekly.yml", label: "🕸️ Discovery crawl (manual dispatch)" },
+  { id: "revalidate-weekly.yml", label: "🛡️ L5 resource re-validation (revalidate-weekly)" }
 ];
 
 /* ------------------------------------------------------------------ */
