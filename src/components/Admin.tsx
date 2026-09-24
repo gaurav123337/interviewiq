@@ -16,6 +16,7 @@ const QuestionsSection = lazy(() => import("./admin/QuestionsSection").then(m =>
 const ReviewInbox = lazy(() => import("./admin/ReviewInbox").then(m => ({ default: m.ReviewInbox })));
 const AutoFill = lazy(() => import("./admin/ImportSection").then(m => ({ default: m.AutoFill })));
 const ScraperSection = lazy(() => import("./admin/ScraperSection").then(m => ({ default: m.ScraperSection })));
+const DiscoverySection = lazy(() => import("./admin/DiscoverySection").then(m => ({ default: m.DiscoverySection })));
 const ConfigSection = lazy(() => import("./admin/ConfigSection").then(m => ({ default: m.ConfigSection })));
 const ActivitySection = lazy(() => import("./admin/ActivitySection").then(m => ({ default: m.ActivitySection })));
 const QualitySection = lazy(() => import("./admin/QualitySection").then(m => ({ default: m.QualitySection })));
@@ -32,7 +33,7 @@ const ContentCuration = lazy(() => import("./admin/ContentCuration").then(m => (
 const SiteConfigSection = lazy(() => import("./admin/SiteConfigSection").then(m => ({ default: m.SiteConfigSection })));
 
 
-type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "config" | "siteConfig" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts" | "contentCuration";
+type Section = "overview" | "users" | "announcements" | "questions" | "review" | "import" | "scraper" | "discovery" | "config" | "siteConfig" | "activity" | "quality" | "billing" | "teams" | "security" | "secrets" | "resources" | "trends" | "content" | "skillRoadmaps" | "aiCosts" | "contentCuration";
 
 interface NavItem { id: Section; label: string; icon: string; }
 interface NavGroup { label: string; icon: string; items: NavItem[]; }
@@ -48,6 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
     { id: "questions", label: "Question Bank", icon: "\u2753" },
     { id: "review", label: "Review Inbox", icon: "\u{1F6C2}" },
     { id: "scraper", label: "Scraper", icon: "\u{1F577}\uFE0F" },
+    { id: "discovery", label: "Discovery", icon: "\u{1F50E}" },
     { id: "contentCuration", label: "Content Pipeline", icon: "\u{1F4DD}" },
     { id: "content", label: "Content CMS", icon: "\u270D\uFE0F" },
     { id: "skillRoadmaps", label: "Skill Roadmaps", icon: "\u{1F6E4}\uFE0F" },
@@ -246,6 +248,7 @@ export function Admin() {
           <AutoFill busy={busy} setBusy={setBusy} onChanged={async () => { setQuestions(getPublishedQuestions()); }} />
         )}
         {section === "scraper" && <ScraperSection busy={busy} setBusy={setBusy} />}
+        {section === "discovery" && <DiscoverySection />}
         {section === "config" && <ConfigSection config={config} setConfig={setConfig} busy={busy} setBusy={setBusy} />}
         {section === "siteConfig" && <SiteConfigSection />}
         {section === "activity" && <ActivitySection busy={busy} setBusy={setBusy} />}

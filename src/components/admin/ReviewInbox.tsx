@@ -4,7 +4,7 @@ import { FIELDS, LEVELS } from "../../data";
 import { chat, aiAvailable } from "../../ai";
 import { type DuplicateMatch } from "../../services/duplicates";
 import { batchDeleteQuestions, batchSetQuestionsPublished, createQuestion, deleteQuestion, setQuestionPublished, updateQuestion, adminMissCandidates, type MissCandidate } from "../../services/admin";
-import { getPublishedQuestions } from "../../services/remoteConfig";
+import { getPublishedQuestions, attributionLabel } from "../../services/remoteConfig";
 import { toast } from "../../toast";
 import { pushUndo, popUndo, peekUndo, onUndoChange, getUndoHistory, clearUndo } from "../../services/undoStack";
 import { cardCls, btnPrimary, btnGhost, btnDanger, btnSm, btnSoft, Chip } from "../ui";
@@ -810,6 +810,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
           <DraftCard
             key={d.id}
             d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]}
+            via={attributionLabel(d)?.via} viaUrl={attributionLabel(d)?.url}
             expanded={expandedDrafts.has(d.id)} busy={busy} focused={focusedIdx === idx}
             onToggle={() => toggle(d.id)} onExpand={() => toggleExpand(d.id)}
             onEdit={(patch) => edit(d.id, patch)}
@@ -941,8 +942,9 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
 }
 
 /* ── Draft card component (shared by virtualized and normal rendering) ── */
-function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, onToggle, onExpand, onEdit, onSave, onPublish, onDelete, onDragStart, onDragOver, onDrop, onDragEnd }: {
+function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, via, viaUrl, onToggle, onExpand, onEdit, onSave, onPublish, onDelete, onDragStart, onDragOver, onDrop, onDragEnd }: {
   d: { id: number; fieldId: string; level: string; question: string; answer: string; keyPoints: string[] };
+  via?: string | null; viaUrl?: string | null;
   e: { fieldId: string; level: string; question: string; answer: string; keyPoints: string[] };
   sel: boolean; t?: { issues: string[]; level: string; dups: { text: string; sim: number }[] };
   ai?: { score: number; note: string }; expanded: boolean; busy: boolean; focused?: boolean;
@@ -998,6 +1000,11 @@ function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, onToggle, onExpa
             ))}
             {ai && (
               <Chip tone={ai.score >= 7 ? "ok" : ai.score >= 4 ? "warn" : "bad"}>✨ {ai.score}/10</Chip>
+            )}
+            {via && (
+              viaUrl
+                ? <a href={viaUrl} target="_blank" rel="noopener noreferrer"><Chip title={`source: ${viaUrl}`}>via {via} ↗</Chip></a>
+                : <Chip>via {via}</Chip>
             )}
             {/* Tag change indicator */}
             {(e.level !== d.level || e.fieldId !== d.fieldId) && (

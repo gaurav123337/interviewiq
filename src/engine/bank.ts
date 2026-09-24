@@ -2,7 +2,7 @@ import type { LevelId, QA } from "../types";
 import { LEVELS, fieldById } from "../data";
 import { publishedFor } from "../services/remoteConfig";
 
-export type BankItem = QA & { lvl: LevelId; addedAt?: number | null; skills?: string[] };
+export type BankItem = QA & { lvl: LevelId; addedAt?: number | null; skills?: string[]; via?: string | null; viaUrl?: string | null };
 
 /** Flattens one field's questions across all levels, optionally filtered by search text
     and/or skill. Includes admin-published question-bank updates. */

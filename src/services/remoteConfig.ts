@@ -257,6 +257,10 @@ export interface PublishedQuestion {
   /** Takedown state (Phase 4 Item D3) — absent on pre-migration caches. Taken-down
       questions are excluded from every public read (publishedFor) and badged in admin. */
   status?: "active" | "taken_down";
+  /** Provenance (Phase 4 Item D4) — meta carries attribution captured free by the
+      scraper/crawler; source_url is the page the draft came from. Both null-safe. */
+  meta?: { attribution?: { source?: string; owner?: string; repo?: string; topic?: string; license?: string } | null } | null;
+  sourceUrl?: string | null;
 }
 
 export function getPublishedQuestions(): PublishedQuestion[] {
@@ -267,11 +271,27 @@ export function setPublishedQuestions(qs: PublishedQuestion[]): void {
   storageSet(STORAGE_KEYS.publishedQ, qs);
 }
 
+/** Human label for a question's attribution: "owner/repo" beats the bare
+    source (host); falls back to the source_url host. Null when unknown —
+    callers render nothing (never a dead link or an empty chip). */
+export function attributionLabel(p: Pick<PublishedQuestion, "meta" | "sourceUrl">): { via: string; url: string | null } | null {
+  const a = p.meta?.attribution;
+  if (a?.owner && a?.repo) return { via: `${a.owner}/${a.repo}`, url: p.sourceUrl ?? null };
+  if (a?.source) return { via: a.source, url: p.sourceUrl ?? null };
+  if (p.sourceUrl) {
+    try { return { via: new URL(p.sourceUrl).host, url: p.sourceUrl }; } catch { return null; }
+  }
+  return null;
+}
+
 /** Published questions for one field+level. Plain-QA assignable (coach/compose
     pools keep working); `addedAt`/`skills` ride along for the bank UI.
     Taken-down questions never surface here (takedown engine, Item D3). */
-export function publishedFor(fieldId: string, level: LevelId): (QA & { addedAt: number | null; skills: string[] })[] {
+export function publishedFor(fieldId: string, level: LevelId): (QA & { addedAt: number | null; skills: string[]; via?: string | null; viaUrl?: string | null })[] {
   return getPublishedQuestions()
     .filter(p => p.published && p.status !== "taken_down" && p.fieldId === fieldId && p.level === level)
-    .map(p => ({ q: p.question, a: p.answer, kp: p.keyPoints, addedAt: p.addedAt ?? null, skills: p.skills ?? [] }));
+    .map(p => {
+      const att = attributionLabel(p);
+      return { q: p.question, a: p.answer, kp: p.keyPoints, addedAt: p.addedAt ?? null, skills: p.skills ?? [], via: att?.via ?? null, viaUrl: att?.url ?? null };
+    });
 }
