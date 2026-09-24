@@ -24,6 +24,9 @@ export interface RoutedItems {
   problems: { id: string; title: unknown; pattern: string }[];
   resources: unknown[];
   attribution: Attribution;
+  /** Hard-noise drops (draft-quality-lib): { reason, item } — surfaced as
+      run-report notices, never written to the bank. */
+  noise: { reason: string; item: unknown }[];
 }
 
 export declare function titleFromUrl(url: string): string;

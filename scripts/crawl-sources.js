@@ -170,6 +170,10 @@ export async function crawlSeed(seed, opts = {}) {
       problems.push(...routed.problems);
       perSeed[key].extracted += routed.qa.length;
       perSeed[key].problems += routed.problems.length;
+      if (routed.noise.length) {
+        perSeed[key].noiseDropped = (perSeed[key].noiseDropped ?? 0) + routed.noise.length;
+        perSeed[key].lastNoiseReason = routed.noise[routed.noise.length - 1].reason;
+      }
     }
 
     /* depth 0 pages always expand; deeper pages only when HTML */
