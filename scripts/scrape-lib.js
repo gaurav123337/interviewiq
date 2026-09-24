@@ -2,6 +2,8 @@
 /* Dependency-free extraction helpers for the weekly question scraper.
    Kept pure so the same functions can be unit-tested from vitest. */
 
+import { deriveSkills } from "./draft-quality-lib.js";
+
 /** Normalizes a raw scraped item into the question schema, or null if unusable. */
 export function normalizeItem(raw, source) {
   const fieldId = String(raw.fieldId ?? raw.field ?? raw.field_id ?? source.fieldId ?? "").trim();
@@ -23,8 +25,14 @@ export function normalizeItem(raw, source) {
   if (company) meta.company = company;
   if (difficulty) meta.difficulty = difficulty;
   if (raw.url) meta.url = String(raw.url);
+  /* skill tags (Bank's react/java/… filters): explicit item tags win; the
+     question+answer text is scanned against the canonical skill list so
+     cron, discovery, and browser Run-now all tag consistently. */
+  const skills = Array.isArray(raw.skills) && raw.skills.length
+    ? raw.skills.map((s) => String(s).trim()).filter(Boolean)
+    : deriveSkills(`${question} ${answer}`);
   return {
-    fieldId, level, question, answer, keyPoints,
+    fieldId, level, question, answer, keyPoints, skills,
     meta, sourceId: String(source.id ?? ""), sourceUrl: String(source.url ?? "")
   };
 }
@@ -304,9 +312,9 @@ export function buildUpsertSql(rows, suppressions) {
   const [kept] = partitionOversizeQuestions(rows);
   if (!kept.length) return "";
   const values = kept
-    .map((r) => `(${sqlStr(r.fieldId)}, ${sqlStr(r.level)}, ${sqlStr(r.question)}, ${sqlStr(r.answer)}, '${JSON.stringify(r.keyPoints).replace(/'/g, "''")}'::jsonb, ${sqlStr(r.sourceId ?? "")}, ${sqlStr(r.sourceUrl ?? "")}, '${JSON.stringify(r.meta ?? {}).replace(/'/g, "''")}'::jsonb, false)`)
+    .map((r) => `(${sqlStr(r.fieldId)}, ${sqlStr(r.level)}, ${sqlStr(r.question)}, ${sqlStr(r.answer)}, '${JSON.stringify(r.keyPoints).replace(/'/g, "''")}'::jsonb, ${sqlStr(r.sourceId ?? "")}, ${sqlStr(r.sourceUrl ?? "")}, '${JSON.stringify(r.meta ?? {}).replace(/'/g, "''")}'::jsonb, '${JSON.stringify(r.skills ?? []).replace(/'/g, "''")}'::jsonb, false)`)
     .join(",\n  ");
-  return `insert into public.published_questions (field_id, level, question, answer, key_points, source_id, source_url, meta, published)
+  return `insert into public.published_questions (field_id, level, question, answer, key_points, source_id, source_url, meta, skills, published)
 values
   ${values}
 on conflict (question)${buildSuppressionClause(suppressions, "question")} do nothing;`;

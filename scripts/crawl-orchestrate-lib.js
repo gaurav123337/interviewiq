@@ -14,6 +14,7 @@
 import { normalizeUrl } from "./crawl-lib.js";
 import { slugify, patternFromTitle } from "./ai-draft-lib.js";
 import { sqlStr } from "./scrape-lib.js";
+import { partitionNoiseItems } from "./draft-quality-lib.js";
 
 /* ------------------------------------------------------------------ */
 /* link classification                                                 */
@@ -92,12 +93,16 @@ export function licenseGate(license) {
 /** Routes scrape-lib items into the three discovery targets. `seed` + optional
  *  license feed meta.attribution / meta.needs_license_review. Answered items
  *  (or question-shaped ones) become Q&A drafts; unanswered items whose title
- *  matches a known problem pattern become problem candidates. */
+ *  matches a known problem pattern become problem candidates. Hard noise
+ *  (URLs-as-questions, JSON fragments, playground links, tracking params)
+ *  is dropped before routing — the 2026-09-24 live crawl showed ~85% of
+ *  HN/search-engine drafts were unusable; reviewers should see signal. */
 export function routeItems(items, seed, license) {
   const gate = licenseGate(license);
   const attribution = attributionFor(seed, { license: gate.license });
-  const out = { qa: [], problems: [], resources: [], attribution };
-  for (const item of items ?? []) {
+  const [keep, noise] = partitionNoiseItems(items);
+  const out = { qa: [], problems: [], resources: [], attribution, noise };
+  for (const item of keep) {
     const meta = { ...(item.meta ?? {}), attribution };
     if (gate.needsReview) meta.needs_license_review = true;
     const hasAnswer = typeof item.answer === "string" && item.answer.trim().length > 0;

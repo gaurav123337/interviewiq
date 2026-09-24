@@ -943,7 +943,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
 
 /* ── Draft card component (shared by virtualized and normal rendering) ── */
 function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, via, viaUrl, onToggle, onExpand, onEdit, onSave, onPublish, onDelete, onDragStart, onDragOver, onDrop, onDragEnd }: {
-  d: { id: number; fieldId: string; level: string; question: string; answer: string; keyPoints: string[] };
+  d: { id: number; fieldId: string; level: string; question: string; answer: string; keyPoints: string[]; skills?: string[] };
   via?: string | null; viaUrl?: string | null;
   e: { fieldId: string; level: string; question: string; answer: string; keyPoints: string[] };
   sel: boolean; t?: { issues: string[]; level: string; dups: { text: string; sim: number }[] };
@@ -1006,6 +1006,7 @@ function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, via, viaUrl, onT
                 ? <a href={viaUrl} target="_blank" rel="noopener noreferrer"><Chip title={`source: ${viaUrl}`}>via {via} ↗</Chip></a>
                 : <Chip>via {via}</Chip>
             )}
+            {(d.skills ?? []).map(s => <Chip key={s} tone="cat">🛠 {s}</Chip>)}
             {/* Tag change indicator */}
             {(e.level !== d.level || e.fieldId !== d.fieldId) && (
               <span className="text-[10px] font-bold text-warn">modified</span>

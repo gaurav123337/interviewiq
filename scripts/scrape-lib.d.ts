@@ -4,6 +4,9 @@ export interface ScrapeItem {
   question: string;
   answer: string;
   keyPoints: string[];
+  /** Canonical skill tags (Bank filter) — derived from question+answer text
+      when the source didn't provide any (draft-quality-lib.deriveSkills). */
+  skills?: string[];
   meta?: Record<string, unknown>;
   sourceId?: string;
   sourceUrl?: string;
