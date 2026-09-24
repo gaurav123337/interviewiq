@@ -33,3 +33,6 @@ export declare function budgetCap(
   proposals: SkillSeedProposal[] | null | undefined,
   maxTotal?: number
 ): SkillSeedProposal[];
+export declare function buildSeedValuesSql(
+  proposals: SkillSeedProposal[] | null | undefined
+): string;

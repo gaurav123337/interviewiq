@@ -102,3 +102,16 @@ export function dedupeProposals(proposals, existingUrls) {
 export function budgetCap(proposals, maxTotal = 20) {
   return (proposals ?? []).slice(0, maxTotal);
 }
+
+/** Pure: one VALUES row per proposal for
+ *    insert into public.discovery_seeds (url, kind, origin, origin_detail,
+ *      skill, status) values ...
+ *  Every row gets status='pending' — the human approval gate. Regression:
+ *  the expression count MUST match the target-column count (the 2026-09-24
+ *  live run shipped 5 expressions for 6 columns and every insert failed). */
+export function buildSeedValuesSql(proposals) {
+  const q = (s) => String(s ?? "").replace(/'/g, "''");
+  return (proposals ?? [])
+    .map(p => `('${q(p.url)}', '${q(p.kind)}', '${q(p.origin)}', '${q(p.origin_detail)}', '${q(p.skill)}', 'pending')`)
+    .join(", ");
+}

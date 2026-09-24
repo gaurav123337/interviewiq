@@ -19,7 +19,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  budgetCap, dedupeProposals, findSkillGaps, parseCatalogSkillNames, proposeSkillSeeds
+  budgetCap, buildSeedValuesSql, dedupeProposals, findSkillGaps, parseCatalogSkillNames, proposeSkillSeeds
 } from "./discover-skills-lib.js";
 
 const API = "https://api.supabase.com/v1";
@@ -203,13 +203,10 @@ export async function main() {
     return;
   }
 
-  const values = kept.map(p =>
-    `('${p.url.replace(/'/g, "''")}', '${p.kind}', '${p.origin}', '${p.origin_detail.replace(/'/g, "''")}', '${p.skill.replace(/'/g, "''")}')`
-  ).join(", ");
   try {
     await runSql(
       `insert into public.discovery_seeds (url, kind, origin, origin_detail, skill, status)
-       values ${values}
+       values ${buildSeedValuesSql(kept)}
        on conflict (url) do nothing`
     );
     console.log(green(`✓ Queued ${kept.length} pending seed(s) — review in Admin → Discovery.`));
