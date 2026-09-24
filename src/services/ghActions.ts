@@ -55,8 +55,8 @@ export interface WorkflowDef {
 export const WORKFLOWS: WorkflowDef[] = [
   { id: "scrape-weekly.yml", label: "🕷️ Question scraper (scrape-weekly)" },
   { id: "ai-problems.yml", label: "🧠 AI problem drafts (ai-problems)" },
-  { id: "jobs-playwright.yml", label: "💼 Playwright job boards (jobs-playwright)" }
-  /* discover-weekly.yml joins here when Item D lands */
+  { id: "jobs-playwright.yml", label: "💼 Playwright job boards (jobs-playwright)" },
+  { id: "discover-weekly.yml", label: "🔎 Discovery crawler (discover-weekly)" }
 ];
 
 /* ------------------------------------------------------------------ */

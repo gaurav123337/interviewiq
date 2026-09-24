@@ -12,13 +12,15 @@
 | B — Scraper run reports + GH Actions cron log | `scraper_runs`, run-log & cron-log cards | #67 | **Merged + migrated + deployed** | done (`scraper-runs.sql` applied 2026-09-23) |
 | C — Playwright job scraping | `jobs` source `playwright`, targets data, daily workflow | #68 | **Merged + verified live** (34 jobs; YC 14, WWR 20) | none |
 | D1 — Pure discovery engines | `discover-lib.js`, `crawl-lib.js` (zero I/O) | #69 | **Merged** | none |
-| D3 — Takedown engine (standalone) | soft-delete + suppressions + audit + admin UI | #72 | **PR open, 5 gates green** | run `supabase/discovery.sql` |
-| — hotfix: oversize upsert + ai-clean scope | batch-poisoning fix, cron AI-clean now works | #71 | **PR open, 5 gates green** | none |
-| D2 — Discovery orchestrator + storage | `crawl-sources.js`, `discovery_seeds`/`discovered_resources` | — | not started | — |
+| D3 — Takedown engine (standalone) | soft-delete + suppressions + audit + admin UI | #72 | **Merged + migrated + deployed** | done (`discovery.sql` applied 2026-09-23, incl. D2 tables) |
+| — hotfix: oversize upsert + ai-clean scope | batch-poisoning fix, cron AI-clean now works | #71 | **Merged** | none |
+| — hotfix: missing `yellow()` helper | nightly crashed after extraction (no upsert, no report) | #73 | **Merged + verified live** (330 drafts upserted) | none |
+| — hotfix: oversize drops are notices | nightly exited 1 forever on a recurring 120k-char item | #74 | **Merged + verified live** (green run, errors=0) | none |
+| D2 — Discovery orchestrator + storage | `crawl-sources.js`, `discovery_seeds`/`discovered_resources` | — | **built, 5 gates green** (PR next) | run `discovery.sql` (already live from D3) |
 | D4 — Admin discovery UI + credits | Discover-from-URL card, approval queue, credits pages | — | not started | — |
 | D5 — Skill-gap auto-discovery + weekly workflow | `discover-skills.js`, `discover-weekly.yml` | — | not started | — |
 
-Test baselines: Item A 1298 → B 1311 → C 1327 → D1 1345 → #71 1349 → D3 1361 (all with the 5-gate cadence: typecheck → build → vitest → eval:rag 41 → deno 72).
+Test baselines: Item A 1298 → B 1311 → C 1327 → D1 1345 → #71 1349 → D3 1361 → D2 1385 (all with the 5-gate cadence: typecheck → build → vitest → eval:rag 41 → deno).
 
 ## Key decisions & facts (carry into D2/D4/D5)
 
@@ -35,4 +37,5 @@ Test baselines: Item A 1298 → B 1311 → C 1327 → D1 1345 → #71 1349 → D
   - **RAG needs no propagation:** the corpus comes from static `content/rag-seed/*.md` (`gen-rag-corpus.mjs`), not scraped questions. Do not touch `embed()`/`embedQuery()` or the `"text-embedding-3-small"` literal in `rag-eval.test.ts`.
 - **Migrations applied on the live project so far:** `content-sourcing.sql` (A), `scraper-runs.sql` (B, incl. admin-insert policy), `jobs.meta jsonb` (C). D3's `discovery.sql` is pending PR #72 merge.
 - **Process hygiene that bit us:** `&&`-chains with pipes mask gate exit codes — verify each gate's `$?` (or `echo GATE=$?`) before declaring green. `import.meta.url` in vitest is not file-scheme here; browser-typed tests can't import `node:fs` (use `resolveJsonModule` JSON imports). Fake Supabase clients should be *returned* by the mocked `getSupabaseClient`, and model "column missing" as a single failing update, not a permanently dead table.
-- **Recommended D sub-order** (per plan): D1 → D3 → D2 → D4 → D5. Next: D2 turns the pure engines (D1) into `crawl-sources.js` behind the approval gate, reporting into `scraper_runs.per_source`.
+- **Recommended D sub-order** (per plan): D1 → D3 → D2 → D4 → D5. **D2 built** (2026-09-23): `crawl-sources.js` crawls APPROVED seeds only (approval gate = crawl trigger), BFS within Budget, robots-checked, reuses `extractItems`/`buildUpsertSql` for drafts, classifies links via `crawl-orchestrate-lib.js` (qa / problem-candidate / resource), inserts `discovered_resources` pending, reports into `scraper_runs` (trigger 'cron'). Per-page fetch failures are counted notices (a seed errors only when nothing loads); problem candidates come from both extracted titles and problem-shaped links. Note: `deno task test` has 8 pre-existing failures on main (`fnjudge.test.ts`, `jsfunctions.test.ts` — jsdom/runner, unrelated); the gate is green **relative to main** (delta +24 passing).
+- **Nightly cron is now fully healthy (2026-09-23):** first green end-to-end run inserted **330 drafts** with the oversize drop surfaced as a notice. Remaining owner action: the AI-clean step gets `AI HTTP 401` — the key stored in Admin → Secrets → AI pipeline is rejected; replace it to re-enable cleaning.

@@ -8,6 +8,7 @@ describe("WORKFLOWS", () => {
     const ids = WORKFLOWS.map(w => w.id);
     expect(ids).toContain("scrape-weekly.yml");
     expect(ids).toContain("jobs-playwright.yml"); /* Phase 4 Item C */
+    expect(ids).toContain("discover-weekly.yml"); /* Phase 4 Item D2 */
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
