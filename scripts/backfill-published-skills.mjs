@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { deriveSkills } from "./draft-quality-lib.js";
 
-const rows = JSON.parse(readFileSync("backfill-rows.json", "utf8")).filter(r => r.id !== 121); /* "refactoring benefits" — CSS came only from "styling" in the answer; no real CSS content */
+const rows = JSON.parse(readFileSync("backfill-rows.json", "utf8")).filter(r => r.id !== 121 && r.id !== 3308); /* 121: CSS came only from "styling" in a refactoring answer; 3308: SQL came only from "SQL injection" in a security-prep answer — incidental mentions, not skill content */
 
 const out = [];
 const tagCounts = new Map();

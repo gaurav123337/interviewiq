@@ -25,6 +25,18 @@ describe("deriveSkills — canonical tags for the Bank's skill filters", () => {
     expect(deriveSkills("tailwind vs plain CSS")).toEqual(["CSS"]);
   });
 
+  it("tags topic shelves (system design, patterns, SOLID, TDD, FP) without over-matching", () => {
+    expect(deriveSkills("Design a URL shortening service like Bit.ly")).toEqual(["System Design"]);
+    expect(deriveSkills("system design interviews")).toEqual(["System Design"]);
+    expect(deriveSkills("How would you design a rate limiter?")).toEqual([]); /* not question-leading */
+    expect(deriveSkills("What is the Law of Demeter?")).toEqual(["Design Patterns"]);
+    expect(deriveSkills("Explain cohesion and loose coupling")).toEqual(["Design Patterns"]);
+    expect(deriveSkills("Name the SOLID principles")).toEqual(["SOLID"]);
+    expect(deriveSkills("a solid understanding of algorithms")).toEqual([]); /* bare lowercase 'solid' never matches */
+    expect(deriveSkills("In TDD, why write tests first?")).toEqual(["TDD"]);
+    expect(deriveSkills("What defines a pure function?")).toEqual(["Functional Programming"]);
+  });
+
   it("never guesses unknown technologies and tolerates empty input", () => {
     expect(deriveSkills("Explain the CAP theorem and consistency models.")).toEqual([]);
     expect(deriveSkills("")).toEqual([]);
@@ -42,6 +54,15 @@ describe("noiseReason — the live crawl's noise, classified", () => {
     /* repo-name items are readable-but-thin — the review-first tier, not hard noise */
     expect(noiseReason("What the f*ck Python? 😱")).toBeNull();
     expect(looksTruncated("What the f*ck Python? 😱")).toBe(true);
+  });
+
+  it("catches HN announcement/promo stories, but not Ask-HN prep questions", () => {
+    expect(noiseReason("Tell HN: Interviewed with Triplebyte? Your profile is about to become public")).toBe("hn-story");
+    expect(noiseReason("Show HN: Oasys – system design interview platform")).toBe("hn-story");
+    expect(noiseReason("show hn: pair programming whiteboard")).toBe("hn-story");
+    /* Ask HN = someone asking a real (if scrappy) question — reviewers decide */
+    expect(noiseReason("Ask HN: How do you prepare for system design interviews?")).toBeNull();
+    expect(looksTruncated("Ask HN: How do you prepare for system design interviews?")).toBe(false);
   });
 
   it("passes legit interview questions (null = keep)", () => {

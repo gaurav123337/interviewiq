@@ -18,7 +18,9 @@ export const CANONICAL_SKILLS = [
   "JavaScript", "TypeScript", "HTML", "CSS", "Node.js", "Python", "Java",
   "Kotlin", "Swift", "Go", "Rust", "C++", "C#", "PHP", "Ruby",
   "SQL", "PostgreSQL", "MongoDB", "Redis", "GraphQL",
-  "Docker", "Kubernetes", "AWS", "Git", "Django", "Spring", "Rails", "Flutter"
+  "Docker", "Kubernetes", "AWS", "Git", "Django", "Spring", "Rails", "Flutter",
+  /* topic shelves (2026-09-24): the static bank's largest untagged clusters */
+  "System Design", "Design Patterns", "SOLID", "TDD", "Functional Programming"
 ];
 
 const SKILL_ALIASES = [
@@ -55,7 +57,17 @@ const SKILL_ALIASES = [
   { canonical: "Django", re: /\bdjango\b/i },
   { canonical: "Spring", re: /\bspring(boot)?\b/i },
   { canonical: "Rails", re: /\brails\b/i },
-  { canonical: "Flutter", re: /\bflutter\b/i }
+  { canonical: "Flutter", re: /\bflutter\b/i },
+  /* topic shelves — tight phrases/acronyms only; bare words like "design" or
+     "solid" ("a solid understanding") must never match. "System Design" also
+     catches question-leading imperatives ("Design a URL shortener…") but not
+     "How would you design a rate limiter?" (not at the start). */
+  { canonical: "System Design", re: /\bsystem[-\s]design\b|^design\s+(a|an|the)\b/i },
+  { canonical: "Design Patterns", re: /\bdesign\s+patterns?\b|\banti[-\s]?corruption\s+layer\b|\blaw\s+of\s+demeter\b|\binversion\s+of\s+control\b|\bdependency\s+(injection|hell)\b|\bactive\s+record\b|\bdata\s+mapper\b|\bcohesion\b|\bcoupling\b|\bseparation\s+of\s+concerns\b|\bsingleton\b/i },
+  { canonical: "SOLID", re: /\bsolid\s+principles?\b/i },
+  { canonical: "SOLID", re: /\bSOLID\b/ }, /* bare acronym: case-sensitive to avoid "a solid understanding" */
+  { canonical: "TDD", re: /\btest[-\s]driven\s+development\b|\bTDD\b/i },
+  { canonical: "Functional Programming", re: /\bpure\s+functions?\b|\bfunctional\s+programming\b/i }
 ];
 
 /** Pure: canonical skill names detected in free text (title, answer, source).
@@ -76,8 +88,8 @@ export function deriveSkills(text) {
 /** Pure: hard-noise classifier for scraped/draft question text.
  *  Returns a machine reason, or null when the text is worth a human's time.
  *  "hard" = a human could NEVER publish it as-is (URLs, JSON, tracked-out
- *  query strings, CJK text). Low-value-but-readable text (truncated HN
- *  titles) returns "truncated-title" — reviewers see why it was flagged. */
+ *  query strings, CJK text, HN announcement/promo stories). Low-value-but-readable
+ *  text (truncated titles, "Ask HN:" prep questions) stays review-tier. */
 export function noiseReason(text) {
   const q = String(text ?? "").trim();
   if (!q) return "empty";
@@ -85,6 +97,7 @@ export function noiseReason(text) {
   if (/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0400-\u04ff]/.test(q)) return "non-english";
   const lower = q.toLowerCase();
   if (/^(https?:\/\/|www\.)/.test(lower)) return "url-as-question";
+  if (/^(tell|show) hn:/.test(lower)) return "hn-story"; // announcements/promos — never interview questions ("Ask HN:" prep questions stay review-tier)
   if (/\b(codepen\.io|jsfiddle\.net|stackblitz\.com|codesandbox\.io|replit\.com)\b/.test(lower)) return "playground-link";
   if (/(\?|&)(utm_|fbclid|gclid|gi=|editors=)/.test(lower)) return "tracking-params";
   if (/(_tags":|_highlights":|objectid|nbhits|url":|title":)/.test(lower)) return "json-fragment";
