@@ -5,9 +5,9 @@ import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { createQuestion, deleteQuestion, restoreQuestion, setQuestionPublished, takeDownQuestion, statusFilterPasses, type QuestionStatusFilter } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
-import { addedLabel } from "../../engine";
+import { addedLabel, adminSkillChips, matchesAllSkills, toBankItem } from "../../engine";
 import { toast } from "../../toast";
-import { btnPrimary, btnSm, btnDanger, btnGhost, cardCls, Chip, Modal } from "../ui";
+import { btnPrimary, btnSm, btnDanger, btnGhost, cardCls, Chip, FilterChip, Modal } from "../ui";
 
 /* ------------------------------------------------------------------ */
 /* Question bank — publish admin-curated questions                     */
@@ -33,6 +33,8 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
   const [filterField, setFilterField] = useState("");
   const [filterLevel, setFilterLevel] = useState("");
   const [filterStatus, setFilterStatus] = useState<QuestionStatusFilter>("all");
+  const [filterSkills, setFilterSkills] = useState<string[]>([]);
+  const skillChips = useMemo(() => adminSkillChips(list), [list]);
   const filteredList = useMemo(() => {
     let out = list;
     const q = search.toLowerCase().trim();
@@ -40,10 +42,11 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
     if (filterField) out = out.filter(d => d.fieldId === filterField);
     if (filterLevel) out = out.filter(d => d.level === filterLevel);
     if (filterStatus !== "all") out = out.filter(d => statusFilterPasses(d.published, filterStatus));
+    if (filterSkills.length) out = out.filter(d => matchesAllSkills(toBankItem(d), filterSkills));
     return out;
-  }, [list, search, filterField, filterLevel, filterStatus]);
-  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterStatus, list.length]);
-  const filtersActive = !!(search || filterField || filterLevel || filterStatus !== "all");
+  }, [list, search, filterField, filterLevel, filterStatus, filterSkills]);
+  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterStatus, filterSkills.length, list.length]);
+  const filtersActive = !!(search || filterField || filterLevel || filterStatus !== "all" || filterSkills.length);
 
   const publish = async () => {
     if (!question.trim()) { toast("Question is required"); return; }
@@ -101,8 +104,20 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
               <option value="draft">🔴 Draft</option>
               <option value="live">🟢 Live</option>
             </select>
+            {skillChips.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <FilterChip active={filterSkills.length === 0} onClick={() => setFilterSkills([])}>All skills</FilterChip>
+                {skillChips.map(s => (
+                  <FilterChip
+                    key={s}
+                    active={filterSkills.some(x => x.toLowerCase() === s.toLowerCase())}
+                    onClick={() => setFilterSkills(sel => sel.some(x => x.toLowerCase() === s.toLowerCase()) ? sel.filter(x => x.toLowerCase() !== s.toLowerCase()) : [...sel, s])}
+                  >🛠 {s}</FilterChip>
+                ))}
+              </div>
+            )}
             {filtersActive && (
-              <button className={btnGhost + btnSm} onClick={() => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterStatus("all"); }}>Clear</button>
+              <button className={btnGhost + btnSm} onClick={() => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterStatus("all"); setFilterSkills([]); }}>Clear</button>
             )}
           </div>
         )}

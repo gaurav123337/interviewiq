@@ -10,7 +10,7 @@ import {
   BASE_LIMITS, aiEnabled, featureOn, getLimits, paywallOn, publishedFor,
   setAnnouncements, setPublishedQuestions, setRemoteConfig, markAnnouncementSeen, nextUnseenAnnouncement
 } from "../services/remoteConfig";
-import { addedLabel, bankItems, bankSkillChips, matchesAllSkills, matchesSkill } from "../engine/bank";
+import { addedLabel, adminSkillChips, bankItems, bankSkillChips, matchesAllSkills, matchesSkill, publishedMatchesSkill } from "../engine/bank";
 import { statusFilterPasses } from "../services/admin/questions";
 import type { QA } from "../types";
 import { queueEvent } from "../services/events";
@@ -141,6 +141,23 @@ describe("phase4 item A — added date, skills, status filter", () => {
     /* text fallback covers untagged items per-skill */
     expect(matchesAllSkills({ q: "How does the JVM garbage collector work", a: "", kp: [] }, ["jvm"])).toBe(true);
     expect(matchesAllSkills({ q: "How does the JVM garbage collector work", a: "", kp: [] }, ["jvm", "react"])).toBe(false);
+  });
+
+  it("publishedMatchesSkill filters admin rows by tag with text fallback; empty = all", () => {
+    const tagged = { question: "What is reconciliation?", answer: "Fiber diff", keyPoints: ["fiber"], skills: ["React"] };
+    const untagged = { question: "Explain the JVM memory model", answer: "", keyPoints: [], skills: [] };
+    expect(publishedMatchesSkill(tagged, "")).toBe(true); /* no filter */
+    expect(publishedMatchesSkill(tagged, "react")).toBe(true); /* tag, case-insensitive */
+    expect(publishedMatchesSkill(tagged, "fiber")).toBe(true); /* key-point text fallback */
+    expect(publishedMatchesSkill(tagged, "java")).toBe(false);
+    expect(publishedMatchesSkill(untagged, "jvm")).toBe(true); /* untagged text fallback */
+    expect(publishedMatchesSkill(untagged, "react")).toBe(false);
+  });
+
+  it("adminSkillChips collects published-row tags deduped + sorted for the admin filter", () => {
+    expect(adminSkillChips([{ skills: ["React", "CSS"] }, { skills: [] }, { skills: ["react", "Vite"] }])).toEqual(["CSS", "React", "Vite"]);
+    expect(adminSkillChips([{ skills: undefined }, { skills: [] }])).toEqual([]);
+    expect(adminSkillChips([{ skills: ["  "] }])).toEqual([]); /* blank tags dropped */
   });
 
   it("bankItems intersects across multiple skills; single-string skill arg stays compatible", () => {

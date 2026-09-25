@@ -65,6 +65,41 @@ export function bankSkillChips(fieldSkills: readonly string[] | undefined, items
   return out;
 }
 
+/** Maps an admin-list row (PublishedQuestion shape) onto the public-bank item shape
+    so the same skill matchers serve both surfaces. */
+export function toBankItem(row: { question: string; answer: string; keyPoints: string[]; skills?: string[] }): Pick<BankItem, "q" | "a" | "kp" | "skills"> {
+  return { q: row.question, a: row.answer, kp: row.keyPoints, skills: row.skills };
+}
+
+/** True when an admin-list row belongs to a skill — reuses the public-bank matcher
+    on a mapped item. Empty skill = all. */
+export function publishedMatchesSkill(
+  row: { question: string; answer: string; keyPoints: string[]; skills?: string[] },
+  skill: string
+): boolean {
+  if (!skill.trim()) return true;
+  return matchesSkill(toBankItem(row), skill);
+}
+
+/** Skill chips for the admin list filters (QuestionsSection / ReviewInbox): every
+    tag published rows carry, deduped case-insensitively, sorted alphabetically.
+    Unlike the public bank there is no static field catalog here — rows only. */
+export function adminSkillChips(rows: readonly { skills?: string[] }[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const r of rows) {
+    for (const s of r.skills ?? []) {
+      const k = s.trim();
+      if (!k) continue;
+      const key = k.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(k);
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+
 /** "22 Sep 2026" for an Added-chip, or null when the question has no timestamp
     (static core-bank questions). */
 export function addedLabel(ms: number | null | undefined): string | null {

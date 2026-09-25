@@ -20,7 +20,9 @@ export const CANONICAL_SKILLS = [
   "SQL", "PostgreSQL", "MongoDB", "Redis", "GraphQL",
   "Docker", "Kubernetes", "AWS", "Git", "Django", "Spring", "Rails", "Flutter",
   /* topic shelves (2026-09-24): the static bank's largest untagged clusters */
-  "System Design", "Design Patterns", "SOLID", "TDD", "Functional Programming"
+  "System Design", "Design Patterns", "SOLID", "TDD", "Functional Programming",
+  /* topic shelves (2026-09-25): the published bank's untagged long tail */
+  "Machine Learning", "Data Structures", "Microservices", "Concurrency"
 ];
 
 const SKILL_ALIASES = [
@@ -33,7 +35,8 @@ const SKILL_ALIASES = [
   { canonical: "JavaScript", re: /\bjava\s?script\b|\bjs\b/i },
   { canonical: "TypeScript", re: /\btype\s?script\b|\bts\b/i },
   { canonical: "HTML", re: /\bhtml5?\b/i },
-  { canonical: "CSS", re: /\bcss3?\b|\btailwind\b|\bsass\b|\bless\b/i },
+  /* "less" only counts with preprocessor context — bare "less" is the English word (#113/#121/#169 lesson) */
+  { canonical: "CSS", re: /\bcss3?\b|\btailwind\b|\bsass\b|\bless\s+(preprocessor|css)\b|\bless\.css\b/i },
   { canonical: "Node.js", re: /\bnode(\.js|js)?\b/i },
   { canonical: "Python", re: /\bpython3?\b/i },
   { canonical: "Java", re: /\bjava\b(?!\s?script)/i },
@@ -67,7 +70,15 @@ const SKILL_ALIASES = [
   { canonical: "SOLID", re: /\bsolid\s+principles?\b/i },
   { canonical: "SOLID", re: /\bSOLID\b/ }, /* bare acronym: case-sensitive to avoid "a solid understanding" */
   { canonical: "TDD", re: /\btest[-\s]driven\s+development\b|\bTDD\b/i },
-  { canonical: "Functional Programming", re: /\bpure\s+functions?\b|\bfunctional\s+programming\b/i }
+  { canonical: "Functional Programming", re: /\bpure\s+functions?\b|\bfunctional\s+programming\b/i },
+  /* topic shelves (2026-09-25) — tight phrases only; generic words ("model",
+     "learning", "thread") never match on their own. "regression" is guarded
+     against "regression testing" (a QA concept, not ML). */
+  { canonical: "Machine Learning", re: /\bmachine learning\b|\boverfit(ting)?\b|\bunderfit(ting)?\b|\bbias[- ]variance\b|\bsupervised learning\b|\bcross[- ]validation\b|\bgradient descent\b|\bneural network\b|\brandom forest\b|\btraining (set|data)\b|\breinforcement learning\b|\bfeature engineering\b/i },
+  { canonical: "Machine Learning", re: /\bregression\b(?!\s+test)/i },
+  { canonical: "Data Structures", re: /\bdata\s+structures?\b|\bhash\s+(table|map)s?\b|\bbinary\s+(search\s+)?tree|\btime\s+complexity\b|\bspace\s+complexity\b|\bbig-?o\s+notation\b|\bself[-\s]balanc(ing|ed)\b/i },
+  { canonical: "Microservices", re: /\bmicroservices?\b/i },
+  { canonical: "Concurrency", re: /\bconcurren(t|cy)\b|\bdeadlocks?\b|\brace\s+conditions?\b|\bmutual\s+exclusion\b|\bsemaphores?\b/i }
 ];
 
 /** Pure: canonical skill names detected in free text (title, answer, source).

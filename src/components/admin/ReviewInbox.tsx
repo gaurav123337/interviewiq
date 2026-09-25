@@ -5,9 +5,10 @@ import { chat, aiAvailable } from "../../ai";
 import { type DuplicateMatch } from "../../services/duplicates";
 import { batchDeleteQuestions, batchSetQuestionsPublished, createQuestion, deleteQuestion, setQuestionPublished, updateQuestion, adminMissCandidates, type MissCandidate } from "../../services/admin";
 import { getPublishedQuestions, attributionLabel } from "../../services/remoteConfig";
+import { adminSkillChips, matchesAllSkills, toBankItem } from "../../engine";
 import { toast } from "../../toast";
 import { pushUndo, popUndo, peekUndo, onUndoChange, getUndoHistory, clearUndo } from "../../services/undoStack";
-import { cardCls, btnPrimary, btnGhost, btnDanger, btnSm, btnSoft, Chip } from "../ui";
+import { cardCls, btnPrimary, btnGhost, btnDanger, btnSm, btnSoft, Chip, FilterChip } from "../ui";
 
 /* ------------------------------------------------------------------ */
 /* Review inbox — batch review of scraped/imported drafts              */
@@ -64,6 +65,8 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [filterField, setFilterField] = useState("");
   const [filterLevel, setFilterLevel] = useState("");
   const [filterTriage, setFilterTriage] = useState("");
+  const [filterSkills, setFilterSkills] = useState<string[]>([]);
+  const draftSkillChips = useMemo(() => adminSkillChips(drafts), [drafts]);
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -88,6 +91,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     if (filterField) out = out.filter(d => d.fieldId === filterField);
     if (filterLevel) out = out.filter(d => d.level === filterLevel);
     if (filterTriage) out = out.filter(d => (triage[d.id]?.level ?? "ready") === filterTriage);
+    if (filterSkills.length) out = out.filter(d => matchesAllSkills(toBankItem(d), filterSkills));
     if (filterDateFrom) {
       const from = new Date(filterDateFrom).getTime();
       out = out.filter(d => {
@@ -105,11 +109,11 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       });
     }
     return out;
-  }, [sortedDrafts, search, filterField, filterLevel, filterTriage, filterDateFrom, filterDateTo, triage, list]);
-  const hasFilters = search || filterField || filterLevel || filterTriage || filterDateFrom || filterDateTo;
-  const clearFilters = () => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterTriage(""); setFilterDateFrom(""); setFilterDateTo(""); };
+  }, [sortedDrafts, search, filterField, filterLevel, filterTriage, filterSkills, filterDateFrom, filterDateTo, triage, list]);
+  const hasFilters = search || filterField || filterLevel || filterTriage || filterSkills.length > 0 || filterDateFrom || filterDateTo;
+  const clearFilters = () => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterTriage(""); setFilterSkills([]); setFilterDateFrom(""); setFilterDateTo(""); };
   // Reset page when filters change
-  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterTriage, filterDateFrom, filterDateTo, drafts.length]);
+  useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterTriage, filterSkills.length, filterDateFrom, filterDateTo, drafts.length]);
 
   /* Web Worker triage: all duplicate detection runs off main thread */
   useEffect(() => {
@@ -754,6 +758,18 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
                 <option value="needs-work">🟡 Needs work</option>
                 <option value="review-first">🔴 Review first</option>
               </select>
+              {draftSkillChips.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <FilterChip active={filterSkills.length === 0} onClick={() => setFilterSkills([])}>All skills</FilterChip>
+                  {draftSkillChips.map(s => (
+                    <FilterChip
+                      key={s}
+                      active={filterSkills.some(x => x.toLowerCase() === s.toLowerCase())}
+                      onClick={() => setFilterSkills(sel => sel.some(x => x.toLowerCase() === s.toLowerCase()) ? sel.filter(x => x.toLowerCase() !== s.toLowerCase()) : [...sel, s])}
+                    >🛠 {s}</FilterChip>
+                  ))}
+                </div>
+              )}
               {hasFilters && (
                 <button className={btnGhost + btnSm} onClick={clearFilters}>Clear</button>
               )}
