@@ -20,6 +20,17 @@ offline-summary.md
 .env.local
 .env.*.local
 
+# local scratch tooling (parses local settings for creds; never commit)
+local-read-query.mjs
+editorial-push.mjs
+backfill-skills-exec.mjs
+drafts-snapshot*.json
+published-snapshot.json
+pub-full.json
+editorial-buckets.json
+drafts-editorial-plan.mjs
+editorial-plan.md
+
 # OS noise
 .DS_Store
 Thumbs.db

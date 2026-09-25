@@ -37,6 +37,26 @@ describe("deriveSkills — canonical tags for the Bank's skill filters", () => {
     expect(deriveSkills("What defines a pure function?")).toEqual(["Functional Programming"]);
   });
 
+  it("tags the 2026-09-25 topic shelves (ML, data structures, microservices, concurrency) without over-matching", () => {
+    expect(deriveSkills("What is the bias-variance trade-off?")).toEqual(["Machine Learning"]);
+    expect(deriveSkills("What is overfitting and how do you prevent it?")).toEqual(["Machine Learning"]);
+    expect(deriveSkills("Which metrics for evaluating regression models do you know?")).toEqual(["Machine Learning"]);
+    expect(deriveSkills("How do you handle regression testing in CI?")).toEqual([]); /* regression ≠ ML */
+    expect(deriveSkills("Explain hash tables vs binary search trees and time complexity")).toEqual(["Data Structures"]);
+    expect(deriveSkills("What is Big-O notation?")).toEqual(["Data Structures"]);
+    expect(deriveSkills("What are microservices and how do they communicate?")).toEqual(["Microservices"]);
+    expect(deriveSkills("What is a deadlock and how do you prevent race conditions?")).toEqual(["Concurrency"]);
+    expect(deriveSkills("What are MSE and RMSE?")).toEqual([]); /* unknown acronyms never guessed */
+    expect(deriveSkills("Tell me about machine learning model deployment")).toEqual(["Machine Learning"]);
+  });
+
+  it("does not tag CSS from the bare English word 'less' (#113/#121/#169 stray lesson)", () => {
+    expect(deriveSkills("What are your thoughts on the use of the goto statement in programming?")).toEqual([]);
+    expect(deriveSkills("What are the benefits of refactoring code in software development?")).toEqual([]);
+    expect(deriveSkills("Use fewer globals and less duplication")).toEqual([]);
+    expect(deriveSkills("When would you choose Sass or Less over plain CSS?")).toEqual(["CSS"]); /* preprocessor context still matches */
+  });
+
   it("never guesses unknown technologies and tolerates empty input", () => {
     expect(deriveSkills("Explain the CAP theorem and consistency models.")).toEqual([]);
     expect(deriveSkills("")).toEqual([]);

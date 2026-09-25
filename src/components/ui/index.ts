@@ -6,6 +6,7 @@ export { btn, btnPrimary, btnGhost, btnSoft, btnOk, btnDanger, btnLg, btnSm, car
 
 // Components
 export { Chip } from "./Chip";
+export { FilterChip } from "./FilterChip";
 export { Kp } from "./Kp";
 export { KpNeutral } from "./KpNeutral";
 export { Seg } from "./Seg";
