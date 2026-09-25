@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   titleFromUrl, classifyLink, attributionFor, licenseGate, routeItems,
   mapSeedRows, buildSeedInsertSql, buildResourcesInsertSql,
   buildRunSummary, buildRunReportSql,
 } from "../../scripts/crawl-orchestrate-lib.js";
-import { crawlSeed } from "../../scripts/crawl-sources.js";
+import { crawlSeed, runGithubSearch } from "../../scripts/crawl-sources.js";
 import { createFetcher, robotsAllowed } from "../../scripts/crawl-lib.js";
 import { classifySeed } from "../../scripts/discover-lib.js";
 
@@ -155,6 +155,56 @@ describe("run report builders (pure)", () => {
     expect(partial.status).toBe("partial");
     const failed = buildRunSummary({ a: { error: "HTTP 500" } }, 0, 0, 1);
     expect(failed.status).toBe("failed");
+  });
+});
+
+describe("runGithubSearch (keyless REST — the JS-rendered search-page blind-spot fix)", () => {
+  const env = (globalThis as Record<string, unknown>).process as { env: Record<string, string | undefined> } | undefined;
+  afterEach(() => { vi.unstubAllGlobals(); if (env) delete env.env.GITHUB_TOKEN; });
+
+  const searchSeed = { id: "s1", url: "https://github.com/search?q=svelte+interview+questions&type=repositories", skill: "JavaScript" };
+
+  it("fans a search seed out into license-stamped repo child seeds", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        total_count: 4,
+        items: [
+          { full_name: "a/svelte-iq", html_url: "https://github.com/a/svelte-iq", license: { spdx_id: "MIT" } },
+          { full_name: "b/svelte-iq-gen", html_url: "https://github.com/b/svelte-iq-gen", license: { spdx_id: "NOASSERTION" } },
+          { full_name: "bad-row" }, /* junk row — dropped */
+        ],
+      }),
+    })));
+    const out = await runGithubSearch(searchSeed, { maxRepos: 3 });
+    expect(out.perSeed.s1.repos).toBe(2);
+    expect(out.perSeed.s1.totalResults).toBe(4);
+    expect(out.childSeeds).toHaveLength(2);
+    expect(out.childSeeds[0]).toMatchObject({ kind: "github-repo", url: "https://github.com/a/svelte-iq", license: "MIT", origin: "search-child", skill: "JavaScript" });
+    /* no-license child keeps the review flag path — license null, never auto-rotated downstream */
+    expect(out.childSeeds[1].license).toBeNull();
+    const called = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, { headers: Record<string, string> }];
+    expect(called[0]).toContain("api.github.com/search/repositories");
+    expect(called[0]).toContain("per_page=3");
+    expect(called[1].headers.Authorization).toBeUndefined(); /* keyless */
+  });
+
+  it("attaches GITHUB_TOKEN when set and reports rate-limit without child seeds", async () => {
+    if (env) env.env.GITHUB_TOKEN = "tok";
+    vi.stubGlobal("fetch", vi.fn(async (_u, init: { headers: Record<string, string> }) => {
+      expect(init.headers.Authorization).toBe("Bearer tok");
+      return { ok: false, status: 403, json: async () => ({}) };
+    }));
+    const out = await runGithubSearch(searchSeed, {});
+    expect(out.perSeed.s1.note).toContain("rate-limited");
+    expect(out.childSeeds).toHaveLength(0);
+  });
+
+  it("ignores non-search seeds", async () => {
+    const out = await runGithubSearch({ id: 1, url: "https://github.com/vuejs/pinia" }, {});
+    expect(out.childSeeds).toHaveLength(0);
+    expect(out.perSeed["1"].kind).toBe("github-search"); /* inert empty entry */
   });
 });
 
