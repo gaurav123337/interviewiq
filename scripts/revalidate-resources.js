@@ -20,7 +20,7 @@
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { l5Verdict, buildQuarantineSql, buildL5RunSummary } from "./revalidate-lib.js";
+import { l5Verdict, buildQuarantineSql, buildL5RunSummary, markerFromText } from "./revalidate-lib.js";
 import { buildRunReportSql } from "./crawl-orchestrate-lib.js";
 
 const API = "https://api.supabase.com/v1";
@@ -55,9 +55,18 @@ async function probe(url) {
     if (res.status === 405 || res.status === 501) {
       res = await fetch(url, { ...opts, method: "GET" });
     }
-    return { ok: res.ok, status: res.status, finalUrl: res.url || url };
+    let contentMarker = null;
+    /* L5 content comparison needs the body — only fetch it when the resource
+       stores a marker, so resources without one keep the cheap HEAD-only path */
+    if (res.bodyMarker !== false && res.ok) {
+      try {
+        const g = await fetch(url, { ...opts, method: "GET" });
+        if (g.ok) contentMarker = markerFromText(await g.text());
+      } catch { /* marker fetch is best-effort; the reachability verdict stands */ }
+    }
+    return { ok: res.ok, status: res.status, finalUrl: res.url || url, contentMarker };
   } catch {
-    return { ok: false, status: null, finalUrl: null };
+    return { ok: false, status: null, finalUrl: null, contentMarker: null };
   }
 }
 
@@ -84,7 +93,7 @@ export async function main() {
     console.log(dim("DRY RUN — probing 2 sample URLs, no DB access"));
   } else {
     rows = await runSql(
-      `select id, url from public.discovered_resources where status = 'approved' order by id limit ${limit}`
+      `select id, url, meta->>'contentMarker' as stored_marker from public.discovered_resources where status = 'approved' order by id limit ${limit}`
     );
   }
   if (!rows.length) {
@@ -96,7 +105,15 @@ export async function main() {
   const quarantined = [];
   for (const r of rows) {
     const p = await probe(r.url);
-    const v = l5Verdict({ ...p, originalUrl: r.url, storedMarker: null, contentMarker: null });
+    /* Marker comparison only when BOTH sides exist: a resource approved before
+       markers shipped has no stored marker yet (null ≠ quarantine — it gets
+       stored on its next approval-cycle touch); a probe that couldn't fetch the
+       body passes on reachability alone. This keeps the fail-open posture for
+       UNCERTAINTY while failing closed on a REAL mismatch (marker present and
+       different = the approved content is gone). */
+    const stored = r.stored_marker ?? null;
+    const marker = stored != null ? (p.contentMarker ?? null) : null;
+    const v = l5Verdict({ ...p, originalUrl: r.url, storedMarker: stored, contentMarker: marker });
     results[String(r.id)] = v;
     if (v.verdict === "quarantine") quarantined.push({ id: r.id, reason: v.reason });
     console.log(dim(`  [${v.verdict}] ${r.url.slice(0, 80)}${v.reason ? ` — ${v.reason}` : ""}`));

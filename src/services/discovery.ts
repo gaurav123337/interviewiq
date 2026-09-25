@@ -12,6 +12,7 @@
 
 import { getSupabaseClient } from "./cloud";
 import { classifySeed, planDiscovery } from "../../scripts/discover-lib.js";
+import { markerFromText } from "../../scripts/revalidate-lib.js";
 import type { SupabaseClientLike } from "./scraper";
 
 export type SeedStatus = "pending" | "approved" | "rejected";
@@ -225,18 +226,34 @@ function mapResourceRow(r: Record<string, unknown>): DiscoveredResourceRow {
 
 /** Admin decision on a discovered resource. The decision note is merged into
     meta (decision_note) — jsonb updates replace the whole value, so the
-    caller's existing meta rides along and nothing is lost. */
+    caller's existing meta rides along and nothing is lost. On APPROVAL the
+    resource's page head is fingerprinted into meta.contentMarker so the L5
+    weekly re-validation can detect content drift (best-effort: a failed or
+    blocked fetch stores no marker and L5 passes on reachability alone). */
 export async function decideResource(
   id: number,
   decision: "approved" | "rejected",
   existingMeta: Record<string, unknown> = {},
   note = "",
+  resourceUrl?: string,
   client?: SupabaseClientLike
 ): Promise<SeedDecision> {
   const c = (client ?? await getSupabaseClient()) as SupabaseClientLike | null;
   if (!c) return { ok: false, error: "Not connected" };
   const meta = { ...existingMeta };
   if (note.trim()) meta.decision_note = note.trim();
+  if (decision === "approved" && resourceUrl && !meta.contentMarker) {
+    try {
+      const res2 = await fetch(resourceUrl, {
+        headers: { "User-Agent": "InterviewIQGuard/1.0 (content marker at approval)" },
+        signal: AbortSignal.timeout(8000)
+      });
+      if (res2.ok) {
+        const marker = markerFromText(await res2.text());
+        if (marker) meta.contentMarker = marker;
+      }
+    } catch { /* marker capture is best-effort — approval never fails on it */ }
+  }
   try {
     const res = (await (c.from("discovered_resources") as any)
       .update({ status: decision, meta, decided_at: new Date().toISOString() })
