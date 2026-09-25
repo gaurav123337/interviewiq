@@ -15,7 +15,7 @@ export function bankItems(fieldSel: string, q: string, skill = "", skills: reado
   }
   const s = skill.trim();
   if (s) items = items.filter(i => matchesSkill(i, s));
-  if (skills.length) items = items.filter(i => matchesAllSkills(i, skills));
+  if (skills.length) items = items.filter(i => matchesAnySkill(i, skills));
   if (q) {
     const t = q.toLowerCase();
     items = items.filter(i =>
@@ -41,10 +41,12 @@ export function matchesSkill(item: Pick<BankItem, "q" | "a" | "kp" | "skills">, 
   );
 }
 
-/** True when an item matches EVERY selected skill (AND — picking React + TypeScript
-    narrows to questions tagged/covering both). One selected skill ≡ matchesSkill. */
-export function matchesAllSkills(item: Pick<BankItem, "q" | "a" | "kp" | "skills">, skills: readonly string[]): boolean {
-  return skills.every(s => matchesSkill(item, s));
+/** True when an item matches ANY of the selected skills (OR — picking React + TypeScript
+    widens to questions tagged/covering either; owner decision 2026-09-25 after AND
+    zeroed out cross-tagged sets). One selected skill ≡ matchesSkill; empty = all. */
+export function matchesAnySkill(item: Pick<BankItem, "q" | "a" | "kp" | "skills">, skills: readonly string[]): boolean {
+  if (!skills.length) return true; /* [].some() is false — no selection must mean no filter */
+  return skills.some(s => matchesSkill(item, s));
 }
 
 /** Skill chips for the public-bank filter: the field's own skills first, then any
