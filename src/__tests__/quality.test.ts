@@ -9,7 +9,7 @@ vi.mock("../services/cloud", () => ({
 
 import { getSupabaseClient } from "../services/cloud";
 import {
-  draftIssues, findDuplicates, normalizeText, tokenJaccard, triageLevel
+  draftIssues, draftSkills, findDuplicates, normalizeText, tokenJaccard, triageLevel
 } from "../services/duplicates";
 import { hasVoted, sendFeedback, voteCount } from "../services/feedback";
 import {
@@ -70,6 +70,13 @@ describe("draft triage", () => {
   it("flags statements that aren't questions", () => {
     const issues = draftIssues({ question: "The event loop in Node.js.", answer: "x".repeat(80), keyPoints: ["k1", "k2"] });
     expect(issues).toContain("looks like a statement, not a question");
+  });
+
+  it("draftSkills: explicit tags win; untagged drafts get derived tags for the inbox chips/filter", () => {
+    expect(draftSkills({ question: "What is overfitting?", answer: "Regularize.", skills: ["Python"] })).toEqual(["Python"]);
+    expect(draftSkills({ question: "What is overfitting in machine learning?", answer: "" })).toEqual(["Machine Learning"]);
+    expect(draftSkills({ question: "Explain hash tables and time complexity.", answer: "" })).toEqual(["Data Structures"]);
+    expect(draftSkills({ question: "What is your biggest weakness?", answer: "" })).toEqual([]); /* never guessed */
   });
 });
 
