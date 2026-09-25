@@ -18,6 +18,23 @@ function sameUrl(a, b) {
   return norm(a) === norm(b);
 }
 
+/** Pure: cheap content fingerprint for L5 drift detection — first ~200 chars
+ *  of visible text after tag stripping + whitespace collapse. Deliberately NOT
+ *  a hash of the whole body: dynamic noise (timestamps, rotating ads, CSRF
+ *  tokens in trailing scripts) would false-positive every weekly run. The head
+ *  of the page (title/h1/lead) is the stable identity of the approved content. */
+export function markerFromText(html) {
+  const text = String(html ?? "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&[a-z]+;|&#\d+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  return text.slice(0, 200);
+}
+
 /** Pure: L5 verdict for one probe result.
  *    - probe ok + same final URL + same content marker → "pass"
  *    - anything else (4xx/5xx, redirect away, content changed, network error) → "quarantine"
@@ -33,7 +50,11 @@ export function l5Verdict({ ok, status, finalUrl, originalUrl, contentMarker, st
   if (finalUrl && originalUrl && !sameUrl(finalUrl, originalUrl)) {
     return { verdict: "quarantine", reason: `redirected to ${finalUrl}` };
   }
-  if (storedMarker != null && contentMarker !== storedMarker) {
+  /* Content comparison only when BOTH sides exist: a stored marker with a
+     failed body fetch (dynamic page, bot block) has no fresh evidence —
+     reachability alone carries the verdict (uncertainty never quarantines).
+     A REAL mismatch (both present, different) is the drift signal. */
+  if (storedMarker != null && contentMarker != null && contentMarker !== storedMarker) {
     return { verdict: "quarantine", reason: "content changed since approval" };
   }
   return { verdict: "pass", reason: null };

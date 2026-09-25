@@ -239,6 +239,16 @@ async function main() {
   }
   const failed = perTarget.filter((p) => p.error).length;
   console.log(green(`\n✓ ${capped.length} extracted / ${report.added} upserted across ${targets.length} target(s) — enters the feed round-robin via FEED_SOURCES.`));
+  /* Selector-drift alarm (2026-09-25): a green run where EVERY target yielded
+     zero postings is how silent selector rot hides (page still loads, selectors
+     match nothing, report says found:0). The per-target '0 postings' error
+     already records the detail — here we also fail the run so Actions shows red
+     and the drift gets looked at instead of shipping silently. */
+  if (!failed && targets.length > 0 && identified.length === 0) {
+    console.error(red("\n✗ SELECTOR DRIFT SUSPECTED: every target loaded but 0 postings matched any selectors."));
+    console.error(red("  Check content/job-playwright-targets.json selectors against the live pages."));
+    process.exit(1);
+  }
   /* surface failures so Actions shows red: all targets failed (or the upsert
      broke) → exit 1; partial failures stay green — the report row carries the detail */
   process.exit(failed === targets.length || sqlError ? 1 : 0);

@@ -88,7 +88,7 @@ export function DiscoverySection() {
   const onDecideResource = async (r: DiscoveredResourceRow, decision: "approved" | "rejected") => {
     setBusy(true);
     try {
-      const res = await decideResource(r.id, decision, r.meta);
+      const res = await decideResource(r.id, decision, r.meta, "", r.url);
       if (!res.ok) { toast("✗ " + (res.error ?? "Couldn't update")); return; }
       toast(decision === "approved"
         ? "✅ Approved — now visible on Sources & credits"

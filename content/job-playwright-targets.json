@@ -1,5 +1,5 @@
 {
-  "_readme": "Curated PUBLIC, JS-heavy job-board targets for the Playwright scraper (Phase 4 Item C). Anti-bot/ToS-protected sites are excluded by policy. Adding a target is a data-only change — scripts/jobs-playwright-lib.js validates shape (kind ∈ html-listing | html-listing-paginated | json-api | remoteok-html-fallback; selectors.item/title/company required; maxItems 1-100 default 25; delayMs default 1200; enabled false to pause). Selectors here were verified against the live pages (2026-09-23); the scraper marks a target failed instead of crashing and the Cron job log surfaces it. himalayas + remoteok-html are disabled: both are behind Cloudflare bot checks that headless CI cannot pass, and both are ALREADY covered by the existing feed (rss:himalayas, remoteok:remoteok in jobs_fetch_reports) — coverage is not lost.",
+  "_readme": "Curated PUBLIC, JS-heavy job-board targets for the Playwright scraper (Phase 4 Item C). Anti-bot/ToS-protected sites are excluded by policy. Adding a target is a data-only change — scripts/jobs-playwright-lib.js validates shape (kind ∈ html-listing | html-listing-paginated | json-api | remoteok-html-fallback; selectors.item/title/company required; maxItems 1-100 default 25; delayMs default 1200; enabled false to pause). Selectors here were verified against the live pages (2026-09-23; WWR re-verified 2026-09-25 — selectors intact, category now redirects to remote-full-stack-programming-jobs; YC confirmed still fully JS-rendered); the scraper marks a target failed instead of crashing and the Cron job log surfaces it. himalayas + remoteok-html are disabled: both are behind Cloudflare bot checks that headless CI cannot pass, and both are ALREADY covered by the existing feed (rss:himalayas, remoteok:remoteok in jobs_fetch_reports) — coverage is not lost.",
   "targets": [
     {
       "id": "yc-work-at-a-startup",
@@ -20,7 +20,7 @@
     {
       "id": "weworkremotely-programming",
       "kind": "html-listing",
-      "id-note": "server-rendered but included as a resilient fallback; also covered by rss:weworkremotely — keep for detail (company+location per posting)",
+      "id-note": "server-rendered but included as a resilient fallback; also covered by rss:weworkremotely — keep for detail (company+location per posting) Re-verified 2026-09-25: selectors intact; the /categories/remote-programming-jobs URL 302s to /categories/remote-full-stack-programming-jobs (Playwright follows redirects).",
       "url": "https://weworkremotely.com/categories/remote-programming-jobs",
       "maxItems": 20,
       "delayMs": 1000,

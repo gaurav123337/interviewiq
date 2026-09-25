@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildL5RunSummary, buildQuarantineSql, l5Verdict } from "../../scripts/revalidate-lib.js";
+import { buildL5RunSummary, buildQuarantineSql, l5Verdict, markerFromText } from "../../scripts/revalidate-lib.js";
 
 describe("l5Verdict — the fail-closed matrix", () => {
   const base = { ok: true, status: 200, finalUrl: "https://x.dev/a", originalUrl: "https://x.dev/a", storedMarker: null, contentMarker: null };
@@ -26,8 +26,30 @@ describe("l5Verdict — the fail-closed matrix", () => {
     expect(l5Verdict({ ...base, storedMarker: "old", contentMarker: "old" }).verdict).toBe("pass");
     expect(l5Verdict({ ...base, storedMarker: "old", contentMarker: "new" }).reason).toContain("content changed");
     /* first revalidation (no stored marker): same-URL 200 passes for now —
-       marker support arrives with the guard's server-side fetch (L3) */
+       the marker gets stored on its next approval-cycle touch */
     expect(l5Verdict({ ...base, storedMarker: null, contentMarker: null }).verdict).toBe("pass");
+    /* stored marker but the body fetch failed (dynamic page / bot block):
+       reachability alone carries the verdict — uncertainty never quarantines */
+    expect(l5Verdict({ ...base, storedMarker: "old", contentMarker: null }).verdict).toBe("pass");
+  });
+
+  it("markerFromText fingerprints visible text and ignores dynamic noise", () => {
+    const page = `
+      <html><head><title>Prep Guide</title>
+      <style>.a { color: red }</style></head>
+      <body>
+        <h1>System Design Prep Guide</h1>
+        <p>The definitive reading list for scalable systems interviews.</p>
+        <script>var csrf = "abc123"; var now = Date.now();</script>
+      </body></html>`;
+    const m = markerFromText(page);
+    expect(m).toContain("System Design Prep Guide");
+    expect(m).not.toContain("csrf");
+    expect(m!.length).toBeLessThanOrEqual(200);
+    expect(markerFromText("")).toBeNull();
+    expect(markerFromText(null)).toBeNull();
+    /* marker stability: the SAME content with different trailing noise matches */
+    expect(markerFromText(page + "<script>var t=Date.now()</script>")).toBe(markerFromText(page));
   });
 });
 
