@@ -5,7 +5,7 @@ import type { LevelId } from "../../types";
 import { FIELDS, LEVELS } from "../../data";
 import { createQuestion, deleteQuestion, restoreQuestion, setQuestionPublished, takeDownQuestion, statusFilterPasses, type QuestionStatusFilter } from "../../services/admin";
 import { getPublishedQuestions } from "../../services/remoteConfig";
-import { addedLabel, adminSkillChips, matchesAllSkills, toBankItem } from "../../engine";
+import { addedLabel, adminSkillChips, matchesAnySkill, toBankItem } from "../../engine";
 import { toast } from "../../toast";
 import { btnPrimary, btnSm, btnDanger, btnGhost, cardCls, Chip, FilterChip, Modal } from "../ui";
 
@@ -42,7 +42,7 @@ export function QuestionsSection({ list, busy, setBusy, onChanged }: {
     if (filterField) out = out.filter(d => d.fieldId === filterField);
     if (filterLevel) out = out.filter(d => d.level === filterLevel);
     if (filterStatus !== "all") out = out.filter(d => statusFilterPasses(d.published, filterStatus));
-    if (filterSkills.length) out = out.filter(d => matchesAllSkills(toBankItem(d), filterSkills));
+    if (filterSkills.length) out = out.filter(d => matchesAnySkill(toBankItem(d), filterSkills));
     return out;
   }, [list, search, filterField, filterLevel, filterStatus, filterSkills]);
   useEffect(() => { setPage(0); }, [search, filterField, filterLevel, filterStatus, filterSkills.length, list.length]);

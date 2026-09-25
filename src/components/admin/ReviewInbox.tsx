@@ -5,7 +5,7 @@ import { chat, aiAvailable } from "../../ai";
 import { type DuplicateMatch } from "../../services/duplicates";
 import { batchDeleteQuestions, batchSetQuestionsPublished, createQuestion, deleteQuestion, setQuestionPublished, updateQuestion, adminMissCandidates, type MissCandidate } from "../../services/admin";
 import { getPublishedQuestions, attributionLabel } from "../../services/remoteConfig";
-import { adminSkillChips, matchesAllSkills, toBankItem } from "../../engine";
+import { adminSkillChips, matchesAnySkill, toBankItem } from "../../engine";
 import { toast } from "../../toast";
 import { pushUndo, popUndo, peekUndo, onUndoChange, getUndoHistory, clearUndo } from "../../services/undoStack";
 import { cardCls, btnPrimary, btnGhost, btnDanger, btnSm, btnSoft, Chip, FilterChip } from "../ui";
@@ -91,7 +91,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     if (filterField) out = out.filter(d => d.fieldId === filterField);
     if (filterLevel) out = out.filter(d => d.level === filterLevel);
     if (filterTriage) out = out.filter(d => (triage[d.id]?.level ?? "ready") === filterTriage);
-    if (filterSkills.length) out = out.filter(d => matchesAllSkills(toBankItem(d), filterSkills));
+    if (filterSkills.length) out = out.filter(d => matchesAnySkill(toBankItem(d), filterSkills));
     if (filterDateFrom) {
       const from = new Date(filterDateFrom).getTime();
       out = out.filter(d => {
