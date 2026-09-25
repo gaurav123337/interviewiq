@@ -32,7 +32,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
 }) {
   const drafts = useMemo(() => list.filter(q => !q.published), [list]);
   /* auto-triage: heuristic issues + near-duplicate detection — runs in Web Worker */
-  const [triage, setTriage] = useState<Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[] }>>({});
+  const [triage, setTriage] = useState<Record<number, { issues: string[]; level: "ready" | "needs-work" | "review-first"; dups: DuplicateMatch[]; skills?: string[] }>>({});
   const [triageProgress, setTriageProgress] = useState(0);
   const workerRef = useRef<Worker | null>(null);
   const triageRef = useRef(triage);
@@ -66,7 +66,13 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
   const [filterLevel, setFilterLevel] = useState("");
   const [filterTriage, setFilterTriage] = useState("");
   const [filterSkills, setFilterSkills] = useState<string[]>([]);
-  const draftSkillChips = useMemo(() => adminSkillChips(drafts), [drafts]);
+  /* Skill tags per draft: explicit tags first, else the triage worker's derived tags
+     (same classifier the scraper uses). Chips + filter stay live on the untagged backlog. */
+  const draftSkillChips = useMemo(
+    () => adminSkillChips(drafts.map(d => ({ skills: triage[d.id]?.skills ?? d.skills ?? [] }))),
+    [drafts, triage]
+  );
+  const skillsOf = (id: number, fallback?: string[]): string[] => triage[id]?.skills ?? fallback ?? [];
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -91,7 +97,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
     if (filterField) out = out.filter(d => d.fieldId === filterField);
     if (filterLevel) out = out.filter(d => d.level === filterLevel);
     if (filterTriage) out = out.filter(d => (triage[d.id]?.level ?? "ready") === filterTriage);
-    if (filterSkills.length) out = out.filter(d => matchesAnySkill(toBankItem(d), filterSkills));
+    if (filterSkills.length) out = out.filter(d => matchesAnySkill({ q: d.question, a: d.answer, kp: d.keyPoints, skills: skillsOf(d.id, d.skills) }, filterSkills));
     if (filterDateFrom) {
       const from = new Date(filterDateFrom).getTime();
       out = out.filter(d => {
@@ -109,7 +115,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
       });
     }
     return out;
-  }, [sortedDrafts, search, filterField, filterLevel, filterTriage, filterSkills, filterDateFrom, filterDateTo, triage, list]);
+  }, [sortedDrafts, search, filterField, filterLevel, filterTriage, filterSkills, filterDateFrom, filterDateTo, triage, list, skillsOf]);
   const hasFilters = search || filterField || filterLevel || filterTriage || filterSkills.length > 0 || filterDateFrom || filterDateTo;
   const clearFilters = () => { setSearch(""); setFilterField(""); setFilterLevel(""); setFilterTriage(""); setFilterSkills([]); setFilterDateFrom(""); setFilterDateTo(""); };
   // Reset page when filters change
@@ -759,7 +765,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
                 <option value="review-first">🔴 Review first</option>
               </select>
               {draftSkillChips.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
+                <div className="mt-2 flex flex-wrap gap-1.5 basis-full">
                   <FilterChip active={filterSkills.length === 0} onClick={() => setFilterSkills([])}>All skills</FilterChip>
                   {draftSkillChips.map(s => (
                     <FilterChip
@@ -825,7 +831,7 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
         return (
           <DraftCard
             key={d.id}
-            d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]}
+            d={d} e={e} sel={selected.has(d.id)} t={triage[d.id]} ai={aiTriage[d.id]} skillsOf={skillsOf}
             via={attributionLabel(d)?.via} viaUrl={attributionLabel(d)?.url}
             expanded={expandedDrafts.has(d.id)} busy={busy} focused={focusedIdx === idx}
             onToggle={() => toggle(d.id)} onExpand={() => toggleExpand(d.id)}
@@ -958,8 +964,10 @@ export function ReviewInbox({ list, busy, setBusy, onChanged }: {
 }
 
 /* ── Draft card component (shared by virtualized and normal rendering) ── */
-function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, via, viaUrl, onToggle, onExpand, onEdit, onSave, onPublish, onDelete, onDragStart, onDragOver, onDrop, onDragEnd }: {
+function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, via, viaUrl, skillsOf, onToggle, onExpand, onEdit, onSave, onPublish, onDelete, onDragStart, onDragOver, onDrop, onDragEnd }: {
   d: { id: number; fieldId: string; level: string; question: string; answer: string; keyPoints: string[]; skills?: string[] };
+  /** Derived-or-explicit skill tags for the 🛠 chips (from the triage result). */
+  skillsOf: (id: number, fallback?: string[]) => string[];
   via?: string | null; viaUrl?: string | null;
   e: { fieldId: string; level: string; question: string; answer: string; keyPoints: string[] };
   sel: boolean; t?: { issues: string[]; level: string; dups: { text: string; sim: number }[] };
@@ -1022,7 +1030,7 @@ function DraftCard({ d, e, sel, t, ai, expanded, busy, focused, via, viaUrl, onT
                 ? <a href={viaUrl} target="_blank" rel="noopener noreferrer"><Chip title={`source: ${viaUrl}`}>via {via} ↗</Chip></a>
                 : <Chip>via {via}</Chip>
             )}
-            {(d.skills ?? []).map(s => <Chip key={s} tone="cat">🛠 {s}</Chip>)}
+            {(skillsOf(d.id, d.skills).map(s => <Chip key={s} tone="cat">🛠 {s}</Chip>))}
             {/* Tag change indicator */}
             {(e.level !== d.level || e.fieldId !== d.fieldId) && (
               <span className="text-[10px] font-bold text-warn">modified</span>

@@ -10,18 +10,24 @@
 */
 
 import { looksTruncated } from "../../scripts/draft-quality-lib.js";
+import { draftSkills } from "./duplicates";
 
 interface Draft {
   id: number;
   question: string;
   answer: string;
   keyPoints: string[];
+  skills?: string[];
 }
 
 interface TriageResult {
   issues: string[];
   level: "ready" | "needs-work" | "review-first";
   dups: { text: string; sim: number }[];
+  /** Canonical skill tags: explicit tags win; untagged drafts get tags derived
+      from question+answer (same classifier the scraper/cron uses) so the inbox's
+      🛠 chips and skill filter work on the untagged backlog. */
+  skills: string[];
 }
 
 /* ── Inlined normalize / tokens / Jaccard ── */
@@ -115,6 +121,7 @@ self.onmessage = (ev: MessageEvent) => {
       issues,
       level: triageLevel(issues),
       dups,
+      skills: draftSkills(d),
     };
 
     // Throttle progress: at most 8 updates per run

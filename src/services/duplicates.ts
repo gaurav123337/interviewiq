@@ -2,6 +2,16 @@
    to flag drafts that already exist (scraped banks produce dupes) so admins
    don't bloat the bank or skew harvest analytics. Pure functions — no deps. */
 
+import { deriveSkills } from "../../scripts/draft-quality-lib.js";
+
+/** Canonical skill tags for a draft: explicit tags win; untagged drafts get
+    tags derived from question+answer (same classifier the scraper/cron uses)
+    so the inbox's 🛠 chips and skill filter work on the untagged backlog. */
+export function draftSkills(d: { question: string; answer: string; skills?: string[] }): string[] {
+  if (d.skills?.length) return d.skills;
+  return deriveSkills(`${d.question}\n${d.answer}`);
+}
+
 /** Lowercase, strip punctuation, collapse whitespace. */
 export function normalizeText(t: string): string {
   return t
