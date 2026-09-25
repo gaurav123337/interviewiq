@@ -40,10 +40,16 @@ jobs:
           fi
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      - name: Install Playwright (only when DISCOVERY_RENDER=1)
+        if: steps.check-secrets.outputs.configured == 'true' && vars.DISCOVERY_RENDER == '1'
+        run: |
+          npm i --no-save playwright@latest
+          npx playwright install --with-deps chromium
       - name: Crawl approved seeds → drafts + resources
         if: steps.check-secrets.outputs.configured == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCOVERY_RENDER: ${{ vars.DISCOVERY_RENDER || '0' }}
         run: node scripts/crawl-sources.js --max-total "${{ github.event.inputs.max-total || '100' }}"

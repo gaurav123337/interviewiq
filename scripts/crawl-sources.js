@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifySeed, planDiscovery, githubSearchUrl, parseRepoSearchHit } from "./discover-lib.js";
 import { Budget, extractLinks, detectType, robotsAllowed, createFetcher } from "./crawl-lib.js";
+import { resolveDiscoveryFetcher, playwrightAvailable } from "./discovery-render-fetcher.mjs";
 import { extractItems, buildUpsertSql, partitionOversizeQuestions } from "./scrape-lib.js";
 import { slugify } from "./ai-draft-lib.js";
 import {
@@ -290,10 +291,17 @@ async function main() {
   const maxTotal = maxTotalIdx >= 0 ? Number(args[maxTotalIdx + 1]) || 100 : 100;
 
   const startedAt = Date.now();
-  const fetcher = createFetcher({
+  /* DISCOVERY_RENDER=1 opts into per-page Chromium rendering (JS-heavy pages —
+     GitHub search pages, SPA docs) via the D1 fetcher seam. Plain fetch stays
+     the default: browser loads cost seconds each and the budget absorbs that
+     deliberately. Falls back with a note when playwright isn't installed. */
+  const { fetcher, mode, close: closeFetcher } = await resolveDiscoveryFetcher(createFetcher, {
     userAgent: "interviewiq-crawler/1.0 (+https://github.com/gaurav123337/interviewiq)",
     delayMs: 300,
   });
+  if (process.env.DISCOVERY_RENDER === "1") {
+    console.log(mode === "playwright" ? green("  render mode: Playwright Chromium (DISCOVERY_RENDER=1)") : yellow("  DISCOVERY_RENDER=1 but playwright not installed — using plain fetch"));
+  }
 
   let seeds = [];
   if (oneSeedUrl) {
@@ -391,6 +399,7 @@ async function main() {
 
   const vals = Object.values(perSeed);
   console.log(green(`\n✓ Discovery crawl: ${vals.reduce((n, p) => n + (p.crawled ?? 0), 0)} page(s), ${inserted} Q&A draft(s), ${allProblems.length} problem candidate(s), ${allResources.length} resource(s), ${errors} error(s).`));
+  await closeFetcher();
   if (errors) process.exit(1);
 }
 
