@@ -156,17 +156,28 @@ Deviations / corrections worth remembering:
 2. **Key rotation** (service-role key + agentrouter key) — owner-deferred "later", tracked
    separately (plan §7).
 
-**Feature work not yet built (candidates for a Phase 5 / follow-up phase):**
-3. **Keyless GitHub REST search path for discovery** — GitHub *search-result pages* are JS-rendered,
-   so search-page seeds yield nav chrome instead of results. The REST API path (or the D1 fetcher
-   seam) would fix the discovery blind spot properly.
-4. **L5 content-marker drift** — scaffolded (`storedMarker`), pending the resource-safety-guard's
-   L3 server-side fetch.
-5. **Playwright rendering inside the discovery crawl** — the fetcher seam (D1) is built ready but
-   deliberately not wired (plan §7, still out of scope).
-6. **Playwright target selector drift** — YC/WWR selectors verified live 2026-09-23 only; treat
-   silent zero-yield as drift. himalayas/remoteok stay disabled unless Cloudflare is bypassed.
-7. **`pdfjs-dist 6.2.108 → 6.3.289`** — no Dependabot PR yet (plan §7).
+**Feature work not yet built — ✅ CLOSED 2026-09-25 (PRs #87–#90):**
+3. ~~**Keyless GitHub REST search path for discovery**~~ — **Done (#87).** `classifySeed` now
+   recognizes `github.com/search` URLs as a `github-search` kind; the orchestrator executes them
+   against the keyless REST API (`githubSearchUrl` / `parseRepoSearchHit` — structured repos with
+   SPDX license stamps) and fans them into license-checked repo child crawls. Optional `GITHUB_TOKEN`
+   raises the rate budget. Live-smoked against the real API.
+4. ~~**L5 content-marker drift**~~ — **Done (#88).** `markerFromText()` fingerprints the first ~200
+   chars of visible text (script/style-stripped, noise-immune); `decideResource` stores it in
+   `meta.contentMarker` at approval (best-effort); the weekly re-validation fetches the body and
+   quarantines on a REAL mismatch. Uncertainty (unfetchable body, pre-marker resources) still passes
+   on reachability — fail-closed on evidence, fail-open on unknowns.
+5. ~~**Playwright rendering inside the discovery crawl**~~ — **Done (#89).**
+   `scripts/discovery-render-fetcher.mjs` implements the D1 seam with a shared headless Chromium;
+   `DISCOVERY_RENDER=1` opts in (crawl-weekly installs Playwright only when the repo variable is
+   set); plain fetch remains the default and the fallback.
+6. ~~**Playwright target selector drift**~~ — **Re-verified + alarmed (#88).** WWR selectors intact
+   (the category URL now 302s to remote-full-stack-programming-jobs); YC confirmed still fully
+   JS-rendered. A run where every target loads but zero postings match now **exits 1** with a
+   `SELECTOR DRIFT SUSPECTED` banner instead of shipping green. himalayas/remoteok stay disabled
+   unless Cloudflare is bypassed.
+7. ~~**`pdfjs-dist 6.2.108 → 6.3.289`**~~ — **Done (#90).** Minor bump; pdf/resume suites pass
+   unchanged, all gates green.
 
 **Data still in the backlog (by design, not missing code):**
 8. **227 answerless drafts** — good titles, no answers; blocked on item 1 (AI-clean key). The
@@ -193,9 +204,9 @@ Deviations / corrections worth remembering:
 
 ## 7. Current gate baselines (moved with each merge, as the cadence requires)
 
-| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-25, post-#86) |
+| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-25, post-#90) |
 |---|---|---|
-| vitest | 1292 | **1452** (+160) |
+| vitest | 1292 | **1459** (+167) |
 | eval:rag | 41 | 41 |
 | deno | 72 passed / 0 failed | 72 passed / 0 failed |
 
@@ -204,6 +215,7 @@ isolation before calling a failure a regression.
 
 ---
 
-_Last updated 2026-09-25 after PRs #84–#86 (admin skill filters, OR semantics, derived inbox chips)
-and the editorial/backfill data operations. For the blow-by-blow record see
+_Last updated 2026-09-25 after PRs #84–#90 (admin skill filters, OR semantics, derived inbox chips,
+keyless GitHub REST search, selector-drift alarm + L5 content markers, opt-in render fetcher,
+pdfjs bump) and the editorial/backfill data operations. For the blow-by-blow record see
 [`docs/phase4-progress.md`](phase4-progress.md)._
