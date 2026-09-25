@@ -18,7 +18,7 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { classifySeed, planDiscovery } from "./discover-lib.js";
+import { classifySeed, planDiscovery, githubSearchUrl, parseRepoSearchHit } from "./discover-lib.js";
 import { Budget, extractLinks, detectType, robotsAllowed, createFetcher } from "./crawl-lib.js";
 import { extractItems, buildUpsertSql, partitionOversizeQuestions } from "./scrape-lib.js";
 import { slugify } from "./ai-draft-lib.js";
@@ -91,6 +91,57 @@ function extractionSource(seed, url) {
     level: seed.level || "mid",
     maxItems: 20,
   };
+}
+
+/** Executes a `github-search` seed against the keyless REST API (the search-UI
+ *  page is JS-rendered — the crawler would only see nav chrome). Returns the
+ *  discovered repos as child github-repo seeds (license carried from the hit;
+ *  no-license repos keep the needs-license-review flag) plus a perSeed entry.
+ *  Keyless = the same 10 req/min budget the D5 prober lives with; optional
+ *  GITHUB_TOKEN raises it via headers. 403/429 → render-fallback notice. */
+export async function runGithubSearch(seed, opts = {}) {
+  const { fetcher, maxRepos = 10 } = opts;
+  const cls = classifySeed(seed.url);
+  const key = String(seed.id ?? seed.url);
+  const empty = { perSeed: { [key]: { url: seed.url, kind: "github-search", repos: 0 } }, childSeeds: [] };
+  if (!cls || cls.kind !== "github-search" || !cls.query) return empty;
+
+  const api = githubSearchUrl(cls.query, { perPage: Math.min(maxRepos, 50) });
+  let body;
+  try {
+    const headers = { Accept: "application/vnd.github+json" };
+    if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+    const res = await fetch(api, { headers });
+    if (!res.ok) {
+      empty.perSeed[key].apiStatus = res.status;
+      empty.perSeed[key].note = res.status === 403 || res.status === 429
+        ? "rate-limited — render-fallback would be JS-rendered chrome; treat as zero-yield"
+        : `search API HTTP ${res.status}`;
+      return empty;
+    }
+    body = await res.json();
+  } catch (e) {
+    empty.perSeed[key].error = `search API failed: ${String(e.message ?? e).slice(0, 120)}`;
+    return empty;
+  }
+
+  const childSeeds = [];
+  for (const hit of Array.isArray(body?.items) ? body.items.slice(0, maxRepos) : []) {
+    const repo = parseRepoSearchHit(hit);
+    if (!repo) continue;
+    childSeeds.push({
+      id: null,
+      url: repo.url,
+      kind: "github-repo",
+      originDetail: `github-search:${cls.query}`,
+      skill: seed.skill ?? null,
+      license: repo.license,
+      origin: "search-child",
+    });
+  }
+  empty.perSeed[key].repos = childSeeds.length;
+  empty.perSeed[key].totalResults = typeof body?.total_count === "number" ? body.total_count : undefined;
+  return { perSeed: empty.perSeed, childSeeds };
 }
 
 /** Crawls ONE seed: BFS from the seed URL within budget, robots+politeness via
@@ -264,6 +315,21 @@ async function main() {
   const robotsCache = new Map();
 
   for (const seed of seeds) {
+    /* github-search seeds never crawl HTML (JS-rendered chrome) — they fan out
+       into license-stamped github-repo child seeds via the keyless REST API */
+    const cls = classifySeed(seed.url);
+    if (cls?.kind === "github-search") {
+      const search = await runGithubSearch(seed, { fetcher });
+      Object.assign(perSeed, search.perSeed);
+      for (const child of search.childSeeds) {
+        const r = await crawlSeed(child, { maxTotal, fetcher, dryRun, robotsCache });
+        Object.assign(perSeed, r.perSeed);
+        allQa = allQa.concat(r.qa);
+        allProblems = allProblems.concat(r.problems);
+        allResources = allResources.concat(r.resources);
+      }
+      continue;
+    }
     const res = await crawlSeed(seed, { maxTotal, fetcher, dryRun, robotsCache });
     Object.assign(perSeed, res.perSeed);
     allQa = allQa.concat(res.qa);

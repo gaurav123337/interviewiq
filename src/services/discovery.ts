@@ -16,7 +16,7 @@ import type { SupabaseClientLike } from "./scraper";
 
 export type SeedStatus = "pending" | "approved" | "rejected";
 export type ResourceStatus = "pending" | "approved" | "rejected";
-export type SeedKind = "github-topic" | "github-repo" | "json" | "sitemap" | "html";
+export type SeedKind = "github-topic" | "github-repo" | "github-search" | "json" | "sitemap" | "html";
 
 export interface DiscoverySeed {
   id: number;

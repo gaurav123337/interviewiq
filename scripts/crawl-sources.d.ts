@@ -30,3 +30,17 @@ export declare function crawlSeed(
     robotsCache?: Map<string, string | null>;
   }
 ): Promise<CrawlSeedResult>;
+
+export interface GithubSearchRunResult {
+  perSeed: Record<string, Record<string, unknown>>;
+  childSeeds: (CrawlSeedRow & { origin?: string })[];
+}
+
+/** Executes a github-search seed against the keyless GitHub REST search API
+    (the search-UI page is JS-rendered chrome). Returns license-stamped
+    github-repo child seeds; rate-limit/403 yields an explanatory perSeed note
+    and no children. Optional GITHUB_TOKEN raises the rate budget. */
+export declare function runGithubSearch(
+  seed: CrawlSeedRow,
+  opts?: { fetcher?: unknown; maxRepos?: number }
+): Promise<GithubSearchRunResult>;

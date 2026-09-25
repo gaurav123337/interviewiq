@@ -17,6 +17,7 @@ import { btnOk, btnGhost, btnDanger, btnSm, cardCls, Chip } from "../ui";
 const KIND_ICON: Record<SeedKind, string> = {
   "github-topic": "🐙",
   "github-repo": "📦",
+  "github-search": "🔎",
   "json": "🧾",
   "sitemap": "🗺️",
   "html": "🌐"
