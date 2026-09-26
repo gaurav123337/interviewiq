@@ -154,6 +154,7 @@ Deviations / corrections worth remembering:
 | Auto-apply engine (local Playwright) | #97 | searches any jobs-list URL (LinkedIn/Naukri/Instahyre/generic), per-JD AI resume+cover letter, honest form answers from an apply profile, per-site submit rules (auto Instahyre/Naukri; review-gate LinkedIn/unknown), fail-closed on unanswerable required questions; local-only driver + reports |
 | Platinum tier (auto-apply gated) | #98 | free/pro/platinum across SQL + payments + client; `is_platinum` server-computed; $349 one-time plan; Upgrade tile + admin grant + gated AutoApplyCard (profile export + run commands); migration applied + verified live |
 | Auto-apply ADD-ON (pay extra, any plan) | #99 | `addons.auto_apply` flag purchasable standalone ($199 one-time) through the normal checkout on free/pro/lifetime too; Platinum bundles it; refunds remove the flag; server-computed gate `addon OR platinum`; SQL applied live |
+| AutoApplyCard admin bypass | #100 | the gate includes `adminUnlockedActive()` — admins are unlocked without any entitlements row (card re-evaluates on admin-state changes) |
 
 ---
 
@@ -254,9 +255,9 @@ Deviations / corrections worth remembering:
 
 ## 7. Current gate baselines (moved with each merge, as the cadence requires)
 
-| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#99) |
+| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#100) |
 |---|---|---|
-| vitest | 1292 | **1521** (+229) |
+| vitest | 1292 | **1522** (+230) |
 | eval:rag | 41 | 41 |
 | deno | 72 passed / 0 failed | 72 passed / 0 failed |
 
