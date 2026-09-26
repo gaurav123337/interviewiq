@@ -151,6 +151,7 @@ Deviations / corrections worth remembering:
 | Scan stale-report + no-listing gateways | #94 | scan card re-scans when the saved provider changes (+ manual Rescan); listing-less gateways (agentrouter serves SPA HTML) fall back to probing saved model + common candidates; HTML-200 probes and Test-key responses rejected as non-chat |
 | Scan card names the provider | #95 | header, scanning line, empty note and auto-apply toast all show the provider host from the saved base URL |
 | Test key loopback guard | #96 | localhost/127.0.0.1/[::1] provider bases rejected up-front with the tunnel fix — the pipeline runs on Supabase/CI and Chrome blocks public→local calls |
+| Auto-apply engine (local Playwright) | #97 | searches any jobs-list URL (LinkedIn/Naukri/Instahyre/generic), per-JD AI resume+cover letter, honest form answers from an apply profile, per-site submit rules (auto Instahyre/Naukri; review-gate LinkedIn/unknown), fail-closed on unanswerable required questions; local-only driver + reports |
 
 ---
 
@@ -251,9 +252,9 @@ Deviations / corrections worth remembering:
 
 ## 7. Current gate baselines (moved with each merge, as the cadence requires)
 
-| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#96) |
+| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#97) |
 |---|---|---|
-| vitest | 1292 | **1493** (+201) |
+| vitest | 1292 | **1510** (+218) |
 | eval:rag | 41 | 41 |
 | deno | 72 passed / 0 failed | 72 passed / 0 failed |
 
