@@ -31,7 +31,8 @@ export type ModuleId =
   | "contentIndex"    // Content indexing for RAG retrieval
   | "deepdive"        // Deep dive analysis
   | "rag"             // RAG tutor & knowledge answers
-  | "contentQuality"; // Content quality scoring (LLM-as-Judge)
+  | "contentQuality" // Content quality scoring (LLM-as-Judge)
+  | "ats";            // ATS resume optimizer (Make ATS-ready)
 
 /** Per-module model override — stored in localStorage. */
 export interface ModuleModelOverride {
@@ -77,6 +78,7 @@ export const MODULE_LIST: ModuleInfo[] = [
   { id: "deepdive",       label: "Deep Dive Analysis",      description: "Multi-step analysis of complex topics.",                   suggestedModel: "gpt-4o",              needsJson: false, benefitsFromReasoning: true },
   { id: "rag",            label: "RAG Tutor & Knowledge",   description: "Grounded retrieval-augmented answers.",                    suggestedModel: "gpt-4o-mini",         needsJson: false, benefitsFromReasoning: false },
   { id: "contentQuality", label: "Content Quality Scoring", description: "Evaluates content accuracy and relevance (LLM-as-Judge).",  suggestedModel: "gpt-4o-mini",         needsJson: true, benefitsFromReasoning: false },
+  { id: "ats",            label: "ATS Resume Optimizer",    description: "Rewrites resumes into ATS-compliant plain text (strict JSON).", suggestedModel: "gpt-4o-mini", needsJson: true, benefitsFromReasoning: false },
 ];
 
 /* ------------------------------------------------------------------ */
