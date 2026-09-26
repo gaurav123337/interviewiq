@@ -139,7 +139,9 @@ async function authedEdgeFetch(payload: unknown): Promise<Response> {
 /** List + live-probe + rank every chat model on the configured provider. */
 export async function scanProviderModels(force = false): Promise<ProbeReport> {
   const listed = await fetchAvailableModels(force);
-  if (!listed.length) throw new Error("Couldn't list models — check the key and base URL, then retry.");
+  if (!listed.length) {
+    throw new Error("The provider listed zero models — the key works but exposes no chat models. Check the provider dashboard.");
+  }
   const res = await authedEdgeFetch({ action: "probe-models" });
   const body = await res.json().catch(() => ({} as { verdicts?: ProbeVerdict[]; error?: string }));
   if (!res.ok || !Array.isArray(body.verdicts)) {
