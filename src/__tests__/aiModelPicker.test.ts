@@ -14,6 +14,7 @@ import {
   autoPick,
   buildModelOptions,
   describeTask,
+  providerLabelFromBase,
   rankFor,
   type ProbeVerdict
 } from "../services/aiModelPicker";
@@ -38,6 +39,20 @@ describe("describeTask", () => {
     expect(describeTask("deepseek/deepseek-v4-flash", ["fast"])).toMatch(/Fast and inexpensive/);
     expect(describeTask("claude-opus-4-8", [])).toMatch(/Flagship quality/);
     expect(describeTask("some-unknown-thing", [])).toMatch(/General-purpose chat/);
+  });
+});
+
+describe("providerLabelFromBase", () => {
+  it("names the provider host from the saved base URL", () => {
+    expect(providerLabelFromBase("https://www.getunikey.ai/v1")).toBe("getunikey.ai");
+    expect(providerLabelFromBase("https://agentrouter.org/")).toBe("agentrouter.org");
+    expect(providerLabelFromBase("http://localhost:8137/v1")).toBe("localhost");
+    expect(providerLabelFromBase("https://api.openai.com/v1")).toBe("api.openai.com");
+  });
+
+  it("never returns empty — falls back to the raw input", () => {
+    expect(providerLabelFromBase("")).toBe("unknown provider");
+    expect(providerLabelFromBase("not-a-url")).toBe("not-a-url");
   });
 });
 
