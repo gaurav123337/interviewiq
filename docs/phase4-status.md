@@ -147,6 +147,7 @@ Deviations / corrections worth remembering:
 | AI-clean + second editorial push (live data ops) | — | key fixed (getunikey / deepseek-v4-flash); 281 drafts published; bank 269 → **550**; pile 293 → 12 |
 | Make ATS-ready resume rewrite | #91 | one-click 🎯 Make ATS-ready on ResumeCard: strict-JSON rewrite via `chat(module:"ats")` (BYOK → cloudChat ladder), dropped-contact repair, mirrored skills filtered to the job, before/after ATS-parse diff, use-as-my-resume → `applyResume` re-extract |
 | Working-model discovery + 2-min auto-apply | #92 | admin ModelScanCard probes the gateway model list through the `ai-chat` edge fn (`probe-models`: 1-token live probe, nonce cache-bypass, media/embedding models excluded), ranks probed models with plain-language task descriptions, and auto-applies the winner after a 120 s countdown; `ai-chat` registered in deploy.yml (was hand-deployed only) |
+| Model-list CORS fix (scan "Couldn't list models") | #93 | ai-chat's list/probe/set handlers returned bare Responses — browsers blocked the CORS-less 200 and the client wrapper swallowed it into `[]`; CORS headers threaded onto every Response + the wrapper now throws with the real reason |
 
 ---
 
@@ -205,6 +206,12 @@ Deviations / corrections worth remembering:
     failure) via the `set-provider-model` action. Deployment gap fixed: `ai-chat` was missing from
     deploy.yml — now registered, so Pages deploys bundle it too. 11 tests in
     `aiModelPicker.test.ts`.
+14. ~~**Scan card "Couldn't list models" in the browser**~~ — **Fixed (#93, 2026-09-26).** The #92
+    handlers returned bare Responses (Content-Type only), dropping the CORS headers — browsers
+    block a CORS-less response even when it's a 200 — and the old client wrapper swallowed every
+    failure into `[]`. Handlers now thread the prepared CORS headers; `fetchAvailableModels`
+    throws with the real reason (edge error / network-or-CORS / signed-out) and no longer caches
+    empty lists. 8 regression tests in `aiModels.test.ts`.
 
 **Data still in the backlog (by design, not missing code):**
 8. ~~**227 answerless drafts**~~ — **Resolved 2026-09-26.** All 293 drafts (the 227 plus the
@@ -233,20 +240,18 @@ Deviations / corrections worth remembering:
 
 ## 7. Current gate baselines (moved with each merge, as the cadence requires)
 
-| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#92) |
+| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#93) |
 |---|---|---|
-| vitest | 1292 | **1478** (+186) |
+| vitest | 1292 | **1486** (+194) |
 | eval:rag | 41 | 41 |
 | deno | 72 passed / 0 failed | 72 passed / 0 failed |
 
 `reviewInbox-perf.test.ts` and `app.flow.test.tsx` remain load-flaky under parallel load — re-run in
 isolation before calling a failure a regression.
 
----
-
-_Last updated 2026-09-26 after PRs #84–#92 (admin skill filters, OR semantics, derived inbox chips,
+---_Last updated 2026-09-26 after PRs #84–#93 (admin skill filters, OR semantics, derived inbox chips,
 keyless GitHub REST search, selector-drift alarm + L5 content markers, opt-in render fetcher,
-pdfjs bump, the ATS-ready resume rewrite, and AI model discovery + auto-apply), the
-editorial/backfill data operations, and the AI-clean + second editorial pass
+pdfjs bump, the ATS-ready resume rewrite, AI model discovery + auto-apply, and the model-list
+CORS fix), the editorial/backfill data operations, and the AI-clean + second editorial pass
 (bank 269 → 550). For the blow-by-blow record see
 [`docs/phase4-progress.md`](phase4-progress.md)._
