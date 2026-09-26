@@ -57,6 +57,12 @@ export async function fetchAvailableModels(forceRefresh = false): Promise<AiMode
   if (!res.ok || !Array.isArray(body.models)) {
     throw new Error(body.error ?? `Listing models failed (HTTP ${res.status}).`);
   }
+  if (!body.models.length) {
+    /* the EDGE could not list either (agentrouter-style gateways serve no
+       JSON /models) — say that, so the scan's probe fallback isn't mistaken
+       for a broken key */
+    throw new Error("This provider does not expose a model list — the scan will probe common models directly instead.");
+  }
 
   /* don't cache an empty list — a transient gateway hiccup would stick for 5 min */
   if (body.models.length) {

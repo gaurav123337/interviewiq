@@ -215,6 +215,7 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
       <ModelScanCard
         open={scanOpen}
         currentModel={status?.model ?? ""}
+        providerId={`${status?.keyHint ?? ""}@${(status?.base ?? "").replace(/\/+$/, "")}`}
         onToast={onToast}
         onApplied={onLoad}
         onClose={() => setScanOpen(false)}
@@ -232,9 +233,11 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
 
 const AUTO_APPLY_AFTER_MS = 120_000;
 
-function ModelScanCard({ open, currentModel, onToast, onApplied, onClose }: {
+function ModelScanCard({ open, currentModel, providerId, onToast, onApplied, onClose }: {
   open: boolean;
   currentModel: string;
+  /** Identifies the SAVED provider (keyHint@base) — a change triggers a re-scan. */
+  providerId: string;
   onToast: (m: string) => void;
   onApplied: () => void;
   onClose: () => void;
@@ -245,6 +248,7 @@ function ModelScanCard({ open, currentModel, onToast, onApplied, onClose }: {
   const [applying, setApplying] = useState("");
   /* idle countdown: starts once results are shown, cancels on any pick */
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const autoAppliedRef = useRef(false);
 
   const runScan = async () => {
     setPhase("scanning");
@@ -262,11 +266,23 @@ function ModelScanCard({ open, currentModel, onToast, onApplied, onClose }: {
     }
   };
 
-  /* auto-scan on open (post-save popup or manual) */
+  /* auto-scan on open (post-save popup or manual); RE-scan when the SAVED
+     provider changes while open — without this, switching keys showed the
+     PREVIOUS provider's results (owner-reported 2026-09-26). */
+  const lastProviderRef = useRef<string | null>(null);
   useEffect(() => {
-    if (open && phase === "idle") void runScan();
+    if (!open) { lastProviderRef.current = null; return; }
+    const changed = lastProviderRef.current !== null && lastProviderRef.current !== providerId;
+    lastProviderRef.current = providerId;
+    if (changed) {
+      setReport(null);
+      setError(null);
+      setSecondsLeft(null);
+      autoAppliedRef.current = false;
+    }
+    if (phase === "idle" || changed) void runScan();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, providerId]);
 
   /* 2-minute idle fallback — self-heals the pipeline when the saved model
      is broken and the owner has walked away. Any pick cancels it. */
@@ -275,7 +291,6 @@ function ModelScanCard({ open, currentModel, onToast, onApplied, onClose }: {
     const t = window.setTimeout(() => setSecondsLeft(s => (s === null ? null : s - 1)), 1000);
     return () => window.clearTimeout(t);
   }, [phase, secondsLeft]);
-  const autoAppliedRef = useRef(false);
   useEffect(() => {
     if (phase !== "done" || secondsLeft !== 0 || autoAppliedRef.current) return;
     autoAppliedRef.current = true;
@@ -321,6 +336,7 @@ function ModelScanCard({ open, currentModel, onToast, onApplied, onClose }: {
               auto-apply best in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")} — pick one to cancel
             </span>
           )}
+          <button className={btnGhost + btnSm} onClick={() => void runScan()} disabled={phase === "scanning"}>↻ Rescan</button>
           <button className="text-[11.5px] text-mut hover:text-ink" onClick={() => { setSecondsLeft(null); onClose(); }}>✕ hide</button>
         </div>
       </div>

@@ -1,5 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/* the scan functions need a signed-in session for the edge fetch — mock the
+   cloud seam (pure functions in this file never touch it) */
+vi.mock("../services/cloud", () => ({
+  getSupabaseClient: vi.fn(async () => ({
+    auth: { getSession: async () => ({ data: { session: { access_token: "test-token" } } }) }
+  })),
+  getCloudState: () => ({ user: { email: "owner@example.com" } })
+}));
 
 import {
   autoPick,
@@ -93,6 +102,49 @@ describe("buildModelOptions", () => {
   it("never suggests a model that was not probed", () => {
     const r = buildModelOptions(listed, [verdict("deepseek/deepseek-v4-flash", "ok")]);
     expect(r.options.map(o => o.id)).toEqual(["deepseek/deepseek-v4-flash"]);
+  });
+});
+
+describe("scanProviderModels (no-listing fallback)", () => {
+  /* agentrouter-style gateways serve no JSON /models — discovery must survive
+     on probe verdicts alone (owner-reported 2026-09-26) */
+  it("builds the report purely from probe verdicts when listing fails", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (init?.method === "POST" && url.includes("/functions/v1/ai-chat")) {
+        return new Response(JSON.stringify({
+          verdicts: [
+            { model: "google/gemini-3.1-flash-lite", status: "ok", httpStatus: 200, latencyMs: 640, sample: "OK" },
+            { model: "gpt-4o-mini", status: "failed", httpStatus: 401, latencyMs: 210, sample: "unauthorized client detected" }
+          ],
+          probed: 2,
+          listedCount: 0,
+          listError: "HTTP 401"
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 }); // listing empty → throws
+    }));
+    const { scanProviderModels } = await import("../services/aiModelPicker");
+    const r = await scanProviderModels(true);
+    expect(r.options.map(o => o.id)).toEqual(["google/gemini-3.1-flash-lite"]);
+    expect(r.rejected).toEqual([{ model: "gpt-4o-mini", httpStatus: 401, note: "unauthorized client detected" }]);
+    expect(r.scanned).toBe(2);
+    expect(calls.some(c => c.startsWith("POST"))).toBe(true); // the probe still ran
+  });
+
+  it("throws an actionable error when there is no list AND nothing answers", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string }) => {
+      if (init?.method === "POST" && url.includes("/functions/v1/ai-chat")) {
+        return new Response(JSON.stringify({
+          verdicts: [{ model: "gpt-4o-mini", status: "failed", httpStatus: 401, latencyMs: 200, sample: "unauthorized" }],
+          probed: 1, listedCount: 0, listError: "HTTP 401"
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    }));
+    const { scanProviderModels } = await import("../services/aiModelPicker");
+    await expect(scanProviderModels(true)).rejects.toThrow(/none of the common chat models answered/i);
   });
 });
 
