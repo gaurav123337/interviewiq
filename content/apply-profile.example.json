@@ -1,0 +1,32 @@
+{
+  "name": "Gaurav Gupta",
+  "email": "you@example.com",
+  "phone": "+91 90000 00000",
+  "headline": "Senior Backend Engineer",
+  "years": 5,
+  "locations": ["Bengaluru", "Remote (India)"],
+  "noticePeriod": "30 days",
+  "salaryExpectation": "",
+  "openToRelocate": true,
+  "openToRemote": true,
+  "portfolio": "https://github.com/you",
+  "linkedin": "https://linkedin.com/in/you",
+  "reasonLeaving": "",
+  "summary": "Backend engineer focused on reliable, well-tested services. Shipped payment and discovery pipelines at scale.",
+  "skills": ["Node.js", "TypeScript", "React", "PostgreSQL", "AWS", "System Design"],
+  "experience": [
+    {
+      "role": "Senior Software Engineer",
+      "company": "Acme Corp",
+      "period": "2022 — present",
+      "highlights": [
+        "Cut p95 API latency 40% by redesigning the caching layer",
+        "Owned the payments migration to a double-entry ledger"
+      ]
+    }
+  ],
+  "projects": [
+    { "name": "InterviewIQ", "description": "open-source interview-prep platform (React + Supabase)" }
+  ],
+  "education": "B.Tech, Computer Science"
+}
