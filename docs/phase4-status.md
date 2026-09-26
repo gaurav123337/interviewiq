@@ -148,6 +148,7 @@ Deviations / corrections worth remembering:
 | Make ATS-ready resume rewrite | #91 | one-click 🎯 Make ATS-ready on ResumeCard: strict-JSON rewrite via `chat(module:"ats")` (BYOK → cloudChat ladder), dropped-contact repair, mirrored skills filtered to the job, before/after ATS-parse diff, use-as-my-resume → `applyResume` re-extract |
 | Working-model discovery + 2-min auto-apply | #92 | admin ModelScanCard probes the gateway model list through the `ai-chat` edge fn (`probe-models`: 1-token live probe, nonce cache-bypass, media/embedding models excluded), ranks probed models with plain-language task descriptions, and auto-applies the winner after a 120 s countdown; `ai-chat` registered in deploy.yml (was hand-deployed only) |
 | Model-list CORS fix (scan "Couldn't list models") | #93 | ai-chat's list/probe/set handlers returned bare Responses — browsers blocked the CORS-less 200 and the client wrapper swallowed it into `[]`; CORS headers threaded onto every Response + the wrapper now throws with the real reason |
+| Scan stale-report + no-listing gateways | #94 | scan card re-scans when the saved provider changes (+ manual Rescan); listing-less gateways (agentrouter serves SPA HTML) fall back to probing saved model + common candidates; HTML-200 probes and Test-key responses rejected as non-chat |
 
 ---
 
@@ -212,6 +213,14 @@ Deviations / corrections worth remembering:
     failure into `[]`. Handlers now thread the prepared CORS headers; `fetchAvailableModels`
     throws with the real reason (edge error / network-or-CORS / signed-out) and no longer caches
     empty lists. 8 regression tests in `aiModels.test.ts`.
+15. ~~**Scan shows the previous provider's models after a key switch; listing-less gateways
+    can't be scanned**~~ — **Fixed (#94 + 92891c08, 2026-09-26).** The card now re-scans whenever
+    the saved provider identity (keyHint@base) changes and has a manual Rescan button; the edge
+    probe action falls back to a candidate set (saved model + common chat families) when the
+    provider serves no JSON `/models`; an HTML-200 probe counts as FAILED (`non-JSON response`),
+    and "Test key" no longer shows a false green on SPA-serving gateways. Note: agentrouter.org
+    blocks non-browser API clients outright (401 "unauthorized client detected") — unusable as a
+    pipeline provider; getunikey works.
 
 **Data still in the backlog (by design, not missing code):**
 8. ~~**227 answerless drafts**~~ — **Resolved 2026-09-26.** All 293 drafts (the 227 plus the
@@ -240,9 +249,9 @@ Deviations / corrections worth remembering:
 
 ## 7. Current gate baselines (moved with each merge, as the cadence requires)
 
-| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#93) |
+| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#94) |
 |---|---|---|
-| vitest | 1292 | **1486** (+194) |
+| vitest | 1292 | **1489** (+197) |
 | eval:rag | 41 | 41 |
 | deno | 72 passed / 0 failed | 72 passed / 0 failed |
 
