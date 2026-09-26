@@ -10,7 +10,7 @@
    Pure + unit-tested; no Playwright, no filesystem, no cloud calls. */
 
 import { getCanonicalProfile, toCareerProfile } from "./profileStore";
-import { getTier } from "./entitlements";
+import { adminUnlockedActive, getTier } from "./entitlements";
 import { serverAutoApply, serverPlatinum } from "./entitlement";
 
 /** The engine's apply-profile.json shape (content/apply-profile.example.json). */
@@ -35,10 +35,13 @@ export interface ApplyProfileJson {
   education?: string;
 }
 
-/** True when the signed-in user's SERVER entitlement grants auto-apply:
-    the ADD-ON purchased on any plan, or the Platinum bundle. */
+/** True when auto-apply is usable: the ADD-ON purchased on any plan, the
+    Platinum bundle — or the viewer is an ADMIN ("admins have ALL
+    restrictions lifted" is independent of the entitlements row, which most
+    admins never have — the gate must honor the bypass like every other
+    paywalled surface). */
 export function platinumActive(): boolean {
-  return serverAutoApply() || serverPlatinum() || getTier() === "platinum";
+  return adminUnlockedActive() || serverAutoApply() || serverPlatinum() || getTier() === "platinum";
 }
 
 /** Builds the engine profile from the app's canonical aggregate. Never

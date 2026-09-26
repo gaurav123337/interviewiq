@@ -2,7 +2,7 @@
    and the run-command builder. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ tier: "free" as string, platinum: false, addon: false }));
+const mocks = vi.hoisted(() => ({ tier: "free" as string, platinum: false, addon: false, admin: false }));
 
 vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(async () => null),
@@ -10,7 +10,8 @@ vi.mock("../services/cloud", () => ({
 }));
 vi.mock("../services/entitlements", () => ({
   getTier: () => mocks.tier,
-  isPlatinum: () => mocks.tier === "platinum"
+  isPlatinum: () => mocks.tier === "platinum",
+  adminUnlockedActive: () => mocks.admin
 }));
 vi.mock("../services/entitlement", () => ({
   serverPlatinum: () => mocks.platinum,
@@ -32,6 +33,7 @@ beforeEach(() => {
   mocks.tier = "free";
   mocks.platinum = false;
   mocks.addon = false;
+  mocks.admin = false;
 });
 
 describe("platinum gate", () => {
@@ -60,6 +62,13 @@ describe("platinum gate", () => {
 
   it("stays closed when neither Platinum nor the add-on is server-verified", () => {
     mocks.tier = "pro";
+    expect(platinumActive()).toBe(false);
+  });
+
+  it("opens for ADMINS with no entitlements row at all (all restrictions lifted)", () => {
+    mocks.admin = true;
+    expect(platinumActive()).toBe(true);
+    mocks.admin = false;
     expect(platinumActive()).toBe(false);
   });
 });
