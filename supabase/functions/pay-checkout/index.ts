@@ -13,7 +13,7 @@ const cors = (req: Request): Record<string, string> => ({
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 });
 
-interface PricingRow { currency?: string; monthly?: number; yearly?: number; lifetime?: number }
+interface PricingRow { currency?: string; monthly?: number; yearly?: number; lifetime?: number; platinum?: number }
 
 async function remotePricing(supabase: ReturnType<typeof createClient>): Promise<PricingRow> {
   const { data, error } = await supabase.from("app_config").select("value").eq("key", "pricing").maybeSingle();
@@ -49,7 +49,8 @@ Deno.serve(async (req) => {
     const currency = pricing.currency ?? Deno.env.get("PAYMENT_CURRENCY") ?? "USD";
     const appUrl = Deno.env.get("APP_URL") ?? "https://gaurav123337.github.io/interviewiq/";
     /* admin-published price (dollars → minor units) or the baked-in catalog */
-    const amountMinorOverride = pricing[plan] != null ? Math.round(pricing[plan] * 100) : undefined;
+    const planPrice = (pricing as Record<string, number | string | undefined>)[plan];
+    const amountMinorOverride = planPrice != null ? Math.round(Number(planPrice) * 100) : undefined;
 
     /* coupon codes are validated server-side — the client's word is not
        trusted. The better of the user discount and the coupon wins, and the

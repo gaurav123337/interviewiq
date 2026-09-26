@@ -1,0 +1,112 @@
+/* autoApply — Platinum-tier bridge to the LOCAL auto-apply engine
+   (scripts/auto-apply-jobs.js). The engine runs on the owner's machine
+   (headed Chromium + persistent job-board logins) — the app's job here is:
+     1. GATE the feature to Platinum (server-verified via serverPlatinum()).
+     2. EXPORT the app's career profile into the engine's apply-profile.json
+        shape (contacts from the canonical aggregate; the engine leaves
+        anything absent blank → required-and-blank marks needs-review,
+        fail-closed).
+     3. Emit ready-to-paste run commands per job board.
+   Pure + unit-tested; no Playwright, no filesystem, no cloud calls. */
+
+import { getCanonicalProfile, toCareerProfile } from "./profileStore";
+import { getTier } from "./entitlements";
+import { serverPlatinum } from "./entitlement";
+
+/** The engine's apply-profile.json shape (content/apply-profile.example.json). */
+export interface ApplyProfileJson {
+  name?: string;
+  email?: string;
+  phone?: string;
+  headline?: string;
+  years?: number;
+  locations?: string[];
+  noticePeriod?: string;
+  salaryExpectation?: string;
+  openToRelocate?: boolean | null;
+  openToRemote?: boolean | null;
+  portfolio?: string;
+  linkedin?: string;
+  reasonLeaving?: string;
+  summary?: string;
+  skills?: string[];
+  experience?: { role?: string; company?: string; period?: string; highlights?: string[] }[];
+  projects?: { name?: string; description?: string }[];
+  education?: string;
+}
+
+/** True when the signed-in user's SERVER entitlement grants Platinum. */
+export function platinumActive(): boolean {
+  return serverPlatinum() || getTier() === "platinum";
+}
+
+/** Builds the engine profile from the app's canonical aggregate. Never
+    invents: fields the app doesn't hold are omitted. workAuth is deliberately
+    NOT exported — the engine's classifier flags work-authorization questions
+    as fail-closed review; a stale resume claim shouldn't auto-answer them. */
+export function buildEngineProfile(): ApplyProfileJson {
+  const canonical = getCanonicalProfile();
+  if (!canonical) return {};
+  const career = toCareerProfile(canonical);
+
+  const p: ApplyProfileJson = {
+    headline: career.headline || undefined,
+    years: career.years != null ? career.years : undefined,
+    locations: [career.location, career.remote ? "Remote" : ""].filter(Boolean),
+    openToRemote: career.remote,
+    summary: career.summary || undefined,
+    skills: career.skills?.length ? [...career.skills] : undefined,
+  };
+  /* contact fields live on the uploaded resume's extracted profile when the
+     canonical store holds them; the engine requires name/email/phone and
+     fail-closes when missing */
+  const extras = canonical as unknown as {
+    name?: string; email?: string; phone?: string;
+    noticePeriod?: string; salaryExpectation?: string; openToRelocate?: boolean;
+    portfolio?: string; linkedin?: string; reasonLeaving?: string;
+    experience?: ApplyProfileJson["experience"]; projects?: ApplyProfileJson["projects"]; education?: string;
+  };
+  if (extras.name) p.name = extras.name;
+  if (extras.email) p.email = extras.email;
+  if (extras.phone) p.phone = extras.phone;
+  if (extras.noticePeriod) p.noticePeriod = extras.noticePeriod;
+  if (extras.salaryExpectation) p.salaryExpectation = extras.salaryExpectation;
+  if (extras.openToRelocate != null) p.openToRelocate = extras.openToRelocate;
+  if (extras.portfolio) p.portfolio = extras.portfolio;
+  if (extras.linkedin) p.linkedin = extras.linkedin;
+  if (extras.reasonLeaving) p.reasonLeaving = extras.reasonLeaving;
+  if (extras.experience?.length) p.experience = extras.experience;
+  if (extras.projects?.length) p.projects = extras.projects;
+  if (extras.education) p.education = extras.education;
+  return p;
+}
+
+export const APPLY_SITES = [
+  { id: "instahyre", label: "Instahyre", url: "https://www.instahyre.com/candidate/opportunities/?matching=true", submit: "auto" },
+  { id: "naukri", label: "Naukri", url: "https://www.naukri.com/mnjuser/recommendedjobs", submit: "auto" },
+  { id: "linkedin", label: "LinkedIn", url: "https://www.linkedin.com/jobs/", submit: "review" },
+] as const;
+
+export interface ApplyCommand {
+  site: string;
+  label: string;
+  submit: "auto" | "review";
+  /** The exact CLI line the owner pastes into a terminal on their machine. */
+  command: string;
+}
+
+/** Ready-to-run commands for one site (one-time login, real run, dry run). */
+export function engineCommands(siteId: string, max = 10): ApplyCommand[] {
+  const site = APPLY_SITES.find(s => s.id === siteId) ?? APPLY_SITES[0];
+  return [
+    { site: site.id, label: `${site.label} — one-time login`, submit: site.submit, command: `node scripts/auto-apply-jobs.mjs --url "${site.url}" --login-only` },
+    { site: site.id, label: `${site.label} — apply to ${max} (${site.submit === "auto" ? "auto-submit" : "you click Submit"})`, submit: site.submit, command: `node scripts/auto-apply-jobs.mjs --url "${site.url}" --max ${max}` },
+    { site: site.id, label: `${site.label} — dry run (fills, never submits)`, submit: site.submit, command: `node scripts/auto-apply-jobs.mjs --url "${site.url}" --max ${max} --dry-run` },
+  ];
+}
+
+/** JSON.stringify with a trailing newline — exactly what the engine expects
+    in apply-profile.json (the owner saves this to the repo root). */
+export function exportProfileJson(): string {
+  return JSON.stringify(buildEngineProfile(), null, 2) + "\n";
+}

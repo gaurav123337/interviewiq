@@ -5,7 +5,7 @@ import { STORAGE_KEYS, storageGet, storageSet } from "./storage";
 import { BASE_LIMITS, getLimits, paywallOn } from "./remoteConfig";
 import { getCloudState } from "./cloud";
 
-export type Tier = "free" | "pro";
+export type Tier = "free" | "pro" | "platinum";
 
 /* A team seat (B2B) grants Pro without touching the local license. This flag
    lives in-memory and is driven by services/teams.ts after each refresh. */
@@ -63,6 +63,15 @@ export function getTier(): Tier {
 
 export function setTier(t: Tier): void {
   storageSet(STORAGE_KEYS.tier, t);
+}
+
+/** Platinum = Pro + the local auto-apply engine. Server-verified only: the
+    local tier string is mirrored from the server (services/entitlement.ts
+    refreshEntitlement), so a forged iq.tier="platinum" dies on next refresh —
+    but the authoritative check lives in serverPlatinum(); this helper is for
+    UI convenience where the refresh already ran. */
+export function isPlatinum(): boolean {
+  return getTier() === "platinum";
 }
 
 const monthKey = (d = new Date()) => `${d.getFullYear()}-${d.getMonth() + 1}`;

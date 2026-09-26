@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CareerProfile, JobPosting, LevelId, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
+import { refreshEntitlement } from "../services/entitlement";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { toast } from "../toast";
 import { btnGhost, btnSm, cardCls, Chip } from "./ui"
@@ -24,6 +25,9 @@ import {dueFollowUps, getTrack, listTracks, markAppliedVia, markFollowUpNotified
 import {benchLevelForYears, detectMarket, type BenchLevel, type Market} from "../services/salaryBench";
 
 import { downloadZip } from "../services/zip";
+import { platinumActive } from "../services/autoApply";
+import { serverPlatinum } from "../services/entitlement";
+import { AutoApplyCard } from "./jobs/AutoApplyCard";
 
 import { ReportModal } from "./jobs/ReportModal";
 import { ImportModal } from "./jobs/ImportModal";
@@ -105,6 +109,9 @@ export function Jobs() {
      user sees a disabled button rather than one that throws on click. */
   const [signedIn, setSignedIn] = useState<boolean>(() => !!getCloudState().user);
   useEffect(() => subscribeCloud(s => setSignedIn(!!s.user)), []);
+  /* 💎 Platinum (auto-apply) — re-check after the server entitlement refresh */
+  const [platinum, setPlatinum] = useState<boolean>(() => platinumActive());
+  useEffect(() => { void refreshEntitlement().then(e => setPlatinum(platinumActive() || !!e?.isPlatinum || serverPlatinum())); }, [signedIn]);
 
   /* pull the latest feed + cloud profile when signed in */
   useEffect(() => {
@@ -432,6 +439,12 @@ export function Jobs() {
         setProfile={setProfile}
         save={save}
         addSuggestedSkill={addSuggestedSkill}
+      />
+
+      <AutoApplyCard
+        locked={proGated && !platinum}
+        platinum={platinum}
+        onUpgrade={() => setUpgrade("Auto-apply engine is a Platinum feature")}
       />
 
       <JdScanCard

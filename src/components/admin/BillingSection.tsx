@@ -70,8 +70,15 @@ export function BillingSection() {
   const grant = async (u: AdminEntitlementRow) => {
     setBusy(true);
     try {
-      await adminSetEntitlement(u.userId, "pro", gPlan, gPlan === "lifetime" ? null : new Date(Date.now() + gDays * 86400000).toISOString());
-      toast(`💎 Granted Pro (${gPlan}) to ${u.email || u.userId.slice(0, 8)}`);
+      /* platinum is a TIER grant (no expiry in the select) — pro plans keep
+         their days-based expiry */
+      if (gPlan === "platinum") {
+        await adminSetEntitlement(u.userId, "platinum", "platinum", null);
+        toast(`💎 Granted Platinum (auto-apply) to ${u.email || u.userId.slice(0, 8)}`);
+      } else {
+        await adminSetEntitlement(u.userId, "pro", gPlan, gPlan === "lifetime" ? null : new Date(Date.now() + gDays * 86400000).toISOString());
+        toast(`💎 Granted Pro (${gPlan}) to ${u.email || u.userId.slice(0, 8)}`);
+      }
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Grant failed")); }
     finally { setBusy(false); }
@@ -261,7 +268,7 @@ export function BillingSection() {
                         <select value={gPlan} onChange={e => setGPlan(e.target.value)} className="inp w-28 py-1 text-[12px]">
                           {PLANS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                         </select>
-                        <input type="number" min={1} value={gDays} onChange={e => setGDays(Math.max(1, Number(e.target.value) || 30))} className="inp w-16 py-1 text-center text-[12px]" title="days (lifetime ignores this)" />
+                        <input type="number" min={1} value={gDays} onChange={e => setGDays(Math.max(1, Number(e.target.value) || 30))} className="inp w-16 py-1 text-center text-[12px]" title="days (lifetime/platinum ignore this)" disabled={gPlan === "platinum"} />
                         <button className={btnOk + btnSm} disabled={busy} onClick={() => grant(u)}>Grant</button>
                       </div>
                     )}

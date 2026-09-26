@@ -18,6 +18,8 @@ export interface ServerEntitlement {
   discountExpiresAt: string | null;
   /** Server-computed: pro and not expired. */
   active: boolean;
+  /** Server-computed: platinum and not expired (optional — older readers omit it). */
+  isPlatinum?: boolean;
   issuedBy: string | null;
   updatedAt: string | null;
 }
@@ -39,7 +41,8 @@ export interface AdminEntitlementRow {
 export const PLANS = [
   { id: "monthly", label: "Monthly", price: 9, per: "/mo" },
   { id: "yearly", label: "Yearly", price: 79, per: "/yr" },
-  { id: "lifetime", label: "Lifetime", price: 199, per: " once" }
+  { id: "lifetime", label: "Lifetime", price: 199, per: " once" },
+  { id: "platinum", label: "Platinum", price: 349, per: " once" }
 ] as const;
 
 let cached: ServerEntitlement | null = null;
@@ -63,6 +66,7 @@ function mapRow(r: Record<string, unknown>): ServerEntitlement {
     discountPct: Number(r.discount_pct ?? 0),
     discountExpiresAt: (r.discount_expires_at as string | null) ?? null,
     active: Boolean(r.active),
+    isPlatinum: r.is_platinum === true,
     issuedBy: (r.issued_by as string | null) ?? null,
     updatedAt: (r.updated_at as string | null) ?? null
   };
@@ -89,6 +93,15 @@ export function serverPro(): boolean {
   return cached?.active === true;
 }
 
+/** Server-verified Platinum (Pro + the local auto-apply engine). When the
+    server response predates is_platinum, fall back to matching the tier/plan
+    fields — still server data, still never client-set. */
+export function serverPlatinum(): boolean {
+  if (!cached?.active) return false;
+  if (cached.isPlatinum != null) return cached.isPlatinum;
+  return cached.tier === "platinum" || cached.plan === "platinum";
+}
+
 /** Fetches the signed-in user's entitlement from the server and makes it
     authoritative: when signed in, the server tier REPLACES the local one
     (a revoked user is downgraded, a granted user is upgraded). Returns null
@@ -100,7 +113,7 @@ export async function refreshEntitlement(): Promise<ServerEntitlement | null> {
     const { data, error } = await client.rpc("get_my_entitlement");
     if (error) throw new Error(error.message);
     const row = (data ?? [])[0] as Record<string, unknown> | undefined;
-    cached = row ? mapRow(row) : { tier: "free", plan: null, expiresAt: null, source: null, discountPct: 0, discountExpiresAt: null, active: false, issuedBy: null, updatedAt: null };
+    cached = row ? mapRow(row) : { tier: "free", plan: null, expiresAt: null, source: null, discountPct: 0, discountExpiresAt: null, active: false, isPlatinum: false, issuedBy: null, updatedAt: null };
     /* the server is authoritative when signed in — mirror it locally so the
        offline experience matches, but never downgrade a team-seat pro */
     if (getTier() !== "pro" || !cached.active) setTier(cached.active ? "pro" : "free");

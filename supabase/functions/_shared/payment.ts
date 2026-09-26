@@ -121,7 +121,10 @@ export async function verifyPaymentSignature(
 export const PLAN_CATALOG: Record<string, { label: string; days: number | null; amountMinor: number }> = {
   monthly: { label: "Monthly", days: 30, amountMinor: 900 },
   yearly: { label: "Yearly", days: 365, amountMinor: 7900 },
-  lifetime: { label: "Lifetime", days: null, amountMinor: 19900 }
+  lifetime: { label: "Lifetime", days: null, amountMinor: 19900 },
+  /* Platinum = Lifetime + the local auto-apply engine (Playwright search &
+     apply with JD-tailored kits). One-time, never expires. */
+  platinum: { label: "Platinum", days: null, amountMinor: 34900 }
 };
 
 export function planDays(plan: string): number | null {
