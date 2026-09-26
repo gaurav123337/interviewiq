@@ -34,6 +34,7 @@ import { RecsDigestModal } from "./jobs/RecsDigestModal";
 import { SalaryBenchmarkCard } from "./jobs/SalaryBenchmarkCard";
 import { ApplyTrackerCard } from "./jobs/ApplyTrackerCard";
 import { ResumeCard } from "./jobs/ResumeCard";
+import { AtsReadyModal } from "./jobs/AtsReadyModal";
 import { CareerProfileCard } from "./jobs/CareerProfileCard";
 import { JdScanCard } from "./jobs/JdScanCard";
 import { CompanyRankingCard } from "./jobs/CompanyRankingCard";
@@ -80,6 +81,8 @@ export function Jobs() {
   /* apply hand-off (Lane C) — first-use explainer shown once */
   const [applyHintShown, setApplyHintShown] = useState(() => storageGet<boolean>(STORAGE_KEYS.externalApplyHint, false));
   const [showResumeBanner, setShowResumeBanner] = useState(false);
+  /* "Make ATS-ready" pipeline over the uploaded resume */
+  const [atsOpen, setAtsOpen] = useState(false);
   const [recsDigestOpen, setRecsDigestOpen] = useState(false);
   const [rankLimit, setRankLimit] = useState(10);
   const [rankFilters, setRankFilters] = useState<RankFilters>(EMPTY_RANK_FILTERS);
@@ -289,6 +292,14 @@ export function Jobs() {
     }
   };
 
+  /* Feed the rewritten text through the same extraction path as an upload:
+     skills/profile/feed all refresh from the ATS-compliant version. */
+  const useAtsResume = (text: string) => {
+    const name = resume ? resume.fileName.replace(/(\.txt)?$/, " (ATS).txt") : "resume (ATS).txt";
+    applyResume(text, name);
+    toast("✅ ATS-ready version saved as your resume — feed re-scored");
+  };
+
   const removeResume = () => {
     clearUploadedResume();
     setResume(null);
@@ -411,6 +422,7 @@ export function Jobs() {
         applyResume={applyResume}
         removeResume={removeResume}
         dismissResumeBanner={dismissResumeBanner}
+        onAtsReady={() => setAtsOpen(true)}
       />
 
       <CareerProfileCard
@@ -566,6 +578,7 @@ export function Jobs() {
         )}
       </div>
 
+      {atsOpen && resume && <AtsReadyModal resume={resume} jobs={jobs} onUseResume={useAtsResume} onClose={() => setAtsOpen(false)} />}
       {upgrade && <UpgradeModal onClose={() => setUpgrade(null)} reason={upgrade} />}
       {gapJob && <GapPlanModal job={gapJob.job} missing={gapJob.missing} detected={gapJob.detected} onClose={() => setGapJob(null)} />}
       {kitJob && profile && <ResumeKitModal job={kitJob} profile={profile} match={matchOf.get(kitJob.id) ?? null} originalResumeText={resume?.text} onAddSkill={addSkillToProfile} onClose={() => setKitJob(null)} />}

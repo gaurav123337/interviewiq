@@ -17,6 +17,7 @@ export interface ResumeCardProps {
   applyResume: (text: string, fileName: string) => void;
   removeResume: () => void;
   dismissResumeBanner: () => void;
+  onAtsReady: () => void;
 }
 
 export function ResumeCard({
@@ -34,6 +35,7 @@ export function ResumeCard({
   applyResume,
   removeResume,
   dismissResumeBanner,
+  onAtsReady,
 }: ResumeCardProps) {
   return (
     <>
@@ -100,6 +102,7 @@ export function ResumeCard({
                   : ""} — the match feed and company ranking below are scored from these. You can still edit the profile card above.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
+                <button className={btnPrimary + btnSm} onClick={onAtsReady} title="Rewrite this resume into ATS-compliant plain text, aligned to a target job">🎯 Make ATS-ready</button>
                 <button className={btnGhost + btnSm} onClick={() => setResumeFormOpen(true)}>↺ Replace resume</button>
                 <button className={btnDanger + btnSm} onClick={removeResume}>🗑 Remove</button>
               </div>

@@ -55,7 +55,7 @@ function classifyModel(modelName: string): {
 function shouldDisableThinking(modelName: string, moduleId: string): boolean {
   const { isThinking } = classifyModel(modelName);
   // JSON-output modules should never use thinking models
-  const JSON_MODULES = new Set(["contentRefine", "articleNormalize", "contentIndex", "contentQuality"]);
+  const JSON_MODULES = new Set(["contentRefine", "articleNormalize", "contentIndex", "contentQuality", "ats"]);
   return isThinking && JSON_MODULES.has(moduleId);
 }
 
