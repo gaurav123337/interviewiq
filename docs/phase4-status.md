@@ -144,15 +144,18 @@ Deviations / corrections worth remembering:
 | Skill chips AND → OR | #85 | owner decision after AND zeroed cross-tag sets |
 | Review Inbox derived skill chips | #86 | chips/filter work on the untagged backlog |
 | Editorial push (live data op) | — | bank 36 → 269 published; 6 dupes deleted; pile 469 → 230 |
+| AI-clean + second editorial push (live data ops) | — | key fixed (getunikey / deepseek-v4-flash); 281 drafts published; bank 269 → **550**; pile 293 → 12 |
 
 ---
 
 ## 5. Not yet implemented / open items
 
 **Owner actions (blockers outside the repo):**
-1. **AI-clean key is rejected (`AI HTTP 401`)** — the nightly's AI-clean step can't run until a
-   valid key is pasted in Admin → Secrets → AI pipeline. This is the single biggest lever: it
-   unblocks auto-answering the 227 answerless drafts below.
+1. ~~**AI-clean key is rejected (`AI HTTP 401`)**~~ — **Resolved 2026-09-26.** Owner pasted a
+   getunikey.ai key in Admin → Secrets → AI pipeline. The gateway's then-active model was
+   unusable (`z-ai/glm-5.2` 524s upstream; `gpt-6-astra` priced above the account balance →
+   gateway 403 "预扣费额度失败"), so the cleaner runs on `deepseek/deepseek-v4-flash` on the
+   same gateway. 286 answerless drafts were AI-answered and 281 promoted (item 8 below).
 2. **Key rotation** (service-role key + agentrouter key) — owner-deferred "later", tracked
    separately (plan §7).
 
@@ -180,8 +183,10 @@ Deviations / corrections worth remembering:
    unchanged, all gates green.
 
 **Data still in the backlog (by design, not missing code):**
-8. **227 answerless drafts** — good titles, no answers; blocked on item 1 (AI-clean key). The
-   audit→publish pass can be re-run once they're cleaned.
+8. ~~**227 answerless drafts**~~ — **Resolved 2026-09-26.** All 293 drafts (the 227 plus the
+   nightly's new intake) were AI-cleaned; 281 passed the audit→publish gate — bank 269 → **550**,
+   tag coverage 382/550 (69%). Remaining pile: 12 rows (classifier-flagged terse titles + a few
+   transients) awaiting inbox review.
 9. **5 truncated-but-answered review-first drafts** (#1386, 1398, 1399, 1400, 1409) — held behind
    the human gate; the classifier fires on terse titles but content is fine. Publish or prune
    manually.
@@ -215,7 +220,8 @@ isolation before calling a failure a regression.
 
 ---
 
-_Last updated 2026-09-25 after PRs #84–#90 (admin skill filters, OR semantics, derived inbox chips,
+_Last updated 2026-09-26 after PRs #84–#90 (admin skill filters, OR semantics, derived inbox chips,
 keyless GitHub REST search, selector-drift alarm + L5 content markers, opt-in render fetcher,
-pdfjs bump) and the editorial/backfill data operations. For the blow-by-blow record see
+pdfjs bump), the editorial/backfill data operations, and the AI-clean + second editorial pass
+(bank 269 → 550). For the blow-by-blow record see
 [`docs/phase4-progress.md`](phase4-progress.md)._
