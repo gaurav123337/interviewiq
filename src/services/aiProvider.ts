@@ -269,7 +269,16 @@ export async function testAiProvider(cfg: { key: string; base: string }): Promis
       method: "GET",
       headers: { Authorization: `Bearer ${cfg.key.trim()}` }
     });
-    if (res.ok) return { ok: true, note: "Key accepted — provider reachable" };
+    if (res.ok) {
+      /* an HTML 200 is NOT a working provider — SPA-serving gateways
+         (agentrouter) return their web page on any path, which used to show
+         a false-green "Key accepted" while every real API call 401'd */
+      const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+      if (!ct.includes("json")) {
+        return { ok: false, note: `Reached ${base} but it served a web page (${ct.split(";")[0] || "non-JSON"}), not the API — check the Base URL (usually needs /v1) or the gateway blocks API clients` };
+      }
+      return { ok: true, note: "Key accepted — provider reachable" };
+    }
     if (res.status === 401) return { ok: false, note: "HTTP 401 — key rejected by the provider" };
     if (res.status === 402) return { ok: false, note: "HTTP 402 — provider account out of credits" };
     if (res.status === 429) return { ok: false, note: "HTTP 429 — rate limited, try again shortly" };
