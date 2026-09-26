@@ -7,6 +7,11 @@ dist/
 # local app / tool state (Freebuff desktop database — never commit)
 .freebuff/
 
+# auto-apply engine local state (browser session + run reports + real profile)
+freebuff-apply-profile/
+freebuff-apply-reports/
+apply-profile.json
+
 # logs
 *.log
 npm-debug.log*
