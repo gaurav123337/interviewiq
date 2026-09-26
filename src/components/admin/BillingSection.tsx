@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  adminIssueDiscount, adminSetEntitlement, PLANS,
+  adminIssueDiscount, adminSetAddon, adminSetEntitlement, PLANS,
   type AdminEntitlementRow
 } from "../../services/entitlement";
 import {
@@ -101,6 +101,16 @@ export function BillingSection() {
       toast(`🪙 Simulated ${gPlan} purchase for ${u.email || u.userId.slice(0, 8)} (${ext}) — same grant path as a real webhook`);
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Simulate failed")); }
+    finally { setBusy(false); }
+  };
+
+  const toggleAddon = async (u: AdminEntitlementRow) => {
+    setBusy(true);
+    try {
+      await adminSetAddon(u.userId, "auto_apply", !u.autoApply);
+      toast(`${u.autoApply ? "⛔ Removed" : "🤖 Granted"} auto-apply add-on for ${u.email || u.userId.slice(0, 8)}`);
+      load();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Add-on update failed")); }
     finally { setBusy(false); }
   };
 
@@ -236,7 +246,7 @@ export function BillingSection() {
                     <div className="text-[11px] text-fnt">{u.userId.slice(0, 8)}… · {u.source ?? "none"}</div>
                   </td>
                   <td className="px-3 py-3">
-                    {u.active ? <Chip tone="ok">PRO</Chip> : <Chip>free</Chip>}
+                    {u.tier === "platinum" ? <Chip tone="lvl">💎 PLATINUM</Chip> : u.active ? <Chip tone="ok">PRO</Chip> : <Chip>free</Chip>}
                   </td>
                   <td className="px-3 py-3">{u.tier === "pro" ? planLabel(u.plan) : "—"}</td>
                   <td className="px-3 py-3 text-[12px] text-fnt">
@@ -261,6 +271,14 @@ export function BillingSection() {
                       </button>
                       <button className={btnGhost + btnSm} disabled={busy} onClick={() => simulate(u)} title="Simulate a confirmed purchase — same apply_purchase grant path as the real webhook">
                         🪙 Sim purchase
+                      </button>
+                      <button
+                        className={btnGhost + btnSm}
+                        disabled={busy}
+                        title={u.autoApply ? "Revoke the auto-apply add-on" : "Grant the auto-apply add-on (works with any tier)"}
+                        onClick={() => void toggleAddon(u)}
+                      >
+                        {u.autoApply ? "🤖 Remove add-on" : "🤖 Add-on"}
                       </button>
                     </div>
                     {open[u.userId] === "grant" && (

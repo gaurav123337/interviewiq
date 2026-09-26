@@ -2,7 +2,7 @@
    and the run-command builder. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ tier: "free" as string, platinum: false }));
+const mocks = vi.hoisted(() => ({ tier: "free" as string, platinum: false, addon: false }));
 
 vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(async () => null),
@@ -13,7 +13,8 @@ vi.mock("../services/entitlements", () => ({
   isPlatinum: () => mocks.tier === "platinum"
 }));
 vi.mock("../services/entitlement", () => ({
-  serverPlatinum: () => mocks.platinum
+  serverPlatinum: () => mocks.platinum,
+  serverAutoApply: () => mocks.addon
 }));
 vi.mock("../services/profileStore", () => ({
   getCanonicalProfile: vi.fn(() => ({ version: 2, headline: "h", years: 5, location: "Bengaluru", remote: true, workAuth: "", targetTitles: [], summary: "s", skills: {}, roadmapSkills: [], origins: { skills: false, goal: false, career: true, resume: false }, careerUpdatedAt: 1, updatedAt: 1 })),
@@ -30,6 +31,7 @@ import { buildEngineProfile, engineCommands, exportProfileJson, platinumActive, 
 beforeEach(() => {
   mocks.tier = "free";
   mocks.platinum = false;
+  mocks.addon = false;
 });
 
 describe("platinum gate", () => {
@@ -47,6 +49,18 @@ describe("platinum gate", () => {
   it("opens when the mirrored local tier is platinum", () => {
     mocks.tier = "platinum";
     expect(platinumActive()).toBe(true);
+  });
+
+  it("opens for the ADD-ON purchased on ANY tier — including free (pay-extra path)", () => {
+    mocks.addon = true;
+    expect(platinumActive()).toBe(true); // free tier + add-on
+    mocks.tier = "pro";
+    expect(platinumActive()).toBe(true); // pro tier + add-on, without Platinum
+  });
+
+  it("stays closed when neither Platinum nor the add-on is server-verified", () => {
+    mocks.tier = "pro";
+    expect(platinumActive()).toBe(false);
   });
 });
 

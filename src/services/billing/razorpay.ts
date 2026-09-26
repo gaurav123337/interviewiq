@@ -73,7 +73,7 @@ export async function verifyPayment(paymentId: string, orderId: string, signatur
     client can render the storefront). Values are dollars; currency is
     optional and defaults to the server's PAYMENT_CURRENCY. Null when the
     admin hasn't published pricing (fall back to the baked-in catalog). */
-export interface RemotePricing { monthly?: number; yearly?: number; lifetime?: number; currency?: string }
+export interface RemotePricing { monthly?: number; yearly?: number; lifetime?: number; platinum?: number; auto_apply?: number; currency?: string }
 
 export async function getRemotePricing(): Promise<RemotePricing | null> {
   const client = await getSupabaseClient();

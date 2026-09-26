@@ -105,11 +105,11 @@ Deno.serve(async (req) => {
     }
 
     /* subscriptions: monthly/yearly via the provider's recurring flow */
-    if (body.subscribe && plan !== "lifetime" && provider.supportsSubscriptions) {
+    if (body.subscribe && plan !== "lifetime" && plan !== "platinum" && plan !== "auto_apply" && provider.supportsSubscriptions) {
       const sub = await provider.createSubscription(r);
       return new Response(JSON.stringify({ ...sub, mode: "subscription" }), { status: 200, headers });
     }
-    if (body.subscribe && plan !== "lifetime" && !provider.supportsSubscriptions) {
+    if (body.subscribe && plan !== "lifetime" && plan !== "platinum" && plan !== "auto_apply" && !provider.supportsSubscriptions) {
       /* provider can't subscribe — fall back to one-time and say so */
       const once = await provider.createCheckout(r);
       return new Response(JSON.stringify({ ...once, mode: "one_time", note: "provider doesn't support subscriptions" }), { status: 200, headers });
