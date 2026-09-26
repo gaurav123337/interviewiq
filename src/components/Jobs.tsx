@@ -3,6 +3,7 @@ import type { CareerProfile, JobPosting, LevelId, UploadedResume } from "../type
 import { getTier, isPaywallEnabled } from "../services/entitlements";
 import { refreshEntitlement } from "../services/entitlement";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
+import { subscribeAdmin } from "../services/admin";
 import { toast } from "../toast";
 import { btnGhost, btnSm, cardCls, Chip } from "./ui"
 import { UpgradeModal } from "./Upgrade";
@@ -109,9 +110,13 @@ export function Jobs() {
      user sees a disabled button rather than one that throws on click. */
   const [signedIn, setSignedIn] = useState<boolean>(() => !!getCloudState().user);
   useEffect(() => subscribeCloud(s => setSignedIn(!!s.user)), []);
-  /* 💎 Platinum (auto-apply) — re-check after the server entitlement refresh */
+  /* 💎 Platinum (auto-apply) — platinumActive() includes the admin bypass
+     (adminUnlocked, set by App.tsx's admin subscription) AND the server
+     entitlement; re-check on admin-state changes and after the refresh so a
+     late flag flips the card without a reload. */
   const [platinum, setPlatinum] = useState<boolean>(() => platinumActive());
-  useEffect(() => { void refreshEntitlement().then(e => setPlatinum(platinumActive() || !!e?.isPlatinum || serverPlatinum())); }, [signedIn]);
+  useEffect(() => subscribeAdmin(() => setPlatinum(platinumActive())), []);
+  useEffect(() => { void refreshEntitlement().then(() => setPlatinum(platinumActive())); }, [signedIn]);
 
   /* pull the latest feed + cloud profile when signed in */
   useEffect(() => {
