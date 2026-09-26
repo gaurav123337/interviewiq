@@ -69,7 +69,7 @@ describe("fetchAvailableModels", () => {
     expect(models[0].id).toBe("deepseek/deepseek-v4-flash");
   });
 
-  it("does NOT cache an empty list — the next call refetches", async () => {
+  it("does NOT cache anything from a failed (empty-list) call", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ models: [] }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -77,10 +77,15 @@ describe("fetchAvailableModels", () => {
       }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(fetchAvailableModels(true)).resolves.toEqual([]);
-    const second = await fetchAvailableModels(false); // within TTL — must still refetch
+    await expect(fetchAvailableModels(true)).rejects.toThrow(/does not expose a model list/i);
+    const second = await fetchAvailableModels(false); // within TTL — failure must not have cached anything
     expect(second).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports empty-list providers distinctly (probe-fallback path, not a key error)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ models: [] }), { status: 200 })));
+    await expect(fetchAvailableModels(true)).rejects.toThrow(/does not expose a model list/i);
   });
 
   it("feeds scanProviderModels' thrown reason through to the scan card", async () => {

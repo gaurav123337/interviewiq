@@ -81,7 +81,10 @@ interface ProbeVerdict {
 }
 
 /** Probes one model with a 1-token chat call. Cheap (1 output token) and
-    decisive: listed-but-dead upstream models 524, priced-out models 403. */
+    decisive: listed-but-dead upstream models 524, priced-out models 403.
+    An HTTP 200 only counts when the body is REAL chat JSON — some gateways
+    (agentrouter) serve their SPA's HTML with a 200 on any unknown path, and
+    treating that as "working" would poison the ranking with fake options. */
 async function probeModel(apiKey: string, apiBase: string, model: string): Promise<ProbeVerdict> {
   const t0 = Date.now();
   try {
@@ -99,6 +102,10 @@ async function probeModel(apiKey: string, apiBase: string, model: string): Promi
       }),
     });
     clearTimeout(timer);
+    const ct = (res.headers.get("content-type") ?? "").toLowerCase();
+    if (res.ok && !ct.includes("json")) {
+      return { model, status: "failed", httpStatus: res.status, latencyMs: Date.now() - t0, sample: `non-JSON response (${ct.split(";")[0] || "unknown type"}) — wrong base URL or gateway served its web app` };
+    }
     const body = await res.json().catch(() => ({} as Record<string, unknown>));
     const errMsg = String((body as { error?: { message?: string } }).error?.message ?? "");
     let quota: string | undefined;
@@ -128,12 +135,20 @@ async function handleProbeModels(providerConfig: Record<string, string>, body: R
     return new Response(JSON.stringify({ error: "Provider not configured" }), { status: 503, headers: cors });
   }
   try {
+    let listed: { id: string }[] = [];
+    let listError = "";
     const listRes = await fetch(`${apiBase}/models`, { headers: { "Authorization": `Bearer ${apiKey}` } });
-    if (!listRes.ok) {
-      return new Response(JSON.stringify({ error: `Provider /models returned HTTP ${listRes.status}` }), { status: 502, headers: cors });
+    if (listRes.ok) {
+      const listCt = (listRes.headers.get("content-type") ?? "").toLowerCase();
+      const data = listCt.includes("json") ? await listRes.json().catch(() => ({})) : {};
+      /* shape-tolerant: OpenAI wraps in {data:[...]}, but several gateways
+         (new-api/one-api variants) return a bare array */
+      const raw = Array.isArray(data) ? data : (Array.isArray((data as { data?: unknown }).data) ? (data as { data: { id: string }[] }).data : []);
+      listed = raw.filter(m => m && typeof m.id === "string");
+      if (!listed.length) listError = "200 but no model array in the body";
+    } else {
+      listError = `HTTP ${listRes.status}`;
     }
-    const data = await listRes.json().catch(() => ({}));
-    const listed: { id: string }[] = data.data ?? [];
     const wanted = (body?.models as string[] | undefined)?.filter(m => typeof m === "string");
     /* exclude image/video/audio/embedding model families — they can't serve
        chat completions and would burn quota on a guaranteed 4xx */
@@ -141,12 +156,20 @@ async function handleProbeModels(providerConfig: Record<string, string>, body: R
       .map(m => m.id)
       .filter(id => id && !/(image|seedance|kling|hailuo|imagine|tts|whisper|embed|bge-)/i.test(id))
       .slice(0, MAX_PROBES);
-    const targets = wanted && wanted.length ? wanted : chatOnly;
-    if (!targets.length) return new Response(JSON.stringify({ error: "no probeable models" }), { status: 400, headers: cors });
+    /* Some gateways don't expose /models at all (agentrouter serves its SPA
+       page; others 401 it). Discovery must not die with the listing: fall
+       back to probing the SAVED model plus common chat-model candidates so
+       the owner still gets a working list. The chat probe itself is the
+       source of truth — a listed model can still be dead, and an unlisted
+       one can work. */
+    const fallback = ["deepseek/deepseek-v4-flash", "google/gemini-3.1-flash-lite", "claude-haiku-4-5-20251001", "gpt-4o-mini", "gpt-5.6-luna", "MiniMax-M2.7"];
+    const merged = [...new Set([...(wanted ?? []), ...chatOnly, providerConfig.model ?? "", ...fallback])].filter(m => m && !/(image|seedance|kling|hailuo|imagine|tts|whisper|embed|bge-)/i.test(m)).slice(0, MAX_PROBES);
+    const targets = merged;
+    if (!targets.length) return new Response(JSON.stringify({ error: "no probeable models", listError }), { status: 400, headers: cors });
     /* modest parallelism — fast enough to finish before gateway idle timeouts,
        gentle enough not to trip per-key burst limits */
     const verdicts = (await Promise.all(targets.map(m => probeModel(apiKey, apiBase, m))));
-    return new Response(JSON.stringify({ verdicts, probed: verdicts.length }), { status: 200, headers: cors });
+    return new Response(JSON.stringify({ verdicts, probed: verdicts.length, listedCount: listed.length, listError: listError || undefined }), { status: 200, headers: cors });
   } catch (e) {
     return new Response(JSON.stringify({ error: (e as Error).message ?? "probe failed" }), { status: 500, headers: cors });
   }

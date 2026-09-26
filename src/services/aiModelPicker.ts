@@ -136,18 +136,32 @@ async function authedEdgeFetch(payload: unknown): Promise<Response> {
   });
 }
 
-/** List + live-probe + rank every chat model on the configured provider. */
+/** List + live-probe + rank every chat model on the configured provider.
+    If the provider serves no model list (agentrouter-style gateways), the
+    edge function probes a fallback candidate set instead — the probe verdicts
+    alone become the report, so discovery still works without a listing. */
 export async function scanProviderModels(force = false): Promise<ProbeReport> {
-  const listed = await fetchAvailableModels(force);
-  if (!listed.length) {
-    throw new Error("The provider listed zero models — the key works but exposes no chat models. Check the provider dashboard.");
-  }
+  const listed = await fetchAvailableModels(force).catch(() => [] as AiModel[]);
   const res = await authedEdgeFetch({ action: "probe-models" });
   const body = await res.json().catch(() => ({} as { verdicts?: ProbeVerdict[]; error?: string }));
   if (!res.ok || !Array.isArray(body.verdicts)) {
     throw new Error(body.error ?? `Model probe failed (HTTP ${res.status}).`);
   }
-  return buildModelOptions(listed, body.verdicts);
+  const verdicts: ProbeVerdict[] = body.verdicts;
+  if (!listed.length) {
+    /* no listing available — the probe results ARE the scan. Feed every
+       probed model in as the "listing" so buildModelOptions can rank the
+       working ones AND report the failed ones; only probe-verified models
+       can appear as options. */
+    if (!verdicts.some(v => v.status === "ok")) {
+      throw new Error("This provider exposes no model list and none of the common chat models answered the live probe — check the key on the provider dashboard.");
+    }
+    return buildModelOptions(
+      verdicts.map(v => ({ id: v.model, name: v.model, owner: "", isThinking: false, tags: [] })),
+      verdicts
+    );
+  }
+  return buildModelOptions(listed, verdicts);
 }
 
 /** Deterministic auto-pick — the top-ranked working option. */
