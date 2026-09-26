@@ -93,7 +93,8 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
 
   const unlock = async () => {
     /* "I've paid" no longer unlocks blindly — the server must confirm the
-       grant (admin grant / redeemed code / Stripe webhook) on the account */
+       grant (admin grant / redeemed code / Stripe webhook) on the account.
+       An auto_apply add-on purchase activates the flag WITHOUT the pro tier. */
     setVerifying(true);
     try {
       const fresh = await refreshEntitlement();
@@ -109,6 +110,12 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
         void queueEvent("tier", { tier: "pro" });
         void updateProfile({ tier: "pro" }).catch(() => {});
         toast("💎 Welcome to Pro — all limits lifted 🎉");
+        onClose();
+        return;
+      }
+      if (fresh?.autoApply) {
+        sessionStorage.removeItem(CHECKOUT_KEY);
+        toast("🤖 Auto-apply add-on unlocked — see Job Match → 🤖 Auto-apply engine 🎉");
         onClose();
         return;
       }
@@ -150,10 +157,17 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
           const v = await verifyPayment(res.razorpay_payment_id, res.razorpay_order_id, res.razorpay_signature);
           if (v.ok) {
             sessionStorage.removeItem(CHECKOUT_KEY);
-            setTier("pro");
-            void queueEvent("tier", { tier: "pro" });
-            void updateProfile({ tier: "pro" }).catch(() => {});
-            toast("💎 Payment verified — Pro unlocked 🎉");
+            if (plan === "auto_apply") {
+              /* the add-on grants the flag, NOT the pro tier — refresh so
+                 serverAutoApply() sees it; the user's plan stays as-is */
+              await refreshEntitlement();
+              toast("🤖 Payment verified — auto-apply add-on unlocked 🎉");
+            } else {
+              setTier("pro");
+              void queueEvent("tier", { tier: "pro" });
+              void updateProfile({ tier: "pro" }).catch(() => {});
+              toast("💎 Payment verified — Pro unlocked 🎉");
+            }
             onClose();
           }
         } catch (e) {
@@ -205,6 +219,25 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
       navigator.clipboard?.writeText(CONFIG.supportEmail).catch(() => {});
     }
     toast("📬 Opening your mail app — mention 'Pro license'");
+  };
+
+  /* the auto-apply ADD-ON: same checkout rails, plan="auto_apply" — the
+     server grants addons.auto_apply without touching tier/plan/expiry */
+  const getAddon = async () => {
+    if (!checkout()) { toast("Sign in to your cloud account to purchase the add-on."); return; }
+    setBuying(true);
+    try {
+      if (paymentProviderName() === "razorpay") {
+        if (await payWithModal("auto_apply")) return;
+      }
+      const r = await createCheckout("auto_apply", effDiscount, false, coupon);
+      window.open(r.url, "_blank", "noopener");
+      toast("💳 Add-on checkout opened — complete it, then tap “I've paid” to verify");
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Checkout unavailable"));
+    } finally {
+      setBuying(false);
+    }
   };
 
   return (
@@ -296,6 +329,26 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
           Checkout opens in a new tab. When you're done, come back and tap <span className="font-bold text-ink">“I've paid — unlock”</span> — Pro activates once the payment is confirmed on your account.
         </p>
       )}
+
+      {/* ── Auto-apply ADD-ON — pay extra on ANY plan (incl. free) ── */}
+      <div className="mb-4 rounded-xl border border-acc3/30 bg-acc3/5 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h4 className="text-[13px] font-extrabold">🤖 Auto-apply add-on — pay extra, any plan</h4>
+            <p className="mt-0.5 text-[11.5px] text-fnt">
+              Already have Monthly/Yearly/Lifetime (or even free)? Add the local auto-apply engine without upgrading: one-time {money(planPrice("auto_apply"))}, never expires.
+              {ent?.active && " Pro features stay exactly as they are."}
+            </p>
+          </div>
+          {ent?.autoApply ? (
+            <Chip tone="ok">✓ owned</Chip>
+          ) : (
+            <button className={btnPrimary + btnSm} disabled={buying} onClick={() => void getAddon()}>
+              {buying ? "Opening…" : `Add for ${money(planPrice("auto_apply"))}`}
+            </button>
+          )}
+        </div>
+      </div>
       {!ent?.active && CONFIG.proUrl && paid && (
         <div className="mb-4 rounded-xl border border-ok/30 bg-ok/10 px-4 py-3 text-[13.5px] text-ink">
           🎉 Payment window — tap below and we'll verify the grant on your account.

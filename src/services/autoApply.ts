@@ -11,7 +11,7 @@
 
 import { getCanonicalProfile, toCareerProfile } from "./profileStore";
 import { getTier } from "./entitlements";
-import { serverPlatinum } from "./entitlement";
+import { serverAutoApply, serverPlatinum } from "./entitlement";
 
 /** The engine's apply-profile.json shape (content/apply-profile.example.json). */
 export interface ApplyProfileJson {
@@ -35,9 +35,10 @@ export interface ApplyProfileJson {
   education?: string;
 }
 
-/** True when the signed-in user's SERVER entitlement grants Platinum. */
+/** True when the signed-in user's SERVER entitlement grants auto-apply:
+    the ADD-ON purchased on any plan, or the Platinum bundle. */
 export function platinumActive(): boolean {
-  return serverPlatinum() || getTier() === "platinum";
+  return serverAutoApply() || serverPlatinum() || getTier() === "platinum";
 }
 
 /** Builds the engine profile from the app's canonical aggregate. Never

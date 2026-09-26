@@ -20,6 +20,9 @@ export interface ServerEntitlement {
   active: boolean;
   /** Server-computed: platinum and not expired (optional — older readers omit it). */
   isPlatinum?: boolean;
+  /** Server-computed: the auto-apply ADD-ON is active (purchased on any plan,
+      or implied by Platinum). Optional — older readers omit it. */
+  autoApply?: boolean;
   issuedBy: string | null;
   updatedAt: string | null;
 }
@@ -34,6 +37,8 @@ export interface AdminEntitlementRow {
   discountPct: number;
   discountExpiresAt: string | null;
   active: boolean;
+  /** auto-apply add-on active (purchased or granted; platinum implies it). */
+  autoApply?: boolean;
   updatedAt: string | null;
 }
 
@@ -67,6 +72,7 @@ function mapRow(r: Record<string, unknown>): ServerEntitlement {
     discountExpiresAt: (r.discount_expires_at as string | null) ?? null,
     active: Boolean(r.active),
     isPlatinum: r.is_platinum === true,
+    autoApply: r.auto_apply === true,
     issuedBy: (r.issued_by as string | null) ?? null,
     updatedAt: (r.updated_at as string | null) ?? null
   };
@@ -102,6 +108,14 @@ export function serverPlatinum(): boolean {
   return cached.tier === "platinum" || cached.plan === "platinum";
 }
 
+/** Server-verified auto-apply access: the ADD-ON purchased on any plan, or
+    bundled with Platinum. This is the gate the AutoApplyCard uses — a free-
+    or pro-tier user who pays the add-on gets the engine without Platinum. */
+export function serverAutoApply(): boolean {
+  if (serverPlatinum()) return true;
+  return cached?.autoApply === true;
+}
+
 /** Fetches the signed-in user's entitlement from the server and makes it
     authoritative: when signed in, the server tier REPLACES the local one
     (a revoked user is downgraded, a granted user is upgraded). Returns null
@@ -113,7 +127,7 @@ export async function refreshEntitlement(): Promise<ServerEntitlement | null> {
     const { data, error } = await client.rpc("get_my_entitlement");
     if (error) throw new Error(error.message);
     const row = (data ?? [])[0] as Record<string, unknown> | undefined;
-    cached = row ? mapRow(row) : { tier: "free", plan: null, expiresAt: null, source: null, discountPct: 0, discountExpiresAt: null, active: false, isPlatinum: false, issuedBy: null, updatedAt: null };
+    cached = row ? mapRow(row) : { tier: "free", plan: null, expiresAt: null, source: null, discountPct: 0, discountExpiresAt: null, active: false, isPlatinum: false, autoApply: false, issuedBy: null, updatedAt: null };
     /* the server is authoritative when signed in — mirror it locally so the
        offline experience matches, but never downgrade a team-seat pro */
     if (getTier() !== "pro" || !cached.active) setTier(cached.active ? "pro" : "free");
@@ -165,6 +179,12 @@ export async function adminIssueDiscount(userId: string, pct: number, days = 90)
   await adminRpc("admin_issue_discount", { p_user: userId, p_pct: Math.round(pct), p_days: Math.round(days) });
 }
 
+/** Grant/revoke the auto-apply ADD-ON on a user — independent of their tier
+    (a free user can own the add-on; a Platinum user has it bundled anyway). */
+export async function adminSetAddon(userId: string, addon: string, on: boolean): Promise<void> {
+  await adminRpc("admin_set_addon", { p_user: userId, p_addon: addon, p_on: on });
+}
+
 /** Create a shareable single-use grant code; returns the code to copy. */
 export async function adminCreateGrant(plan: string, days: number, discountPct: number): Promise<string> {
   const client = await getSupabaseClient();
@@ -189,6 +209,7 @@ export async function adminListEntitlements(): Promise<AdminEntitlementRow[]> {
     discountPct: Number(r.discount_pct ?? 0),
     discountExpiresAt: (r.discount_expires_at as string | null) ?? null,
     active: Boolean(r.active),
+    autoApply: r.auto_apply === true,
     updatedAt: (r.updated_at as string | null) ?? null
   }));
 }

@@ -124,7 +124,10 @@ export const PLAN_CATALOG: Record<string, { label: string; days: number | null; 
   lifetime: { label: "Lifetime", days: null, amountMinor: 19900 },
   /* Platinum = Lifetime + the local auto-apply engine (Playwright search &
      apply with JD-tailored kits). One-time, never expires. */
-  platinum: { label: "Platinum", days: null, amountMinor: 34900 }
+  platinum: { label: "Platinum", days: null, amountMinor: 34900 },
+  /* Auto-apply ADD-ON — pay extra on ANY plan (incl. free): grants the
+     addons.auto_apply flag without touching tier/plan/expiry. */
+  auto_apply: { label: "Auto-apply add-on", days: null, amountMinor: 19900 }
 };
 
 export function planDays(plan: string): number | null {
