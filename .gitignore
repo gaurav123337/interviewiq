@@ -10,7 +10,6 @@ dist/
 # auto-apply engine local state (browser session + run reports + real profile)
 freebuff-apply-profile/
 freebuff-apply-reports/
-apply-profile.json
 
 # logs
 *.log
@@ -41,3 +40,4 @@ editorial-plan.md
 # OS noise
 .DS_Store
 Thumbs.db
+apply-profile.json

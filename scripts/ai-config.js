@@ -29,6 +29,44 @@ async function runSql(token, projectRef, sql) {
   return body;
 }
 
+/** Local-owner fallback: read the provider row via PostgREST using the
+    service key stashed in .claude/settings.local.json's permissions rules
+    (gitignored, owner machine only — absent in CI, where the Management-API
+    env vars are set). Same parsing as local-read-query.mjs. */
+async function localPostgrestConfig() {
+  try {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(process.cwd(), ".claude", "settings.local.json"), "utf8")
+    );
+    const rule = (settings.permissions?.allow ?? []).find(
+      (r) => typeof r === "string" && /Bash\(SUPA_URL=/.test(r)
+    );
+    const m = rule?.match(/SUPA_URL=(https:\/\/\S+?)\s+SUPA_KEY=(\S+?)\s+node/);
+    if (!m) return null;
+    const [, base, key] = m;
+    const res = await fetch(
+      `${base.replace(/\/+$/, "")}/rest/v1/ai_provider_config?select=value&key=eq.provider`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    );
+    if (!res.ok) return null;
+    const rows = await res.json();
+    const v = Array.isArray(rows) && rows[0]?.value;
+    if (v && typeof v === "object" && v.key) {
+      return {
+        key: String(v.key),
+        base: String(v.base || "").replace(/\/+$/, "") || "https://api.openai.com/v1",
+        model: String(v.model || "") || "gpt-4o-mini",
+        source: "supabase"
+      };
+    }
+  } catch {
+    /* file missing or unreadable — fall through */
+  }
+  return null;
+}
+
 /** Loads the AI provider config. Prefers the Supabase row; env is the legacy
     fallback so local runs and pre-migration setups keep working. */
 export async function loadAiProviderConfig({ token, projectRef } = {}) {
@@ -53,6 +91,8 @@ export async function loadAiProviderConfig({ token, projectRef } = {}) {
       console.warn(`(ai-config: Supabase read failed — falling back to env: ${e.message})`);
     }
   }
+  const local = await localPostgrestConfig();
+  if (local) return local;
   return {
     key: process.env.AI_CLEAN_KEY ?? null,
     base: (process.env.AI_CLEAN_BASE || "https://api.openai.com/v1").replace(/\/+$/, ""),
