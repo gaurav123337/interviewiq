@@ -2,7 +2,7 @@
 /* apply-engine-lib — PURE logic for the local auto-apply engine (no Playwright
  * I/O): per-site rules, form-question classification, honest answer drafting,
  * fuzzy option matching, and run-report builders. The browser-driving script
- * (auto-apply-jobs.mjs) imports these; unit tests pin the pure behavior.
+ * (auto-apply-jobs.js) imports these; unit tests pin the pure behavior.
  *
  * Safety model baked in here:
  *  - auto-submit is a PER-SITE rule (LinkedIn never auto-submits — review gate)

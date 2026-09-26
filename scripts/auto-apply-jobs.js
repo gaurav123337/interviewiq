@@ -16,7 +16,7 @@
  *     (fail-closed) and marks the job needs-review in the report.
  *
  * Usage:
- *   node scripts/auto-apply-jobs.mjs --url "https://www.instahyre.com/candidate/opportunities/?matching=true" \
+ *   node scripts/auto-apply-jobs.js --url "https://www.instahyre.com/candidate/opportunities/?matching=true" \
  *     [--max 8] [--profile apply-profile.json] [--dry-run] [--headless] [--login-only]
  *
  * Files: freebuff-apply-profile/ (browser session, gitignored) and
@@ -232,7 +232,7 @@ async function trySubmit(page, site) {
 async function main() {
   const args = parseArgs(process.argv);
   if (!args.url) {
-    console.error(`Usage: node scripts/auto-apply-jobs.mjs --url "<jobs list URL>" [--max N] [--dry-run] [--login-only] [--headless] [--profile file]`);
+    console.error(`Usage: node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only] [--headless] [--profile file]`);
     process.exit(1);
   }
   const site = siteFromUrl(args.url);

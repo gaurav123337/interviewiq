@@ -103,9 +103,9 @@ export interface ApplyCommand {
 export function engineCommands(siteId: string, max = 10): ApplyCommand[] {
   const site = APPLY_SITES.find(s => s.id === siteId) ?? APPLY_SITES[0];
   return [
-    { site: site.id, label: `${site.label} — one-time login`, submit: site.submit, command: `node scripts/auto-apply-jobs.mjs --url "${site.url}" --login-only` },
-    { site: site.id, label: `${site.label} — apply to ${max} (${site.submit === "auto" ? "auto-submit" : "you click Submit"})`, submit: site.submit, command: `node scripts/auto-apply-jobs.mjs --url "${site.url}" --max ${max}` },
-    { site: site.id, label: `${site.label} — dry run (fills, never submits)`, submit: site.submit, command: `node scripts/auto-apply-jobs.mjs --url "${site.url}" --max ${max} --dry-run` },
+    { site: site.id, label: `${site.label} — one-time login`, submit: site.submit, command: `node scripts/auto-apply-jobs.js --url "${site.url}" --login-only` },
+    { site: site.id, label: `${site.label} — apply to ${max} (${site.submit === "auto" ? "auto-submit" : "you click Submit"})`, submit: site.submit, command: `node scripts/auto-apply-jobs.js --url "${site.url}" --max ${max}` },
+    { site: site.id, label: `${site.label} — dry run (fills, never submits)`, submit: site.submit, command: `node scripts/auto-apply-jobs.js --url "${site.url}" --max ${max} --dry-run` },
   ];
 }
 

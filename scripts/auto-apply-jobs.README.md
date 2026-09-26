@@ -26,15 +26,15 @@ The session persists for weeks; no passwords are stored or typed by the script.
 
 ```bash
 # one-time per site (opens the window; log in; done)
-node scripts/auto-apply-jobs.mjs --url "https://www.linkedin.com/jobs/" --login-only
+node scripts/auto-apply-jobs.js --url "https://www.linkedin.com/jobs/" --login-only
 
 # apply run (auto-logs-in if the session is still valid)
-node scripts/auto-apply-jobs.mjs \
+node scripts/auto-apply-jobs.js \
   --url "https://www.instahyre.com/candidate/opportunities/?matching=true" \
   --max 10
 
 # rehearsal: fill everything, submit nothing
-node scripts/auto-apply-jobs.mjs --url "..." --max 5 --dry-run
+node scripts/auto-apply-jobs.js --url "..." --max 5 --dry-run
 ```
 
 ## Your profile
