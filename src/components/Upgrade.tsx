@@ -16,7 +16,8 @@ const BENEFITS = [
   "Journey mode and mock interviews",
   "Unlimited AI feedback & hints",
   "Voice mode — the interviewer speaks, you answer aloud",
-  "Full history and progress analytics"
+  "Full history and progress analytics",
+  "💎 Platinum only: local auto-apply engine (JD-tailored resume + cover letter, auto-submit on Instahyre/Naukri, review-gate on LinkedIn)"
 ];
 
 const CHECKOUT_KEY = "iq.checkout";
@@ -224,19 +225,19 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
         </div>
       ) : (
         <>
-        <div className="mb-4 grid grid-cols-3 gap-2">
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {PLANS.map(p => {
             const base = planPrice(p.id);
             const was = effDiscount > 0 ? base : 0;
             const now = discountedPrice(base, effDiscount);
-            const recurring = subscribe && p.id !== "lifetime";
+            const recurring = subscribe && p.id !== "lifetime" && p.id !== "platinum";
             return (
               <button
                 key={p.id}
                 type="button"
                 disabled={buying}
                 onClick={() => getPro(p.id)}
-                className={`rounded-xl border p-3 text-center transition-all hover:border-acc1/60 disabled:opacity-60 ${p.id === "yearly" ? "border-acc1/50 bg-acc1/10" : "border-line/10 bg-deep/40 hover:bg-deep/60"}`}
+                className={`rounded-xl border p-3 text-center transition-all hover:border-acc1/60 disabled:opacity-60 ${p.id === "platinum" ? "border-acc3/60 bg-acc3/10" : p.id === "yearly" ? "border-acc1/50 bg-acc1/10" : "border-line/10 bg-deep/40 hover:bg-deep/60"}`}
               >
                 <div className="text-[11px] font-extrabold uppercase tracking-wider text-mut">{p.label}</div>
                 <div className="mt-1 text-[17px] font-extrabold tabular-nums">
@@ -246,11 +247,15 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
                 {recurring && <div className="text-[10px] font-bold text-acc1">billed {p.id === "yearly" ? "yearly" : "monthly"} · cancel anytime</div>}
                 {effDiscount > 0 && <div className="text-[10.5px] font-bold text-ok">−{effDiscount}%{couponCheck?.valid ? ` (${couponCheck.discountPct}% code)` : " for you"}</div>}
                 {!recurring && p.id === "yearly" && <div className="text-[10px] font-bold text-acc1">best value</div>}
+                {!recurring && p.id === "platinum" && <div className="text-[10px] font-bold text-acctxt">auto-apply included</div>}
                 <div className="mt-1.5 text-[10.5px] font-bold text-acctxt">{buying ? "Opening…" : "Choose"}</div>
               </button>
             );
           })}
         </div>
+        <p className="mb-4 text-[11.5px] text-mut">
+          <span className="font-bold">💎 Platinum</span> = everything in Lifetime + the <span className="font-bold">local auto-apply engine</span> — a Playwright browser that searches your job boards (LinkedIn, Naukri, Instahyre…), tailors a resume + cover letter to each JD with AI, fills the application, and submits (auto on Instahyre/Naukri, review-gate on LinkedIn). Runs on your machine; one-time purchase.
+        </p>
         {checkout() && (
           <label className="mb-3 flex cursor-pointer items-center gap-2 text-[12.5px] font-bold text-mut select-none">
             <input
