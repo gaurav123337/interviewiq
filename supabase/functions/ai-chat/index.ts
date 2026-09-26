@@ -117,17 +117,20 @@ async function probeModel(apiKey: string, apiBase: string, model: string): Promi
 
 /** POST { action: "probe-models", models?: string[] } — admin-only. Probes the
     requested models (default: every chat model from GET /models, capped) with
-    1-token calls and returns live verdicts + quota intel. */
-async function handleProbeModels(providerConfig: Record<string, string>, body: Record<string, unknown>): Promise<Response> {
+    1-token calls and returns live verdicts + quota intel. Every Response below
+    MUST carry the prepared CORS headers: CORS is enforced by the BROWSER, so a
+    bare Response (Content-Type only) is a 200 the browser throws away — the
+    scan then failed as "Couldn't list models" while curl worked fine. */
+async function handleProbeModels(providerConfig: Record<string, string>, body: Record<string, unknown>, cors: Record<string, string>): Promise<Response> {
   const apiKey = providerConfig.key ?? providerConfig.apiKey ?? "";
   const apiBase = (providerConfig.base ?? providerConfig.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
   if (!apiKey || !apiBase) {
-    return new Response(JSON.stringify({ error: "Provider not configured" }), { status: 503, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: "Provider not configured" }), { status: 503, headers: cors });
   }
   try {
     const listRes = await fetch(`${apiBase}/models`, { headers: { "Authorization": `Bearer ${apiKey}` } });
     if (!listRes.ok) {
-      return new Response(JSON.stringify({ error: `Provider /models returned HTTP ${listRes.status}` }), { status: 502, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: `Provider /models returned HTTP ${listRes.status}` }), { status: 502, headers: cors });
     }
     const data = await listRes.json().catch(() => ({}));
     const listed: { id: string }[] = data.data ?? [];
@@ -139,22 +142,22 @@ async function handleProbeModels(providerConfig: Record<string, string>, body: R
       .filter(id => id && !/(image|seedance|kling|hailuo|imagine|tts|whisper|embed|bge-)/i.test(id))
       .slice(0, MAX_PROBES);
     const targets = wanted && wanted.length ? wanted : chatOnly;
-    if (!targets.length) return new Response(JSON.stringify({ error: "no probeable models" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    if (!targets.length) return new Response(JSON.stringify({ error: "no probeable models" }), { status: 400, headers: cors });
     /* modest parallelism — fast enough to finish before gateway idle timeouts,
        gentle enough not to trip per-key burst limits */
     const verdicts = (await Promise.all(targets.map(m => probeModel(apiKey, apiBase, m))));
-    return new Response(JSON.stringify({ verdicts, probed: verdicts.length }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ verdicts, probed: verdicts.length }), { status: 200, headers: cors });
   } catch (e) {
-    return new Response(JSON.stringify({ error: (e as Error).message ?? "probe failed" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: (e as Error).message ?? "probe failed" }), { status: 500, headers: cors });
   }
 }
 
 /** POST { action: "set-provider-model", model } — admin-only. Updates the
     active model on the saved provider row WITHOUT needing the key again.
     Lets the auto-apply / model picker switch models in one click. */
-async function handleSetProviderModel(model: string, projectUrl: string): Promise<Response> {
+async function handleSetProviderModel(model: string, projectUrl: string, cors: Record<string, string>): Promise<Response> {
   const m = String(model || "").trim();
-  if (!m || m.length > 200) return new Response(JSON.stringify({ error: "model required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  if (!m || m.length > 200) return new Response(JSON.stringify({ error: "model required" }), { status: 400, headers: cors });
   try {
     /* read-modify-write the value blob so the key/base are never clobbered */
     const cur = await fetch(`${projectUrl}/rest/v1/ai_provider_config?key=eq.provider&select=value`, {
@@ -169,21 +172,21 @@ async function handleSetProviderModel(model: string, projectUrl: string): Promis
     });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      return new Response(JSON.stringify({ error: `update failed HTTP ${res.status}: ${t.slice(0, 120)}` }), { status: 502, headers: { "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: `update failed HTTP ${res.status}: ${t.slice(0, 120)}` }), { status: 502, headers: cors });
     }
-    return new Response(JSON.stringify({ ok: true, model: m }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, model: m }), { status: 200, headers: cors });
     } catch (e) {
-    return new Response(JSON.stringify({ error: (e as Error).message ?? "update failed" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: (e as Error).message ?? "update failed" }), { status: 500, headers: cors });
   }
 }
 
 /* ── GET /models — list available models from provider ──────────────────── */
 
-async function handleListModels(providerConfig: Record<string, string>, projectUrl: string): Promise<Response> {
+async function handleListModels(providerConfig: Record<string, string>, projectUrl: string, cors: Record<string, string>): Promise<Response> {
   const apiKey = providerConfig.key ?? providerConfig.apiKey ?? "";
   const baseUrl = (providerConfig.base ?? providerConfig.baseUrl ?? "").replace(/\/+$/, "");
   if (!apiKey || !baseUrl) {
-  	return new Response(JSON.stringify({ error: "Provider not configured" }), { status: 503, headers: { "Content-Type": "application/json" } });
+  	return new Response(JSON.stringify({ error: "Provider not configured" }), { status: 503, headers: cors });
   }
 
   try {
@@ -191,7 +194,7 @@ async function handleListModels(providerConfig: Record<string, string>, projectU
   	  headers: { "Authorization": `Bearer ${apiKey}` },
   	});
   	if (!res.ok) {
-  	  return new Response(JSON.stringify({ error: `Provider returned HTTP ${res.status}` }), { status: 502, headers: { "Content-Type": "application/json" } });
+  	  return new Response(JSON.stringify({ error: `Provider returned HTTP ${res.status}` }), { status: 502, headers: cors });
   	}
   	const data = await res.json().catch(() => ({}));
   	const models: { id: string; name?: string; owned_by?: string }[] = data.data ?? [];
@@ -217,9 +220,9 @@ async function handleListModels(providerConfig: Record<string, string>, projectU
   	  })
   	  .sort((a, b) => a.id.localeCompare(b.id));
 
-  	return new Response(JSON.stringify({ models: enriched, moduleDefaults }), { status: 200, headers: { "Content-Type": "application/json" } });
+  	return new Response(JSON.stringify({ models: enriched, moduleDefaults }), { status: 200, headers: cors });
   } catch (e) {
-  	return new Response(JSON.stringify({ error: (e as Error).message ?? "Failed to list models" }), { status: 500, headers: { "Content-Type": "application/json" } });
+  	return new Response(JSON.stringify({ error: (e as Error).message ?? "Failed to list models" }), { status: 500, headers: cors });
   }
 }
 
@@ -266,7 +269,7 @@ Deno.serve(async (req) => {
 
     // GET /models — list available models from provider
     if (req.method === "GET") {
-      return await handleListModels(config, projectUrl);
+      return await handleListModels(config, projectUrl, headers);
     }
 
     // Parse the request body
@@ -283,8 +286,8 @@ Deno.serve(async (req) => {
       if (!admin) {
         return new Response(JSON.stringify({ error: "admin only" }), { status: 403, headers });
       }
-      if (body.action === "probe-models") return await handleProbeModels(config, body);
-      return await handleSetProviderModel(String(body?.model ?? ""), projectUrl);
+      if (body.action === "probe-models") return await handleProbeModels(config, body, headers);
+      return await handleSetProviderModel(String(body?.model ?? ""), projectUrl, headers);
     }
 
     const { messages, temperature = 0.6, maxTokens = 700, module: moduleId } = body;
