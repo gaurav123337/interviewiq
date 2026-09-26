@@ -141,3 +141,12 @@ jobs:
           npx supabase functions deploy seed-rag \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
+          # ai-chat — the cloud AI proxy (chat + GET /models + the admin-gated
+          # probe-models / set-provider-model actions for the model picker).
+          # Was deployed by hand only, so it could drift silently; register it here
+          # so it ships every deploy. --no-verify-jwt: the function authenticates
+          # callers itself (Bearer != anon) and requireAdmin-gates the config
+          # actions.
+          npx supabase functions deploy ai-chat \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt

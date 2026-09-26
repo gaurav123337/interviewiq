@@ -10,6 +10,7 @@
 */
 
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
+import { requireAdmin } from "../_shared/auth.ts";
 
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -57,6 +58,123 @@ function shouldDisableThinking(modelName: string, moduleId: string): boolean {
   // JSON-output modules should never use thinking models
   const JSON_MODULES = new Set(["contentRefine", "articleNormalize", "contentIndex", "contentQuality", "ats"]);
   return isThinking && JSON_MODULES.has(moduleId);
+}
+
+/* ── POST action: probe models with 1-token live calls ─────────────────── */
+
+/** Deterministic suffix so probing never hits the provider's prompt cache —
+    an accidental cache-hit response would look like a healthy model while
+    proving nothing about live generation. */
+const probeNonce = () => `#p${Date.now().toString(36)}`;
+/** Cap on models probed per request — keeps a 200-model gateway from
+    turning one scan into a minute-long, quota-burning marathon. */
+const MAX_PROBES = 60;
+
+interface ProbeVerdict {
+  model: string;
+  status: "ok" | "failed";
+  httpStatus: number;
+  latencyMs: number;
+  sample: string;
+  /** Server-decoded quota wall, e.g. "needs 200.1 credits, 174.06 available". */
+  quota?: string;
+}
+
+/** Probes one model with a 1-token chat call. Cheap (1 output token) and
+    decisive: listed-but-dead upstream models 524, priced-out models 403. */
+async function probeModel(apiKey: string, apiBase: string, model: string): Promise<ProbeVerdict> {
+  const t0 = Date.now();
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 30_000);
+    const res = await fetch(`${apiBase}/chat/completions`, {
+      method: "POST",
+      signal: ac.signal,
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: `Reply with the single word OK. ${probeNonce()}` }],
+        max_tokens: 1,
+        temperature: 0,
+      }),
+    });
+    clearTimeout(timer);
+    const body = await res.json().catch(() => ({} as Record<string, unknown>));
+    const errMsg = String((body as { error?: { message?: string } }).error?.message ?? "");
+    let quota: string | undefined;
+    const need = errMsg.match(/需要预扣费额度[:：]?\s*Credits?([\d.]+)/);
+    const have = errMsg.match(/剩余额度[:：]?\s*Credits?([\d.]+)/);
+    if (need && have) quota = `needs ~${need[1]} credits/call, ${have[1]} available`;
+    if (res.ok) {
+      const msg = (body as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content ?? "";
+      return { model, status: "ok", httpStatus: res.status, latencyMs: Date.now() - t0, sample: msg.slice(0, 20), quota };
+    }
+    return { model, status: "failed", httpStatus: res.status, latencyMs: Date.now() - t0, sample: errMsg.slice(0, 120), quota };
+    } catch (e) {
+    return { model, status: "failed", httpStatus: 0, latencyMs: Date.now() - t0, sample: (e as Error).name === "AbortError" ? "timeout after 30s" : (e as Error).message.slice(0, 120) };
+  }
+}
+
+/** POST { action: "probe-models", models?: string[] } — admin-only. Probes the
+    requested models (default: every chat model from GET /models, capped) with
+    1-token calls and returns live verdicts + quota intel. */
+async function handleProbeModels(providerConfig: Record<string, string>, body: Record<string, unknown>): Promise<Response> {
+  const apiKey = providerConfig.key ?? providerConfig.apiKey ?? "";
+  const apiBase = (providerConfig.base ?? providerConfig.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+  if (!apiKey || !apiBase) {
+    return new Response(JSON.stringify({ error: "Provider not configured" }), { status: 503, headers: { "Content-Type": "application/json" } });
+  }
+  try {
+    const listRes = await fetch(`${apiBase}/models`, { headers: { "Authorization": `Bearer ${apiKey}` } });
+    if (!listRes.ok) {
+      return new Response(JSON.stringify({ error: `Provider /models returned HTTP ${listRes.status}` }), { status: 502, headers: { "Content-Type": "application/json" } });
+    }
+    const data = await listRes.json().catch(() => ({}));
+    const listed: { id: string }[] = data.data ?? [];
+    const wanted = (body?.models as string[] | undefined)?.filter(m => typeof m === "string");
+    /* exclude image/video/audio/embedding model families — they can't serve
+       chat completions and would burn quota on a guaranteed 4xx */
+    const chatOnly = listed
+      .map(m => m.id)
+      .filter(id => id && !/(image|seedance|kling|hailuo|imagine|tts|whisper|embed|bge-)/i.test(id))
+      .slice(0, MAX_PROBES);
+    const targets = wanted && wanted.length ? wanted : chatOnly;
+    if (!targets.length) return new Response(JSON.stringify({ error: "no probeable models" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    /* modest parallelism — fast enough to finish before gateway idle timeouts,
+       gentle enough not to trip per-key burst limits */
+    const verdicts = (await Promise.all(targets.map(m => probeModel(apiKey, apiBase, m))));
+    return new Response(JSON.stringify({ verdicts, probed: verdicts.length }), { status: 200, headers: { "Content-Type": "application/json" } });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: (e as Error).message ?? "probe failed" }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+}
+
+/** POST { action: "set-provider-model", model } — admin-only. Updates the
+    active model on the saved provider row WITHOUT needing the key again.
+    Lets the auto-apply / model picker switch models in one click. */
+async function handleSetProviderModel(model: string, projectUrl: string): Promise<Response> {
+  const m = String(model || "").trim();
+  if (!m || m.length > 200) return new Response(JSON.stringify({ error: "model required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+  try {
+    /* read-modify-write the value blob so the key/base are never clobbered */
+    const cur = await fetch(`${projectUrl}/rest/v1/ai_provider_config?key=eq.provider&select=value`, {
+      headers: { "Authorization": `Bearer ${SERVICE_ROLE_KEY}`, "apikey": SERVICE_ROLE_KEY },
+    });
+    const rows = await cur.json().catch(() => [] as Record<string, unknown>[]);
+    const value = { ...((rows[0]?.value as Record<string, unknown>) ?? {}), model: m };
+    const res = await fetch(`${projectUrl}/rest/v1/ai_provider_config?key=eq.provider`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${SERVICE_ROLE_KEY}`, "apikey": SERVICE_ROLE_KEY, "Prefer": "return=minimal" },
+      body: JSON.stringify({ value, updated_at: Date.now() }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      return new Response(JSON.stringify({ error: `update failed HTTP ${res.status}: ${t.slice(0, 120)}` }), { status: 502, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ ok: true, model: m }), { status: 200, headers: { "Content-Type": "application/json" } });
+    } catch (e) {
+    return new Response(JSON.stringify({ error: (e as Error).message ?? "update failed" }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
 }
 
 /* ── GET /models — list available models from provider ──────────────────── */
@@ -156,6 +274,19 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "POST or GET only" }), { status: 405, headers });
     }
     const body = await req.json().catch(() => ({}));
+
+    /* Admin actions for the model picker / auto-apply — checked before the
+       messages validation because these POSTs carry no messages array. They
+       read/modify the saved provider config, so they are admin-gated. */
+    if (body?.action === "probe-models" || body?.action === "set-provider-model") {
+      const admin = await requireAdmin(req);
+      if (!admin) {
+        return new Response(JSON.stringify({ error: "admin only" }), { status: 403, headers });
+      }
+      if (body.action === "probe-models") return await handleProbeModels(config, body);
+      return await handleSetProviderModel(String(body?.model ?? ""), projectUrl);
+    }
+
     const { messages, temperature = 0.6, maxTokens = 700, module: moduleId } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
