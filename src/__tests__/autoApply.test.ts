@@ -27,7 +27,7 @@ vi.mock("../services/profileStore", () => ({
   toUploadedResume: vi.fn(() => null)
 }));
 
-import { buildEngineProfile, engineCommands, exportProfileJson, platinumActive, APPLY_SITES } from "../services/autoApply";
+import { buildEngineProfile, engineCommands, exportProfileJson, extractContacts, platinumActive, APPLY_SITES } from "../services/autoApply";
 
 beforeEach(() => {
   mocks.tier = "free";
@@ -93,6 +93,21 @@ describe("buildEngineProfile — honest export", () => {
     const raw = exportProfileJson();
     expect(raw.endsWith("\n")).toBe(true);
     expect(() => JSON.parse(raw)).not.toThrow();
+  });
+});
+
+describe("extractContacts (from the uploaded resume text)", () => {
+  it("finds email, phone, and a plausible name near the top", () => {
+    const c = extractContacts("GAURAV GUPTA\nBangalore · gaurav.123337@gmail.com · +91 98765 43210\nStaff Frontend Engineer");
+    expect(c.email).toBe("gaurav.123337@gmail.com");
+    expect(c.phone).toContain("98765");
+    expect(c.name).toBe("GAURAV GUPTA");
+  });
+
+  it("never invents: junk lines, digits, URLs are not names; missing fields stay undefined", () => {
+    expect(extractContacts("gaurav.123337@gmail.com\n14 years experience\nhttps://linkedin.com/in/x").name).toBeUndefined();
+    expect(extractContacts("").email).toBeUndefined();
+    expect(extractContacts("no contact info here").email).toBeUndefined();
   });
 });
 
