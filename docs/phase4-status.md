@@ -145,6 +145,8 @@ Deviations / corrections worth remembering:
 | Review Inbox derived skill chips | #86 | chips/filter work on the untagged backlog |
 | Editorial push (live data op) | — | bank 36 → 269 published; 6 dupes deleted; pile 469 → 230 |
 | AI-clean + second editorial push (live data ops) | — | key fixed (getunikey / deepseek-v4-flash); 281 drafts published; bank 269 → **550**; pile 293 → 12 |
+| Make ATS-ready resume rewrite | #91 | one-click 🎯 Make ATS-ready on ResumeCard: strict-JSON rewrite via `chat(module:"ats")` (BYOK → cloudChat ladder), dropped-contact repair, mirrored skills filtered to the job, before/after ATS-parse diff, use-as-my-resume → `applyResume` re-extract |
+| Working-model discovery + 2-min auto-apply | #92 | admin ModelScanCard probes the gateway model list through the `ai-chat` edge fn (`probe-models`: 1-token live probe, nonce cache-bypass, media/embedding models excluded), ranks probed models with plain-language task descriptions, and auto-applies the winner after a 120 s countdown; `ai-chat` registered in deploy.yml (was hand-deployed only) |
 
 ---
 
@@ -182,6 +184,28 @@ Deviations / corrections worth remembering:
 7. ~~**`pdfjs-dist 6.2.108 → 6.3.289`**~~ — **Done (#90).** Minor bump; pdf/resume suites pass
    unchanged, all gates green.
 
+**Owner-requested features (2026-09-26) — ✅ CLOSED (PRs #91–#92):**
+12. ~~**"Make ATS-ready" resume feature**~~ — **Done (#91).** One-click rewrite of the stored
+    resume into ATS-compliant plain text through the existing AI ladder (`chat(module:"ats")`,
+    BYOK → cloudChat → error): strict-JSON prompt with output validation (rejects <120 chars /
+    single line / HTML / fenced output) and a contact-repair pass that re-inserts email / phone /
+    LinkedIn the model dropped under line 3. The modal shortlists jobs by skill overlap, shows a
+    before/after diff via the shared ATS parser, and "use as my resume" feeds the result through
+    `applyResume` re-extraction. `moduleModels` gains the `"ats"` module so owners can route it to
+    a cheaper model. 8 tests in `atsReady.test.ts`.
+13. ~~**Working-model discovery with task descriptions + 2-minute auto-apply**~~ — **Done (#92).**
+    After a key save (or via the standalone 🔍 Find working models button), the admin
+    ModelScanCard probes the gateway's `/models` list through a new admin-gated `probe-models`
+    action on the `ai-chat` edge function (1-token live probe, nonce cache-bypass, 30 s cap,
+    image/video/audio/embedding models excluded, MAX_PROBES=60) and renders each survivor with a
+    plain-language task description (`describeTask`: embeddings / image / video / vision / code /
+    thinking / fast / flagship / general). `aiModelPicker.ts` ranks only probed models
+    (auto-pick-name −40, non-thinking −10, opus/ultra/max +25, non-chat +200, latency bonus) and
+    auto-applies the winner after a 120 s countdown ("Use this" cancels; stand-down toasts on
+    failure) via the `set-provider-model` action. Deployment gap fixed: `ai-chat` was missing from
+    deploy.yml — now registered, so Pages deploys bundle it too. 11 tests in
+    `aiModelPicker.test.ts`.
+
 **Data still in the backlog (by design, not missing code):**
 8. ~~**227 answerless drafts**~~ — **Resolved 2026-09-26.** All 293 drafts (the 227 plus the
    nightly's new intake) were AI-cleaned; 281 passed the audit→publish gate — bank 269 → **550**,
@@ -209,9 +233,9 @@ Deviations / corrections worth remembering:
 
 ## 7. Current gate baselines (moved with each merge, as the cadence requires)
 
-| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-25, post-#90) |
+| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#92) |
 |---|---|---|
-| vitest | 1292 | **1459** (+167) |
+| vitest | 1292 | **1478** (+186) |
 | eval:rag | 41 | 41 |
 | deno | 72 passed / 0 failed | 72 passed / 0 failed |
 
@@ -220,8 +244,9 @@ isolation before calling a failure a regression.
 
 ---
 
-_Last updated 2026-09-26 after PRs #84–#90 (admin skill filters, OR semantics, derived inbox chips,
+_Last updated 2026-09-26 after PRs #84–#92 (admin skill filters, OR semantics, derived inbox chips,
 keyless GitHub REST search, selector-drift alarm + L5 content markers, opt-in render fetcher,
-pdfjs bump), the editorial/backfill data operations, and the AI-clean + second editorial pass
+pdfjs bump, the ATS-ready resume rewrite, and AI model discovery + auto-apply), the
+editorial/backfill data operations, and the AI-clean + second editorial pass
 (bank 269 → 550). For the blow-by-blow record see
 [`docs/phase4-progress.md`](phase4-progress.md)._
