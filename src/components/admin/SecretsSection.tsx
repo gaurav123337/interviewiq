@@ -1,9 +1,10 @@
-import { memo, useMemo, useState, useEffect } from "react";
+import { memo, useMemo, useState, useEffect, useRef } from "react";
 import { CONFIG } from "../../config";
 import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretStatusRow } from "../../services/secrets";
 import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, getEmbeddingsProviderConfig, saveEmbeddingsProviderConfig, testEmbeddingsProvider, type AiProviderStatus, type EmbeddingsProviderStatus } from "../../services/aiProvider";
 import { listProviderHistory, saveToHistory, deleteHistoryEntry, formatHistoryDate, type ProviderHistoryEntry } from "../../services/aiProviderHistory";
 import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretStatus } from "../../services/edgeSecrets";
+import { scanProviderModels, applyProviderModel, autoPick, type ProbeReport } from "../../services/aiModelPicker";
 import { toast } from "../../toast";
 import { cardCls, btnPrimary, btnGhost, btnSm, Chip } from "../ui";
 
@@ -22,6 +23,8 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
   const [testNote, setTestNote] = useState<string | null>(null);
   const [history, setHistory] = useState<ProviderHistoryEntry[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  /* working-model scan (opens automatically after a key save) */
+  const [scanOpen, setScanOpen] = useState(false);
 
   useEffect(() => {
     if (status) {
@@ -54,9 +57,10 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
         const updated = await listProviderHistory();
         setHistory(updated);
       }
-      onToast("🤖 AI pipeline key saved — the next scrape/problem-bank run uses it");
+      onToast("🤖 AI pipeline key saved — scanning the provider for working models…");
       setKey("");
       await onLoad();
+      setScanOpen(true);
     } catch (e) {
       onToast("✗ " + ((e as Error).message || "Save failed"));
     } finally {
@@ -143,6 +147,9 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
         <button className={btnGhost + btnSm} onClick={() => void test()} disabled={saving || testing} title="One live call to the provider's /models endpoint with the entered key">
           {testing ? "Testing…" : "🧪 Test key"}
         </button>
+        <button className={btnGhost + btnSm} onClick={() => setScanOpen(true)} disabled={saving || testing} title="Probe every model on this provider with a 1-token live call and rank the working ones">
+          🔍 Find working models
+        </button>
         {history.length > 0 && (
           <button
             className={btnGhost + btnSm}
@@ -203,6 +210,172 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
             ))}
           </div>
         </div>
+      )}
+
+      <ModelScanCard
+        open={scanOpen}
+        currentModel={status?.model ?? ""}
+        onToast={onToast}
+        onApplied={onLoad}
+        onClose={() => setScanOpen(false)}
+      />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Working-model scan — probes every model on the provider with a       */
+/* 1-token live call (through the ai-chat edge function, which holds    */
+/* the key), ranks the working ones by task fit, and — if the owner     */
+/* picks nothing within 2 minutes — auto-applies the best one.          */
+/* ------------------------------------------------------------------ */
+
+const AUTO_APPLY_AFTER_MS = 120_000;
+
+function ModelScanCard({ open, currentModel, onToast, onApplied, onClose }: {
+  open: boolean;
+  currentModel: string;
+  onToast: (m: string) => void;
+  onApplied: () => void;
+  onClose: () => void;
+}) {
+  const [phase, setPhase] = useState<"idle" | "scanning" | "done" | "error">("idle");
+  const [report, setReport] = useState<ProbeReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [applying, setApplying] = useState("");
+  /* idle countdown: starts once results are shown, cancels on any pick */
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+
+  const runScan = async () => {
+    setPhase("scanning");
+    setError(null);
+    setReport(null);
+    setSecondsLeft(null);
+    try {
+      const r = await scanProviderModels(true);
+      setReport(r);
+      setPhase("done");
+      setSecondsLeft(AUTO_APPLY_AFTER_MS / 1000);
+    } catch (e) {
+      setError((e as Error).message || "Scan failed");
+      setPhase("error");
+    }
+  };
+
+  /* auto-scan on open (post-save popup or manual) */
+  useEffect(() => {
+    if (open && phase === "idle") void runScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  /* 2-minute idle fallback — self-heals the pipeline when the saved model
+     is broken and the owner has walked away. Any pick cancels it. */
+  useEffect(() => {
+    if (phase !== "done" || secondsLeft === null || secondsLeft <= 0) return;
+    const t = window.setTimeout(() => setSecondsLeft(s => (s === null ? null : s - 1)), 1000);
+    return () => window.clearTimeout(t);
+  }, [phase, secondsLeft]);
+  const autoAppliedRef = useRef(false);
+  useEffect(() => {
+    if (phase !== "done" || secondsLeft !== 0 || autoAppliedRef.current) return;
+    autoAppliedRef.current = true;
+    void (async () => {
+      const best = autoPick(report ?? { options: [], rejected: [], scanned: 0 });
+      if (!best || best.id === currentModel) { onToast("ℹ️ No better working model found — config unchanged"); return; }
+      setApplying(best.id);
+      try {
+        await applyProviderModel(best.id);
+        onApplied();
+        onToast(`🤖 No pick after 2 min — auto-applied ${best.id} (the best working model)`);
+      } catch (e) {
+        onToast("✗ Auto-apply failed: " + (e as Error).message);
+      } finally {
+        setApplying("");
+        setSecondsLeft(null);
+      }
+    })();
+  }, [phase, secondsLeft, report, currentModel, onApplied, onToast]);
+
+  const apply = async (model: string) => {
+    setSecondsLeft(null); // any manual pick cancels the idle fallback
+    setApplying(model);
+    try {
+      await applyProviderModel(model);
+      onApplied();
+      onToast(`✅ Active model → ${model}`);
+    } catch (e) {
+      onToast("✗ " + (e as Error).message);
+    } finally {
+      setApplying("");
+    }
+  };
+
+  if (!open) return null;
+  return (
+    <div className="mt-4 rounded-xl border border-acc1/30 bg-acc1/5 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-[13.5px] font-extrabold">🔍 Working models on this provider</h3>
+        <div className="flex items-center gap-2">
+          {phase === "done" && secondsLeft !== null && secondsLeft > 0 && (
+            <span className="text-[11px] font-bold text-acctxt">
+              auto-apply best in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")} — pick one to cancel
+            </span>
+          )}
+          <button className="text-[11.5px] text-mut hover:text-ink" onClick={() => { setSecondsLeft(null); onClose(); }}>✕ hide</button>
+        </div>
+      </div>
+
+      {phase === "scanning" && (
+        <p className="mt-3 text-[12.5px] text-fnt"><span className="spinner" /> Listing models, then live-probing each with a 1-token call… (up to a minute)</p>
+      )}
+      {phase === "error" && (
+        <div className="mt-3">
+          <p className="text-[12.5px] text-warn">✗ {error}</p>
+          <button className={btnGhost + btnSm + " mt-2"} onClick={() => void runScan()}>↻ Retry scan</button>
+        </div>
+      )}
+
+      {phase === "done" && report && (
+        <>
+          {report.options.length === 0 && (
+            <p className="mt-3 text-[12.5px] text-warn">No working chat models found. {report.rejected.length} listed model(s) failed the live probe — check the provider account (credits, access).</p>
+          )}
+          <div className="mt-3 space-y-2">
+            {report.options.map(o => (
+              <div key={o.id} className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2.5 ${o.id === currentModel ? "border-ok/40 bg-ok/10" : "border-line/10 bg-wht/5"}`}>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[12.5px] font-bold text-fnt">{o.id}</span>
+                    {o.recommended && <span className="rounded bg-ok/15 px-1.5 py-0.5 text-[10px] font-bold text-ok">BEST</span>}
+                    {o.id === currentModel && <span className="rounded bg-acc1/15 px-1.5 py-0.5 text-[10px] font-bold text-acctxt">ACTIVE</span>}
+                    <span className="text-[10.5px] text-mut">{o.latencyMs} ms probe</span>
+                  </div>
+                  <p className="mt-0.5 text-[11.5px] text-mut">{o.task}</p>
+                </div>
+                {o.id !== currentModel && (
+                  <button
+                    className="rounded-lg border border-acc1/30 bg-acc1/10 px-2.5 py-1 text-[11px] font-bold text-acctxt hover:bg-acc1/20 disabled:opacity-50"
+                    disabled={applying !== ""}
+                    onClick={() => void apply(o.id)}
+                  >
+                    {applying === o.id ? "Switching…" : "Use this"}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {report.rejected.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-[11.5px] font-bold text-mut">✗ {report.rejected.length} listed model(s) failed the live probe</summary>
+              <ul className="mt-2 space-y-1 pl-4 text-[11px] text-mut">
+                {report.rejected.slice(0, 12).map(r => (
+                  <li key={r.model}><b>{r.model}</b> — HTTP {r.httpStatus || "net"}: {r.note}</li>
+                ))}
+                {report.rejected.length > 12 && <li>… +{report.rejected.length - 12} more</li>}
+              </ul>
+            </details>
+          )}
+        </>
       )}
     </div>
   );
