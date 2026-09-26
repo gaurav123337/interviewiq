@@ -264,6 +264,15 @@ export function resolveModulePreview(
 export async function testAiProvider(cfg: { key: string; base: string }): Promise<{ ok: boolean; note: string }> {
   const base = (cfg.base.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
   if (!cfg.key.trim()) return { ok: false, note: "Enter a key first" };
+  /* loopback bases can only ever work from THIS browser: the AI pipeline
+     runs on Supabase edge functions / GitHub cron, whose "localhost" is a
+     different machine entirely. Warn up-front with the fix. */
+  if (/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])([:/]|$)/i.test(base)) {
+    return {
+      ok: false,
+      note: "localhost providers can't power the app — the AI pipeline runs on Supabase/CI, not this machine, and the deployed site blocks browser calls to localhost. Expose the proxy with a tunnel (e.g. `cloudflared tunnel --url http://localhost:PORT`) and save that https URL instead."
+    };
+  }
   try {
     const res = await fetch(`${base}/models`, {
       method: "GET",

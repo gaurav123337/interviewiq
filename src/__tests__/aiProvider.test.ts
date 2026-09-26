@@ -1,7 +1,7 @@
 /* Per-module AI model wiring (docs/deep-dive-system-design-plan.md §2) —
    resolution precedence + save/delete behavior. */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveModulePreview } from "../services/aiProvider";
 
 const from = vi.hoisted(() => vi.fn());
@@ -68,5 +68,29 @@ describe("saveModuleModel — upsert vs delete", () => {
     await saveModuleModel("coach", { model: "", key: "" });
     expect(del).toHaveBeenCalledWith("key", "module:coach");
     expect(upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("testAiProvider — loopback guard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects localhost/127.0.0.1/[::1] bases up-front with the tunnel fix", async () => {
+    const { testAiProvider } = await import("../services/aiProvider");
+    for (const base of ["http://localhost:20128/v1", "http://127.0.0.1:8080", "http://[::1]:9000/v1"]) {
+      const r = await testAiProvider({ key: "sk-test", base });
+      expect(r.ok).toBe(false);
+      expect(r.note).toMatch(/localhost providers can't power the app/i);
+      expect(r.note).toMatch(/cloudflared tunnel/i);
+    }
+  });
+
+  it("never reaches the network for loopback bases", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { testAiProvider } = await import("../services/aiProvider");
+    await testAiProvider({ key: "sk-test", base: "http://localhost:20128/v1" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
