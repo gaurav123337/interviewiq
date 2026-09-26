@@ -24,6 +24,8 @@ offline-summary.md
 local-read-query.mjs
 editorial-push.mjs
 backfill-skills-exec.mjs
+ai-clean-exec.mjs
+editorial-clean-push.mjs
 drafts-snapshot*.json
 published-snapshot.json
 pub-full.json
