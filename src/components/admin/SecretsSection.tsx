@@ -4,7 +4,7 @@ import { fetchSecretStatus, sendTestEmail, type SecretStatusReport, type SecretS
 import { getAiProviderConfig, saveAiProviderConfig, testAiProvider, getEmbeddingsProviderConfig, saveEmbeddingsProviderConfig, testEmbeddingsProvider, type AiProviderStatus, type EmbeddingsProviderStatus } from "../../services/aiProvider";
 import { listProviderHistory, saveToHistory, deleteHistoryEntry, formatHistoryDate, type ProviderHistoryEntry } from "../../services/aiProviderHistory";
 import { getEdgeSecrets, saveEdgeSecret, APP_MANAGED_SECRETS, type EdgeSecretStatus } from "../../services/edgeSecrets";
-import { scanProviderModels, applyProviderModel, autoPick, type ProbeReport } from "../../services/aiModelPicker";
+import { scanProviderModels, applyProviderModel, autoPick, providerLabelFromBase, type ProbeReport } from "../../services/aiModelPicker";
 import { toast } from "../../toast";
 import { cardCls, btnPrimary, btnGhost, btnSm, Chip } from "../ui";
 
@@ -216,6 +216,7 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
         open={scanOpen}
         currentModel={status?.model ?? ""}
         providerId={`${status?.keyHint ?? ""}@${(status?.base ?? "").replace(/\/+$/, "")}`}
+        providerLabel={providerLabelFromBase(status?.base ?? "")}
         onToast={onToast}
         onApplied={onLoad}
         onClose={() => setScanOpen(false)}
@@ -233,11 +234,13 @@ function AiPipelineCard({ status, onLoad, onToast }: { status: AiProviderStatus 
 
 const AUTO_APPLY_AFTER_MS = 120_000;
 
-function ModelScanCard({ open, currentModel, providerId, onToast, onApplied, onClose }: {
+function ModelScanCard({ open, currentModel, providerId, providerLabel, onToast, onApplied, onClose }: {
   open: boolean;
   currentModel: string;
   /** Identifies the SAVED provider (keyHint@base) — a change triggers a re-scan. */
   providerId: string;
+  /** Human provider name (host from the saved base URL) shown in the card. */
+  providerLabel: string;
   onToast: (m: string) => void;
   onApplied: () => void;
   onClose: () => void;
@@ -301,7 +304,7 @@ function ModelScanCard({ open, currentModel, providerId, onToast, onApplied, onC
       try {
         await applyProviderModel(best.id);
         onApplied();
-        onToast(`🤖 No pick after 2 min — auto-applied ${best.id} (the best working model)`);
+        onToast(`🤖 No pick after 2 min — auto-applied ${best.id} (best working model on ${providerLabel})`);
       } catch (e) {
         onToast("✗ Auto-apply failed: " + (e as Error).message);
       } finally {
@@ -329,7 +332,7 @@ function ModelScanCard({ open, currentModel, providerId, onToast, onApplied, onC
   return (
     <div className="mt-4 rounded-xl border border-acc1/30 bg-acc1/5 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-[13.5px] font-extrabold">🔍 Working models on this provider</h3>
+        <h3 className="text-[13.5px] font-extrabold">🔍 Working models — {providerLabel}</h3>
         <div className="flex items-center gap-2">
           {phase === "done" && secondsLeft !== null && secondsLeft > 0 && (
             <span className="text-[11px] font-bold text-acctxt">
@@ -342,7 +345,7 @@ function ModelScanCard({ open, currentModel, providerId, onToast, onApplied, onC
       </div>
 
       {phase === "scanning" && (
-        <p className="mt-3 text-[12.5px] text-fnt"><span className="spinner" /> Listing models, then live-probing each with a 1-token call… (up to a minute)</p>
+        <p className="mt-3 text-[12.5px] text-fnt"><span className="spinner" /> Scanning <b>{providerLabel}</b> — listing models, then live-probing each with a 1-token call… (up to a minute)</p>
       )}
       {phase === "error" && (
         <div className="mt-3">
@@ -354,7 +357,7 @@ function ModelScanCard({ open, currentModel, providerId, onToast, onApplied, onC
       {phase === "done" && report && (
         <>
           {report.options.length === 0 && (
-            <p className="mt-3 text-[12.5px] text-warn">No working chat models found. {report.rejected.length} listed model(s) failed the live probe — check the provider account (credits, access).</p>
+            <p className="mt-3 text-[12.5px] text-warn">No working chat models found on <b>{providerLabel}</b>. {report.rejected.length} model(s) failed the live probe — check the provider account (credits, access).</p>
           )}
           <div className="mt-3 space-y-2">
             {report.options.map(o => (

@@ -123,6 +123,15 @@ export function buildModelOptions(listed: AiModel[], verdicts: ProbeVerdict[]): 
 
 /* ── the scan itself ───────────────────────────────────────────────────── */
 
+/** Short provider label from the saved base URL — "getunikey.ai",
+    "agentrouter.org" — so the scan card can say WHICH provider it scanned.
+    Strips scheme/www/port/path and caps the length. */
+export function providerLabelFromBase(base: string): string {
+  const host = base.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/:?#]/)[0] ?? "";
+  if (!host) return base.trim() || "unknown provider";
+  return host.length > 32 ? host.slice(0, 31) + "…" : host;
+}
+
 /** Authed POST to the ai-chat edge function (same ladder as GET /models). */
 async function authedEdgeFetch(payload: unknown): Promise<Response> {
   const client = await getSupabaseClient();
