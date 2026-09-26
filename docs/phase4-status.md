@@ -152,6 +152,7 @@ Deviations / corrections worth remembering:
 | Scan card names the provider | #95 | header, scanning line, empty note and auto-apply toast all show the provider host from the saved base URL |
 | Test key loopback guard | #96 | localhost/127.0.0.1/[::1] provider bases rejected up-front with the tunnel fix — the pipeline runs on Supabase/CI and Chrome blocks public→local calls |
 | Auto-apply engine (local Playwright) | #97 | searches any jobs-list URL (LinkedIn/Naukri/Instahyre/generic), per-JD AI resume+cover letter, honest form answers from an apply profile, per-site submit rules (auto Instahyre/Naukri; review-gate LinkedIn/unknown), fail-closed on unanswerable required questions; local-only driver + reports |
+| Platinum tier (auto-apply gated) | #98 | free/pro/platinum across SQL + payments + client; `is_platinum` server-computed; $349 one-time plan; Upgrade tile + admin grant + gated AutoApplyCard (profile export + run commands); migration applied + verified live |
 
 ---
 
@@ -252,9 +253,9 @@ Deviations / corrections worth remembering:
 
 ## 7. Current gate baselines (moved with each merge, as the cadence requires)
 
-| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#97) |
+| Gate | Baseline at plan approval (2026-09-22) | Now (2026-09-26, post-#98) |
 |---|---|---|
-| vitest | 1292 | **1510** (+218) |
+| vitest | 1292 | **1519** (+227) |
 | eval:rag | 41 | 41 |
 | deno | 72 passed / 0 failed | 72 passed / 0 failed |
 

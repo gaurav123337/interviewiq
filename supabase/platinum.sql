@@ -159,14 +159,17 @@ begin
     from public.entitlements e where e.user_id = auth.uid();
 end $$;
 
-/* 6. entitlement reader exposes is_platinum so the client never string-matches */
+/* 6. entitlement reader exposes is_platinum so the client never string-matches.
+      The return type gains a column — DROP first (Postgres can't change an
+      existing function's OUT row type in place). */
+drop function if exists public.get_my_entitlement();
 create or replace function public.get_my_entitlement()
 returns table (
   tier text, plan text, expires_at timestamptz, source text,
   discount_pct integer, discount_expires_at timestamptz,
   active boolean, is_platinum boolean, issued_by uuid, updated_at timestamptz
 ) language sql stable security definer set search_path = public as $$
-  select e.tier, e.plan, e.expires_at, e.discount_pct, e.discount_expires_at,
+  select e.tier, e.plan, e.expires_at, e.source, e.discount_pct, e.discount_expires_at,
          (e.tier in ('pro', 'platinum') and (e.expires_at is null or e.expires_at > now())) as active,
          (e.tier = 'platinum' and (e.expires_at is null or e.expires_at > now())) as is_platinum,
          e.issued_by, e.updated_at
