@@ -13,6 +13,34 @@ import { getCanonicalProfile, toCareerProfile } from "./profileStore";
 import { adminUnlockedActive, getTier } from "./entitlements";
 import { serverAutoApply, serverPlatinum } from "./entitlement";
 
+/* ── contact extraction from the uploaded resume text ──────────────────── */
+
+export interface ResumeContacts { name?: string; email?: string; phone?: string }
+
+/** Pulls name/email/phone out of the raw resume text. Best-effort and
+    conservative: the email/phone regexes are strict; the name heuristic only
+    accepts a short letters-only line near the top (never lines with digits,
+    emails, or URLs). Anything it can't find stays undefined — the engine
+    fail-closes on required fields rather than guessing. */
+export function extractContacts(resumeText: string): ResumeContacts {
+  const t = String(resumeText ?? "");
+  if (!t) return {};
+  const email = t.match(/[\w.+-]+@[\w-]+\.[\w.-]{2,}/)?.[0];
+  /* Indian + international formats: +91 98765 43210, 9876543210, (555) 123-4567… */
+  const phone = t.match(/(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{2,5}\)?[\s-]?){2,3}\d{3,4}(?!\d)/)?.[0]?.trim();
+  let name: string | undefined;
+  const lines = t.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  for (const l of lines.slice(0, 6)) {
+    if (/[@\d]|https?:|resume|curriculum/i.test(l)) continue;
+    const words = l.split(/\s+/).filter(Boolean);
+    if (words.length < 2 || words.length > 4) continue;
+    if (!/^[A-Za-z][A-Za-z.'-]*(\s+[A-Za-z][A-Za-z.'-]*)+$/.test(l)) continue;
+    name = l.replace(/\s+/g, " ");
+    break;
+  }
+  return { name, email, phone };
+}
+
 /** The engine's apply-profile.json shape (content/apply-profile.example.json). */
 export interface ApplyProfileJson {
   name?: string;
@@ -61,9 +89,13 @@ export function buildEngineProfile(): ApplyProfileJson {
     summary: career.summary || undefined,
     skills: career.skills?.length ? [...career.skills] : undefined,
   };
-  /* contact fields live on the uploaded resume's extracted profile when the
-     canonical store holds them; the engine requires name/email/phone and
-     fail-closes when missing */
+  /* contact fields: the career form doesn't hold them — parse them from the
+     uploaded resume's stored TEXT (the engine requires name/email/phone and
+     fail-closes when missing; the card warns so they can be checked) */
+  const parsed = extractContacts(canonical.resume?.text ?? "");
+  if (parsed.name) p.name = parsed.name;
+  if (parsed.email) p.email = parsed.email;
+  if (parsed.phone) p.phone = parsed.phone;
   const extras = canonical as unknown as {
     name?: string; email?: string; phone?: string;
     noticePeriod?: string; salaryExpectation?: string; openToRelocate?: boolean;
