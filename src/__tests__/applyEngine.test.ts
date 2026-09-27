@@ -8,8 +8,23 @@ import {
   SITE_RULES, siteFromUrl, classifyQuestion, draftAnswer,
   valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
-  canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore,
+  canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
 } from "../../scripts/apply-engine-lib.js";
+
+describe("external apply buttons (company-website ATS)", () => {
+  it("detects the company-website mode (the button text is the mode selector)", () => {
+    expect(isExternalApplyButton("Apply on company website")).toBe(true);
+    expect(isExternalApplyButton("Apply to company site")).toBe(true);
+    expect(isExternalApplyButton("Easy Apply")).toBe(false);
+    expect(isExternalApplyButton("")).toBe(false);
+  });
+
+  it("LinkedIn rules now match both Easy Apply and company-website buttons", () => {
+    expect(SITE_RULES.linkedin.applyButtonText.test("Easy Apply")).toBe(true);
+    expect(SITE_RULES.linkedin.applyButtonText.test("Apply on company website")).toBe(true);
+    expect(SITE_RULES.linkedin.applyButtonText.test("Save")).toBe(false);
+  });
+});
 
 describe("siteFromUrl", () => {
   it("routes the owner's three boards to their rules", () => {

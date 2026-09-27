@@ -34,7 +34,7 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, isExternalApplyButton,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi } from "./apply-kit-node.js";
 
@@ -357,9 +357,52 @@ async function collectJobs(page, url, site, max) {
 async function openJob(page, job) {
   await page.goto(job.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(2500);
-  job.pageText = (await page.evaluate(() => document.body?.innerText ?? "")).slice(0, 6000);
-  const m = job.pageText.match(/(?:about|description|the role|responsibilities)[\s\S]{200,3000}/i);
-  job.description = m ? m[0].slice(0, 2000) : job.pageText.slice(0, 1200);
+  /* Boards clamp the JD behind a "see more"-style expander (LinkedIn only
+     renders ~2 paragraphs + "…see more") — expand it so the skill gate
+     judges the FULL posting, not the teaser. Tolerant: no expander → no-op. */
+  const seeMore = page
+    .locator("button:visible, [role=button]:visible, a:visible")
+    .filter({ hasText: /^(see more|show more|view more|read more|\.\.\.|…|more\.\.\.)$/i }) // NO bare "more" — that's the top-nav menu
+    .first();
+  if ((await seeMore.count()) > 0) await seeMore.click({ timeout: 3000 }).catch(() => {});
+  /* LinkedIn lazy-renders "About the job" — poll (bounded) until the JD body
+     is actually in the DOM; a single early snapshot yields nav chrome only. */
+  let container = "";
+  const grabDesc = () => page.evaluate(() => {
+    const sels = [".jobs-description__content", ".jobs-description", ".show-more-less-html__markup", "[class*='job-description']", "[class*='jobs-description']"];
+    let best = "";
+    for (const sel of sels) {
+      for (const el of document.querySelectorAll(sel)) {
+        const t = (el.innerText || "").trim();
+        if (t.length > best.length && t.length >= 120) best = t;
+      }
+    }
+    return { container: best.slice(0, 4000), pageText: (document.body?.innerText ?? "").slice(0, 9000) };
+  });
+  for (let i = 0; i < 6; i++) {
+    const g = await grabDesc();
+    container = g.container;
+    job.pageText = g.pageText;
+    const key = (job.title || "").toLowerCase().slice(0, 25).trim();
+    const at = key.length > 8 ? job.pageText.toLowerCase().indexOf(key) : -1;
+    if (container.length >= 120 || (at >= 0 && job.pageText.slice(at).length >= 600)) break;
+    await page.waitForTimeout(1500);
+  }
+  if (container.length >= 120) {
+    job.description = container;
+  } else {
+    /* no known container (LinkedIn variants ship obfuscated classes): anchor
+       on the job TITLE — the JD body always follows it in the main section;
+       a page-head slice would only capture nav chrome + header meta. */
+    const key = (job.title || "").toLowerCase().slice(0, 25).trim();
+    const at = key.length > 8 ? job.pageText.toLowerCase().indexOf(key) : -1;
+    if (at >= 0) {
+      job.description = job.pageText.slice(at, at + 3500);
+    } else {
+      const m = job.pageText.match(/(?:about|description|the role|responsibilities)[\s\S]{200,3000}/i);
+      job.description = m ? m[0].slice(0, 3000) : job.pageText.slice(0, 1500);
+    }
+  }
   const t = (job.pageText.match(/(?:at|·|—|\|)\s*([A-Z][\w&.\- ]{1,40}(?:Labs|Technologies|Solutions|Systems|Inc|Pvt)?)/) || [])[1];
   if (!job.company && t) job.company = t.trim();
 }
@@ -586,9 +629,41 @@ async function runSingle(args) {
           await page.waitForTimeout(2000);
         }
         if (applyCount > 0) {
+          /* mode selector: "Easy Apply" (in-product) vs "Apply on company
+             website" (external ATS, usually a NEW tab). External ATS forms
+             are filled and QUEUED — never auto-submitted (fail-closed). */
+          const btnText = ((await applyBtn.innerText({ timeout: 2000 }).catch(() => "")) || "") + " " + ((await applyBtn.getAttribute("aria-label").catch(() => null)) ?? "");
+          const external = isExternalApplyButton(btnText);
           const how = await clickButton(page, applyBtn, rules.applyButtonText);
-          console.log(dim(`  apply clicked (${how})`));
+          console.log(dim(`  apply clicked (${how}${external ? " · external ATS" : ""})`));
           await page.waitForTimeout(3000);
+          if (external) {
+            let atsPage = null;
+            for (const p of ctx.pages()) {
+              if (p !== page && !/linkedin\.com/i.test(p.url())) { atsPage = p; break; }
+            }
+            const sameTab = !atsPage && !/linkedin\.com/i.test(page.url()); // redirected in-place
+            const target = atsPage ?? (sameTab ? page : null);
+            if (!target) {
+              recordResult(report, job, "skipped", "external apply clicked but no ATS page opened");
+              console.log(dim("  ⏭ skipped — external ATS did not open"));
+            } else if (args["dry-run"]) {
+              recordResult(report, job, "skipped", "external ATS form detected — dry-run (not filled)");
+              console.log(dim("  dry-run: external ATS form present, not filled"));
+            } else {
+              try { await target.waitForLoadState("domcontentloaded", { timeout: 20_000 }); } catch { /* ATS load rules vary */ }
+              if (atsPage) { await target.bringToFront().catch(() => {}); await target.waitForTimeout(2500); }
+              const resumePath2 = path.join(REPORTS_DIR, `resume-${Date.now()}.txt`);
+              writeFileSync(resumePath2, kit.resume);
+              const res2 = await fillApplicationForm(target, { profile, job, resumePath: resumePath2, dryRun: false });
+              recordResult(report, job, "needsReview", `external ATS form filled (${res2.filled} fields) — submit manually from the review queue`);
+              console.log(yellow(`  ⏸ external ATS: filled ${res2.filled} fields — queued; you submit (never auto on unknown ATS)`));
+              await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null });
+              if (atsPage) await atsPage.close().catch(() => {}); // don't leak tabs
+            }
+            await page.waitForTimeout(rules.minIntervalMs);
+            continue;
+          }
         } else if (site === "instahyre" || site === "naukri") {
           /* some boards apply in-place — no separate form page */
         } else {
