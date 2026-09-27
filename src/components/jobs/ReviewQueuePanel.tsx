@@ -6,8 +6,24 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig,
-  type ReviewItem,
+  type ReviewItem, type ReviewFormField,
 } from "../../services/jobSites.ts";
+
+/* form-field preview: label + kind + answered marker, one line per field */
+function FieldPreviewList({ fields }: { fields: ReviewFormField[] }) {
+  return (
+    <div className="mt-1.5 space-y-0.5 rounded bg-zinc-950/60 px-2 py-1.5">
+      {fields.map((f, i) => (
+        <div key={i} className="flex items-center gap-1.5 text-[11px] leading-4">
+          {f.answered ? <span className="text-emerald-400">✓</span> : <span className="text-amber-500">○</span>}
+          <span className="min-w-0 flex-1 truncate text-zinc-300">{f.label || <span className="italic text-zinc-600">(unlabeled)</span>}</span>
+          <span className="shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">{f.kind}</span>
+          {f.required && <span className="shrink-0 text-[10px] text-zinc-600">required</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function ago(iso: string): string {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -119,6 +135,7 @@ export default function ReviewQueuePanel() {
                   {it.site_host} · {ago(it.created_at)}{it.reason ? ` · ${it.reason}` : ""}
                 </div>
               </div>
+              {Array.isArray(it.form_fields) && it.form_fields.length > 0 && <FieldPreviewList fields={it.form_fields} />}
               {busy === it.id ? (
                 <span className="text-xs text-zinc-500">…</span>
               ) : (

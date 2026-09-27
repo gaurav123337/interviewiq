@@ -293,6 +293,98 @@ export function isExternalApplyButton(text) {
   return /apply (on|to) (the )?company (website|site)/i.test(String(text || ""));
 }
 
+/* ─────────────────── per-ATS selector packs ─────────────────── */
+
+/* External ATS boards have known, stable markup. A pack scopes form-field
+   extraction (tighter than the page-wide generic selector, so nav/search
+   junk never lands in the field list) and pins the submit/success text for
+   the day an ATS is trusted with auto-submit (never today — external forms
+   are always filled and queued for the human). Unknown ATS falls back to
+   the generic pack. */
+export const ATS_PACKS = {
+  greenhouse: {
+    label: "Greenhouse",
+    hostHints: ["greenhouse.io", "grnh.se"],
+    fieldSelectorHints: ["#application_form input:not([type=hidden]):not([disabled])", "#application_form textarea", "#application_form select", "form input:not([type=hidden]):not([disabled])", "form textarea", "form select"],
+    submitButtonText: /submit\s*application/i,
+    successText: /application (was|has been) (received|submitted)|thanks for applying/i,
+  },
+  lever: {
+    label: "Lever",
+    hostHints: ["lever.co"],
+    fieldSelectorHints: ["form input:not([type=hidden]):not([disabled])", "form textarea", "form select"],
+    submitButtonText: /submit\s*application/i,
+    successText: /application (was|has been) (received|submitted)|thanks for applying/i,
+  },
+  workable: {
+    label: "Workable",
+    hostHints: ["workable.com"],
+    fieldSelectorHints: ["form input:not([type=hidden]):not([disabled])", "form textarea", "form select", "[data-ui='input'] input:not([type=hidden])", "[data-ui='textarea'] textarea", "[data-ui='select'] select"],
+    submitButtonText: /submit(\s*application)?/i,
+    successText: /application (was|has been) (received|submitted)|thanks for applying/i,
+  },
+  generic: {
+    label: "ATS",
+    hostHints: [],
+    fieldSelectorHints: ["input:not([type=hidden]):not([disabled])", "textarea", "select"],
+    submitButtonText: /submit(\s*application)?/i,
+    successText: /application (was|has been) (received|submitted)|thanks for applying|thank you for (your )?(applying|application)/i,
+  },
+};
+
+/** Which ATS pack drives form extraction for this URL? Unknown hosts get
+    the generic pack (page-wide selectors, same behavior as before packs). */
+export function detectAts(url) {
+  let host = "";
+  try { host = new URL(url).hostname.toLowerCase(); } catch { /* generic below */ }
+  for (const pack of Object.values(ATS_PACKS)) {
+    if (pack.hostHints.some((h) => host === h || host.endsWith("." + h))) return pack;
+  }
+  return ATS_PACKS.generic;
+}
+
+/* ─────────────────── form-answer memory (reuse) ─────────────────── */
+
+/** Stable storage key for a form field: lowercase, punctuation-collapsed
+    label. "First Name *" and "first name:" share one key; a label change on
+    the board misses the cache honestly (fail-open to draftAnswer). */
+export function normalizeFieldKey(label) {
+  return String(label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 120);
+}
+
+/* Kinds whose answers must NEVER be reused from memory: job-specific text
+   (the tailored letter), free-form unknowns, and review-gate facts the
+   engine only fills when the profile declares them. Reusing those would
+   spray one job's words into another job's form. */
+const NON_REUSABLE_KINDS = new Set(["coverLetter", "longText", "unknown", "workAuth", "certificate"]);
+export function canStoreAnswer(kind) { return !NON_REUSABLE_KINDS.has(String(kind || "unknown")); }
+
+/**
+ * One classification pass per field: draft from the profile first, then
+ * fall back to a remembered answer for this exact label key. Returns the
+ * plan the fill loop walks (answer "" = leave blank, as always).
+ */
+export function planFormAnswers(fields, profile, job, stored = {}) {
+  return (fields ?? []).map((meta) => {
+    const cls = classifyQuestion(meta.label, { tag: meta.tag, required: meta.required });
+    const key = normalizeFieldKey(meta.label);
+    let answer = draftAnswer(cls.kind, profile, job);
+    if (!answer && key && typeof stored[key] === "string" && stored[key].trim()) answer = stored[key].trim();
+    return { cls, key, answer };
+  });
+}
+
+/** What the review queue shows the owner before they open the form: every
+    field with its kind and whether the engine had an answer for it. */
+export function formFieldsPreview(fields, plan) {
+  return (fields ?? []).map((meta, i) => ({
+    label: String(meta.label ?? "").slice(0, 80),
+    kind: plan?.[i]?.cls?.kind ?? "unknown",
+    required: !!meta.required,
+    answered: Boolean(plan?.[i]?.answer),
+  })).slice(0, 24);
+}
+
 /* ---- profile extras: hard answers for recurring form questions --------- */
 /* extraAnswers: { [kind]: string } — an OWNER-DECLARED fact used verbatim
    when the profile has no first-class field for that question kind (e.g.

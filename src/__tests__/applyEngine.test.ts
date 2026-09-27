@@ -9,6 +9,7 @@ import {
   valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
+  ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("external apply buttons (company-website ATS)", () => {
@@ -300,5 +301,87 @@ describe("fitScore — re-rank the review queue by skill fit", () => {
     expect(r.results[0].fit).toBe(75);
     recordResult(r, { title: "T2", company: "C", url: "u2" }, "skipped", "no gate");
     expect(r.results[1].fit).toBeNull();
+  });
+});
+
+describe("per-ATS selector packs", () => {
+  it("routes known ATS hosts to their pack", () => {
+    expect(detectAts("https://boards.greenhouse.io/acme/jobs/123")).toBe(ATS_PACKS.greenhouse);
+    expect(detectAts("https://jobs.lever.co/acme/abc")).toBe(ATS_PACKS.lever);
+    expect(detectAts("https://apply.workable.com/acme/j/123")).toBe(ATS_PACKS.workable);
+    expect(detectAts("https://careers.something-else.io/x")).toBe(ATS_PACKS.generic);
+    expect(detectAts("not a url")).toBe(ATS_PACKS.generic);
+  });
+
+  it("packs scope field extraction and pin submit/success text", () => {
+    for (const key of ["greenhouse", "lever", "workable"] as const) {
+      expect(ATS_PACKS[key].fieldSelectorHints.length).toBeGreaterThan(0);
+      expect(ATS_PACKS[key].submitButtonText).toBeInstanceOf(RegExp);
+      expect(ATS_PACKS[key].successText).toBeInstanceOf(RegExp);
+    }
+    expect(ATS_PACKS.greenhouse.fieldSelectorHints.some((h) => h.includes("#application_form"))).toBe(true);
+    expect(ATS_PACKS.lever.fieldSelectorHints.every((h) => h.includes("form ") || h.startsWith("form"))).toBe(true);
+  });
+});
+
+describe("form-answer memory — store and reuse what was filled", () => {
+  it("normalizes field labels into stable keys", () => {
+    expect(normalizeFieldKey("First Name *")).toBe("first name");
+    expect(normalizeFieldKey("  Phone (Mobile):  ")).toBe("phone mobile");
+    expect(normalizeFieldKey("")).toBe("");
+    expect(normalizeFieldKey(null)).toBe("");
+  });
+
+  it("never stores/reuses job-specific or review-gate kinds", () => {
+    expect(canStoreAnswer("coverLetter")).toBe(false);
+    expect(canStoreAnswer("longText")).toBe(false);
+    expect(canStoreAnswer("unknown")).toBe(false);
+    expect(canStoreAnswer("workAuth")).toBe(false);
+    expect(canStoreAnswer("certificate")).toBe(false);
+    expect(canStoreAnswer("email")).toBe(true);
+    expect(canStoreAnswer("phone")).toBe(true);
+    expect(canStoreAnswer("notice")).toBe(true);
+    expect(canStoreAnswer("phoneCountryCode")).toBe(true);
+  });
+
+  it("reuses a stored answer when the profile has none (and profile still wins)", () => {
+    const fields = [
+      { label: "Email", tag: "input", required: true },
+      { label: "notice period", tag: "input", required: true },
+      { label: "LinkedIn profile", tag: "input", required: false },
+    ];
+    const profile = { email: "me@x.com" }; // no noticePeriod, no portfolio
+    const stored = { "notice period": "30 days", "linkedin profile": "https://linkedin.com/in/me" };
+    const plan = planFormAnswers(fields, profile, {}, stored);
+    expect(plan[0].answer).toBe("me@x.com");       // profile wins
+    expect(plan[1].answer).toBe("30 days");        // memory fills the gap
+    expect(plan[1].key).toBe("notice period");
+    expect(plan[2].answer).toBe("https://linkedin.com/in/me"); // memory-only field
+  });
+
+  it("still leaves blanks blank when neither profile nor memory has an answer", () => {
+    const plan = planFormAnswers([{ label: "Expected CTC", tag: "input", required: true }], {}, {}, { "phone": "+91 98765 43210" });
+    expect(plan[0].answer).toBe("");
+  });
+
+  it("builds the review-queue preview: label, kind, required, answered", () => {
+    const fields = [
+      { label: "Email *", tag: "input", required: true },
+      { label: "Why this role?", tag: "textarea", required: true },
+    ];
+    const plan = planFormAnswers(fields, { email: "me@x.com" }, { __coverLetter: "Dear team" }, {});
+    const preview = formFieldsPreview(fields, plan);
+    expect(preview).toHaveLength(2);
+    expect(preview[0]).toEqual({ label: "Email *", kind: "email", required: true, answered: true });
+    expect(preview[1].kind).toBe("coverLetter");
+    expect(preview[1].answered).toBe(true); // letter drafted — shown, never stored
+  });
+
+  it("preview handles missing plan entries and caps at 24 fields", () => {
+    const fields = Array.from({ length: 30 }, (_, i) => ({ label: `Q${i}`, tag: "input", required: false }));
+    const preview = formFieldsPreview(fields, null);
+    expect(preview).toHaveLength(24);
+    expect(preview[0].kind).toBe("unknown");
+    expect(preview[0].answered).toBe(false);
   });
 });
