@@ -41,3 +41,4 @@ editorial-plan.md
 .DS_Store
 Thumbs.db
 apply-profile.json
+provider-base-push.mjs
