@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 import {
   SITE_RULES, siteFromUrl, classifyQuestion, draftAnswer,
   valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
+  canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("siteFromUrl", () => {
@@ -189,5 +190,76 @@ describe("relevance + refusal guards", () => {
     expect(looksLikeRefusal("Gaurav Gupta\nStaff Frontend Engineer\n14 years of React…")).toBe(false);
     expect(looksLikeRefusal("I led the migration to Next.js — I can't stress its impact enough.")).toBe(false);
     expect(looksLikeRefusal("")).toBe(false);
+  });
+});
+
+describe("JD skill gate — the resume must back the posting's skills", () => {
+  const fe = {
+    headline: "Staff Frontend Engineer",
+    skills: ["React", "Next.js", "TypeScript", "JavaScript", "CSS", "Redux", "Webpack", "Vite", "Tailwind CSS", "Testing", "Accessibility", "Performance", "Design Systems", "Micro Frontends", "PWA", "SSR", "Azure", "Docker", "CI/CD"],
+  };
+  const feJD = "About the role: We are looking for a Senior Frontend Engineer. Responsibilities: build user interfaces with React and TypeScript, state management with Redux, styling with Tailwind CSS, performance optimization and accessibility. Requirements: 5+ years experience with React, Next.js, TypeScript.";
+  const beJD = "About the role: Backend Engineer. Design and build REST APIs and microservices with Node.js, Python, PostgreSQL, Kafka and AWS. Requirements: strong system design, distributed systems, Kubernetes.";
+
+  it("normalizes skill spellings and families", () => {
+    expect(canonicalSkill("Node.js")).toBe("node");
+    expect(canonicalSkill("C++")).toBe("cpp");
+    expect(canonicalSkill("Next.js")).toBe("react"); // same family — a React dev answers a Next.js ask
+    expect(canonicalSkill("PostgreSQL")).toBe("sql");
+    expect(canonicalSkill("Team Player")).toBeNull(); // not a skill
+    expect(profileSkillSet(fe).has("react")).toBe(true);
+  });
+
+  it("PASSES a frontend posting for a frontend resume", () => {
+    const m = postingRelevant({ title: "Senior Frontend Engineer", description: feJD }, fe);
+    expect(m.ok).toBe(true);
+    expect(m.matched).toEqual(expect.arrayContaining(["react", "typescript"]));
+  });
+
+  it("REJECTS a backend posting for a frontend resume (the reported bug)", () => {
+    const m = postingRelevant({ title: "Backend Engineer", description: beJD }, fe);
+    expect(m.ok).toBe(false);
+    expect(m.reason).toMatch(/not on the resume/);
+    expect(m.missing).toEqual(expect.arrayContaining(["node", "python", "sql"]));
+  });
+
+  it("still fails alien fields at the title gate", () => {
+    expect(postingRelevant({ title: "Data Scientist", description: feJD }, fe).ok).toBe(false);
+  });
+
+  it("a JD with no specific skills needs profile pull (skill-ghost postings)", () => {
+    const ghost = "Great opportunity! Join our dynamic team. Competitive salary. Apply now.";
+    expect(jdSkillMatch(ghost, fe).ok).toBe(false); // nothing in the JD pulls the profile in
+  });
+
+  it("a JD with no specific skills passes when the profile's top skills appear anyway", () => {
+    const soft = "We value craft: build interfaces with React and TypeScript for our design platform.";
+    expect(jdSkillMatch(soft, fe).ok).toBe(true);
+  });
+
+  it("family transfer: React skills cover a Next.js ask, NOT a Node/Python ask", () => {
+    const next = "Build marketing sites in Next.js with Tailwind CSS and SSR.";
+    expect(jdSkillMatch(next, fe).ok).toBe(true);
+    expect(jdSkillMatch("Automate pipelines with Python and Django.", fe).ok).toBe(false);
+  });
+
+  it("tolerates empty JD text and skill-less profiles (title gate only)", () => {
+    expect(jdSkillMatch("", fe).ok).toBe(false); // nothing known about the job → no pull
+    expect(jdSkillMatch(feJD, { skills: [] }).ok).toBe(true); // profile silent → don't block on skills
+    expect(postingRelevant({ title: "Frontend Engineer", description: "" }, fe).ok).toBe(false);
+  });
+});
+
+describe("extraAnswers — owner-declared hard answers", () => {
+  it("fills kinds the profile lacks a first-class field for", () => {
+    expect(extraAnswerFor({ extraAnswers: { phoneCountryCode: "+91" } }, "phoneCountryCode")).toBe("+91");
+    expect(draftAnswer("phoneCountryCode", { extraAnswers: { phoneCountryCode: "+91" } }, {})).toBe("+91");
+  });
+
+  it("never invents: absent or blank extras answer empty (fail-closed as before)", () => {
+    expect(extraAnswerFor({}, "phoneCountryCode")).toBe("");
+    expect(draftAnswer("phoneCountryCode", {}, {})).toBe("");
+    expect(draftAnswer("phoneCountryCode", { extraAnswers: { phoneCountryCode: "   " } }, {})).toBe("");
+    expect(draftAnswer("workAuth", { extraAnswers: { workAuth: "" } }, {})).toBe("");
   });
 });
