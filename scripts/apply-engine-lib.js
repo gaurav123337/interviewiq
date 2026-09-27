@@ -19,7 +19,7 @@ export const SITE_RULES = {
     jobsUrlHosts: ["linkedin.com"],
     loginPathHints: ["authwall", "/login", "checkpoint"],
     loggedInHint: "/feed",
-    applyButtonText: /easy\s*apply/i,
+    applyButtonText: /easy\s*apply|apply (on|to) (the )?company (website|site)/i,
     steps: ["contact", "resume", "questions", "review"],
     autoSubmit: false, // owner decision: LinkedIn accounts are precious — review gate
     submitButtonText: /submit\s*application/i,
@@ -162,7 +162,7 @@ const SKILL_ALIASES = {
   "performance": "performance", "web performance": "performance", "core web vitals": "performance",
   "pwa": "pwa", "ssr": "ssr", "server-side rendering": "ssr", "ssg": "ssr", "static site generation": "ssr",
   "system design": "systemdesign", "distributed systems": "systemdesign", "scalability": "systemdesign",
-  "ai": "ai", "machine learning": "ai", "ml": "ai", "llm": "ai", "nlp": "ai",
+  "machine learning": "ai", "artificial intelligence": "ai", "llm": "ai", "nlp": "ai", "genai": "ai", "generative ai": "ai", // bare "ai"/"ml" dropped — prose mentions wrongly reject roles
   "webpack": "bundler", "vite": "bundler", "rollup": "bundler", "esbuild": "bundler",
   "git": "git", "agile": "agile", "scrum": "agile", "figma": "design", "ui/ux": "design",
 };
@@ -282,6 +282,15 @@ export function classifyQuestion(label, { tag = "", required = false } = {}) {
   if (has(/how did you hear|referral source|source of job/)) return { kind: "source", confidence: "answer" };
   if (has(/reason for (leaving|change)|why (are you )?leaving/)) return { kind: "reasonLeaving", confidence: required ? "review" : "answer" };
   return { kind: "unknown", confidence: required ? "review" : "answer" };
+}
+
+/** LinkedIn shows either "Easy Apply" (in-product modal) or "Apply on
+    company website" (external ATS, usually a new tab). The button text is
+    the mode selector: external ATS forms must NEVER auto-submit — they are
+    filled and queued for the human, same fail-closed standard as unknown
+    boards. */
+export function isExternalApplyButton(text) {
+  return /apply (on|to) (the )?company (website|site)/i.test(String(text || ""));
 }
 
 /* ---- profile extras: hard answers for recurring form questions --------- */

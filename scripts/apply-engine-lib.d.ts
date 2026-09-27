@@ -127,4 +127,6 @@ export function postingRelevant(
 
 export function extraAnswerFor(profile: ApplyProfileLike | null | undefined, kind: string): string;
 
+export function isExternalApplyButton(text: string | null | undefined): boolean;
+
 export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined): number | null;
