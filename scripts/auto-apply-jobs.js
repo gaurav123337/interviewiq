@@ -34,7 +34,7 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi } from "./apply-kit-node.js";
 
@@ -444,12 +444,17 @@ async function clickButton(page, locator, textRe) {
   }
 }
 
-async function trySubmit(page, site) {
-  const rules = SITE_RULES[site] ?? SITE_RULES.generic;
+async function trySubmit(page, site, rulesOverride) {
+  const rules = rulesOverride ?? SITE_RULES[site] ?? SITE_RULES.generic;
   /* the FINAL button is usually NOT the opener — Instahyre: "Apply now" opens
      a modal, then a plain "Submit" button inside it sends the application */
   const btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
   if ((await btn.count()) === 0) {
+    /* LinkedIn Easy Apply is a MULTI-STEP modal: "Submit application" only
+       exists on its last step, so a missing button here means the modal is
+       mid-flow — NOT "already applied". Queue honestly instead of faking a
+       submission; in-place boards (Naukri/Instahyre) keep the old behavior. */
+    if (site === "linkedin") return { auto: false, note: "Easy Apply modal mid-flow — form filled, finish the submit (2 clicks)" };
     if (rules.autoSubmit) return { auto: true, note: "submit button not found (may already be applied)" };
     return { auto: false, note: "review gate — human submits" };
   }
@@ -563,7 +568,7 @@ async function runSingle(args) {
           console.log(dim(`  ⏭ skipped — ${gate.reason}`));
           continue;
         }
-        if (gate.matched?.length) console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""}`));
+        if (gate.matched?.length) { job.__fit = fitScore(gate.matched, gate.missing); console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""} · fit ${job.__fit}`)); }
         job.__coverLetter = kit.coverLetter;
         console.log(dim(`  kit: resume+cover ${kit.ai ? "(AI-tailored)" : "(template)"} ${kit.notes.join("; ")}`));
 
@@ -571,9 +576,16 @@ async function runSingle(args) {
         const resumePath = path.join(REPORTS_DIR, `resume-${Date.now()}.txt`);
         writeFileSync(resumePath, kit.resume);
 
-        /* find and open the apply flow on the job page */
+        /* find and open the apply flow on the job page. SPA boards hydrate
+           the button late — retry bounded (3×2s) instead of one-shot detection. */
         const applyBtn = textButtonLocator(page, rules.applyButtonText);
-        if ((await applyBtn.count()) > 0) {
+        let applyCount = 0;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          applyCount = await applyBtn.count();
+          if (applyCount > 0) break;
+          await page.waitForTimeout(2000);
+        }
+        if (applyCount > 0) {
           const how = await clickButton(page, applyBtn, rules.applyButtonText);
           console.log(dim(`  apply clicked (${how})`));
           await page.waitForTimeout(3000);
@@ -581,6 +593,7 @@ async function runSingle(args) {
           /* some boards apply in-place — no separate form page */
         } else {
           recordResult(report, job, "skipped", "no apply button found");
+          console.log(dim("  ⏭ skipped — no apply button on the posting"));
           continue;
         }
 
@@ -588,13 +601,13 @@ async function runSingle(args) {
         if (unfilledRequired.length) {
           recordResult(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
-          if (!rules.autoSubmit && args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}` }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
+          if (!rules.autoSubmit && args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           if (!rules.autoSubmit) await page.pause(); // review-gate sites: let the human finish here
           continue;
         }
         if (args["dry-run"]) { recordResult(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
 
-        const sub = await trySubmit(page, site);
+        const sub = await trySubmit(page, site, rules); // merged registry rules — the owner's autoSubmit decision
         if (sub.auto) {
           recordResult(report, job, "submitted", sub.note);
           markApplied(job.url);
@@ -602,7 +615,7 @@ async function runSingle(args) {
         } else {
           recordResult(report, job, "needsReview", sub.note);
           console.log(yellow(`  ⏸ ${sub.note} — browser is open on the form; finish and submit manually.`));
-          if (args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
+          if (args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);

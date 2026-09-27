@@ -53,6 +53,7 @@ export interface ReviewItem {
   company: string | null;
   form_url: string | null;
   reason: string | null;
+  fit: number | null;
   created_at: string;
 }
 

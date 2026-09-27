@@ -144,7 +144,7 @@ const SKILL_ALIASES = {
   "node": "node", "node.js": "node", "nodejs": "node", "express": "node", "express.js": "node", "expressjs": "node", "nestjs": "node", "nest.js": "node", "adonis": "node",
   "python": "python", "django": "python", "flask": "python", "fastapi": "python",
   "java": "java", "spring": "java", "spring boot": "java", "kotlin": "java",
-  "go": "go", "golang": "go",
+  "golang": "go", // bare "go" is too common in English prose to be a skill signal
   "rust": "rust", "c#": "csharp", "csharp": "csharp", ".net": "csharp", "dotnet": "csharp", "asp.net": "csharp",
   "c++": "cpp", "cpp": "cpp",
   "php": "php", "laravel": "php", "symfony": "php",
@@ -259,6 +259,10 @@ export function classifyQuestion(label, { tag = "", required = false } = {}) {
   const isTextarea = tag === "textarea";
   const has = (re) => re.test(t);
 
+  /* a country-code dropdown is NOT the phone input — label contains "phone",
+     but the honest answer is the owner's dialing code (extraAnswers), and a
+     full number never matches the option list */
+  if (has(/country code|dial(ing)? code/)) return { kind: "phoneCountryCode", confidence: "answer" };
   if (has(/\bemail\b/)) return { kind: "email", confidence: "answer" };
   if (has(/phone|mobile|contact number/)) return { kind: "phone", confidence: "answer" };
   if (has(/years.*experience|experience.*years|total experience/)) return { kind: "years", confidence: "answer" };
@@ -343,8 +347,17 @@ export function newReport(sourceUrl, site) {
   return { sourceUrl, site, startedAt: Date.now(), results: [], counts: { submitted: 0, needsReview: 0, skipped: 0, error: 0 } };
 }
 
+/** 0–100 fit score from the skill gate's matched/missing arrays. Null when
+    the gate had no opinion (JD named no specific skills). */
+export function fitScore(matched, missing) {
+  const m = matched?.length ?? 0;
+  const x = missing?.length ?? 0;
+  if (!m && !x) return null;
+  return Math.round((m / (m + x)) * 100);
+}
+
 export function recordResult(report, job, result, detail = "") {
-  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail, at: Date.now() });
+  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail, fit: job?.__fit ?? null, at: Date.now() });
   const key = { submitted: "submitted", needsReview: "needsReview", skipped: "skipped", error: "error" }[result];
   if (key) report.counts[key] += 1;
 }

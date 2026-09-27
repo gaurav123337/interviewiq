@@ -8,7 +8,7 @@ import {
   SITE_RULES, siteFromUrl, classifyQuestion, draftAnswer,
   valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
-  canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor,
+  canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("siteFromUrl", () => {
@@ -51,6 +51,13 @@ describe("classifyQuestion", () => {
     expect(classifyQuestion("Are you legally authorized to work in the US?", { required: true }).confidence).toBe("review");
     expect(classifyQuestion("Do you hold any professional certifications?", { required: true }).confidence).toBe("review");
     expect(classifyQuestion("Why are you leaving your current job?", { required: true }).confidence).toBe("review");
+  });
+
+  it("routes the phone country code to its own kind (not the phone number)", () => {
+    expect(classifyQuestion("Phone country code*").kind).toBe("phoneCountryCode");
+    expect(classifyQuestion("Phone number").kind).toBe("phone");
+    expect(classifyQuestion("Dialing code").kind).toBe("phoneCountryCode");
+    expect(draftAnswer("phoneCountryCode", { extraAnswers: { phoneCountryCode: "+91" } }, {})).toBe("+91");
   });
 
   it("treats textareas as the cover-letter slot (the engine answers those)", () => {
@@ -261,5 +268,22 @@ describe("extraAnswers — owner-declared hard answers", () => {
     expect(draftAnswer("phoneCountryCode", {}, {})).toBe("");
     expect(draftAnswer("phoneCountryCode", { extraAnswers: { phoneCountryCode: "   " } }, {})).toBe("");
     expect(draftAnswer("workAuth", { extraAnswers: { workAuth: "" } }, {})).toBe("");
+  });
+});
+
+describe("fitScore — re-rank the review queue by skill fit", () => {
+  it("scores matched share 0-100 and nulls the no-opinion case", () => {
+    expect(fitScore(["react", "typescript", "css", "performance"], [])).toBe(100);
+    expect(fitScore(["react"], ["node", "python", "sql"])).toBe(25);
+    expect(fitScore([], [])).toBeNull();
+    expect(fitScore(undefined, undefined)).toBeNull();
+  });
+
+  it("recordResult carries the job's fit into the report row", () => {
+    const r = newReport("https://x/jobs", "naukri");
+    recordResult(r, { title: "T", company: "C", url: "u", __fit: 75 }, "submitted", "ok");
+    expect(r.results[0].fit).toBe(75);
+    recordResult(r, { title: "T2", company: "C", url: "u2" }, "skipped", "no gate");
+    expect(r.results[1].fit).toBeNull();
   });
 });

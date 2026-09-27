@@ -36,7 +36,7 @@ export function looksLoggedIn(opts: {
 
 export interface QuestionClass {
   kind:
-    | "email" | "phone" | "years" | "notice" | "salary" | "relocation" | "remote"
+    | "email" | "phone" | "phoneCountryCode" | "years" | "notice" | "salary" | "relocation" | "remote"
     | "location" | "workAuth" | "certificate" | "coverLetter" | "longText"
     | "link" | "firstName" | "lastName" | "fullName" | "source"
     | "reasonLeaving" | "unknown";
@@ -59,7 +59,7 @@ export interface ApplyProfileLike {
 
 export interface ApplyJobLike {
   title?: string; company?: string; location?: string; url?: string;
-  skills?: string[]; __coverLetter?: string;
+  skills?: string[]; __coverLetter?: string; __fit?: number | null;
 }
 
 export function draftAnswer(
@@ -73,7 +73,7 @@ export function valueMatchesList(answer: string, optionText: string): boolean;
 export interface ApplyRunResult {
   title: string; company: string; url: string;
   result: "submitted" | "needsReview" | "skipped" | "error";
-  detail: string; at: number;
+  detail: string; fit?: number | null; at: number;
 }
 
 export interface ApplyRunReport {
@@ -126,3 +126,5 @@ export function postingRelevant(
 ): JdSkillMatchResult;
 
 export function extraAnswerFor(profile: ApplyProfileLike | null | undefined, kind: string): string;
+
+export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined): number | null;
