@@ -25,7 +25,7 @@
  * No credentials are stored or typed by this script — logins are manual once.
  */
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -42,7 +42,7 @@ const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
 /* ----------------------------- CLI args ----------------------------- */
 
 function parseArgs(argv) {
-  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false };
+  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") args.url = argv[++i] ?? "";
@@ -57,6 +57,7 @@ function parseArgs(argv) {
     else if (a === "--discover") args.discover = true;
     else if (a === "--every") args.everyHours = Math.max(1, parseFloat(argv[++i]) || 0);
     else if (a === "--unattended") args.unattended = true; // scheduled runs: never page.pause() — skip review-gate sites instead
+    else if (a === "--status") args.status = true; // send a Telegram summary of today's runs
   }
   return args;
 }
@@ -103,6 +104,43 @@ async function syncRunToDb(host, report) {
       notes: reportLine(report).slice(0, 200),
     });
   } catch (e) { console.log(dim(`  (run not synced: ${e.message.slice(0, 80)})`)); }
+}
+
+/* --- review queue: unattended skips get recorded for one-click finish --- */
+async function queueReview(entry) {
+  const db = await sitesDb();
+  if (!db?.queueJobReview) return;
+  await db.queueJobReview(entry).catch((e) => console.log(dim(`  (queue: ${e.message.slice(0, 60)})`)));
+}
+
+/* --- Telegram notify: post-batch summary (opt-in via notify_config) --- */
+async function sendTelegramNotify(text) {
+  const db = await sitesDb();
+  const cfg = await db?.getNotifyConfig?.().catch(() => null);
+  if (!cfg?.chat_id || !cfg?.bot_token) return false;
+  const res = await fetch(`https://api.telegram.org/bot${cfg.bot_token}/sendMessage`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: cfg.chat_id, text, disable_web_page_preview: true }),
+  }).catch(() => null);
+  if (!res?.ok) { console.log(dim("  (telegram notify failed)")); return false; }
+  return true;
+}
+
+/* Summarize today's run-*.json reports (used by --status and by the watcher). */
+async function summarizeDayFromReports() {
+  let files = [];
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    files = readdirSync(REPORTS_DIR).filter((f) => /^run-.*\.json$/.test(f) && f.includes(today)).sort();
+  } catch { /* no reports dir yet */ }
+  const totals = { submitted: 0, needsReview: 0, skipped: 0, error: 0 };
+  for (const f of files.slice(-12)) {
+    try {
+      const r = JSON.parse(readFileSync(path.join(REPORTS_DIR, f), "utf8"));
+      for (const x of r.results ?? []) totals[x.result] = (totals[x.result] ?? 0) + 1;
+    } catch { /* skip unreadable report */ }
+  }
+  return `Freebuff apply · ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC — ✅ ${totals.submitted} submitted · ⏸ ${totals.needsReview} review · ⏭ ${totals.skipped} skipped · ✗ ${totals.error} errors (${files.length} run${files.length === 1 ? "" : "s"} today)`;
 }
 
 /* --- selector auto-learning: deduce what worked on this site and persist it ---
@@ -518,7 +556,7 @@ async function runSingle(args) {
         if (unfilledRequired.length) {
           recordResult(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
-          if (!rules.autoSubmit && args.unattended) { recordResult(report, job, "skipped", "review-gate site — skipped in --unattended mode"); console.log(dim("  ⏭ unattended: left for a human session")); continue; }
+          if (!rules.autoSubmit && args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}` }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           if (!rules.autoSubmit) await page.pause(); // review-gate sites: let the human finish here
           continue;
         }
@@ -532,7 +570,7 @@ async function runSingle(args) {
         } else {
           recordResult(report, job, "needsReview", sub.note);
           console.log(yellow(`  ⏸ ${sub.note} — browser is open on the form; finish and submit manually.`));
-          if (args.unattended) { recordResult(report, job, "skipped", "review-gate site — skipped in --unattended mode"); console.log(dim("  ⏭ unattended: left for a human session")); continue; }
+          if (args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);
@@ -550,6 +588,12 @@ async function runSingle(args) {
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
     await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
     await learnRules(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
+    if (!args["dry-run"]) {
+      const n = report.results.filter((r) => r.result === "submitted").length;
+      const q = report.results.filter((r) => r.result === "needsReview").length;
+      const er = report.results.filter((r) => r.result === "error").length;
+      await sendTelegramNotify(`Freebuff apply · ${site}: ✅ ${n} submitted · ⏸ ${q} review · ✗ ${er} errors`).catch(() => {});
+    }
     await ctx.close().catch(() => {});
   }
 }
@@ -578,14 +622,22 @@ async function runAll(args) {
   for (const s of sites) {
     console.log(`\n━━━ ${s.label} (${s.host}) ━━━`);
     try {
-      /* re-invoke this script per site so every run gets its own report + sync */
-      const { spawnSync } = await import("node:child_process");
-      const res = spawnSync(process.execPath, [
+      /* re-invoke this script per site so every run gets its own report + sync.
+         Hard watchdog: a site that wedges (hung page/network) must never stall
+         a scheduled cycle — kill it after 12 min and move on to the next site. */
+      const { spawn } = await import("node:child_process");
+      const SITE_TIMEOUT_MS = 12 * 60_000;
+      const child = spawn(process.execPath, [
         path.join(ROOT, "auto-apply-jobs.js"), "--url", s.url, "--max", String(args.max),
         ...(args["dry-run"] ? ["--dry-run"] : []),
         ...(args.unattended ? ["--unattended"] : []),
       ], { stdio: "inherit", cwd: path.join(ROOT, "..") });
-      if (res.status !== 0) totals.errors++;
+      const code = await new Promise((resolve) => {
+        const t = setTimeout(() => { console.log(yellow(`  ⏱ site timed out after 12 min — killed, moving on`)); child.kill(); resolve(-1); }, SITE_TIMEOUT_MS);
+        child.on("exit", (c) => { clearTimeout(t); resolve(c ?? -1); });
+        child.on("error", () => { clearTimeout(t); resolve(-1); });
+      });
+      if (code !== 0) totals.errors++;
     } catch (e) {
       console.error(red(`site ${s.host} failed: ${e.message.slice(0, 120)}`));
       totals.errors++;
@@ -623,6 +675,7 @@ async function main() {
   }
   if (args.watch) { await runWatch(args); return; }
   if (args.all) { await runAll(args); return; }
+  if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
   if (!args.url) {
     console.error(`Usage:
   node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only]

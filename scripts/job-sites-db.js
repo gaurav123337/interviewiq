@@ -57,3 +57,22 @@ export async function recordRun({ host, ok, collected, submitted, skipped, error
 export async function setSiteRules(host, rules) {
   return rpc(loadLocalCreds(), "engine_set_job_site_rules", { p_host: host, p_rules: rules });
 }
+
+/** Queue a review-gate job the engine skipped in unattended mode (deduped). */
+export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason }) {
+  return rpc(loadLocalCreds(), "engine_queue_job_review", {
+    p_site_host: siteHost, p_job_url: jobUrl, p_title: title ?? null,
+    p_company: company ?? null, p_form_url: formUrl ?? null, p_reason: reason ?? null,
+  });
+}
+
+/** Telegram notify config for post-batch summaries (nulls when unset). */
+export async function getNotifyConfig() {
+  const creds = loadLocalCreds();
+  const res = await fetch(`${creds.base}/rest/v1/notify_config?select=*&key=eq.telegram`, {
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
+  });
+  if (!res.ok) throw new Error(`notify_config read ${res.status}`);
+  const rows = await res.json();
+  return rows[0] ?? null;
+}
