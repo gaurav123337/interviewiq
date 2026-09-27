@@ -102,6 +102,39 @@ async function syncRunToDb(host, report) {
     });
   } catch (e) { console.log(dim(`  (run not synced: ${e.message.slice(0, 80)})`)); }
 }
+
+/* --- selector auto-learning: deduce what worked on this site and persist it ---
+   Learned rules ride in the registry (`rules` jsonb) and win over builtin
+   hints on the next run, so markup changes self-heal without code edits. */
+function learnedRulesFromReport(report, host) {
+  const learned = {};
+  const okJobs = report.results.filter((r) => r.result === "submitted" || (r.detail || "").includes("filled"));
+  if (okJobs.length) {
+    const u = okJobs[0].url || "";
+    /* derive a durable link shape: /job-listings-<id> → a[href*='job-listings-'] */
+    const path = u.replace(/^https?:\/\/[^/]+/, "").split("?")[0];
+    const seg = path.split("-")[0]?.replace(/^\//, "");
+    if (seg && seg.length > 2 && !/^(view|search|jobs?|opportunit)/i.test(seg)) {
+      learned.listLinkPattern = seg;
+    }
+    learned.cardAttr = path.includes("/job-listings-") ? "data-job-id" : (learned.cardAttr ?? null);
+  }
+  const submitted = report.results.filter((r) => r.result === "submitted");
+  if (submitted.length) learned.lastSuccessAt = new Date().toISOString();
+  return learned;
+}
+
+async function learnRules(host, report) {
+  const learned = learnedRulesFromReport(report, host);
+  const useful = Object.fromEntries(Object.entries(learned).filter(([, v]) => v != null));
+  if (!Object.keys(useful).length) return;
+  const db = await sitesDb();
+  if (!db) return;
+  try {
+    await db.setSiteRules(host, useful);
+    console.log(dim(`  learned rules stored: ${JSON.stringify(useful).slice(0, 100)}`));
+  } catch (e) { console.log(dim(`  (rules not learned: ${e.message.slice(0, 80)})`)); }
+}
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -512,6 +545,7 @@ async function runSingle(args) {
     console.log(`\n${reportLine(report)}`);
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
     await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
+    await learnRules(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
     await ctx.close().catch(() => {});
   }
 }
