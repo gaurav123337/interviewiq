@@ -6,6 +6,7 @@ export interface ApplySiteRule {
   loginPathHints: string[];
   loggedInHint: string;
   applyButtonText: RegExp;
+  submitButtonText?: RegExp;
   steps: string[];
   autoSubmit: boolean;
   successText: RegExp;
