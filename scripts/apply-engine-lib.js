@@ -126,6 +126,117 @@ export function titleRelevant(title, profile) {
   return words.some(w => new RegExp("\\b" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b").test(t));
 }
 
+/* ---- JD skill relevance: does the POSTING ask for what the RESUME has? ----
+
+   Skills with several spellings normalize to one token (c#, c++, node.js …);
+   related skills collapse into families so "React" answers a "Next.js" ask
+   (transferable within the same stack, which the profile genuinely covers).
+   Aliases map to a CANONICAL skill name; families share a base token so any
+   family member proves the whole family. */
+const SKILL_ALIASES = {
+  "react": "react", "reactjs": "react", "react.js": "react", "next.js": "react", "nextjs": "react", "next": "react",
+  "remix": "react", "redux": "react", "react native": "react",
+  "vue": "vue", "vue.js": "vue", "vuejs": "vue", "nuxt": "vue", "nuxt.js": "vue",
+  "angular": "angular", "angularjs": "angular", "angular.js": "angular",
+  "svelte": "svelte", "sveltekit": "svelte",
+  "typescript": "typescript", "ts": "typescript",
+  "javascript": "javascript", "js": "javascript", "es6": "javascript", "ecmascript": "javascript",
+  "node": "node", "node.js": "node", "nodejs": "node", "express": "node", "express.js": "node", "expressjs": "node", "nestjs": "node", "nest.js": "node", "adonis": "node",
+  "python": "python", "django": "python", "flask": "python", "fastapi": "python",
+  "java": "java", "spring": "java", "spring boot": "java", "kotlin": "java",
+  "go": "go", "golang": "go",
+  "rust": "rust", "c#": "csharp", "csharp": "csharp", ".net": "csharp", "dotnet": "csharp", "asp.net": "csharp",
+  "c++": "cpp", "cpp": "cpp",
+  "php": "php", "laravel": "php", "symfony": "php",
+  "ruby": "ruby", "rails": "ruby", "ruby on rails": "ruby",
+  "scala": "scala", "elixir": "elixir", "graphql": "graphql", "apollo": "graphql",
+  "sql": "sql", "mysql": "sql", "postgres": "sql", "postgresql": "sql", "sqlite": "sql", "sql server": "sql", "mssql": "sql", "pl/sql": "sql", "oracle": "sql", "mongodb": "sql", "mongo": "sql", "dynamo": "sql", "dynamodb": "sql", "redis": "sql", "cassandra": "sql", "elasticsearch": "sql",
+  "aws": "aws", "amazon web services": "aws", "gcp": "cloud", "google cloud": "cloud", "azure": "cloud", "cloud": "cloud",
+  "docker": "docker", "container": "docker", "kubernetes": "docker", "k8s": "docker", "eks": "docker", "ecs": "docker",
+  "terraform": "devops", "ansible": "devops", "jenkins": "devops", "ci/cd": "devops", "cicd": "devops", "ci cd": "devops", "github actions": "devops", "gitlab ci": "devops", "devops": "devops",
+  "html": "html", "html5": "html", "css": "css", "css3": "css", "sass": "css", "scss": "css", "less": "css", "tailwind": "css", "tailwindcss": "css", "tailwind css": "css", "bootstrap": "css", "styled-components": "css", "styled components": "css",
+  "graphql apis": "graphql", "rest": "rest", "rest api": "rest", "restful": "rest", "rest apis": "rest", "grpc": "rest",
+  "microservices": "microservices", "micro frontend": "microfrontend", "micro frontends": "microfrontend", "micro-frontend": "microfrontend",
+  "accessibility": "accessibility", "a11y": "accessibility", "wcag": "accessibility",
+  "testing": "testing", "jest": "testing", "vitest": "testing", "cypress": "testing", "playwright": "testing", "testing library": "testing", "unit test": "testing", "unit testing": "testing", "e2e testing": "testing",
+  "performance": "performance", "web performance": "performance", "core web vitals": "performance",
+  "pwa": "pwa", "ssr": "ssr", "server-side rendering": "ssr", "ssg": "ssr", "static site generation": "ssr",
+  "system design": "systemdesign", "distributed systems": "systemdesign", "scalability": "systemdesign",
+  "ai": "ai", "machine learning": "ai", "ml": "ai", "llm": "ai", "nlp": "ai",
+  "webpack": "bundler", "vite": "bundler", "rollup": "bundler", "esbuild": "bundler",
+  "git": "git", "agile": "agile", "scrum": "agile", "figma": "design", "ui/ux": "design",
+};
+
+const CANON_SKILL_RE = /c\+\+|c#|c|f#|go|ai|ml|ts|js|node|go$/; // 1–2-char canonicals need care when scanning
+
+/** Normalize a raw skill string to its canonical token (null = not a skill). */
+export function canonicalSkill(raw) {
+  const s = String(raw || "").toLowerCase().replace(/\s+/g, " ").trim().replace(/[.,;]$/, "");
+  if (!s || s.length > 24) return null;
+  return SKILL_ALIASES[s] ?? null;
+}
+
+/** The profile's canonical skill set (deduped, non-empty). */
+export function profileSkillSet(profile) {
+  const out = new Set();
+  for (const s of profile?.skills ?? []) {
+    const c = canonicalSkill(s);
+    if (c) out.add(c);
+    else if (typeof s === "string" && s.trim().length >= 3 && s.trim().length <= 24) out.add(s.toLowerCase().replace(/\s+/g, " ").trim());
+  }
+  return out;
+}
+
+/**
+ * JD-vs-resume skill match. The gate is deliberately ASYMMETRIC:
+ *  - the JD's REQUIRED skills must be (largely) covered by the profile, and
+ *  - the profile proves relevance when enough of its top skills appear in the
+ *    JD text (a posting that mentions none of your skills isn't your job).
+ * Generic words (experience, agile, git …) never count on either side.
+ */
+export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2 } = {}) {
+  const text = " " + String(jdText || "").toLowerCase().replace(/[^a-z0-9+#./ -]/g, " ").replace(/\s+/g, " ") + " ";
+  const prof = profileSkillSet(profile);
+  if (!prof.size) return { ok: true, reason: "profile lists no skills — title gate only", matched: [], missing: [] };
+
+  const jdSkills = new Set();
+  for (const [alias, canon] of Object.entries(SKILL_ALIASES)) {
+    const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\//g, "\\/");
+    if (new RegExp("(?:^| )" + esc + "(?: |$)").test(text)) jdSkills.add(canon);
+  }
+  const generic = new Set(["git", "agile", "design", "performance", "testing", "rest"]);
+  const required = [...jdSkills].filter((s) => !generic.has(s) || prof.has(s));
+  if (!required.length) {
+    return { ok: profHasPull(prof, text, minProfile), reason: "JD mentions no specific skills", matched: [], missing: [], jdSkills: [] };
+  }
+  const matched = required.filter((s) => prof.has(s));
+  const missing = required.filter((s) => !prof.has(s));
+  const enough = matched.length / required.length >= minJd;
+  const pull = matched.length >= minProfile ? true : profHasPull(prof, text, minProfile);
+  return { ok: enough && pull, matched, missing, reason: enough ? (pull ? "skill match" : "JD skills barely overlap the resume") : `JD requires ${missing.slice(0, 3).join(", ")} — not on the resume` };
+}
+
+/* Enough of the profile's TOP skills appear in the JD? (relevance pull) */
+function profHasPull(prof, text, minProfile) {
+  const ranked = [...prof].filter((s) => !CANON_SKILL_RE.test(s));
+  const generic = new Set(["git", "agile", "design", "performance", "testing"]);
+  let hits = 0;
+  for (const s of ranked.slice(0, 12)) {
+    if (generic.has(s)) continue;
+    const esc = s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp("(?:^| )" + esc + "(?: |$)").test(text)) hits++;
+  }
+  return hits >= Math.min(minProfile, Math.max(1, Math.floor(ranked.length / 4)));
+}
+
+/** The relevance gate for a posting: title + JD skills must BOTH agree. */
+export function postingRelevant({ title, description }, profile) {
+  if (!titleRelevant(title, profile)) return { ok: false, reason: "title not relevant to profile" };
+  const m = jdSkillMatch(String(description || ""), profile);
+  if (!m.ok) return { ok: false, reason: m.reason, matched: m.matched, missing: m.missing };
+  return { ok: true, reason: m.reason, matched: m.matched, missing: m.missing };
+}
+
 /** AI refusals/preambles must never become a resume or cover letter: the
     agreed SKIP sentinel, first-person refusals, and meta commentary about
     the input ("I need to flag something:", "this resume is missing…"). */
@@ -169,10 +280,21 @@ export function classifyQuestion(label, { tag = "", required = false } = {}) {
   return { kind: "unknown", confidence: required ? "review" : "answer" };
 }
 
+/* ---- profile extras: hard answers for recurring form questions --------- */
+/* extraAnswers: { [kind]: string } — an OWNER-DECLARED fact used verbatim
+   when the profile has no first-class field for that question kind (e.g.
+   "phoneCountryCode": "+91" for the LinkedIn "Phone country code*" select).
+   Nothing is invented: absent key → empty answer → fail-closed as before. */
+export function extraAnswerFor(profile, kind) {
+  const v = profile?.extraAnswers?.[kind];
+  return typeof v === "string" && v.trim() ? v.trim() : "";
+}
+
 /**
  * Drafts an honest answer for a classified question. Returns "" (leave blank)
  * when the profile has no data — the caller decides whether that blocks
- * submission (required fields do). NEVER invents facts.
+ * submission (required fields do). NEVER invents facts. An owner-declared
+ * extraAnswers[kind] fills kinds the profile lacks a first-class field for.
  */
 export function draftAnswer(kind, profile, job) {
   const p = profile || {};
@@ -193,7 +315,7 @@ export function draftAnswer(kind, profile, job) {
     case "reasonLeaving": return p.reasonLeaving ?? "";
     case "coverLetter": return job?.__coverLetter ?? ""; // the AI-tailored letter, injected by the engine
     case "longText": return job?.__coverLetter ?? ""; // a textarea gets the letter, never a guess
-    default: return ""; // unknown / workAuth / certificate → never guessed
+    default: return extraAnswerFor(p, kind); // phoneCountryCode etc. — only if the owner declared it
   }
 }
 

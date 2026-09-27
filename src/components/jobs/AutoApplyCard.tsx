@@ -46,8 +46,8 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
           <h3 className="text-[14.5px] font-extrabold">🤖 Auto-apply engine {active ? "" : "· 💎 Platinum"}</h3>
           <p className="mt-0.5 max-w-[720px] text-[11.5px] text-fnt">
             A local Playwright browser that searches your job boards, tailors a resume + cover letter to each JD with AI,
-            fills the application with your profile answers, and submits — auto on Instahyre &amp; Naukri, review-gate on LinkedIn.
-            Runs on your machine with your logged-in sessions; one-time manual login per site.
+            fills the application with your profile answers, and submits — auto on Instahyre, Naukri &amp; LinkedIn,
+            review-gate on unknown boards. Postings must match your resume's skills, not just the job title.
           </p>
         </div>
         <Chip tone={active ? "ok" : "co"}>{active ? "💎 Platinum active" : "🔒 Platinum"}</Chip>

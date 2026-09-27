@@ -54,6 +54,7 @@ export interface ApplyProfileLike {
   salaryExpectation?: string; openToRelocate?: boolean | null;
   openToRemote?: boolean | null; portfolio?: string; linkedin?: string;
   reasonLeaving?: string; summary?: string; skills?: string[];
+  extraAnswers?: Record<string, string>;
 }
 
 export interface ApplyJobLike {
@@ -98,3 +99,30 @@ export function buildApplyReportSql(
   report: ApplyRunReport,
   meta: { totalSeen: number }
 ): string;
+
+/* ── JD skill relevance gate ─────────────────────────────────────────── */
+
+export function canonicalSkill(raw: string | null | undefined): string | null;
+
+export function profileSkillSet(profile: ApplyProfileLike | null | undefined): Set<string>;
+
+export interface JdSkillMatchResult {
+  ok: boolean;
+  reason: string;
+  matched: string[];
+  missing: string[];
+  jdSkills?: string[];
+}
+
+export function jdSkillMatch(
+  jdText: string | null | undefined,
+  profile: ApplyProfileLike | null | undefined,
+  opts?: { minJd?: number; minProfile?: number }
+): JdSkillMatchResult;
+
+export function postingRelevant(
+  posting: { title: string | null | undefined; description?: string | null },
+  profile: ApplyProfileLike | null | undefined
+): JdSkillMatchResult;
+
+export function extraAnswerFor(profile: ApplyProfileLike | null | undefined, kind: string): string;

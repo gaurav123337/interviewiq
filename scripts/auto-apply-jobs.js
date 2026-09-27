@@ -13,6 +13,9 @@
  *       Instahyre + Naukri → auto-submit; LinkedIn + unknown → REVIEW GATE
  *       (form filled, browser paused for a human click; with --unattended
  *       those sites are skipped instead of pausing, so scheduled runs never hang).
+ *   - postings must pass BOTH a title gate and a JD-skill gate (the job's
+ *     required skills are checked against the resume's skills — no more
+ *     backend applications from a frontend profile).
  *   - any required question it cannot answer confidently blocks submission
  *     (fail-closed) and marks the job needs-review in the report.
  *
@@ -31,7 +34,7 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi } from "./apply-kit-node.js";
 
@@ -467,7 +470,14 @@ async function runSingle(args) {
     process.exit(1);
   }
   const site = siteFromUrl(args.url);
-  const rules = SITE_RULES[site];
+  let rules = { ...SITE_RULES[site] };
+  /* registry rules win over builtin hints: learned selectors AND the owner's
+     autoSubmit decision (e.g. LinkedIn flipped on in the sites registry) */
+  try {
+    const db = await sitesDb();
+    const row = (await db?.listJobSites?.())?.find((s) => s.host === args.url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] || s.host === (new URL(args.url).hostname.replace(/^www\./, "")));
+    if (row?.rules && typeof row.rules === "object") rules = { ...rules, ...row.rules };
+  } catch { /* registry unavailable — builtin rules stand */ }
   const profile = loadApplyProfile(args.profile);
   const token = process.env.SUPABASE_ACCESS_TOKEN;
   const projectRef = process.env.SUPABASE_PROJECT_REF;
@@ -475,7 +485,7 @@ async function runSingle(args) {
   console.log(`apply-engine → ${rules.label} · ${args.url} · max ${args.max}${ai ? ` · AI: ${ai.model}` : " · AI: OFF (templates)"}`);
 
   const ctx = await launchBrowser(args.headless);
-  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  let page = ctx.pages()[0] ?? (await ctx.newPage());
   const report = newReport(args.url, site);
   mkdirSync(REPORTS_DIR, { recursive: true });
 
@@ -526,12 +536,34 @@ async function runSingle(args) {
         console.log(dim("  ⏭ skipped — not relevant to your profile"));
         continue;
       }
+      /* skill gate: the JD must ask for what the resume actually has — no
+         backend/ML/data postings just because the title says "engineer".
+         Pure/sync checks first (dedupe, title, pre-gate) stay OUTSIDE the
+         watchdog: they cannot wedge, and arming the timer before them would
+         leak it on every early skip (the process would linger 4 min). */
+      const pre = postingRelevant({ title: job.title, description: job.description ?? "" }, profile);
+      if (!pre.ok && pre.reason !== "JD mentions no specific skills" && /not on the resume|barely overlap|not relevant/.test(pre.reason)) {
+        recordResult(report, job, "skipped", pre.reason);
+        console.log(dim(`  ⏭ skipped — ${pre.reason}`));
+        continue;
+      }
+      /* per-job watchdog: a wedged form must cost ONE job, not the site leg */
+      const jw = setTimeout(() => { console.log(yellow(`  ⏱ job timed out after 4 min — skipping`)); try { page.close().catch(() => {}); } catch { /* already closed */ } }, 4 * 60_000);
+      if (page.isClosed?.()) page = await ctx.newPage(); // watchdog closed it last job — fresh page
       try {
         await openJob(page, job);
         const kit = await buildKit(ai, profile, { title: job.title, company: job.company, skills: (job.description.match(/\b(Node\.js|React|TypeScript|Python|AWS|Kubernetes|PostgreSQL|Docker|GraphQL|Kafka|System Design|Machine Learning)\b/gi) ?? []).slice(0, 8).map(s => s[0].toUpperCase() + s.slice(1)) });
         if (looksLikeRefusal(kit.resume) || looksLikeRefusal(kit.coverLetter)) {
           throw new Error("AI refused to tailor this kit (role mismatch?) — not submitting");
         }
+        /* skill gate on the REAL JD text now that the page is open */
+        const gate = postingRelevant({ title: job.title, description: job.description }, profile);
+        if (!gate.ok) {
+          recordResult(report, job, "skipped", gate.reason);
+          console.log(dim(`  ⏭ skipped — ${gate.reason}`));
+          continue;
+        }
+        if (gate.matched?.length) console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""}`));
         job.__coverLetter = kit.coverLetter;
         console.log(dim(`  kit: resume+cover ${kit.ai ? "(AI-tailored)" : "(template)"} ${kit.notes.join("; ")}`));
 
@@ -577,6 +609,8 @@ async function runSingle(args) {
       } catch (e) {
         recordResult(report, job, "error", e.message.slice(0, 160));
         console.error(red(`  ✗ ${e.message.slice(0, 160)}`));
+      } finally {
+        clearTimeout(jw);
       }
     }
   } finally {
