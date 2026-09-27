@@ -35,7 +35,7 @@ export const SITE_RULES = {
     steps: ["apply"],
     autoSubmit: true,
     successText: /applied|application (has been )?submitted/i,
-    listSelectorHints: ["a[href*='job-detail']", "a[href*='joblisting']", "a.job-title-href", ".job-tittle a"],
+    listSelectorHints: ["a[href*='job-listings-']", "a[href*='job-detail']", "a[href*='joblisting']", "a.job-title-href", ".job-tittle a"],
     minIntervalMs: 2500,
   },
   instahyre: {
@@ -106,6 +106,30 @@ export function looksLoggedIn({ url, title, bodyText, loggedInHint, loginPathHin
   if (onLogin) return false;
   if (loggedInHint && !u.includes(loggedInHint)) return false;
   return !isChallengePage(title, bodyText);
+}
+
+/** Is this posting title plausibly relevant to the profile? Generic role
+    words (engineer/developer/sde) pass — specialization is the AI tailor's
+    job — but alien fields (Data Scientist, Product Manager, Store Executive)
+    fail: auto-applying there wastes the application and the AI rightly
+    refuses to invent the experience. */
+export function titleRelevant(title, profile) {
+  const t = String(title || "").toLowerCase();
+  if (!t) return false;
+  if (/\b(engineer|developer|sde|sdet|programmer|architect)\b/.test(t)) return true;
+  const hay = [profile?.headline ?? "", ...(profile?.skills ?? [])].join(" ").toLowerCase();
+  const words = [...new Set(hay.split(/[^a-z0-9.+#]+/).filter(w => w.length >= 3 && w !== "and"))];
+  return words.some(w => new RegExp("\\b" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b").test(t));
+}
+
+/** AI refusals/preambles must never become a resume or cover letter: the
+    agreed SKIP sentinel, first-person refusals, and meta commentary about
+    the input ("I need to flag something:", "this resume is missing…"). */
+export function looksLikeRefusal(text) {
+  const s = String(text || "").slice(0, 300).trim();
+  if (/^__SKIP__$/i.test(s)) return true;
+  if (/^\s*(i (can't|cannot|won't|am unable|am not able|need to|must|noticed|see that)|sorry,? (but )?i (can't|cannot))/i.test(s)) return true;
+  return /^(i need to flag|this (resume|letter|profile) (is|was) missing|the (resume|input) (you|provided))/.test(s.toLowerCase());
 }
 
 /* ─────────────────── form-question intelligence ─────────────────── */

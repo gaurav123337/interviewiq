@@ -17,6 +17,10 @@ export const SITE_RULES: Record<string, ApplySiteRule>;
 
 export function siteFromUrl(url: string): string;
 
+export function titleRelevant(title: string | null | undefined, profile: { headline?: string; skills?: string[] } | null | undefined): boolean;
+
+export function looksLikeRefusal(text: string | null | undefined): boolean;
+
 export function isChallengePage(title: string | null | undefined, bodyText: string | null | undefined): boolean;
 
 export function detectAccountProblem(bodyText: string | null | undefined): string | null;

@@ -30,7 +30,7 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES,
-  isChallengePage, detectAccountProblem, looksLoggedIn,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi } from "./apply-kit-node.js";
 
@@ -182,6 +182,29 @@ async function collectJobs(page, url, site, max) {
     const out = [];
     /* nav junk that looks like a link but is chrome, not a posting */
     const junk = /^(opportunities|jobs?|search jobs?|home|activity|inbox|profile|settings|logout|feed|my network|messaging|notifications|all jobs?|jobs? at .*|view all|see more|more)$/i;
+    /* Naukri-style cards: job id in an attribute, no anchor at all */
+    for (const art of document.querySelectorAll("[data-job-id]")) {
+      const id = art.getAttribute("data-job-id");
+      if (!id || seen.has(id)) continue;
+      const t = art.querySelector("p[class*='title'], [class*='designation']");
+      const c = art.querySelector("[class*='company']");
+      const title = ((t?.textContent || art.innerText || "").trim().split("\n")[0] || "").slice(0, 140);
+      if (!title || title.length < 8 || junk.test(title)) continue;
+      seen.add(id);
+      const company = (c?.textContent || "").trim().split("\n")[0].replace(/\s*[\d.]+\s*(Reviews?|stars?)\s*$/i, "").replace(/\s+\d+(\.\d+)?$/, "").slice(0, 80);
+      out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company });
+    }
+    /* LinkedIn landing/search cards: currentJobId=<id> inside search-results hrefs */
+    for (const a of document.querySelectorAll("a[href*='currentJobId=']")) {
+      const m = (a.getAttribute("href") || "").match(/currentJobId=(\d+)/);
+      if (!m || seen.has(m[1])) continue;
+      const text = (a.innerText || "").trim();
+      const title = (text.split("\n")[0] || "").replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 140);
+      if (!title || title.length < 8 || junk.test(title)) continue;
+      seen.add(m[1]);
+      const lines = text.split("\n").map(s => s.trim()).filter(Boolean);
+      out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company: (lines.find(l => l !== title && l.length > 1 && l.length < 60) || "").slice(0, 80) });
+    }
     for (const sel of hints) {
       for (const a of document.querySelectorAll(sel)) {
         const href = a.href || a.getAttribute("href") || "";
@@ -311,6 +334,17 @@ async function main() {
       const dbg = [
         `finalUrl: ${page.url()}`,
         `title: ${await page.title()}`,
+        "--- anchor href shapes ---",
+        await page.evaluate(() => {
+          const shapes = {};
+          for (const a of document.querySelectorAll("a")) {
+            const h = a.getAttribute("href") || "";
+            if (!h) continue;
+            const shape = h.replace(/\d+/g, "#").split("?")[0];
+            shapes[shape] = (shapes[shape] || 0) + 1;
+          }
+          return Object.entries(shapes).sort((a, b) => b[1] - a[1]).slice(0, 30).map(([s, n]) => `${n}x ${s}`).join("\n");
+        }),
         "--- body text (first 4000 chars) ---",
         (await page.evaluate(() => document.body?.innerText ?? "")).slice(0, 4000),
       ].join("\n");
@@ -323,9 +357,17 @@ async function main() {
 
     for (const job of jobs) {
       console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);
+      if (!titleRelevant(job.title, profile)) {
+        recordResult(report, job, "skipped", `not relevant to profile (${profile.headline || "no headline"})`);
+        console.log(dim("  ⏭ skipped — not relevant to your profile"));
+        continue;
+      }
       try {
         await openJob(page, job);
         const kit = await buildKit(ai, profile, { title: job.title, company: job.company, skills: (job.description.match(/\b(Node\.js|React|TypeScript|Python|AWS|Kubernetes|PostgreSQL|Docker|GraphQL|Kafka|System Design|Machine Learning)\b/gi) ?? []).slice(0, 8).map(s => s[0].toUpperCase() + s.slice(1)) });
+        if (looksLikeRefusal(kit.resume) || looksLikeRefusal(kit.coverLetter)) {
+          throw new Error("AI refused to tailor this kit (role mismatch?) — not submitting");
+        }
         job.__coverLetter = kit.coverLetter;
         console.log(dim(`  kit: resume+cover ${kit.ai ? "(AI-tailored)" : "(template)"} ${kit.notes.join("; ")}`));
 

@@ -85,7 +85,7 @@ async function chatOnce(ai, messages, maxTokens) {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`AI HTTP ${res.status}: ${JSON.stringify(body).slice(0, 140)}`);
-    return body.choices?.[0]?.message?.content ?? "";
+    return (body.choices?.[0]?.message?.content ?? "").replace(/^SKIP\s*$/i, "__SKIP__").trim();
   } finally {
     clearTimeout(timer);
   }
@@ -95,7 +95,7 @@ async function chatOnce(ai, messages, maxTokens) {
 export async function tailorResume(ai, profile, job) {
   const template = templateResume(profile, job);
   if (!ai?.key) return { text: template, ai: false, note: "no AI provider configured" };
-  const sys = "You are an expert resume writer for tech roles. Rewrite the given resume to be sharper, more concrete, and tailored to the target job. Keep the same sections and facts — never invent experience, companies, or credentials. Use action verbs and quantify impact where the facts allow. Under ~320 words. Output ONLY the resume text.";
+  const sys = "You are an expert resume writer for tech roles. Rewrite the given resume to be sharper, more concrete, and tailored to the target job. Emphasize the candidate's real skills that transfer to this role (even adjacent ones — a frontend engineer applying to backend roles DOES have API, data-modeling and systems experience worth highlighting). Keep the same sections and facts — never invent experience, companies, titles, or credentials. The input may lack employment history or other data: that is EXPECTED — work with what is provided, never refuse or comment on missing data. Only if the role is in a genuinely unrelated field where NO honest mapping exists, reply with exactly: SKIP. Use action verbs and quantify impact where the facts allow. Under ~320 words. Output ONLY the resume text.";
   const usr = `Target job: ${job.title} at ${job.company}.\nKey requirements: ${(job.skills ?? []).join(", ") || "general engineering"}.\n\nCurrent resume:\n${template}\n\nRewrite it tailored to this job.`;
   try {
     const out = await chatOnce(ai, [{ role: "system", content: sys }, { role: "user", content: usr }], 800);
@@ -110,7 +110,7 @@ export async function tailorResume(ai, profile, job) {
 export async function tailorCoverLetter(ai, profile, job) {
   const template = templateCoverLetter(profile, job);
   if (!ai?.key) return { text: template, ai: false, note: "no AI provider configured" };
-  const sys = "You are an expert cover-letter writer for tech roles. Rewrite the given cover letter to be warmer, more specific, and clearly tailored to the target job and company. Never invent facts, companies, or credentials. Under ~220 words. Output ONLY the letter text.";
+  const sys = "You are an expert cover-letter writer for tech roles. Rewrite the given cover letter to be warmer, more specific, and clearly tailored to the target job and company. Never invent facts, companies, or credentials. The input may lack some data: that is EXPECTED — work with what is provided, never refuse or comment on missing data. Only if the role is in a genuinely unrelated field where NO honest mapping exists, reply with exactly: SKIP. Under ~220 words. Output ONLY the letter text.";
   const usr = `Target job: ${job.title} at ${job.company}.\nKey requirements: ${(job.skills ?? []).join(", ") || "general engineering"}.\n\nTemplate letter:\n${template}\n\nRewrite it for this application.`;
   try {
     const out = await chatOnce(ai, [{ role: "system", content: sys }, { role: "user", content: usr }], 500);
