@@ -6,7 +6,8 @@
 import { describe, expect, it } from "vitest";
 import {
   SITE_RULES, siteFromUrl, classifyQuestion, draftAnswer,
-  valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql
+  valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
+  isChallengePage, detectAccountProblem, looksLoggedIn
 } from "../../scripts/apply-engine-lib.js";
 
 describe("siteFromUrl", () => {
@@ -134,5 +135,29 @@ describe("run reports", () => {
     expect(sql).toContain("'apply-engine'");
     expect(sql).toContain("submitted 1, review 1");
     expect(sql).toContain("needs authorization".replace("needs ", "")); // detail escaped through
+  });
+});
+
+describe("page-state guards", () => {
+  it("flags Cloudflare-style challenges (title or body) and passes normal pages", () => {
+    expect(isChallengePage("Just a moment...", "Performing security verification")).toBe(true);
+    expect(isChallengePage("Opportunities — Instahyre", "Senior React Engineer at Flipkart Apply")).toBe(false);
+    expect(isChallengePage("", "Please verify you are a human to continue")).toBe(true);
+    expect(isChallengePage(null, null)).toBe(false);
+  });
+
+  it("detects account-level blockers and ignores healthy lists", () => {
+    expect(detectAccountProblem("Automatic account disablement — your account has been disabled due to inactivity.")).toMatch(/disabled/);
+    expect(detectAccountProblem("Your account is suspended. Contact support.")).toMatch(/disabled|suspended/);
+    expect(detectAccountProblem("Senior Frontend Engineer at Razorpay · 12-25 LPA · Apply")).toBeNull();
+    expect(detectAccountProblem("")).toBeNull();
+  });
+
+  it("looksLoggedIn is false on login URLs, challenges, and missing hints", () => {
+    const base = { loggedInHint: "/candidate/opportunities", loginPathHints: ["/login/"] };
+    expect(looksLoggedIn({ ...base, url: "https://instahyre.com/login/?next=/candidate/opportunities/" })).toBe(false);
+    expect(looksLoggedIn({ ...base, url: "https://instahyre.com/candidate/opportunities/", title: "Just a moment...", bodyText: "Performing security verification" })).toBe(false);
+    expect(looksLoggedIn({ ...base, url: "https://instahyre.com/candidate/opportunities/", title: "Opportunities", bodyText: "Senior Engineer · Apply" })).toBe(true);
+    expect(looksLoggedIn({ ...base, url: "https://instahyre.com/somewhere-else/" })).toBe(false);
   });
 });

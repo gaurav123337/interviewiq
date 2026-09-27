@@ -41,13 +41,13 @@ export const SITE_RULES = {
   instahyre: {
     label: "Instahyre",
     jobsUrlHosts: ["instahyre.com"],
-    loginPathHints: ["/accounts/login"],
+    loginPathHints: ["/accounts/login", "/login/", "login/?next="],
     loggedInHint: "/candidate/opportunities",
     applyButtonText: /apply|interested/i,
     steps: ["apply"],
     autoSubmit: true,
     successText: /applied|application sent|we'll be in touch/i,
-    listSelectorHints: ["a[href*='/candidate/opportunities/']", ".opportunity a", ".job-card a"],
+    listSelectorHints: ["a[href*='/job-']", "a[href*='/candidate/opportunities/']"],
     minIntervalMs: 2500,
   },
   generic: {
@@ -72,6 +72,40 @@ export function siteFromUrl(url) {
     if (rules.jobsUrlHosts.some(h => host === h || host.endsWith("." + h))) return key;
   }
   return "generic";
+}
+
+/* ─────────────────── page-state guards (login / challenge / bans) ─────────────────── */
+
+/**
+ * True while a Cloudflare-style interstitial holds the page: the URL stays on
+ * the target but the document is the challenge ("Just a moment…", security
+ * verification). The engine must NOT treat this as a logged-in page.
+ */
+export function isChallengePage(title, bodyText) {
+  const t = String(title || "");
+  const b = String(bodyText || "");
+  return /just a moment|attention required|security verification|checking your browser|verify you are (a )?human|performing security/i.test(t + " " + b.slice(0, 2000));
+}
+
+/** Account-level blockers a board shows INSTEAD of the job list after login. */
+export function detectAccountProblem(bodyText) {
+  const b = String(bodyText || "");
+  if (/account (has been|is) (disabled|deactivated|suspended)|automatic account disablement|account.*disabled due to inactivity/i.test(b.slice(0, 6000))) {
+    return "account disabled (contact the site to reactivate)";
+  }
+  return null;
+}
+
+/**
+ * Conservative "am I really logged in?" — URL hint AND no login marker AND
+ * no challenge. `title`/`bodyText` come from the live page.
+ */
+export function looksLoggedIn({ url, title, bodyText, loggedInHint, loginPathHints }) {
+  const u = String(url || "");
+  const onLogin = (loginPathHints ?? []).some((h) => u.toLowerCase().includes(String(h).toLowerCase()));
+  if (onLogin) return false;
+  if (loggedInHint && !u.includes(loggedInHint)) return false;
+  return !isChallengePage(title, bodyText);
 }
 
 /* ─────────────────── form-question intelligence ─────────────────── */

@@ -29,7 +29,8 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
-  newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES
+  newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES,
+  isChallengePage, detectAccountProblem, looksLoggedIn,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi } from "./apply-kit-node.js";
 
@@ -89,14 +90,52 @@ async function launchBrowser(headless) {
   return ctx;
 }
 
+/** Poll the CURRENT page until its state is trustworthy: challenge cleared
+    AND no in-flight login redirect (SPAs bounce to /login/ — or straight to
+    the OAuth provider — seconds after a challenge clears). Returns
+    { kind: "loggedIn"|"login"|"challenge", title, bodyText }. */
+const normHost = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
+async function waitForStableState(page, rules, url, { settleMs = 9_000 } = {}) {
+  const target = normHost(url);
+  const t0 = Date.now();
+  let stableSince = 0;
+  let last = { kind: "challenge", title: "", bodyText: "" };
+  for (;;) {
+    /* a login/redirect can destroy the execution context mid-poll — tolerate and retry */
+    let title = "", bodyText = "";
+    try {
+      title = await page.title();
+      bodyText = await page.evaluate(() => document.body?.innerText ?? "");
+    } catch {
+      await page.waitForTimeout(1500);
+      continue;
+    }
+    const onLogin = rules.loginPathHints.some(h => page.url().toLowerCase().includes(h.toLowerCase()));
+    const challenge = isChallengePage(title, bodyText);
+    let kind = challenge ? "challenge" : onLogin ? "login" : "loggedIn";
+    /* bounced off-site (e.g. accounts.google.com OAuth) = login needed */
+    if (kind === "loggedIn" && target && normHost(page.url()) !== target) kind = "login";
+    if (kind !== last.kind) { stableSince = Date.now(); last = { kind, title, bodyText }; }
+    /* state must hold for 3s (two consecutive SPA redirects can chain) */
+    if (kind !== "challenge" && Date.now() - stableSince >= 3000) return { ...last, kind };
+    if (Date.now() - t0 > settleMs) return { ...last, kind };
+    await page.waitForTimeout(1500);
+  }
+}
+
 async function ensureLoggedIn(page, url, site, loginOnly) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  const host = new URL(url).hostname;
+  const state = await waitForStableState(page, rules, url);
   const onLogin = () => rules.loginPathHints.some(h => page.url().toLowerCase().includes(h.toLowerCase()));
-  if (rules.loggedInHint && page.url().includes(rules.loggedInHint) && !onLogin()) {
+  if (!loginOnly && state.kind === "loggedIn") {
+    const problem = detectAccountProblem(state.bodyText);
+    if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
     console.log(green(`✓ ${rules.label}: session active`));
     return true;
+  }
+  if (state.kind === "login" && !loginOnly) {
+    console.log(yellow(`⏸  ${rules.label}: session expired (redirected to login) — please sign in again.`));
   }
   if (onLogin() || loginOnly) {
     console.log(yellow(`⏸  ${rules.label}: please sign in in the opened window (Google OAuth / email / OTP — anything the site offers).`));
@@ -104,16 +143,20 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
     if (!loginOnly) {
       console.log(dim("   (Re-run with --login-only to just log in first, if you prefer.)"));
     }
-    /* wait up to 5 minutes for the human to complete login */
+    /* wait up to 10 minutes for the human to complete login */
     const t0 = Date.now();
-    while (Date.now() - t0 < 5 * 60_000) {
+    while (Date.now() - t0 < 10 * 60_000) {
       await page.waitForTimeout(2000);
-      if (!onLogin() && (!rules.loggedInHint || page.url().includes(rules.loggedInHint))) {
+      let st;
+      try { st = await waitForStableState(page, rules, url, { settleMs: 0 }); } catch { continue; }
+      if (st.kind === "loggedIn") {
+        const problem = detectAccountProblem(st.bodyText);
+        if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — login cannot succeed until the account is restored.`)); return false; }
         console.log(green(`✓ ${rules.label}: logged in.`));
         return true;
       }
     }
-    console.error(red(`✗ ${rules.label}: login not completed within 5 minutes.`));
+    console.error(red(`✗ ${rules.label}: login not completed within 10 minutes.`));
     return false;
   }
   return true;
@@ -124,7 +167,11 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
 async function collectJobs(page, url, site, max) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  await page.waitForTimeout(3000); // SPA render
+  const state = await waitForStableState(page, rules, url); // SPA render + challenge clear + redirect settle
+  if (state.kind === "challenge") throw new Error(`${rules.label}: bot-check did not clear — re-run headed (no --headless).`);
+  if (state.kind === "login") throw new Error(`${rules.label}: session expired — re-run with --login-only to sign in again.`);
+  const problem = detectAccountProblem(state.bodyText);
+  if (problem) throw new Error(`${rules.label}: ${problem}`);
   /* auto-scroll to load lazy lists (LinkedIn/Instahyre paginate inside SPA) */
   for (let i = 0; i < 6; i++) {
     await page.mouse.wheel(0, 2400);
@@ -133,6 +180,8 @@ async function collectJobs(page, url, site, max) {
   const jobs = await page.evaluate((hints) => {
     const seen = new Set();
     const out = [];
+    /* nav junk that looks like a link but is chrome, not a posting */
+    const junk = /^(opportunities|jobs?|search jobs?|home|activity|inbox|profile|settings|logout|feed|my network|messaging|notifications|all jobs?|jobs? at .*|view all|see more|more)$/i;
     for (const sel of hints) {
       for (const a of document.querySelectorAll(sel)) {
         const href = a.href || a.getAttribute("href") || "";
@@ -140,7 +189,7 @@ async function collectJobs(page, url, site, max) {
         const abs = new URL(href, location.origin).toString();
         if (seen.has(abs)) continue;
         const text = (a.innerText || a.textContent || "").trim();
-        if (!text || text.length < 8) continue;
+        if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
         out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "" });
       }
@@ -257,7 +306,20 @@ async function main() {
 
     const jobs = await collectJobs(page, args.url, site, args.max);
     console.log(dim(`collected ${jobs.length} posting(s)`));
-    if (!jobs.length) { console.log(reportLine(report)); return; }
+    if (!jobs.length) {
+      /* honest diagnostics: dump exactly what the engine saw */
+      const dbg = [
+        `finalUrl: ${page.url()}`,
+        `title: ${await page.title()}`,
+        "--- body text (first 4000 chars) ---",
+        (await page.evaluate(() => document.body?.innerText ?? "")).slice(0, 4000),
+      ].join("\n");
+      const dbgPath = path.join(REPORTS_DIR, `debug-empty-${Date.now()}.txt`);
+      writeFileSync(dbgPath, dbg);
+      console.log(yellow("No postings found — page state dumped to " + dbgPath));
+      console.log(reportLine(report));
+      return;
+    }
 
     for (const job of jobs) {
       console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);
