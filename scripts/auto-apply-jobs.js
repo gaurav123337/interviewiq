@@ -286,12 +286,53 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun }) {
 
 /* ------------------------------ submit ------------------------------ */
 
+/* Playwright's :has-text() takes a STRING, not a regex — build a JS-side
+   regex-matching locator instead so /apply|interested/i etc. work. Only
+   VISIBLE+ENABLED buttons count, and the FIRST match wins: boards render
+   disabled basket widgets ("Apply to 0 jobs") AFTER the real button. */
+function textButtonLocator(page, re) {
+  return page
+    .locator("button:visible:not([disabled]), a[role=button]:visible, input[type=submit]:visible:not([disabled]), input[type=button]:visible:not([disabled])")
+    .filter({ hasText: re })
+    .first();
+}
+
+async function clickButton(page, locator, textRe) {
+  /* scroll to it first — lazy pages keep buttons out of the viewport where
+     Playwright refuses to click */
+  await locator.scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {});
+  try {
+    await locator.click({ timeout: 6000 });
+    return "pointer";
+  } catch (e) {
+    /* Angular/Vue boards can fail Playwright's actionability checks forever
+       even though the button is visibly clickable — fall back to a DOM click
+       through the framework's own handler (proven on Instahyre ng-click). */
+    if (!textRe) throw e;
+    const ok = await page.evaluate((src) => {
+      const re = new RegExp(src, "i");
+      const els = [...document.querySelectorAll("button, a[role=button], input[type=submit], input[type=button]")];
+      const t = els.find((b) => !b.disabled && (b.offsetWidth || b.offsetHeight) && re.test(((b.innerText || b.value || "").trim())));
+      if (!t) return false;
+      t.click();
+      return true;
+    }, textRe.source);
+    if (!ok) throw e;
+    return "js";
+  }
+}
+
 async function trySubmit(page, site) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
-  const btn = page.locator(`button:has-text("${rules.applyButtonText.source}"), input[type=submit]`).last();
-  if (rules.autoSubmit && !btn) return { auto: true, note: "submit button not found (may already be applied)" };
+  /* the FINAL button is usually NOT the opener — Instahyre: "Apply now" opens
+     a modal, then a plain "Submit" button inside it sends the application */
+  const btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
+  if ((await btn.count()) === 0) {
+    if (rules.autoSubmit) return { auto: true, note: "submit button not found (may already be applied)" };
+    return { auto: false, note: "review gate — human submits" };
+  }
   if (rules.autoSubmit) {
-    await btn.click({ timeout: 5000 });
+    await clickButton(page, btn, rules.submitButtonText ?? rules.applyButtonText);
     await page.waitForTimeout(4000);
     const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
     return { auto: true, note: success ? "submitted" : "clicked submit; success text not detected" };
@@ -376,9 +417,10 @@ async function main() {
         writeFileSync(resumePath, kit.resume);
 
         /* find and open the apply flow on the job page */
-        const applyBtn = page.locator(`button:has-text("${rules.applyButtonText.source}"), a:has-text("${rules.applyButtonText.source}")`).last();
-        if (await applyBtn.count()) {
-          await applyBtn.click({ timeout: 5000 });
+        const applyBtn = textButtonLocator(page, rules.applyButtonText);
+        if ((await applyBtn.count()) > 0) {
+          const how = await clickButton(page, applyBtn, rules.applyButtonText);
+          console.log(dim(`  apply clicked (${how})`));
           await page.waitForTimeout(3000);
         } else if (site === "instahyre" || site === "naukri") {
           /* some boards apply in-place — no separate form page */

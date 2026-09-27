@@ -22,6 +22,7 @@ export const SITE_RULES = {
     applyButtonText: /easy\s*apply/i,
     steps: ["contact", "resume", "questions", "review"],
     autoSubmit: false, // owner decision: LinkedIn accounts are precious — review gate
+    submitButtonText: /submit\s*application/i,
     successText: /application\s+sent|your application was sent/i,
     listSelectorHints: ["a[href*='/jobs/view/']", ".jobs-search-results__list-item", ".job-card-container"],
     minIntervalMs: 4000, // LinkedIn rate-limits hard; keep it slow
@@ -34,6 +35,7 @@ export const SITE_RULES = {
     applyButtonText: /^apply$/i,
     steps: ["apply"],
     autoSubmit: true,
+    submitButtonText: /^apply$/i,
     successText: /applied|application (has been )?submitted/i,
     listSelectorHints: ["a[href*='job-listings-']", "a[href*='job-detail']", "a[href*='joblisting']", "a.job-title-href", ".job-tittle a"],
     minIntervalMs: 2500,
@@ -46,6 +48,7 @@ export const SITE_RULES = {
     applyButtonText: /apply|interested/i,
     steps: ["apply"],
     autoSubmit: true,
+    submitButtonText: /^submit$/i,
     successText: /applied|application sent|we'll be in touch/i,
     listSelectorHints: ["a[href*='/job-']", "a[href*='/candidate/opportunities/']"],
     minIntervalMs: 2500,
@@ -58,6 +61,7 @@ export const SITE_RULES = {
     applyButtonText: /^apply( now)?$/i,
     steps: ["apply"],
     autoSubmit: false, // unknown ATS — never auto-submit
+    submitButtonText: /^submit( application)?$/i,
     successText: /application (was|has been) (sent|submitted)|thanks for applying/i,
     listSelectorHints: ["a[href*='job']", "a[href*='career']", "a[href*='position']"],
     minIntervalMs: 1500,
