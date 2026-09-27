@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   SITE_RULES, siteFromUrl, classifyQuestion, draftAnswer,
   valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
-  isChallengePage, detectAccountProblem, looksLoggedIn
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal
 } from "../../scripts/apply-engine-lib.js";
 
 describe("siteFromUrl", () => {
@@ -159,5 +159,35 @@ describe("page-state guards", () => {
     expect(looksLoggedIn({ ...base, url: "https://instahyre.com/candidate/opportunities/", title: "Just a moment...", bodyText: "Performing security verification" })).toBe(false);
     expect(looksLoggedIn({ ...base, url: "https://instahyre.com/candidate/opportunities/", title: "Opportunities", bodyText: "Senior Engineer · Apply" })).toBe(true);
     expect(looksLoggedIn({ ...base, url: "https://instahyre.com/somewhere-else/" })).toBe(false);
+  });
+});
+
+describe("relevance + refusal guards", () => {
+  const fe = { headline: "Staff Frontend Engineer", skills: ["React", "TypeScript", "Next.js"] };
+
+  it("titleRelevant passes engineering roles and skill-matched titles", () => {
+    expect(titleRelevant("Senior Frontend Engineer", fe)).toBe(true);
+    expect(titleRelevant("SDE II — Backend", fe)).toBe(true);
+    expect(titleRelevant("React Developer at Razorpay", fe)).toBe(true);
+    expect(titleRelevant("Lead Engineer, Web Platform", fe)).toBe(true);
+  });
+
+  it("titleRelevant rejects alien fields and junk", () => {
+    expect(titleRelevant("Sr. Data Scientist", fe)).toBe(false);
+    expect(titleRelevant("Product Manager — Healthcare", fe)).toBe(false);
+    expect(titleRelevant("Store Executive", fe)).toBe(false);
+    expect(titleRelevant("", fe)).toBe(false);
+  });
+
+  it("looksLikeRefusal catches AI refusal text but not resumes", () => {
+    expect(looksLikeRefusal("I can't help with this. The resume you've provided…")).toBe(true);
+    expect(looksLikeRefusal("Sorry, but I cannot invent ML experience.")).toBe(true);
+    expect(looksLikeRefusal("I am unable to fabricate credentials.")).toBe(true);
+    expect(looksLikeRefusal("__SKIP__")).toBe(true);
+    expect(looksLikeRefusal("I need to flag something: this resume is missing employment history. It lists skills…")).toBe(true);
+    expect(looksLikeRefusal("This resume is missing employment history.")).toBe(true);
+    expect(looksLikeRefusal("Gaurav Gupta\nStaff Frontend Engineer\n14 years of React…")).toBe(false);
+    expect(looksLikeRefusal("I led the migration to Next.js — I can't stress its impact enough.")).toBe(false);
+    expect(looksLikeRefusal("")).toBe(false);
   });
 });
