@@ -59,10 +59,11 @@ export async function setSiteRules(host, rules) {
 }
 
 /** Queue a review-gate job the engine skipped in unattended mode (deduped). */
-export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason }) {
+export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason, fit }) {
   return rpc(loadLocalCreds(), "engine_queue_job_review", {
     p_site_host: siteHost, p_job_url: jobUrl, p_title: title ?? null,
     p_company: company ?? null, p_form_url: formUrl ?? null, p_reason: reason ?? null,
+    p_fit: fit ?? null,
   });
 }
 
