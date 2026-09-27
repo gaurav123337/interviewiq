@@ -7,6 +7,7 @@
 import { useMemo, useState } from "react";
 import { cardCls, btnGhost, btnOk, btnPrimary, btnSm, Chip } from "../ui";
 import { APPLY_SITES, engineCommands, exportProfileJson, platinumActive } from "../../services/autoApply";
+import JobSitesPanel from "./JobSitesPanel";
 
 export function AutoApplyCard({ locked, onUpgrade, platinum }: {
   locked: boolean;
@@ -107,6 +108,20 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
           <p className="mt-3 text-[11px] text-mut">
             Reports land in <code className="font-mono">freebuff-apply-reports/</code>; the admin Scraper log shows apply runs too.
           </p>
+
+          <JobSitesPanel />
+
+          <div className="mt-3 rounded-lg border border-line/10 bg-deep/40 p-3">
+            <div className="text-[12.5px] font-bold text-fnt">♻️ Keep applying (watch mode)</div>
+            <p className="mt-1 text-[11px] text-mut">
+              One command runs forever on your machine: discovers new candidate boards every cycle, applies across every
+              <b> active</b> registered site, and never re-applies the same job. Leave it in an open terminal:
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-line/10 bg-deep/80 px-3 py-2 font-mono text-[11.5px] text-fnt">node scripts/auto-apply-jobs.js --watch --max 3 --every 6</code>
+              <button className={btnGhost + btnSm} onClick={() => void copy("node scripts/auto-apply-jobs.js --watch --max 3 --every 6")}>📋</button>
+            </div>
+          </div>
         </div>
       )}
     </div>
