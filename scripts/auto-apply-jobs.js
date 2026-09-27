@@ -41,7 +41,7 @@ const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
 /* ----------------------------- CLI args ----------------------------- */
 
 function parseArgs(argv) {
-  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false };
+  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0 };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") args.url = argv[++i] ?? "";
@@ -51,11 +51,57 @@ function parseArgs(argv) {
     else if (a === "--headless") args.headless = true;
     else if (a === "--login-only") args["login-only"] = true;
     else if (a === "--yes") args.confirm = true;
+    else if (a === "--all") args.all = true;
+    else if (a === "--watch") { args.all = true; args.watch = true; }
+    else if (a === "--discover") args.discover = true;
+    else if (a === "--every") args.everyHours = Math.max(1, parseFloat(argv[++i]) || 0);
   }
   return args;
 }
 
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
+
+/* ------------------- applied-dedupe + site registry ------------------- */
+
+const DEDUPE_FILE = path.join(ROOT, "..", "freebuff-apply-state.json");
+let __applied = null;
+function appliedSet() {
+  if (!__applied) {
+    try { __applied = new Set(JSON.parse(readFileSync(DEDUPE_FILE, "utf8"))); }
+    catch { __applied = new Set(); }
+  }
+  return __applied;
+}
+function markApplied(jobUrl) {
+  const s = appliedSet();
+  s.add(jobUrl.split("?")[0]);
+  try { writeFileSync(DEDUPE_FILE, JSON.stringify([...s].slice(-5000))); } catch { /* best effort */ }
+}
+function wasApplied(jobUrl) { return appliedSet().has(jobUrl.split("?")[0]); }
+
+let __sitesDb = undefined;
+async function sitesDb() {
+  if (__sitesDb === undefined) {
+    try { __sitesDb = await import("./job-sites-db.js"); }
+    catch { __sitesDb = null; } // no local creds (e.g. borrowed machine) — degrade to CLI-only
+  }
+  return __sitesDb;
+}
+
+async function syncRunToDb(host, report) {
+  const db = await sitesDb();
+  if (!db) return;
+  try {
+    await db.recordRun({
+      host, ok: report.results.some((r) => r.result === "submitted"),
+      collected: report.results.length,
+      submitted: report.results.filter((r) => r.result === "submitted").length,
+      skipped: report.results.filter((r) => r.result === "skipped").length,
+      errors: report.results.filter((r) => r.result === "error").length,
+      notes: reportLine(report).slice(0, 200),
+    });
+  } catch (e) { console.log(dim(`  (run not synced: ${e.message.slice(0, 80)})`)); }
+}
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -342,8 +388,7 @@ async function trySubmit(page, site) {
 
 /* ------------------------------- main ------------------------------- */
 
-async function main() {
-  const args = parseArgs(process.argv);
+async function runSingle(args) {
   if (!args.url) {
     console.error(`Usage: node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only] [--headless] [--profile file]`);
     process.exit(1);
@@ -398,6 +443,11 @@ async function main() {
 
     for (const job of jobs) {
       console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);
+      if (wasApplied(job.url)) {
+        recordResult(report, job, "skipped", "already applied (dedupe)");
+        console.log(dim("  ⏭ skipped — already applied earlier"));
+        continue;
+      }
       if (!titleRelevant(job.title, profile)) {
         recordResult(report, job, "skipped", `not relevant to profile (${profile.headline || "no headline"})`);
         console.log(dim("  ⏭ skipped — not relevant to your profile"));
@@ -441,6 +491,7 @@ async function main() {
         const sub = await trySubmit(page, site);
         if (sub.auto) {
           recordResult(report, job, "submitted", sub.note);
+          markApplied(job.url);
           console.log(green(`  ✓ ${sub.note}`));
         } else {
           recordResult(report, job, "needsReview", sub.note);
@@ -460,8 +511,88 @@ async function main() {
     writeFileSync(path.join(REPORTS_DIR, `run-${stamp}.md`), buildReportMarkdown(report));
     console.log(`\n${reportLine(report)}`);
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
+    await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
     await ctx.close().catch(() => {});
   }
+}
+
+/* ------------------- --all: iterate ACTIVE registered sites ------------------- */
+
+async function runAll(args) {
+  const db = await sitesDb();
+  let sites = [];
+  if (db) {
+    try {
+      sites = (await db.listJobSites())
+        .filter((s) => s.status === "active" && s.jobs_url)
+        .map((s) => ({ host: s.host, url: s.jobs_url, label: s.label }));
+    } catch (e) { console.log(dim(`(registry read failed: ${e.message.slice(0, 80)})`)); }
+  }
+  if (!sites.length) {
+    /* registry unavailable — fall back to the three builtin boards */
+    sites = [
+      { host: "instahyre.com", url: "https://www.instahyre.com/search-jobs/?search=react", label: "Instahyre" },
+      { host: "naukri.com", url: "https://www.naukri.com/mnjuser/recommendedjobs", label: "Naukri" },
+    ];
+  }
+  console.log(`apply-engine --all → ${sites.length} active site(s): ${sites.map((s) => s.host).join(", ")}`);
+  const totals = { submitted: 0, skipped: 0, errors: 0 };
+  for (const s of sites) {
+    console.log(`\n━━━ ${s.label} (${s.host}) ━━━`);
+    try {
+      /* re-invoke this script per site so every run gets its own report + sync */
+      const { spawnSync } = await import("node:child_process");
+      const res = spawnSync(process.execPath, [
+        path.join(ROOT, "auto-apply-jobs.js"), "--url", s.url, "--max", String(args.max),
+        ...(args["dry-run"] ? ["--dry-run"] : []),
+      ], { stdio: "inherit", cwd: path.join(ROOT, "..") });
+      if (res.status !== 0) totals.errors++;
+    } catch (e) {
+      console.error(red(`site ${s.host} failed: ${e.message.slice(0, 120)}`));
+      totals.errors++;
+    }
+  }
+  console.log(`\n--all complete (${sites.length} sites).`);
+}
+
+/* ----------------------- --watch: keep applying ----------------------- */
+
+async function runWatch(args) {
+  const everyH = args.everyHours || 6;
+  const cycle = async () => {
+    console.log(`\n════ watch cycle ${new Date().toLocaleTimeString()} — discovery (max 4) then apply (--max ${args.max}) ════`);
+    /* discovery first so newly-approved sites join the rotation quickly */
+    try {
+      const { spawnSync } = await import("node:child_process");
+      spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), "--limit", "4"], { stdio: "inherit", cwd: path.join(ROOT, "..") });
+    } catch { /* discovery failing must never stop applying */ }
+    await runAll(args);
+  };
+  for (;;) {
+    await cycle();
+    console.log(dim(`\nsleeping ${everyH}h until the next cycle (Ctrl+C to stop)…`));
+    await new Promise((r) => setTimeout(r, everyH * 3600_000));
+  }
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+  if (args.discover) {
+    const { spawnSync } = await import("node:child_process");
+    const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });
+    process.exit(res.status ?? 1);
+  }
+  if (args.watch) { await runWatch(args); return; }
+  if (args.all) { await runAll(args); return; }
+  if (!args.url) {
+    console.error(`Usage:
+  node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only]
+  node scripts/auto-apply-jobs.js --all [--max N] [--dry-run]        # run every ACTIVE registered site
+  node scripts/auto-apply-jobs.js --watch [--every 6] [--max N]      # discover + apply forever
+  node scripts/auto-apply-jobs.js --discover [--limit 8] [--query "…"] # find new candidate sites (→ pending)`);
+    process.exit(1);
+  }
+  await runSingle(args);
 }
 
 main().catch(e => { console.error(red(e.stack ?? e.message)); process.exit(1); });

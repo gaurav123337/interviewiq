@@ -1,0 +1,59 @@
+/* job-sites-db — Supabase access for the apply engine's site registry.
+   Uses the service key from .claude/settings.local.json (owner machine,
+   gitignored) via the same parse as ai-config.js — CI never has it, and CI
+   doesn't run the local engine anyway. All writes go through the engine_*
+   RPCs (service-role gated server-side). */
+
+import { readFileSync } from "node:fs";
+
+export function loadLocalCreds() {
+  const settings = JSON.parse(readFileSync(".claude/settings.local.json", "utf8"));
+  const rule = (settings.permissions?.allow ?? []).find(
+    (r) => typeof r === "string" && /Bash\(SUPA_URL=/.test(r)
+  );
+  const m = rule?.match(/SUPA_URL=(https:\/\/\S+?)\s+SUPA_KEY=(\S+?)\s+node/);
+  if (!m) throw new Error("no SUPA creds in .claude/settings.local.json");
+  return { base: m[1].replace(/\/+$/, ""), key: m[2] };
+}
+
+async function rpc(creds, fn, args) {
+  const res = await fetch(`${creds.base}/rest/v1/rpc/${fn}`, {
+    method: "POST",
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}`, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) throw new Error(`rpc ${fn} ${res.status}: ${(await res.text()).slice(0, 140)}`);
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+/** All registry rows (builtin + discovered, any status). */
+export async function listJobSites() {
+  const creds = loadLocalCreds();
+  const res = await fetch(`${creds.base}/rest/v1/job_sites?select=*&order=host.asc`, {
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
+  });
+  if (!res.ok) throw new Error(`job_sites read ${res.status}`);
+  return res.json();
+}
+
+/** Insert/update a site (discovery + rule learning). Returns the row id. */
+export async function upsertJobSite({ host, label, jobsUrl, source, rules, sessionOk }) {
+  return rpc(loadLocalCreds(), "engine_upsert_job_site", {
+    p_host: host, p_label: label, p_jobs_url: jobsUrl ?? null, p_source: source,
+    p_rules: rules ?? null, p_session_ok: sessionOk ?? null,
+  });
+}
+
+/** Record a run's outcome on a site (drives the UI's last-run column). */
+export async function recordRun({ host, ok, collected, submitted, skipped, errors, notes }) {
+  return rpc(loadLocalCreds(), "engine_record_job_site_run", {
+    p_host: host, p_ok: ok, p_collected: collected ?? 0, p_submitted: submitted ?? 0,
+    p_skipped: skipped ?? 0, p_errors: errors ?? 0, p_notes: notes ?? null,
+  });
+}
+
+/** Merge learned selector rules into a site's rules blob. */
+export async function setSiteRules(host, rules) {
+  return rpc(loadLocalCreds(), "engine_set_job_site_rules", { p_host: host, p_rules: rules });
+}
