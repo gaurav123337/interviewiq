@@ -17,6 +17,18 @@ export const SITE_RULES: Record<string, ApplySiteRule>;
 
 export function siteFromUrl(url: string): string;
 
+export function isChallengePage(title: string | null | undefined, bodyText: string | null | undefined): boolean;
+
+export function detectAccountProblem(bodyText: string | null | undefined): string | null;
+
+export function looksLoggedIn(opts: {
+  url: string;
+  title?: string | null;
+  bodyText?: string | null;
+  loggedInHint?: string;
+  loginPathHints?: string[];
+}): boolean;
+
 export interface QuestionClass {
   kind:
     | "email" | "phone" | "years" | "notice" | "salary" | "relocation" | "remote"
