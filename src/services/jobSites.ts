@@ -45,6 +45,13 @@ export function summarizeSite(s: JobSite): string {
 /* ── Review queue: review-gate jobs the engine skipped in --unattended mode.
    The engine records them with the form URL; the owner finishes them here. */
 
+export interface ReviewFormField {
+  label: string;
+  kind: string;
+  required: boolean;
+  answered: boolean;
+}
+
 export interface ReviewItem {
   id: string;
   site_host: string;
@@ -54,6 +61,7 @@ export interface ReviewItem {
   form_url: string | null;
   reason: string | null;
   fit: number | null;
+  form_fields: ReviewFormField[] | null;
   created_at: string;
 }
 

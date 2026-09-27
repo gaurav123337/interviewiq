@@ -130,3 +130,49 @@ export function extraAnswerFor(profile: ApplyProfileLike | null | undefined, kin
 export function isExternalApplyButton(text: string | null | undefined): boolean;
 
 export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined): number | null;
+
+/* ── per-ATS selector packs ─────────────────────────────────────────── */
+
+export interface AtsPack {
+  label: string;
+  hostHints: string[];
+  fieldSelectorHints: string[];
+  submitButtonText: RegExp;
+  successText: RegExp;
+}
+
+export const ATS_PACKS: Record<"greenhouse" | "lever" | "workable" | "generic", AtsPack>;
+
+export function detectAts(url: string | null | undefined): AtsPack;
+
+/* ── form-answer memory (store + reuse) ─────────────────────────────── */
+
+export function normalizeFieldKey(label: string | null | undefined): string;
+
+export function canStoreAnswer(kind: string | null | undefined): boolean;
+
+export interface FormFieldMeta {
+  label: string; tag: string; type?: string; required: boolean; options?: string[];
+}
+
+export interface PlannedAnswer {
+  cls: QuestionClass;
+  key: string;
+  answer: string;
+}
+
+export function planFormAnswers(
+  fields: FormFieldMeta[] | null | undefined,
+  profile: ApplyProfileLike | null | undefined,
+  job: ApplyJobLike | null | undefined,
+  stored?: Record<string, string>
+): PlannedAnswer[];
+
+export interface FormFieldPreview {
+  label: string; kind: string; required: boolean; answered: boolean;
+}
+
+export function formFieldsPreview(
+  fields: FormFieldMeta[] | null | undefined,
+  plan?: PlannedAnswer[] | null
+): FormFieldPreview[];

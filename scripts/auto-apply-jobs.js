@@ -33,8 +33,9 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
-  newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES,
+  newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, isExternalApplyButton,
+  normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi } from "./apply-kit-node.js";
 
@@ -114,6 +115,41 @@ async function queueReview(entry) {
   const db = await sitesDb();
   if (!db?.queueJobReview) return;
   await db.queueJobReview(entry).catch((e) => console.log(dim(`  (queue: ${e.message.slice(0, 60)})`)));
+}
+
+/* --- form-answer memory: every filled field is stored for future reuse ---
+   DB (form_answers, keyed site_host+field_key) is the durable copy; a local
+   JSON cache mirrors it so forms fill even when Supabase is unreachable.
+   Reads are merged (DB wins on conflict) — both are just (label → answer). */
+const ANSWERS_FILE = path.join(ROOT, "..", "freebuff-apply-answers.json");
+function localAnswerCache() {
+  try { return JSON.parse(readFileSync(ANSWERS_FILE, "utf8")) ?? {}; }
+  catch { return {}; }
+}
+function rememberLocalAnswer(host, key, answer) {
+  if (!key || !answer) return;
+  try {
+    const all = localAnswerCache();
+    (all[host] ??= {});
+    all[host][key] = answer;
+    writeFileSync(ANSWERS_FILE, JSON.stringify(all, null, 2));
+  } catch { /* best effort — the DB copy is authoritative */ }
+}
+async function storeFormAnswers(host, plan, fields) {
+  const db = await sitesDb();
+  for (let i = 0; i < (fields?.length ?? 0); i++) {
+    const p = plan[i];
+    if (!p?.answer || !p.key || !canStoreAnswer(p.cls.kind)) continue;
+    rememberLocalAnswer(host, p.key, p.answer);
+    await db?.putFormAnswer?.({ siteHost: host, fieldKey: p.key, answer: p.answer, kind: p.cls.kind, label: fields[i].label }).catch(() => {});
+  }
+}
+async function loadAnswerMemory(host) {
+  const db = await sitesDb();
+  let dbMap = {};
+  try { dbMap = (await db?.getFormAnswers?.(host)) ?? {}; } catch { /* degrade to local cache */ }
+  const local = (localAnswerCache()[host] ?? {});
+  return { ...local, ...dbMap }; // DB wins on conflict (fresher, owner-visible)
 }
 
 /* --- Telegram notify: post-batch summary (opt-in via notify_config) --- */
@@ -409,24 +445,34 @@ async function openJob(page, job) {
 
 /* --------------------------- form filling --------------------------- */
 
-async function fillApplicationForm(page, { profile, job, resumePath, dryRun }) {
-  const fields = await page.evaluate(() => {
-    const controls = [...document.querySelectorAll("input:not([type=hidden]):not([disabled]), textarea, select")];
+async function fillApplicationForm(page, { profile, job, resumePath, dryRun, siteHost, storedAnswers }) {
+  /* per-ATS selector pack: known boards (Greenhouse/Lever/Workable) scope the
+     field query to their form so nav/search inputs never become "fields" */
+  const pack = detectAts(page.url());
+  const scopedSelector = pack === ATS_PACKS.generic
+    ? "input:not([type=hidden]):not([disabled]), textarea, select"
+    : pack.fieldSelectorHints.join(", ");
+  const fields = await page.evaluate((sel) => {
+    const controls = [...document.querySelectorAll(sel)];
     return controls.map(el => {
       const labelEl = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null);
       const label = (labelEl?.innerText ?? el.getAttribute("aria-label") ?? el.getAttribute("placeholder") ?? el.getAttribute("name") ?? "").trim();
       return { tag: el.tagName.toLowerCase(), type: el.getAttribute("type") ?? "", label, required: el.required || !!el.closest("[aria-required=true]"), options: el.tagName === "SELECT" ? [...el.options].map(o => o.textContent.trim()) : undefined };
     });
-  });
-  const controls = await page.$$("input:not([type=hidden]):not([disabled]), textarea, select");
+  }, scopedSelector);
+  const controls = await page.$$(scopedSelector);
+  /* one plan per form: draft from the profile, then fall back to the
+     remembered answer for the same field label (form-answer memory) */
+  const plan = planFormAnswers(fields, profile, job, storedAnswers ?? {});
   const unfilledRequired = [];
   let filled = 0;
 
   for (let i = 0; i < controls.length; i++) {
     const c = controls[i];
     const meta = fields[i] ?? { label: "", tag: "input", required: false };
-    const cls = classifyQuestion(meta.label, { tag: meta.tag, required: meta.required });
-    const answer = draftAnswer(cls.kind, profile, job);
+    let p = plan[i];
+    if (!p) { const c2 = classifyQuestion(meta.label, { tag: meta.tag, required: meta.required }); p = { cls: c2, key: normalizeFieldKey(meta.label), answer: draftAnswer(c2.kind, profile, job) }; }
+    const { cls, answer } = p;
     try {
       if (meta.tag === "select") {
         if (!answer) { if (meta.required) unfilledRequired.push(meta.label || cls.kind); continue; }
@@ -446,7 +492,8 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun }) {
       }
     } catch { /* field-specific failure — count as unfilled if required */ if (meta.required) unfilledRequired.push(meta.label || cls.kind); }
   }
-  return { filled, unfilledRequired };
+  if (!dryRun) await storeFormAnswers(siteHost ?? "", plan, fields);
+  return { filled, unfilledRequired, fields, plan };
 }
 
 /* ------------------------------ submit ------------------------------ */
@@ -655,10 +702,12 @@ async function runSingle(args) {
               if (atsPage) { await target.bringToFront().catch(() => {}); await target.waitForTimeout(2500); }
               const resumePath2 = path.join(REPORTS_DIR, `resume-${Date.now()}.txt`);
               writeFileSync(resumePath2, kit.resume);
-              const res2 = await fillApplicationForm(target, { profile, job, resumePath: resumePath2, dryRun: false });
+              const mem2 = await loadAnswerMemory(site);
+              const res2 = await fillApplicationForm(target, { profile, job, resumePath: resumePath2, dryRun: false, siteHost: site, storedAnswers: mem2 });
+              const preview = formFieldsPreview(res2.fields, res2.plan);
               recordResult(report, job, "needsReview", `external ATS form filled (${res2.filled} fields) — submit manually from the review queue`);
               console.log(yellow(`  ⏸ external ATS: filled ${res2.filled} fields — queued; you submit (never auto on unknown ATS)`));
-              await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null });
+              await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null, formFields: preview });
               if (atsPage) await atsPage.close().catch(() => {}); // don't leak tabs
             }
             await page.waitForTimeout(rules.minIntervalMs);
@@ -672,7 +721,8 @@ async function runSingle(args) {
           continue;
         }
 
-        const { filled, unfilledRequired } = await fillApplicationForm(page, { profile, job, resumePath, dryRun: args["dry-run"] });
+        const mem = await loadAnswerMemory(site); // form-answer memory: stored labels reuse their last answer
+        const { filled, unfilledRequired } = await fillApplicationForm(page, { profile, job, resumePath, dryRun: args["dry-run"], siteHost: site, storedAnswers: mem });
         if (unfilledRequired.length) {
           recordResult(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));

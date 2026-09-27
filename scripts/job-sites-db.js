@@ -59,12 +59,30 @@ export async function setSiteRules(host, rules) {
 }
 
 /** Queue a review-gate job the engine skipped in unattended mode (deduped). */
-export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason, fit }) {
+export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason, fit, formFields }) {
   return rpc(loadLocalCreds(), "engine_queue_job_review", {
     p_site_host: siteHost, p_job_url: jobUrl, p_title: title ?? null,
     p_company: company ?? null, p_form_url: formUrl ?? null, p_reason: reason ?? null,
-    p_fit: fit ?? null,
+    p_fit: fit ?? null, p_form_fields: formFields ?? null,
   });
+}
+
+/* ── form-answer memory: store every filled field for reuse ─────────── */
+
+/** Upsert one field's answer (freshest wins). Fire-and-forget per field is
+    fine — failures are non-fatal (memory is an optimization, never a gate). */
+export async function putFormAnswer({ siteHost, fieldKey, answer, kind, label }) {
+  return rpc(loadLocalCreds(), "engine_put_form_answer", {
+    p_site_host: siteHost, p_field_key: fieldKey, p_answer: answer,
+    p_kind: kind ?? null, p_label: label ?? null,
+  });
+}
+
+/** The remembered (label → answer) map for one site. Empty map when the
+    memory is unavailable — planFormAnswers falls back to draftAnswer only. */
+export async function getFormAnswers(siteHost) {
+  const rows = await rpc(loadLocalCreds(), "engine_get_form_answers", { p_site_host: siteHost });
+  return Object.fromEntries((rows ?? []).map((r) => [r.field_key, r.answer]));
 }
 
 /** Telegram notify config for post-batch summaries (nulls when unset). */
