@@ -41,3 +41,55 @@ export function summarizeSite(s: JobSite): string {
   if (!s.last_ok) return `last run failed · ${when}`;
   return `${s.last_submitted ?? 0} submitted / ${s.last_collected ?? 0} seen · ${when}`;
 }
+
+/* ── Review queue: review-gate jobs the engine skipped in --unattended mode.
+   The engine records them with the form URL; the owner finishes them here. */
+
+export interface ReviewItem {
+  id: string;
+  site_host: string;
+  job_url: string;
+  title: string | null;
+  company: string | null;
+  form_url: string | null;
+  reason: string | null;
+  created_at: string;
+}
+
+export async function listJobReviews(): Promise<ReviewItem[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_list_job_reviews");
+  if (error) throw error;
+  return (data ?? []) as ReviewItem[];
+}
+
+export async function resolveJobReview(id: string, status: "done" | "dismissed"): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_resolve_job_review", { p_id: id, p_status: status });
+  if (error) throw error;
+}
+
+/* ── Telegram notify config (used by the engine's post-batch summary) ──── */
+
+export interface NotifyConfig {
+  chat_id: string | null;
+  bot_token: string | null;
+  updated_at: string | null;
+}
+
+export async function getNotifyConfig(): Promise<NotifyConfig | null> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_get_notify_config");
+  if (error) throw error;
+  return ((data as NotifyConfig[]) ?? [])[0] ?? null;
+}
+
+export async function setNotifyConfig(chatId: string, botToken: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_set_notify_config", { p_chat_id: chatId, p_bot_token: botToken });
+  if (error) throw error;
+}

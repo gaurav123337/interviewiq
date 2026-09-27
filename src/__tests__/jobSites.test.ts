@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig } from "../services/jobSites";
 
 const rpc = vi.fn();
 const client = { rpc };
@@ -58,5 +58,58 @@ describe("summarizeSite", () => {
     expect(summarizeSite({ last_run_at: null } as never)).toBe("never run");
     expect(summarizeSite({ last_run_at: "2026-09-27T05:00:00Z", last_ok: false } as never)).toMatch(/failed/);
     expect(summarizeSite({ last_run_at: "2026-09-27T05:00:00Z", last_ok: true, last_submitted: 2, last_collected: 5 } as never)).toMatch(/2 submitted \/ 5 seen/);
+  });
+});
+
+describe("review queue", () => {
+  it("returns pending review items via admin_list_job_reviews", async () => {
+    rpc.mockResolvedValueOnce({
+      data: [
+        { id: "r1", site_host: "linkedin.com", job_url: "https://x/job", title: "Frontend Engineer", company: "Acme", form_url: "https://x/form", reason: "review gate", created_at: "2026-09-27T09:00:00Z" },
+      ],
+      error: null,
+    });
+    const rows = await listJobReviews();
+    expect(rpc).toHaveBeenCalledWith("admin_list_job_reviews");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].site_host).toBe("linkedin.com");
+    expect(rows[0].form_url).toBe("https://x/form");
+  });
+
+  it("throws when cloud is not configured", async () => {
+    clientFn.value = null;
+    await expect(listJobReviews()).rejects.toThrow(/cloud not configured/);
+    clientFn.value = client;
+  });
+
+  it("resolves an item with admin_resolve_job_review", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await resolveJobReview("r1", "done");
+    expect(rpc).toHaveBeenCalledWith("admin_resolve_job_review", { p_id: "r1", p_status: "done" });
+  });
+
+  it("propagates resolve errors", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
+    await expect(resolveJobReview("r1", "dismissed")).rejects.toThrow("forbidden");
+  });
+});
+
+describe("notify config", () => {
+  it("reads the telegram row via admin_get_notify_config", async () => {
+    rpc.mockResolvedValueOnce({ data: [{ chat_id: "42", bot_token: "tok", updated_at: "2026-09-27T09:00:00Z" }], error: null });
+    const cfg = await getNotifyConfig();
+    expect(rpc).toHaveBeenCalledWith("admin_get_notify_config");
+    expect(cfg?.chat_id).toBe("42");
+  });
+
+  it("returns null when unset", async () => {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
+    expect(await getNotifyConfig()).toBeNull();
+  });
+
+  it("saves via admin_set_notify_config", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await setNotifyConfig("42", "tok");
+    expect(rpc).toHaveBeenCalledWith("admin_set_notify_config", { p_chat_id: "42", p_bot_token: "tok" });
   });
 });
