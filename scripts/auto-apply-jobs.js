@@ -11,7 +11,8 @@
  *     one the app uses), fills the application form with honest answers from
  *     your profile, and submits — per-site rules:
  *       Instahyre + Naukri → auto-submit; LinkedIn + unknown → REVIEW GATE
- *       (form filled, browser paused for a human click).
+ *       (form filled, browser paused for a human click; with --unattended
+ *       those sites are skipped instead of pausing, so scheduled runs never hang).
  *   - any required question it cannot answer confidently blocks submission
  *     (fail-closed) and marks the job needs-review in the report.
  *
@@ -41,7 +42,7 @@ const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
 /* ----------------------------- CLI args ----------------------------- */
 
 function parseArgs(argv) {
-  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0 };
+  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") args.url = argv[++i] ?? "";
@@ -55,6 +56,7 @@ function parseArgs(argv) {
     else if (a === "--watch") { args.all = true; args.watch = true; }
     else if (a === "--discover") args.discover = true;
     else if (a === "--every") args.everyHours = Math.max(1, parseFloat(argv[++i]) || 0);
+    else if (a === "--unattended") args.unattended = true; // scheduled runs: never page.pause() — skip review-gate sites instead
   }
   return args;
 }
@@ -516,6 +518,7 @@ async function runSingle(args) {
         if (unfilledRequired.length) {
           recordResult(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
+          if (!rules.autoSubmit && args.unattended) { recordResult(report, job, "skipped", "review-gate site — skipped in --unattended mode"); console.log(dim("  ⏭ unattended: left for a human session")); continue; }
           if (!rules.autoSubmit) await page.pause(); // review-gate sites: let the human finish here
           continue;
         }
@@ -529,6 +532,7 @@ async function runSingle(args) {
         } else {
           recordResult(report, job, "needsReview", sub.note);
           console.log(yellow(`  ⏸ ${sub.note} — browser is open on the form; finish and submit manually.`));
+          if (args.unattended) { recordResult(report, job, "skipped", "review-gate site — skipped in --unattended mode"); console.log(dim("  ⏭ unattended: left for a human session")); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);
@@ -579,6 +583,7 @@ async function runAll(args) {
       const res = spawnSync(process.execPath, [
         path.join(ROOT, "auto-apply-jobs.js"), "--url", s.url, "--max", String(args.max),
         ...(args["dry-run"] ? ["--dry-run"] : []),
+        ...(args.unattended ? ["--unattended"] : []),
       ], { stdio: "inherit", cwd: path.join(ROOT, "..") });
       if (res.status !== 0) totals.errors++;
     } catch (e) {
