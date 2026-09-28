@@ -46,9 +46,11 @@ Shortlist for us: **Browserbase** (best docs/resume semantics) or **Steel**
 ## Risks (the part that decides this)
 
 1. **Cloud IP reputation** — the #1 risk. Mitigations, in order of preference:
-   vendor **residential/mobile proxy add-on** (Browserbase/Steel both sell
-   geo-targeted residential egress), or routing the session through the owner's
-   home via a tiny residential exit relay (self-hosted complexity).
+   **IMPLEMENTED: the residential-exit relay (see apply-relay.md) — a dedicated
+   persistent Chromium with CDP on the owner's machine, reachable over the
+   tailnet; residential IP egress, $0.** Vendor residential/mobile proxy
+   add-ons (Browserbase/Steel sell geo-targeted egress) are the fallback for
+   true hosting.
 2. **ToS** — driving a real logged-in LinkedIn account from a hosted browser is
    the same automation the local engine does; account risk is unchanged in kind,
    but new-IP-logins look suspicious → keep one stable egress IP per site session.

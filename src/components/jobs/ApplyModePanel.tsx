@@ -12,7 +12,7 @@ import { getApplyConfig, setApplyConfig, isValidCdpEndpoint, type ApplyConfig, t
 const MODES: { id: ApplyMode; label: string; blurb: string }[] = [
   { id: "off", label: "⏸ Off", blurb: "Kill switch — the engine re-checks this every cycle and skips even while the watcher is running." },
   { id: "local", label: "🖥 My machine", blurb: "Run the local Playwright engine here (watcher + watchdog as set up on this PC)." },
-  { id: "cloud", label: "☁️ Cloud session", blurb: "Run against a persistent hosted browser (CDP). Needs a session endpoint; remote acquisition ships next." },
+  { id: "cloud", label: "☁️ Cloud session", blurb: "Run against a persistent browser over CDP — your home relay (http://127.0.0.1:9222, docs/apply-relay.md) or a vendor (wss://…)." },
 ];
 
 export default function ApplyModePanel() {
@@ -98,7 +98,7 @@ export default function ApplyModePanel() {
           <input
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder="CDP endpoint — wss://… (Browserbase/Steel) or http://127.0.0.1:9222 (local test)"
+            placeholder="CDP endpoint — home relay http://127.0.0.1:9222 · tailnet http://100.x.y.z:9222 · vendor wss://…"
             className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500"
           />
           <button disabled={busy || !isValidCdpEndpoint(endpoint)} onClick={() => void apply("cloud")}
