@@ -37,7 +37,7 @@ import {
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, isExternalApplyButton,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
 } from "./apply-engine-lib.js";
-import { buildKit, loadAi } from "./apply-kit-node.js";
+import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
 import { acquireApplyContext, isRemoteEndpoint } from "./apply-browser.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -730,16 +730,33 @@ async function runSingle(args) {
       if (page.isClosed?.()) page = await ctx.newPage(); // watchdog closed it last job — fresh page
       try {
         await openJob(page, job);
-        const kit = await buildKit(ai, profile, { title: job.title, company: job.company, skills: (job.description.match(/\b(Node\.js|React|TypeScript|Python|AWS|Kubernetes|PostgreSQL|Docker|GraphQL|Kafka|System Design|Machine Learning)\b/gi) ?? []).slice(0, 8).map(s => s[0].toUpperCase() + s.slice(1)) });
-        if (looksLikeRefusal(kit.resume) || looksLikeRefusal(kit.coverLetter)) {
-          throw new Error("AI refused to tailor this kit (role mismatch?) — not submitting");
-        }
-        /* skill gate on the REAL JD text now that the page is open */
+        /* skill gate on the REAL JD text now that the page is open (cheap,
+           deterministic: title-critical skills, coverage ratio) */
         const gate = postingRelevant({ title: job.title, description: job.description }, profile);
         if (!gate.ok) {
           recordResultBoth(report, job, "skipped", gate.reason);
           console.log(dim(`  ⏭ skipped — ${gate.reason}`));
           continue;
+        }
+        /* AI JUDGE: reads the actual JD and renders apply/skip with a reason
+           — catches what regexes cannot ("Testing on the resume ≠ SDET job",
+           backend-core-under-frontend-words JDs). Fail-open to unknown:
+           judge trouble never blocks the deterministic path. Runs BEFORE
+           kit generation — a skip here saves two AI calls + form filling. */
+        if (ai) {
+          job.__judge = await judgeFit(ai, job, profile);
+          if (job.__judge.verdict === "skip") {
+            const why = `AI judge: ${job.__judge.reason || "not a realistic match"}`;
+            recordResultBoth(report, job, "skipped", why);
+            console.log(dim(`  ⏭ skipped — ${why}`));
+            continue;
+          }
+          if (job.__judge.verdict === "apply") console.log(dim(`  🧠 judge: apply (${job.__judge.reason || "match"})`));
+          else console.log(dim(`  🧠 judge: unsure (${job.__judge.reason || "no verdict"}) — proceeding on gates`));
+        }
+        const kit = await buildKit(ai, profile, { title: job.title, company: job.company, skills: (job.description.match(/\b(Node\.js|React|TypeScript|Python|AWS|Kubernetes|PostgreSQL|Docker|GraphQL|Kafka|System Design|Machine Learning)\b/gi) ?? []).slice(0, 8).map(s => s[0].toUpperCase() + s.slice(1)) });
+        if (looksLikeRefusal(kit.resume) || looksLikeRefusal(kit.coverLetter)) {
+          throw new Error("AI refused to tailor this kit (role mismatch?) — not submitting");
         }
         if (gate.matched?.length) { job.__fit = fitScore(gate.matched, gate.missing); console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""} · fit ${job.__fit}`)); }
         job.__coverLetter = kit.coverLetter;

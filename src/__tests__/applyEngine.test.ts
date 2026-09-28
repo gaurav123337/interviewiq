@@ -10,6 +10,7 @@ import {
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
+  titleSkills, judgeMessages, parseJudgeReply,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("external apply buttons (company-website ATS)", () => {
@@ -321,6 +322,61 @@ describe("per-ATS selector packs", () => {
     }
     expect(ATS_PACKS.greenhouse.fieldSelectorHints.some((h) => h.includes("#application_form"))).toBe(true);
     expect(ATS_PACKS.lever.fieldSelectorHints.every((h) => h.includes("form ") || h.startsWith("form"))).toBe(true);
+  });
+});
+
+describe("critical-skill gate — title-named skills are not ratio-forgiven", () => {
+  const profile = { headline: "Staff Frontend Engineer", years: 14, skills: ["React", "TypeScript", "Testing", "Playwright", "Docker", "CI/CD"] };
+
+  it("extracts skills named in the posting title", () => {
+    expect(titleSkills("Senior Python Full Stack Developer With React")).toContain("python");
+    expect(titleSkills("Senior Python Full Stack Developer With React")).toContain("react");
+    expect(titleSkills("Next.js Staff Engineer")).toContain("react"); // next.js → react family
+    expect(titleSkills("Go deep with your career")).not.toContain("go"); // prose, not a skill
+  });
+
+  it("rejects DataArt-style JDs even though the coverage ratio would pass", () => {
+    // react+ts+docker+ci match, python missing → 4/5 = 80% ≥ 60% — old gate PASSED this
+    const m = postingRelevant({ title: "Senior Python Full Stack Developer With React", description: "Python backend with FastAPI. React frontend. Docker, CI/CD, TypeScript." }, profile);
+    expect(m.ok).toBe(false);
+    expect(m.reason).toMatch(/core skill missing: python/);
+  });
+
+  it("still passes a genuinely matching posting (no false strictness)", () => {
+    const m = postingRelevant({ title: "Staff Frontend Engineer", description: "React, Next.js, TypeScript, design systems, performance. Docker and CI/CD a plus." }, profile);
+    expect(m.ok).toBe(true);
+  });
+
+  it("repeated ≥3× in the JD makes a skill critical even when the title omits it", () => {
+    const m = postingRelevant({ title: "Platform Engineer", description: "python python python — everything here is python" }, profile);
+    expect(m.ok).toBe(false);
+    expect(m.reason).toMatch(/core skill missing: python/);
+  });
+});
+
+describe("AI judge — reading comprehension over regex gates", () => {
+  const profile = { headline: "Staff Frontend Engineer", years: 14, skills: ["React", "TypeScript", "Testing", "Playwright"] };
+
+  it("the judge prompt encodes the SDET/preference-vs-role guard", () => {
+    const { system } = judgeMessages({ title: "SDET at HackerRank", description: "Playwright, TS, automation frameworks" }, profile);
+    expect(system).toMatch(/SDET/);
+    expect(system).toMatch(/"verdict":"apply\|skip"/);
+    expect(system).toMatch(/missingCore/);
+  });
+
+  it("parses a well-formed verdict and clamps/preserves fields", () => {
+    const v = parseJudgeReply('{"verdict":"skip","confidence":0.9,"reason":"QA automation role, not frontend","missingCore":["qa","selenium"]}');
+    expect(v.verdict).toBe("skip");
+    expect(v.confidence).toBe(0.9);
+    expect(v.missingCore).toEqual(["qa", "selenium"]);
+  });
+
+  it("any prose/refusal/junk degrades to unknown (fail-open), never to a verdict", () => {
+    expect(parseJudgeReply("I cannot do that").verdict).toBe("unknown");
+    expect(parseJudgeReply("{verdict: skip}").verdict).toBe("unknown"); // not valid JSON
+    expect(parseJudgeReply('{"verdict":"maybe","reason":"x"}').verdict).toBe("unknown");
+    expect(parseJudgeReply("").verdict).toBe("unknown");
+    expect(parseJudgeReply(null).verdict).toBe("unknown");
   });
 });
 

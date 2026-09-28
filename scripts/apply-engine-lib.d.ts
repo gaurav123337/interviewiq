@@ -176,3 +176,21 @@ export function formFieldsPreview(
   fields: FormFieldMeta[] | null | undefined,
   plan?: PlannedAnswer[] | null
 ): FormFieldPreview[];
+
+/* ── AI judge (JD reading comprehension) ───────────────────────────── */
+
+export function titleSkills(title: string | null | undefined): string[];
+
+export interface JudgeVerdict {
+  verdict: "apply" | "skip" | "unknown";
+  confidence?: number;
+  reason?: string;
+  missingCore?: string[];
+}
+
+export function judgeMessages(
+  job: (ApplyJobLike & { description?: string | null }) | null | undefined,
+  profile: ApplyProfileLike | null | undefined
+): { system: string; user: string };
+
+export function parseJudgeReply(text: string | null | undefined): JudgeVerdict;
