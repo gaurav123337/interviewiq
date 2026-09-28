@@ -122,6 +122,11 @@ export async function getApplyConfig(): Promise<ApplyConfig | null> {
   return ((data as ApplyConfig[]) ?? [])[0] ?? null;
 }
 
+/** CDP endpoint shape: ws/wss (vendors) or http(s) (local test servers). */
+export function isValidCdpEndpoint(endpoint: string): boolean {
+  return /^(wss?|https?):\/\//i.test(endpoint.trim());
+}
+
 export async function setApplyConfig(mode: ApplyMode, cloudProvider?: string, cloudEndpoint?: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");

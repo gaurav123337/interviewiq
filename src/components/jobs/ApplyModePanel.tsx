@@ -7,7 +7,7 @@
    skips honestly until then). */
 
 import { useEffect, useState } from "react";
-import { getApplyConfig, setApplyConfig, type ApplyConfig, type ApplyMode } from "../../services/jobSites.ts";
+import { getApplyConfig, setApplyConfig, isValidCdpEndpoint, type ApplyConfig, type ApplyMode } from "../../services/jobSites.ts";
 
 const MODES: { id: ApplyMode; label: string; blurb: string }[] = [
   { id: "off", label: "⏸ Off", blurb: "Kill switch — the engine re-checks this every cycle and skips even while the watcher is running." },
@@ -98,11 +98,12 @@ export default function ApplyModePanel() {
           <input
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder="CDP endpoint (wss://…browserbase…/…) — required for cloud mode"
+            placeholder="CDP endpoint — wss://… (Browserbase/Steel) or http://127.0.0.1:9222 (local test)"
             className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500"
           />
-          <button disabled={busy || !endpoint.trim()} onClick={() => void apply("cloud")}
+          <button disabled={busy || !isValidCdpEndpoint(endpoint)} onClick={() => void apply("cloud")}
             className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40">Save endpoint</button>
+          {endpoint && !isValidCdpEndpoint(endpoint) && <div className="w-full text-[10.5px] text-amber-500">needs to start with wss://, ws:// or http(s)://</div>}
         </div>
       )}
 
