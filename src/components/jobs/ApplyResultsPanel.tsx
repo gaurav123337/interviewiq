@@ -4,7 +4,10 @@
    story; the review queue handles only the "you must act" subset. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listApplyResults, applyResultCounts, type ApplyResultRow } from "../../services/jobSites.ts";
+import {
+  listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes,
+  type ApplyResultRow,
+} from "../../services/jobSites.ts";
 
 /** host part of a job/form URL → source chip; falls back to the row's site_host */
 function sourceOf(r: ApplyResultRow): string {
@@ -29,13 +32,16 @@ function ago(iso: string): string {
 
 export default function ApplyResultsPanel() {
   const [rows, setRows] = useState<ApplyResultRow[] | null>(null);
+  const [strikes, setStrikes] = useState<{ skill: string; strikes: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ApplyResultRow["result"] | "all">("all");
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
       setRows(await listApplyResults(150));
+      setStrikes(await getSkillStrikes().catch(() => []));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setRows([]);
@@ -43,6 +49,23 @@ export default function ApplyResultsPanel() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  /* 👎 → the row's missing-core skills gain a strike (2 = learned hard
+     reject); 👍 → clears strikes for those skills. Skills are parsed from
+     the judge detail when present, else sent empty (verdict still stored). */
+  const learn = async (r: ApplyResultRow, verdict: "good" | "bad") => {
+    setBusyId(r.id);
+    try {
+      const skills = r.detail?.match(/missing:\s*([a-z0-9,. ]+)/i)?.[1]
+        ?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+      await sendApplyFeedback(r.id, verdict, skills);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   if (rows === null) return <div className="mt-3 text-xs text-zinc-500">Loading applications report…</div>;
 
@@ -68,6 +91,12 @@ export default function ApplyResultsPanel() {
       {error && <div className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!rows.length && <div className="mt-2 text-xs text-zinc-500">No decisions recorded yet — they land here as soon as the engine runs a site.</div>}
 
+      {strikes.length > 0 && (
+        <div className="mt-2 rounded bg-fuchsia-500/10 px-2 py-1.5 text-[11px] text-fuchsia-300">
+          🧠 Learned hard-rejects (2+ of your 👎): {strikes.map((s) => `${s.skill} ×${s.strikes}`).join(" · ")} — any JD requiring these is skipped automatically. 👍 on a new row clears a skill.
+        </div>
+      )}
+
       <div className="mt-2 max-h-72 space-y-1.5 overflow-y-auto pr-1">
         {shown.map((r) => (
           <div key={r.id} className="rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5">
@@ -91,6 +120,16 @@ export default function ApplyResultsPanel() {
               ) : r.job_url ? (
                 <a href={r.job_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-sky-500 hover:text-sky-400">open ↗</a>
               ) : null}
+              {(r.result === "submitted" || r.result === "needs_review") && (
+                <span className="ml-auto flex shrink-0 items-center gap-1">
+                  <button disabled={busyId === r.id} title="Good match — also clears any learned strikes on this row's missing skills"
+                    onClick={() => void learn(r, "good")}
+                    className={`rounded border px-1.5 py-0.5 ${r.feedback === "good" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300" : "border-zinc-700 text-zinc-400 hover:border-emerald-600 hover:text-emerald-400"} disabled:opacity-40`}>👍</button>
+                  <button disabled={busyId === r.id} title="Wrong application — its missing-core skills get a strike (2 strikes = auto-reject forever)"
+                    onClick={() => void learn(r, "bad")}
+                    className={`rounded border px-1.5 py-0.5 ${r.feedback === "bad" ? "border-red-500/60 bg-red-500/15 text-red-300" : "border-zinc-700 text-zinc-400 hover:border-red-600 hover:text-red-400"} disabled:opacity-40`}>👎</button>
+                </span>
+              )}
             </div>
           </div>
         ))}

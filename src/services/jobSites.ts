@@ -149,6 +149,7 @@ export interface ApplyResultRow {
   result: "submitted" | "needs_review" | "skipped" | "error";
   detail: string | null;
   fit: number | null;
+  feedback: "good" | "bad" | null;
   created_at: string;
 }
 
@@ -164,4 +165,28 @@ export function applyResultCounts(rows: ApplyResultRow[]): Record<ApplyResultRow
   const counts = { submitted: 0, needs_review: 0, skipped: 0, error: 0 };
   for (const r of rows) if (r.result in counts) counts[r.result] += 1;
   return counts;
+}
+
+/* ── feedback loop: 👍/👎 on applied jobs teach the gate ────────────────── */
+
+export type FeedbackVerdict = "good" | "bad";
+
+/** Record owner feedback; skills are the row's missing-core skills (bad →
+    strikes, good → clears). Returns resulting global strike counts. */
+export async function sendApplyFeedback(id: string, verdict: FeedbackVerdict, skills: string[]): Promise<{ skill: string; strikes: number }[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("engine_apply_feedback", {
+    p_result_id: id, p_verdict: verdict, p_skills: skills.length ? skills : null,
+  });
+  if (error) throw error;
+  return ((data as { skill: string; strikes: number }[]) ?? []);
+}
+
+export async function getSkillStrikes(): Promise<{ skill: string; strikes: number }[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_get_skill_strikes");
+  if (error) throw error;
+  return ((data as { skill: string; strikes: number }[]) ?? []);
 }
