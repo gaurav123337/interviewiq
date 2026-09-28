@@ -188,16 +188,40 @@ export function profileSkillSet(profile) {
 }
 
 /**
+ * Skills named in the POSTING TITLE are core by definition: "Senior Python
+ * Full Stack Developer" needs python — a 60% overall ratio must not wave
+ * the headline skill through. Longest-alias-first so "next.js" wins over
+ * "next"; word-boundary matched.
+ */
+export function titleSkills(title) {
+  const t = " " + String(title || "").toLowerCase().replace(/[^a-z0-9+#./ -]/g, " ").replace(/\s+/g, " ") + " ";
+  const out = new Set();
+  const aliases = Object.keys(SKILL_ALIASES).sort((a, b) => b.length - a.length);
+  for (const alias of aliases) {
+    if (alias.length < 2) continue; // "go"/"r" in titles = prose, not skills
+    const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\//g, "\\/");
+    if (new RegExp("(?:^| )" + esc + "(?: |$)").test(t)) out.add(SKILL_ALIASES[alias]);
+  }
+  return [...out];
+}
+
+/**
  * JD-vs-resume skill match. The gate is deliberately ASYMMETRIC:
  *  - the JD's REQUIRED skills must be (largely) covered by the profile, and
  *  - the profile proves relevance when enough of its top skills appear in the
  *    JD text (a posting that mentions none of your skills isn't your job).
  * Generic words (experience, agile, git …) never count on either side.
+ *
+ * CRITICAL skills (opts.critical: title-derived and/or repetition-weighted)
+ * are NOT forgiven by the ratio: "Python" in the title of a posting the
+ * profile lacks python for = reject, whatever the overall coverage. The
+ * caller may pass learned strikes (apply_skill_strikes) — a skill the owner
+ * 👎-ed twice is treated as permanently critical (the engine learned it).
  */
-export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2 } = {}) {
+export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2, critical = [], learnedCritical = [] } = {}) {
   const text = " " + String(jdText || "").toLowerCase().replace(/[^a-z0-9+#./ -]/g, " ").replace(/\s+/g, " ") + " ";
   const prof = profileSkillSet(profile);
-  if (!prof.size) return { ok: true, reason: "profile lists no skills — title gate only", matched: [], missing: [] };
+  if (!prof.size) return { ok: true, reason: "profile lists no skills — title gate only", matched: [], missing: [], jdSkills: [] };
 
   const jdSkills = new Set();
   for (const [alias, canon] of Object.entries(SKILL_ALIASES)) {
@@ -211,9 +235,29 @@ export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2 } = 
   }
   const matched = required.filter((s) => prof.has(s));
   const missing = required.filter((s) => !prof.has(s));
+  /* repetition-weighted core detection: a skill the JD names ≥3× is core
+     even if the title forgot it ("Python… Python… Python" postings) */
+  const repeated = [...jdSkills].filter((s) => {
+    const esc = s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return (text.match(new RegExp("(?:^| )" + esc + "(?: |$)", "g")) ?? []).length >= 3;
+  });
+  const criticalMissing = [...new Set([...critical, ...learnedCritical, ...repeated])].filter(
+    (s) => missing.includes(s) || !prof.has(s)
+  );
+  if (criticalMissing.length) {
+    return {
+      ok: false,
+      reason: `core skill missing: ${criticalMissing.slice(0, 3).join(", ")} — required by title/JD`,
+      matched, missing, criticalMissing, jdSkills: [...jdSkills],
+    };
+  }
   const enough = matched.length / required.length >= minJd;
   const pull = matched.length >= minProfile ? true : profHasPull(prof, text, minProfile);
-  return { ok: enough && pull, matched, missing, reason: enough ? (pull ? "skill match" : "JD skills barely overlap the resume") : `JD requires ${missing.slice(0, 3).join(", ")} — not on the resume` };
+  return {
+    ok: enough && pull,
+    reason: enough ? (pull ? "skill match" : "JD skills barely overlap the resume") : `JD requires ${missing.slice(0, 3).join(", ")} — not on the resume`,
+    matched, missing, jdSkills: [...jdSkills], criticalMissing: [],
+  };
 }
 
 /* Enough of the profile's TOP skills appear in the JD? (relevance pull) */
@@ -229,11 +273,16 @@ function profHasPull(prof, text, minProfile) {
   return hits >= Math.min(minProfile, Math.max(1, Math.floor(ranked.length / 4)));
 }
 
-/** The relevance gate for a posting: title + JD skills must BOTH agree. */
-export function postingRelevant({ title, description }, profile) {
+/** The relevance gate for a posting: title + JD skills must BOTH agree.
+    Title-derived critical skills come along automatically; the caller may
+    add learned strikes (owner feedback) via opts. */
+export function postingRelevant({ title, description }, profile, opts = {}) {
   if (!titleRelevant(title, profile)) return { ok: false, reason: "title not relevant to profile" };
-  const m = jdSkillMatch(String(description || ""), profile);
-  if (!m.ok) return { ok: false, reason: m.reason, matched: m.matched, missing: m.missing };
+  const m = jdSkillMatch(String(description || ""), profile, {
+    critical: titleSkills(title),
+    learnedCritical: opts.learnedCritical ?? [],
+  });
+  if (!m.ok) return { ok: false, reason: m.reason, matched: m.matched, missing: m.missing, criticalMissing: m.criticalMissing };
   return { ok: true, reason: m.reason, matched: m.matched, missing: m.missing };
 }
 
@@ -383,6 +432,50 @@ export function formFieldsPreview(fields, plan) {
     required: !!meta.required,
     answered: Boolean(plan?.[i]?.answer),
   })).slice(0, 24);
+}
+
+/* ─────────────────── AI judge (the engine's reading comprehension) ─────────────────── */
+
+/* Regex gates catch arithmetic facts ("Python in the title", 60% coverage).
+   They CATCH-ALL fail on judgment: "Testing" on the resume does not make an
+   SDET/QA-automation role a frontend engineer's job; "full stack" JDs hide
+   a backend core under frontend words. The AI judge reads the ACTUAL JD and
+   renders a verdict with strict JSON — before any kit is built or form is
+   touched. Rules remain the guardrails (cheap, instant, auditable); the
+   judge is the reading comprehension layered on top of them. */
+export function judgeMessages(job, profile) {
+  const p = profile || {};
+  const system = [
+    "You are a strict hiring manager screening applications for a real candidate.",
+    "Decide whether this candidate is a REALISTIC match for this specific posting — not whether they could learn it.",
+    "Reject (verdict skip) when ANY of these hold:",
+    "- a skill named in the job TITLE (e.g. Python, Java, React) is absent from the candidate's skills — the headline requirement is not negotiable",
+    "- the role's core function differs from the candidate's demonstrated work (a frontend/product-engineer resume is NOT a QA-automation/SDET, data-engineering, or DevOps role even when some tools overlap)",
+    "- hard requirements (domain, seniority, stack) clearly outstrip the resume",
+    "Apply (verdict apply) when the core function matches and most key requirements are genuinely on the resume; adjacent transferable experience counts.",
+    "Be conservative about wasting the candidate's applications — a wrong application is worse than a missed one.",
+    "Reply with ONLY this JSON, nothing else:",
+    '{"verdict":"apply|skip","confidence":0.0-1.0,"reason":"one short sentence","missingCore":["skills the posting fundamentally requires that the resume lacks"]}',
+  ].join(" ");
+  const user = [
+    `CANDIDATE: ${p.headline || "engineer"}${p.years != null ? `, ${p.years} yrs` : ""}. Skills: ${(p.skills ?? []).join(", ") || "(none listed)"}.`,
+    `POSTING: ${job?.title || "(untitled)"}${job?.company ? ` at ${job.company}` : ""}.`,
+    `JD (may be truncated): ${(job?.description || "").slice(0, 3500)}`,
+  ].join("\n");
+  return { system, user };
+}
+
+/** Parse the judge's reply defensively: any deviation from the JSON contract
+    (prose, refusal, truncated JSON) = "unknown" — the caller proceeds
+    fail-open to the deterministic backstops (kit SKIP sentinel etc.). */
+export function parseJudgeReply(text) {
+  const m = String(text || "").match(/\{[\s\S]*\}/);
+  if (!m) return { verdict: "unknown", reason: "judge returned no JSON" };
+  try {
+    const j = JSON.parse(m[0]);
+    if (j.verdict !== "apply" && j.verdict !== "skip") return { verdict: "unknown", reason: "judge verdict not apply/skip" };
+    return { verdict: j.verdict, confidence: Number(j.confidence) || 0, reason: String(j.reason ?? "").slice(0, 160), missingCore: Array.isArray(j.missingCore) ? j.missingCore.slice(0, 5).map(String) : [] };
+  } catch { return { verdict: "unknown", reason: "judge JSON unparseable" }; }
 }
 
 /* ---- profile extras: hard answers for recurring form questions --------- */
