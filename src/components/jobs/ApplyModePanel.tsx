@@ -1,0 +1,112 @@
+/* Apply-mode control — the owner's ON/OFF switch for the auto-apply engine,
+   plus the machine choice: `off` is the kill switch (the local engine re-reads
+   it every watch cycle, so turning it off stops even a running watcher within
+   one poll); `local` = today's behavior on the user's machine; `cloud` =
+   persistent hosted browser session (CDP endpoint required — see
+   docs/cloud-browser-research.md; remote acquisition ships next, the engine
+   skips honestly until then). */
+
+import { useEffect, useState } from "react";
+import { getApplyConfig, setApplyConfig, type ApplyConfig, type ApplyMode } from "../../services/jobSites.ts";
+
+const MODES: { id: ApplyMode; label: string; blurb: string }[] = [
+  { id: "off", label: "⏸ Off", blurb: "Kill switch — the engine re-checks this every cycle and skips even while the watcher is running." },
+  { id: "local", label: "🖥 My machine", blurb: "Run the local Playwright engine here (watcher + watchdog as set up on this PC)." },
+  { id: "cloud", label: "☁️ Cloud session", blurb: "Run against a persistent hosted browser (CDP). Needs a session endpoint; remote acquisition ships next." },
+];
+
+export default function ApplyModePanel() {
+  const [cfg, setCfg] = useState<ApplyConfig | null>(null);
+  const [endpoint, setEndpoint] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const refresh = async () => {
+    try {
+      setError(null);
+      const c = await getApplyConfig();
+      setCfg(c);
+      setEndpoint(c?.cloud_endpoint ?? "");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  useEffect(() => { void refresh(); }, []);
+
+  const apply = async (mode: ApplyMode) => {
+    setBusy(true);
+    setError(null);
+    setSaved(null);
+    try {
+      await setApplyConfig(mode, mode === "cloud" ? "browserbase" : undefined, mode === "cloud" ? endpoint.trim() : undefined);
+      await refresh();
+      setSaved(mode === "off"
+        ? "✓ Engine OFF — the next watch cycle (within 6h, or the next scheduled poll) will skip everything."
+        : `✓ Mode set to ${mode}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const mode = cfg?.mode ?? null;
+
+  return (
+    <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-zinc-200">
+          🎛 Apply mode {mode && (
+            <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-extrabold ${
+              mode === "off" ? "bg-red-500/15 text-red-400" : mode === "local" ? "bg-emerald-500/15 text-emerald-400" : "bg-sky-500/15 text-sky-400"
+            }`}>{mode.toUpperCase()}</span>
+          )}
+        </div>
+        <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        One switch controls the whole rig. <b>Off</b> is the kill switch — the engine reads it before every cycle, so no
+        application happens while it is off, even if the watcher process is still running on your machine.
+      </p>
+
+      {error && <div className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
+      {saved && <div className="mt-2 rounded bg-emerald-500/10 px-2 py-1 text-xs text-emerald-400">{saved}</div>}
+
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        {MODES.map((m) => (
+          <button
+            key={m.id}
+            disabled={busy || mode === null}
+            onClick={() => void apply(m.id)}
+            title={m.blurb}
+            className={`rounded-md border px-2.5 py-2 text-left text-xs transition ${
+              mode === m.id
+                ? m.id === "off" ? "border-red-500/60 bg-red-500/10 text-red-300" : m.id === "local" ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-300" : "border-sky-500/60 bg-sky-500/10 text-sky-300"
+                : "border-zinc-800 bg-zinc-900 text-zinc-300 hover:border-zinc-600"
+            } ${busy ? "opacity-50" : ""}`}
+          >
+            <span className="font-bold">{m.label}</span>
+            <span className="mt-0.5 block text-[10.5px] leading-4 text-zinc-500">{m.blurb}</span>
+          </button>
+        ))}
+      </div>
+
+      {mode === "cloud" && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={endpoint}
+            onChange={(e) => setEndpoint(e.target.value)}
+            placeholder="CDP endpoint (wss://…browserbase…/…) — required for cloud mode"
+            className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500"
+          />
+          <button disabled={busy || !endpoint.trim()} onClick={() => void apply("cloud")}
+            className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-40">Save endpoint</button>
+        </div>
+      )}
+
+      {cfg?.updated_at && <div className="mt-2 text-[10.5px] text-zinc-600">last changed {new Date(cfg.updated_at).toLocaleString()}</div>}
+    </div>
+  );
+}

@@ -85,6 +85,25 @@ export async function getFormAnswers(siteHost) {
   return Object.fromEntries((rows ?? []).map((r) => [r.field_key, r.answer]));
 }
 
+/* ── owner mode switch: off (kill switch) / local / cloud ───────────── */
+
+/** The global apply_config row (array with one element; [] when unset). */
+export async function getApplyConfig() {
+  return rpc(loadLocalCreds(), "engine_get_apply_config", {});
+}
+
+/* ── per-job run report (the UI's applications report) ───────────────── */
+
+/** Push one per-job decision. Fire-and-forget from the engine: report
+    failures must never break an apply run. */
+export async function recordApplyResult({ siteHost, jobUrl, title, company, result, detail, fit }) {
+  return rpc(loadLocalCreds(), "engine_record_apply_result", {
+    p_site_host: siteHost, p_job_url: jobUrl, p_title: title ?? null,
+    p_company: company ?? null, p_result: result, p_detail: detail ?? null,
+    p_fit: fit ?? null,
+  });
+}
+
 /** Telegram notify config for post-batch summaries (nulls when unset). */
 export async function getNotifyConfig() {
   const creds = loadLocalCreds();

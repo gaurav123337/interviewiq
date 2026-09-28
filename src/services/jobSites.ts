@@ -102,3 +102,61 @@ export async function setNotifyConfig(chatId: string, botToken: string): Promise
   const { error } = await client.rpc("admin_set_notify_config", { p_chat_id: chatId, p_bot_token: botToken });
   if (error) throw error;
 }
+
+/* ── Apply mode control: off (kill switch) / local machine / cloud session ── */
+
+export type ApplyMode = "off" | "local" | "cloud";
+
+export interface ApplyConfig {
+  mode: ApplyMode;
+  cloud_provider: string | null;
+  cloud_endpoint: string | null;
+  updated_at: string | null;
+}
+
+export async function getApplyConfig(): Promise<ApplyConfig | null> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_get_apply_config");
+  if (error) throw error;
+  return ((data as ApplyConfig[]) ?? [])[0] ?? null;
+}
+
+export async function setApplyConfig(mode: ApplyMode, cloudProvider?: string, cloudEndpoint?: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_set_apply_config", {
+    p_mode: mode,
+    p_cloud_provider: cloudProvider ?? null,
+    p_cloud_endpoint: cloudEndpoint ?? null,
+  });
+  if (error) throw error;
+}
+
+/* ── Per-job run report: every decision the engine made, newest first ── */
+
+export interface ApplyResultRow {
+  id: string;
+  site_host: string;
+  job_url: string;
+  title: string | null;
+  company: string | null;
+  result: "submitted" | "needs_review" | "skipped" | "error";
+  detail: string | null;
+  fit: number | null;
+  created_at: string;
+}
+
+export async function listApplyResults(limit = 100): Promise<ApplyResultRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_list_apply_results", { p_limit: limit });
+  if (error) throw error;
+  return (data ?? []) as ApplyResultRow[];
+}
+
+export function applyResultCounts(rows: ApplyResultRow[]): Record<ApplyResultRow["result"], number> {
+  const counts = { submitted: 0, needs_review: 0, skipped: 0, error: 0 };
+  for (const r of rows) if (r.result in counts) counts[r.result] += 1;
+  return counts;
+}

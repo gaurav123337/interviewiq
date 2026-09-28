@@ -117,6 +117,54 @@ async function queueReview(entry) {
   await db.queueJobReview(entry).catch((e) => console.log(dim(`  (queue: ${e.message.slice(0, 60)})`)));
 }
 
+/* --- owner mode switch: off (kill switch) / local / cloud ---
+   Read at every cycle start AND before every per-site run in --all, so
+   flipping Off in the UI stops even a live watcher within one site. No DB
+   (or no row) fails OPEN for single runs (the owner runs them on purpose)
+   but the --all/watch cycle fails CLOSED — scheduled automation must stop
+   when the owner said stop. Cloud mode is honored only as a NO-GO marker
+   for now: local Playwright cannot use a CDP endpoint, so a cloud-mode
+   cycle skips honestly until the remote-acquisition PR ships. */
+async function readApplyMode() {
+  const db = await sitesDb();
+  if (!db?.getApplyConfig) return { mode: "unknown", reason: "no db" };
+  try {
+    const rows = await db.getApplyConfig();
+    const row = (rows ?? [])[0];
+    if (!row) return { mode: "unknown", reason: "no config row" };
+    return { mode: row.mode, provider: row.cloud_provider ?? null, endpoint: row.cloud_endpoint ?? null };
+  } catch (e) { return { mode: "unknown", reason: e.message.slice(0, 60) }; }
+}
+
+async function applyModeBlocked(cycle) {
+  const cfg = await readApplyMode();
+  if (cfg.mode === "off") return "owner switch is OFF (kill switch)";
+  if (cfg.mode === "cloud") return cfg.endpoint
+    ? "cloud mode set — remote browser acquisition not shipped yet (see docs/cloud-browser-research.md)"
+    : "cloud mode set without a CDP endpoint";
+  if (cycle && cfg.mode === "unknown") return `config unavailable (${cfg.reason}) — scheduled runs fail closed`;
+  return null;
+}
+
+/* local report row + cloud report row, always together */
+function recordResultBoth(report, job, result, detail) {
+  recordResult(report, job, result, detail);
+  recordResultDb(new URL(report.sourceUrl).hostname.replace(/^www\./, ""), job, result === "needsReview" ? "needs_review" : result, detail).catch(() => {});
+}
+
+/* --- report every per-job decision to apply_results (UI report) --- */
+async function recordResultDb(host, job, result, detail) {
+  const db = await sitesDb();
+  if (!db?.recordApplyResult) return;
+  try {
+    await db.recordApplyResult({
+      siteHost: host, jobUrl: job?.url ?? "", title: job?.title ?? null,
+      company: job?.company ?? null, result, detail: String(detail ?? "").slice(0, 400),
+      fit: job?.__fit ?? null,
+    });
+  } catch { /* report push is best-effort — never breaks a run */ }
+}
+
 /* --- form-answer memory: every filled field is stored for future reuse ---
    DB (form_answers, keyed site_host+field_key) is the durable copy; a local
    JSON cache mirrors it so forms fill even when Supabase is unreachable.
@@ -578,6 +626,12 @@ async function runSingle(args) {
   const projectRef = process.env.SUPABASE_PROJECT_REF;
   const ai = await loadAi({ token, projectRef });
   console.log(`apply-engine → ${rules.label} · ${args.url} · max ${args.max}${ai ? ` · AI: ${ai.model}` : " · AI: OFF (templates)"}`);
+  /* owner kill switch: a manual single run fails open when the config is
+     unreadable (the owner is running it on purpose), but honors off/cloud */
+  if (!args["login-only"]) {
+    const blocked = await applyModeBlocked(false);
+    if (blocked) { console.error(red(`✗ apply engine disabled: ${blocked}.`)); return; }
+  }
 
   const ctx = await launchBrowser(args.headless);
   let page = ctx.pages()[0] ?? (await ctx.newPage());
@@ -620,14 +674,13 @@ async function runSingle(args) {
     }
 
     for (const job of jobs) {
-      console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);
-      if (wasApplied(job.url)) {
-        recordResult(report, job, "skipped", "already applied (dedupe)");
+      console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);        if (wasApplied(job.url)) {
+          recordResultBoth(report, job, "skipped", "already applied (dedupe)");
         console.log(dim("  ⏭ skipped — already applied earlier"));
         continue;
       }
       if (!titleRelevant(job.title, profile)) {
-        recordResult(report, job, "skipped", `not relevant to profile (${profile.headline || "no headline"})`);
+        recordResultBoth(report, job, "skipped", `not relevant to profile (${profile.headline || "no headline"})`);
         console.log(dim("  ⏭ skipped — not relevant to your profile"));
         continue;
       }
@@ -638,7 +691,7 @@ async function runSingle(args) {
          leak it on every early skip (the process would linger 4 min). */
       const pre = postingRelevant({ title: job.title, description: job.description ?? "" }, profile);
       if (!pre.ok && pre.reason !== "JD mentions no specific skills" && /not on the resume|barely overlap|not relevant/.test(pre.reason)) {
-        recordResult(report, job, "skipped", pre.reason);
+        recordResultBoth(report, job, "skipped", pre.reason);
         console.log(dim(`  ⏭ skipped — ${pre.reason}`));
         continue;
       }
@@ -654,7 +707,7 @@ async function runSingle(args) {
         /* skill gate on the REAL JD text now that the page is open */
         const gate = postingRelevant({ title: job.title, description: job.description }, profile);
         if (!gate.ok) {
-          recordResult(report, job, "skipped", gate.reason);
+          recordResultBoth(report, job, "skipped", gate.reason);
           console.log(dim(`  ⏭ skipped — ${gate.reason}`));
           continue;
         }
@@ -692,10 +745,10 @@ async function runSingle(args) {
             const sameTab = !atsPage && !/linkedin\.com/i.test(page.url()); // redirected in-place
             const target = atsPage ?? (sameTab ? page : null);
             if (!target) {
-              recordResult(report, job, "skipped", "external apply clicked but no ATS page opened");
+              recordResultBoth(report, job, "skipped", "external apply clicked but no ATS page opened");
               console.log(dim("  ⏭ skipped — external ATS did not open"));
             } else if (args["dry-run"]) {
-              recordResult(report, job, "skipped", "external ATS form detected — dry-run (not filled)");
+              recordResultBoth(report, job, "skipped", "external ATS form detected — dry-run (not filled)");
               console.log(dim("  dry-run: external ATS form present, not filled"));
             } else {
               try { await target.waitForLoadState("domcontentloaded", { timeout: 20_000 }); } catch { /* ATS load rules vary */ }
@@ -705,7 +758,7 @@ async function runSingle(args) {
               const mem2 = await loadAnswerMemory(site);
               const res2 = await fillApplicationForm(target, { profile, job, resumePath: resumePath2, dryRun: false, siteHost: site, storedAnswers: mem2 });
               const preview = formFieldsPreview(res2.fields, res2.plan);
-              recordResult(report, job, "needsReview", `external ATS form filled (${res2.filled} fields) — submit manually from the review queue`);
+              recordResultBoth(report, job, "needsReview", `external ATS form filled (${res2.filled} fields) — submit manually from the review queue`);
               console.log(yellow(`  ⏸ external ATS: filled ${res2.filled} fields — queued; you submit (never auto on unknown ATS)`));
               await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null, formFields: preview });
               if (atsPage) await atsPage.close().catch(() => {}); // don't leak tabs
@@ -716,7 +769,7 @@ async function runSingle(args) {
         } else if (site === "instahyre" || site === "naukri") {
           /* some boards apply in-place — no separate form page */
         } else {
-          recordResult(report, job, "skipped", "no apply button found");
+          recordResultBoth(report, job, "skipped", "no apply button found");
           console.log(dim("  ⏭ skipped — no apply button on the posting"));
           continue;
         }
@@ -724,28 +777,28 @@ async function runSingle(args) {
         const mem = await loadAnswerMemory(site); // form-answer memory: stored labels reuse their last answer
         const { filled, unfilledRequired } = await fillApplicationForm(page, { profile, job, resumePath, dryRun: args["dry-run"], siteHost: site, storedAnswers: mem });
         if (unfilledRequired.length) {
-          recordResult(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
+          recordResultBoth(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
           if (!rules.autoSubmit && args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           if (!rules.autoSubmit) await page.pause(); // review-gate sites: let the human finish here
           continue;
         }
-        if (args["dry-run"]) { recordResult(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
+        if (args["dry-run"]) { recordResultBoth(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
 
         const sub = await trySubmit(page, site, rules); // merged registry rules — the owner's autoSubmit decision
         if (sub.auto) {
-          recordResult(report, job, "submitted", sub.note);
+          recordResultBoth(report, job, "submitted", sub.note);
           markApplied(job.url);
           console.log(green(`  ✓ ${sub.note}`));
         } else {
-          recordResult(report, job, "needsReview", sub.note);
+          recordResultBoth(report, job, "needsReview", sub.note);
           console.log(yellow(`  ⏸ ${sub.note} — browser is open on the form; finish and submit manually.`));
           if (args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);
       } catch (e) {
-        recordResult(report, job, "error", e.message.slice(0, 160));
+        recordResultBoth(report, job, "error", e.message.slice(0, 160));
         console.error(red(`  ✗ ${e.message.slice(0, 160)}`));
       } finally {
         clearTimeout(jw);
@@ -790,6 +843,10 @@ async function runAll(args) {
     ];
   }
   console.log(`apply-engine --all → ${sites.length} active site(s): ${sites.map((s) => s.host).join(", ")}`);
+  /* owner kill switch: the SCHEDULED path fails closed — off/cloud/unknown
+     all stop the cycle (unknown = config unreadable → stop too) */
+  const blocked = await applyModeBlocked(true);
+  if (blocked) { console.log(yellow(`⏸ apply engine disabled: ${blocked} — skipping this cycle.`)); return; }
   const totals = { submitted: 0, skipped: 0, errors: 0 };
   for (const s of sites) {
     console.log(`\n━━━ ${s.label} (${s.host}) ━━━`);
@@ -852,6 +909,10 @@ async function runWatch(args) {
   }
   const cycle = async () => {
     console.log(`\n════ watch cycle ${new Date().toLocaleTimeString()} — discovery (max 4) then apply (--max ${args.max}) ════`);
+    /* kill switch checked per cycle: flipping Off in the UI stops the
+       watcher's next cycle within one poll (no process restart needed) */
+    const cycleBlocked = await applyModeBlocked(true);
+    if (cycleBlocked) { console.log(yellow(`⏸ ${cycleBlocked} — cycle skipped (switch back on in the UI)`)); return; }
     /* discovery first so newly-approved sites join the rotation quickly */
     try {
       const { spawnSync } = await import("node:child_process");
