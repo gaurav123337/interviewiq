@@ -38,6 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi } from "./apply-kit-node.js";
+import { acquireApplyContext, isRemoteEndpoint } from "./apply-browser.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
@@ -139,9 +140,10 @@ async function readApplyMode() {
 async function applyModeBlocked(cycle) {
   const cfg = await readApplyMode();
   if (cfg.mode === "off") return "owner switch is OFF (kill switch)";
-  if (cfg.mode === "cloud") return cfg.endpoint
-    ? "cloud mode set — remote browser acquisition not shipped yet (see docs/cloud-browser-research.md)"
-    : "cloud mode set without a CDP endpoint";
+  if (cfg.mode === "cloud") {
+    if (!isRemoteEndpoint(cfg.endpoint)) return "cloud mode set without a valid CDP endpoint (wss://…)";
+    return null; // cloud + valid endpoint = runnable via the apply-browser seam
+  }
   if (cycle && cfg.mode === "unknown") return `config unavailable (${cfg.reason}) — scheduled runs fail closed`;
   return null;
 }
@@ -282,19 +284,21 @@ function loadApplyProfile(file) {
 
 /* --------------------------- browser setup --------------------------- */
 
+/* Acquisition goes through scripts/apply-browser.js: local persistent
+   profile by default, or a remote CDP session when the owner's apply_config
+   says cloud. runSingle carries the cleanup fn — remote connections must
+   DISCONNECT (browser.close on CDP), never kill the hosted session. */
+let __browserCleanup = null;
 async function launchBrowser(headless) {
-  /* playwright specifier computed at runtime so vite/vitest never statically
-     resolve it (same trick as discovery-render-fetcher.mjs) */
-  const spec = ["play", "wright"].join("");
-  const { chromium } = await import(/* @vite-ignore */ spec);
-  mkdirSync(PROFILE_DIR, { recursive: true });
-  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless,
-    viewport: { width: 1380, height: 900 },
-    args: ["--disable-blink-features=AutomationControlled"],
-  });
+  let endpoint = "";
+  if (args_isCloudMode) endpoint = (await readApplyMode()).endpoint ?? "";
+  const { ctx, cleanup, remote } = await acquireApplyContext({ headless, endpoint });
+  __browserCleanup = cleanup;
+  if (remote) console.log(dim("  ☁️ connected to remote persistent browser session"));
   return ctx;
 }
+/* set once in main() from the apply_config read — avoids re-reading per run */
+let args_isCloudMode = false;
 
 /** Poll the CURRENT page until its state is trustworthy: challenge cleared
     AND no in-flight login redirect (SPAs bounce to /login/ — or straight to
@@ -819,7 +823,10 @@ async function runSingle(args) {
       const er = report.results.filter((r) => r.result === "error").length;
       await sendTelegramNotify(`Freebuff apply · ${site}: ✅ ${n} submitted · ⏸ ${q} review · ✗ ${er} errors`).catch(() => {});
     }
-    await ctx.close().catch(() => {});
+    /* remote sessions: DISCONNECT ONLY — browser.close() over CDP keeps the
+       hosted session (and its logins) alive for the next run */
+    if (__browserCleanup) await __browserCleanup().catch(() => {});
+    else await ctx.close().catch(() => {});
   }
 }
 
@@ -929,6 +936,9 @@ async function runWatch(args) {
 
 async function main() {
   const args = parseArgs(process.argv);
+  /* cloud/local is decided once per process (the switch rarely changes
+     mid-run; per-cycle guards still re-read it) */
+  args_isCloudMode = (await readApplyMode()).mode === "cloud";
   if (args.discover) {
     const { spawnSync } = await import("node:child_process");
     const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });
