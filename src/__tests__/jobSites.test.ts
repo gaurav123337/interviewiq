@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts } from "../services/jobSites";
 
 const rpc = vi.fn();
 const client = { rpc };
@@ -91,6 +91,71 @@ describe("review queue", () => {
   it("propagates resolve errors", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
     await expect(resolveJobReview("r1", "dismissed")).rejects.toThrow("forbidden");
+  });
+});
+
+describe("apply mode config (off/local/cloud)", () => {
+  it("reads the global row via admin_get_apply_config", async () => {
+    rpc.mockResolvedValueOnce({ data: [{ mode: "off", cloud_provider: null, cloud_endpoint: null, updated_at: "2026-09-28T06:00:00Z" }], error: null });
+    const cfg = await getApplyConfig();
+    expect(rpc).toHaveBeenCalledWith("admin_get_apply_config");
+    expect(cfg?.mode).toBe("off");
+  });
+
+  it("returns null when the config row is missing", async () => {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
+    expect(await getApplyConfig()).toBeNull();
+  });
+
+  it("off mode sends no cloud fields (the kill switch needs nothing else)", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await setApplyConfig("off");
+    expect(rpc).toHaveBeenCalledWith("admin_set_apply_config", { p_mode: "off", p_cloud_provider: null, p_cloud_endpoint: null });
+  });
+
+  it("cloud mode carries the provider + CDP endpoint", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await setApplyConfig("cloud", "browserbase", "wss://cdn.browserbase.com/session/x");
+    expect(rpc).toHaveBeenCalledWith("admin_set_apply_config", { p_mode: "cloud", p_cloud_provider: "browserbase", p_cloud_endpoint: "wss://cdn.browserbase.com/session/x" });
+  });
+
+  it("propagates the RPC rejection (cloud without endpoint is rejected server-side)", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "cloud mode needs a CDP endpoint" } });
+    await expect(setApplyConfig("cloud", "browserbase", "")).rejects.toThrow(/CDP endpoint/);
+  });
+});
+
+describe("applications report", () => {
+  it("lists per-job decisions via admin_list_apply_results", async () => {
+    rpc.mockResolvedValueOnce({
+      data: [
+        { id: "a1", site_host: "naukri.com", job_url: "https://x/1", title: "FE Eng", company: "Acme", result: "submitted", detail: "ok", fit: 90, created_at: "2026-09-28T06:00:00Z" },
+        { id: "a2", site_host: "naukri.com", job_url: "https://x/2", title: "BE Eng", company: "Beta", result: "skipped", detail: "JD requires go — not on the resume", fit: null, created_at: "2026-09-28T05:00:00Z" },
+      ],
+      error: null,
+    });
+    const rows = await listApplyResults(50);
+    expect(rpc).toHaveBeenCalledWith("admin_list_apply_results", { p_limit: 50 });
+    expect(rows).toHaveLength(2);
+    expect(rows[0].result).toBe("submitted");
+  });
+
+  it("throws when cloud is not configured", async () => {
+    clientFn.value = null;
+    await expect(listApplyResults()).rejects.toThrow(/cloud not configured/);
+    clientFn.value = client;
+  });
+
+  it("tallies the four result kinds (and ignores unknowns)", () => {
+    const rows = [
+      { result: "submitted" }, { result: "submitted" },
+      { result: "needs_review" },
+      { result: "skipped" }, { result: "skipped" }, { result: "skipped" },
+      { result: "error" },
+      { result: "something-else" },
+    ] as never;
+    const c = applyResultCounts(rows);
+    expect(c).toEqual({ submitted: 2, needs_review: 1, skipped: 3, error: 1 });
   });
 });
 

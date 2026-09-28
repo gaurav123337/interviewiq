@@ -8,6 +8,8 @@ import { useMemo, useState } from "react";
 import { cardCls, btnGhost, btnOk, btnPrimary, btnSm, Chip } from "../ui";
 import { APPLY_SITES, engineCommands, exportProfileJson, platinumActive } from "../../services/autoApply";
 import JobSitesPanel from "./JobSitesPanel";
+import ApplyModePanel from "./ApplyModePanel";
+import ApplyResultsPanel from "./ApplyResultsPanel";
 import ReviewQueuePanel from "./ReviewQueuePanel";
 
 export function AutoApplyCard({ locked, onUpgrade, platinum }: {
@@ -109,6 +111,12 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
           <p className="mt-3 text-[11px] text-mut">
             Reports land in <code className="font-mono">freebuff-apply-reports/</code>; the admin Scraper log shows apply runs too.
           </p>
+
+          {/* the owner's master switch: off (kill switch) / my machine / cloud */}
+          <ApplyModePanel />
+
+          {/* full per-job decision report (submitted / needs-you / skipped / error) */}
+          <ApplyResultsPanel />
 
           <JobSitesPanel />
 
