@@ -241,9 +241,17 @@ export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2, cri
     const esc = s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return (text.match(new RegExp("(?:^| )" + esc + "(?: |$)", "g")) ?? []).length >= 3;
   });
-  const criticalMissing = [...new Set([...critical, ...learnedCritical, ...repeated])].filter(
-    (s) => missing.includes(s) || !prof.has(s)
-  );
+  /* critical-and-missing, with source-correct semantics:
+     - title-named → reject when the profile lacks it (even if the JD text
+       never spells it out — the title already demanded it)
+     - JD-repeated ≥3× → same
+     - LEARNED strikes (owner 👎) → reject only when THIS JD actually
+       requires it — a strike on python must not reject a python-free JD */
+  const critSet = new Set();
+  for (const s of critical) if (!prof.has(s)) critSet.add(s);
+  for (const s of repeated) if (!prof.has(s)) critSet.add(s);
+  for (const s of learnedCritical) if (missing.includes(s)) critSet.add(s);
+  const criticalMissing = [...critSet];
   if (criticalMissing.length) {
     return {
       ok: false,

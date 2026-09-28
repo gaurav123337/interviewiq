@@ -92,6 +92,13 @@ export async function getApplyConfig() {
   return rpc(loadLocalCreds(), "engine_get_apply_config", {});
 }
 
+/* ── learned skill strikes (owner feedback loop) ───────────────────── */
+
+/** Skills the owner 👎-ed >= p_min times → hard-reject when a JD requires them. */
+export async function getSkillStrikes(min = 2) {
+  return rpc(loadLocalCreds(), "engine_get_skill_strikes", { p_min: min });
+}
+
 /* ── per-job run report (the UI's applications report) ───────────────── */
 
 /** Push one per-job decision. Fire-and-forget from the engine: report

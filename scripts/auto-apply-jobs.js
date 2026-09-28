@@ -126,6 +126,16 @@ async function queueReview(entry) {
    when the owner said stop. Cloud mode is honored only as a NO-GO marker
    for now: local Playwright cannot use a CDP endpoint, so a cloud-mode
    cycle skips honestly until the remote-acquisition PR ships. */
+/* Learned criticals: skills the owner 👎-ed >=2 times (via the report's
+   feedback buttons) hard-reject any JD that requires them. Empty until the
+   owner teaches — the loop is: engine applies → owner reacts → gate learns. */
+async function learnedCriticalSkills() {
+  const db = await sitesDb();
+  if (!db?.getSkillStrikes) return [];
+  try { return ((await db.getSkillStrikes(2)) ?? []).map((r) => r.skill); }
+  catch { return []; }
+}
+
 async function readApplyMode() {
   const db = await sitesDb();
   if (!db?.getApplyConfig) return { mode: "unknown", reason: "no db" };
@@ -719,7 +729,7 @@ async function runSingle(args) {
          Pure/sync checks first (dedupe, title, pre-gate) stay OUTSIDE the
          watchdog: they cannot wedge, and arming the timer before them would
          leak it on every early skip (the process would linger 4 min). */
-      const pre = postingRelevant({ title: job.title, description: job.description ?? "" }, profile);
+      const pre = postingRelevant({ title: job.title, description: job.description ?? "" }, profile, { learnedCritical: await learnedCriticalSkills() });
       if (!pre.ok && pre.reason !== "JD mentions no specific skills" && /not on the resume|barely overlap|not relevant/.test(pre.reason)) {
         recordResultBoth(report, job, "skipped", pre.reason);
         console.log(dim(`  ⏭ skipped — ${pre.reason}`));
@@ -732,7 +742,7 @@ async function runSingle(args) {
         await openJob(page, job);
         /* skill gate on the REAL JD text now that the page is open (cheap,
            deterministic: title-critical skills, coverage ratio) */
-        const gate = postingRelevant({ title: job.title, description: job.description }, profile);
+        const gate = postingRelevant({ title: job.title, description: job.description }, profile, { learnedCritical: await learnedCriticalSkills() });
         if (!gate.ok) {
           recordResultBoth(report, job, "skipped", gate.reason);
           console.log(dim(`  ⏭ skipped — ${gate.reason}`));

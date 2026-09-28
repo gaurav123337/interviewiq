@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes } from "../services/jobSites";
 
 const rpc = vi.fn();
 const client = { rpc };
@@ -156,6 +156,39 @@ describe("applications report", () => {
     ] as never;
     const c = applyResultCounts(rows);
     expect(c).toEqual({ submitted: 2, needs_review: 1, skipped: 3, error: 1 });
+  });
+});
+
+describe("feedback learning loop (👍/👎 → learned strikes)", () => {
+  it("👎 sends the verdict + missing-core skills and returns strike counts", async () => {
+    rpc.mockResolvedValueOnce({ data: [{ skill: "python", strikes: 1 }], error: null });
+    const out = await sendApplyFeedback("row-1", "bad", ["python"]);
+    expect(rpc).toHaveBeenCalledWith("engine_apply_feedback", { p_result_id: "row-1", p_verdict: "bad", p_skills: ["python"] });
+    expect(out[0]).toEqual({ skill: "python", strikes: 1 });
+  });
+
+  it("👍 clears strikes (skills array still passed)", async () => {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
+    await sendApplyFeedback("row-2", "good", ["python"]);
+    expect(rpc).toHaveBeenCalledWith("engine_apply_feedback", { p_result_id: "row-2", p_verdict: "good", p_skills: ["python"] });
+  });
+
+  it("empty skills list is sent as null (verdict-only feedback)", async () => {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
+    await sendApplyFeedback("row-3", "bad", []);
+    expect(rpc).toHaveBeenCalledWith("engine_apply_feedback", { p_result_id: "row-3", p_verdict: "bad", p_skills: null });
+  });
+
+  it("reads learned strikes for the UI strip", async () => {
+    rpc.mockResolvedValueOnce({ data: [{ skill: "python", strikes: 2 }], error: null });
+    const s = await getSkillStrikes();
+    expect(rpc).toHaveBeenCalledWith("admin_get_skill_strikes");
+    expect(s).toEqual([{ skill: "python", strikes: 2 }]);
+  });
+
+  it("propagates feedback errors", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
+    await expect(sendApplyFeedback("row-x", "bad", [])).rejects.toThrow("forbidden");
   });
 });
 
