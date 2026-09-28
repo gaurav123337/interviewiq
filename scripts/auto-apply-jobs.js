@@ -299,6 +299,8 @@ async function launchBrowser(headless) {
 }
 /* set once in main() from the apply_config read — avoids re-reading per run */
 let args_isCloudMode = false;
+/* set in main(): true for --unattended runs — login waits fail fast (no human) */
+let args_unattended = false;
 
 /** Poll the CURRENT page until its state is trustworthy: challenge cleared
     AND no in-flight login redirect (SPAs bounce to /login/ — or straight to
@@ -335,6 +337,11 @@ async function waitForStableState(page, rules, url, { settleMs = 9_000 } = {}) {
 
 async function ensureLoggedIn(page, url, site, loginOnly) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
+  /* unattended runs have no human at the wheel: a login page means WAIT
+     (the session may be restoring — bounded), not "hold the run for 10 min
+     for a sign-in that will never come". This was the real scheduled-cloud
+     wedge: remote relay runs hit a challenge/login and sat out the clock. */
+  const humanAvailable = !args_unattended;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   const state = await waitForStableState(page, rules, url);
   const onLogin = () => rules.loginPathHints.some(h => page.url().toLowerCase().includes(h.toLowerCase()));
@@ -348,6 +355,25 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
     console.log(yellow(`⏸  ${rules.label}: session expired (redirected to login) — please sign in again.`));
   }
   if (onLogin() || loginOnly) {
+    if (!humanAvailable) {
+      /* unattended (scheduled/cloud): nobody can sign in — the site wants a
+         re-auth the automation must not fake. Fail THIS site fast and let
+         the watchdog move the batch on; a human signs in later from the UI
+         or a manual --login-only run. */
+      console.log(yellow(`⏸  ${rules.label}: needs sign-in — unattended run skips after a bounded re-auth wait.`));
+      const t0 = Date.now();
+      while (Date.now() - t0 < 45_000) {
+        await page.waitForTimeout(3000);
+        let st;
+        try { st = await waitForStableState(page, rules, url, { settleMs: 0 }); } catch { continue; }
+        if (st.kind === "loggedIn") break; // session restored itself
+      }
+      let st2;
+      try { st2 = await waitForStableState(page, rules, url, { settleMs: 0 }); } catch { st2 = { kind: "login" }; }
+      if (st2.kind === "loggedIn") { console.log(green(`✓ ${rules.label}: session restored.`)); return true; }
+      console.error(red(`✗ ${rules.label}: no session and no human — skipping site (unattended).`));
+      return false;
+    }
     console.log(yellow(`⏸  ${rules.label}: please sign in in the opened window (Google OAuth / email / OTP — anything the site offers).`));
     console.log(dim("   The session persists in freebuff-apply-profile/ — this is one-time per site."));
     if (!loginOnly) {
@@ -939,6 +965,7 @@ async function main() {
   /* cloud/local is decided once per process (the switch rarely changes
      mid-run; per-cycle guards still re-read it) */
   args_isCloudMode = (await readApplyMode()).mode === "cloud";
+  args_unattended = args.unattended;
   if (args.discover) {
     const { spawnSync } = await import("node:child_process");
     const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });

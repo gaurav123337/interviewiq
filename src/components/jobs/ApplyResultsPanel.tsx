@@ -6,6 +6,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { listApplyResults, applyResultCounts, type ApplyResultRow } from "../../services/jobSites.ts";
 
+/** host part of a job/form URL → source chip; falls back to the row's site_host */
+function sourceOf(r: ApplyResultRow): string {
+  try { return new URL(r.job_url).hostname.replace(/^www\./, ""); } catch { return r.site_host; }
+}
+
 const RESULT_META: Record<ApplyResultRow["result"], { icon: string; label: string; cls: string }> = {
   submitted: { icon: "✅", label: "applied", cls: "bg-emerald-500/15 text-emerald-400" },
   needs_review: { icon: "⏸", label: "needs you", cls: "bg-amber-500/15 text-amber-400" },
@@ -78,11 +83,14 @@ export default function ApplyResultsPanel() {
               )}
               <span className="shrink-0 text-[10.5px] text-zinc-600">{ago(r.created_at)}</span>
             </div>
-            <div className="mt-0.5 flex items-center gap-2 text-[10.5px] text-zinc-500">
-              <span className="truncate">{r.site_host}{r.detail ? ` · ${r.detail}` : ""}</span>
-              {r.job_url && (
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10.5px] text-zinc-500">
+              <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-bold text-zinc-400">via {sourceOf(r)}</span>
+              <span className="min-w-0 flex-1 truncate">{r.detail || ""}</span>
+              {r.result === "needs_review" ? (
+                <a href="#review-queue" className="shrink-0 font-bold text-amber-400 hover:text-amber-300">needs you → review queue</a>
+              ) : r.job_url ? (
                 <a href={r.job_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-sky-500 hover:text-sky-400">open ↗</a>
-              )}
+              ) : null}
             </div>
           </div>
         ))}
