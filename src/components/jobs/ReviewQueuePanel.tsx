@@ -104,7 +104,7 @@ export default function ReviewQueuePanel() {
   if (items === null) return <div className="mt-3 text-xs text-zinc-500">Loading review queue…</div>;
 
   return (
-    <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+    <div id="review-queue" className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
       <div className="mb-2 flex items-center justify-between">
         <div className="text-sm font-semibold text-zinc-200">
           📥 Review queue {items.length > 0 && <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">{items.length} waiting</span>}
