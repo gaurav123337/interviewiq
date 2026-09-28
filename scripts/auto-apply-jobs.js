@@ -28,7 +28,7 @@
  * No credentials are stored or typed by this script — logins are manual once.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, createWriteStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -820,8 +820,36 @@ async function runAll(args) {
 
 /* ----------------------- --watch: keep applying ----------------------- */
 
+/* Watch-mode log tee: when started by the supervisor (no shell redirect —
+   shell appends on Windows open the log WITHOUT write-sharing and a stale
+   handle from any previous watcher blocks every new start with "file in
+   use"), the watcher appends to the log itself via a node stream, which
+   opens with share-read/write and coexists with any other appender. */
+function teeWatchLog() {
+  const p = process.env.FREEBUFF_WATCH_LOG;
+  if (!p) return;
+  try {
+    const stream = createWriteStream(p, { flags: "a" });
+    const line = (s) => stream.write(s.replace(/\x1b\[[0-9;]*m/g, "") + "\n"); // strip ANSI for the file
+    const log = console.log.bind(console), err = console.error.bind(console);
+    console.log = (...a) => { log(...a); line(a.map(String).join(" ")); };
+    console.error = (...a) => { err(...a); line(a.map(String).join(" ")); };
+  } catch { /* logging must never kill the watcher */ }
+}
+
 async function runWatch(args) {
   const everyH = args.everyHours || 6;
+  /* boot-time network guard: after a REBOOT the logon task can start this
+     watcher before Windows networking is up — every site then fails with
+     ERR_NAME_NOT_RESOLVED and the cycle burns 6h sleeping on a dead run.
+     Wait for real connectivity (bounded) before the first cycle. */
+  for (let i = 0; i < 20; i++) {
+    try { await fetch("https://www.linkedin.com/robots.txt", { signal: AbortSignal.timeout(8000) }); break; }
+    catch {
+      console.log(`network not up yet (attempt ${i + 1}/20) — retrying in 15s`);
+      await new Promise((r) => setTimeout(r, 15_000));
+    }
+  }
   const cycle = async () => {
     console.log(`\n════ watch cycle ${new Date().toLocaleTimeString()} — discovery (max 4) then apply (--max ${args.max}) ════`);
     /* discovery first so newly-approved sites join the rotation quickly */
@@ -845,7 +873,7 @@ async function main() {
     const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });
     process.exit(res.status ?? 1);
   }
-  if (args.watch) { await runWatch(args); return; }
+  if (args.watch) { teeWatchLog(); await runWatch(args); return; }
   if (args.all) { await runAll(args); return; }
   if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
   if (!args.url) {
