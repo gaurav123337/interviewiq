@@ -107,6 +107,12 @@ export async function listReviewedUrls() {
   return rpc(loadLocalCreds(), "engine_list_reviewed_urls", {});
 }
 
+/** True when a PENDING review row already exists for the URL — lets the
+    engine ping the owner only when a row is NEW, not on every rerun. */
+export async function hasPendingReview(jobUrl) {
+  return rpc(loadLocalCreds(), "engine_has_pending_review", { p_job_url: jobUrl });
+}
+
 /* ── learned skill strikes (owner feedback loop) ───────────────────── */
 
 /** Skills the owner 👎-ed >= p_min times → hard-reject when a JD requires them. */
