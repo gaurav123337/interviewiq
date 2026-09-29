@@ -113,6 +113,17 @@ export async function hasPendingReview(jobUrl) {
   return rpc(loadLocalCreds(), "engine_has_pending_review", { p_job_url: jobUrl });
 }
 
+/** Resolve any pending review row for a URL (engine-side: a submission
+    makes the ask obsolete). status: done | dismissed | closed. */
+export async function resolveReviewByUrl(jobUrl, status) {
+  return rpc(loadLocalCreds(), "engine_resolve_review_by_url", { p_job_url: jobUrl, p_status: status });
+}
+
+/** Weekly digest per board: engine decisions + owner resolutions, 7d. */
+export async function applyWeeklyDigest() {
+  return rpc(loadLocalCreds(), "admin_apply_weekly_digest", {});
+}
+
 /* ── learned skill strikes (owner feedback loop) ───────────────────── */
 
 /** Skills the owner 👎-ed >= p_min times → hard-reject when a JD requires them. */
