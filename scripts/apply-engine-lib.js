@@ -26,6 +26,7 @@ export const SITE_RULES = {
     successText: /application\s+sent|your application was sent/i,
     listSelectorHints: ["a[href*='/jobs/view/']", ".jobs-search-results__list-item", ".job-card-container"],
     minIntervalMs: 4000, // LinkedIn rate-limits hard; keep it slow
+    sessionCookieNames: ["li_at"], // ground truth: guests never have li_at
   },
   naukri: {
     label: "Naukri",
