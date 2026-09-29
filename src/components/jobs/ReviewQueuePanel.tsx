@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig,
+  listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, putJudgeExemplar,
   type ReviewItem, type ReviewFormField,
 } from "../../services/jobSites.ts";
 
@@ -69,9 +69,26 @@ export default function ReviewQueuePanel() {
     })();
   }, [notifyOpen]);
 
+  /* posting id when the URL carries one (LinkedIn /jobs/view/<id> or
+     currentJobId=<id>) — lets ownerExemplarFor match future postings by id */
+  const jobIdFromUrl = (u: string | null): string | null => {
+    const m = String(u || "").match(/(?:jobs\/view\/|currentJobId=)(\d+)/);
+    return m ? m[1] : null;
+  };
+
   const resolve = async (it: ReviewItem, status: "done" | "dismissed") => {
     setBusy(it.id);
     try {
+      if (status === "done") {
+        /* Done TEACHES the judge: a positive exemplar (same shape as the
+           seeded ones, incl. the posting id when known) makes similar
+           owner-approved postings apply automatically next time instead of
+           queueing for review. Best-effort — a failed write never blocks
+           the resolve itself. */
+        const id = jobIdFromUrl(it.job_url);
+        const summary = `${it.title || "(untitled)"}${it.company ? ` at ${it.company}` : ""}${id ? ` (${id})` : ""}: owner-confirmed relevant — finished manually from review queue`;
+        await putJudgeExemplar("positive", summary, it.reason ?? undefined, it.job_url).catch(() => {});
+      }
       await resolveJobReview(it.id, status);
       await refresh();
     } catch (e) {
@@ -116,7 +133,8 @@ export default function ReviewQueuePanel() {
       </div>
       <div className="mb-2 text-xs text-zinc-500">
         Review-gate forms the engine skipped in <code className="rounded bg-zinc-800 px-1">--unattended</code> mode wait here with their
-        link — open, submit by hand, then mark Done. Dismissed jobs never come back.
+        link — open, submit by hand, then mark Done. Marking Done also <span className="text-zinc-400">teaches the AI judge</span> (positive
+        exemplar) so similar owner-approved jobs apply automatically next time. Dismissed jobs never come back.
       </div>
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!items.length && <div className="text-xs text-zinc-500">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
@@ -142,7 +160,7 @@ export default function ReviewQueuePanel() {
                 <>
                   <button onClick={() => openForm(it)} className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500">Open form ↗</button>
                   <button onClick={() => void copy(it.form_url || it.job_url)} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">📋</button>
-                  <button onClick={() => void resolve(it, "done")} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">✓ Done</button>
+                  <button onClick={() => void resolve(it, "done")} title="Mark done + teach the judge this kind of job is relevant" className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">✓ Done</button>
                   <button onClick={() => void resolve(it, "dismissed")} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">✕</button>
                 </>
               )}
