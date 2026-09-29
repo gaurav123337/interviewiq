@@ -401,16 +401,40 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
     if (!loginOnly) {
       console.log(dim("   (Re-run with --login-only to just log in first, if you prefer.)"));
     }
-    /* wait up to 10 minutes for the human to complete login */
+    /* wait up to 10 minutes for the human to complete login. VERIFIED by
+       cookies where the site names its session cookie: page-based checks
+       false-positive on LinkedIn (guests see signed-out variants of the
+       home/feed pages that pass every URL/title probe — three "Login
+       saved" runs in a row stored NO session cookie at all). */
+    const verifySession = async () => {
+      const names = rules.sessionCookieNames ?? [];
+      if (!names.length) return waitForStableState(page, rules, url, { settleMs: 0 });
+      for (let i = 0; i < 3; i++) {
+        const cookies = await page.context().cookies(url).catch(() => []);
+        const hit = names.map((n) => cookies.find((c) => c.name === n)).find(Boolean);
+        if (hit?.value) {
+          /* diagnostic: a session-scoped cookie (no expiry) dies with the
+             browser — the owner must tick the site's keep-signed-in box */
+          const exp = hit.expires > 0 ? new Date(hit.expires * 1000).toISOString().slice(0, 10) : "SESSION-ONLY (dies at browser close)";
+          console.log(dim(`  session cookie ${hit.name}: expires ${exp}`));
+          return { kind: "loggedIn", title: "", bodyText: "" };
+        }
+        await page.waitForTimeout(4000);
+      }
+      return { kind: "login", title: "", bodyText: "" };
+    };
     const t0 = Date.now();
     while (Date.now() - t0 < 10 * 60_000) {
       await page.waitForTimeout(2000);
       let st;
       try { st = await waitForStableState(page, rules, url, { settleMs: 0 }); } catch { continue; }
       if (st.kind === "loggedIn") {
+        st = await verifySession(); // guest-on-homepage false-positive guard
+        if (st.kind !== "loggedIn") continue; // still signed out — keep waiting
         const problem = detectAccountProblem(st.bodyText);
         if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — login cannot succeed until the account is restored.`)); return false; }
         console.log(green(`✓ ${rules.label}: logged in.`));
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {}); // back where the run expects
         return true;
       }
     }
@@ -927,8 +951,12 @@ async function runSingle(args) {
         console.log(dim(`  ⏭ skipped — ${pre.reason}`));
         continue;
       }
-      /* per-job watchdog: a wedged form must cost ONE job, not the site leg */
-      const jw = setTimeout(() => { console.log(yellow(`  ⏱ job timed out after 4 min — skipping`)); try { page.close().catch(() => {}); } catch { /* already closed */ } }, 4 * 60_000);
+      /* per-job watchdog: a wedged form must cost ONE job, not the site leg.
+         Attended runs get a human budget — page.pause() review gates and
+         Easy Apply modals wait for HANDS (a human needs >4 min); unattended
+         stays tight: nobody is coming to click. */
+      const JOB_BUDGET_MS = args.unattended ? 4 * 60_000 : 15 * 60_000;
+      const jw = setTimeout(() => { console.log(yellow(`  ⏱ job timed out after ${JOB_BUDGET_MS / 60_000} min — skipping`)); try { page.close().catch(() => {}); } catch { /* already closed */ } }, JOB_BUDGET_MS);
       if (page.isClosed?.()) page = await ctx.newPage(); // watchdog closed it last job — fresh page
       try {
         await openJob(page, job);
@@ -984,6 +1012,20 @@ async function runSingle(args) {
           await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
           await page.waitForTimeout(2500);
           applyCount = await applyBtn.count();
+        }
+        if (applyCount === 0 && site === "linkedin") {
+          /* LinkedIn serves the CTA-less public shell for /jobs/view/<id>/
+             deep links EVEN when signed in — the real UI (Easy Apply +
+             .jobs-box__html-content) lives at /jobs/search/?currentJobId=<id>.
+             Re-anchor there before giving up; guests just fall through to
+             the needsReview queue below. */
+          const jid = (job.url || "").match(/jobs\/view\/(\d+)/i)?.[1];
+          if (jid) {
+            await page.goto(`https://www.linkedin.com/jobs/search/?currentJobId=${jid}`, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+            await page.waitForTimeout(3500);
+            applyCount = await applyBtn.count();
+            if (applyCount > 0) console.log(dim("  re-anchored to the signed-in jobs UI (currentJobId)"));
+          }
         }
         if (applyCount > 0) {
           /* mode selector: "Easy Apply" (in-product) vs "Apply on company
