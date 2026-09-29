@@ -73,7 +73,7 @@ export async function listJobReviews(): Promise<ReviewItem[]> {
   return (data ?? []) as ReviewItem[];
 }
 
-export async function resolveJobReview(id: string, status: "done" | "dismissed"): Promise<void> {
+export async function resolveJobReview(id: string, status: "done" | "dismissed" | "closed"): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
   const { error } = await client.rpc("admin_resolve_job_review", { p_id: id, p_status: status });

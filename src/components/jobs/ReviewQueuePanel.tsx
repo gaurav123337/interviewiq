@@ -76,18 +76,18 @@ export default function ReviewQueuePanel() {
     return m ? m[1] : null;
   };
 
-  const resolve = async (it: ReviewItem, status: "done" | "dismissed") => {
+  const resolve = async (it: ReviewItem, status: "done" | "dismissed" | "closed") => {
     setBusy(it.id);
     try {
+      /* Applied/Not-interested TEACH the judge (what the owner wants);
+         Closed teaches NOTHING — a shut posting is the company's state,
+         not a preference. Exemplar writes are best-effort. */
+      const id = jobIdFromUrl(it.job_url);
+      const base = `${it.title || "(untitled)"}${it.company ? ` at ${it.company}` : ""}${id ? ` (${id})` : ""}`;
       if (status === "done") {
-        /* Done TEACHES the judge: a positive exemplar (same shape as the
-           seeded ones, incl. the posting id when known) makes similar
-           owner-approved postings apply automatically next time instead of
-           queueing for review. Best-effort — a failed write never blocks
-           the resolve itself. */
-        const id = jobIdFromUrl(it.job_url);
-        const summary = `${it.title || "(untitled)"}${it.company ? ` at ${it.company}` : ""}${id ? ` (${id})` : ""}: owner-confirmed relevant — finished manually from review queue`;
-        await putJudgeExemplar("positive", summary, it.reason ?? undefined, it.job_url).catch(() => {});
+        await putJudgeExemplar("positive", `${base}: owner-confirmed relevant — applied from review queue`, it.reason ?? undefined, it.job_url).catch(() => {});
+      } else if (status === "dismissed") {
+        await putJudgeExemplar("negative", `${base}: owner not interested — dismissed from review queue`, it.reason ?? undefined, it.job_url).catch(() => {});
       }
       await resolveJobReview(it.id, status);
       await refresh();
@@ -133,8 +133,8 @@ export default function ReviewQueuePanel() {
       </div>
       <div className="mb-2 text-xs text-zinc-500">
         Review-gate forms the engine skipped in <code className="rounded bg-zinc-800 px-1">--unattended</code> mode wait here with their
-        link — open, submit by hand, then mark Done. Marking Done also <span className="text-zinc-400">teaches the AI judge</span> (positive
-        exemplar) so similar owner-approved jobs apply automatically next time. Dismissed jobs never come back.
+        link — open, submit by hand, then record the outcome: <b className="text-zinc-400">✓ Applied</b> and <b className="text-zinc-400">✕ Not interested</b> teach the
+        AI judge your preference for similar postings; <b className="text-zinc-400">🚫 Closed</b> (no longer accepting) just stops the engine from retrying.
       </div>
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!items.length && <div className="text-xs text-zinc-500">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
@@ -160,8 +160,9 @@ export default function ReviewQueuePanel() {
                 <>
                   <button onClick={() => openForm(it)} className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500">Open form ↗</button>
                   <button onClick={() => void copy(it.form_url || it.job_url)} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">📋</button>
-                  <button onClick={() => void resolve(it, "done")} title="Mark done + teach the judge this kind of job is relevant" className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">✓ Done</button>
-                  <button onClick={() => void resolve(it, "dismissed")} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">✕</button>
+                  <button onClick={() => void resolve(it, "done")} title="I already applied — also teaches the judge this kind of job is relevant" className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">✓ Applied</button>
+                  <button onClick={() => void resolve(it, "dismissed")} title="Not interested — also teaches the judge to skip similar postings" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:border-red-600 hover:text-red-400">✕ Not interested</button>
+                  <button onClick={() => void resolve(it, "closed")} title="Posting closed / no longer accepting — stops retries, teaches nothing" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">🚫 Closed</button>
                 </>
               )}
             </div>

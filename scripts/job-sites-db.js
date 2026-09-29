@@ -98,6 +98,15 @@ export async function getJudgeExemplars() {
   return rpc(loadLocalCreds(), "engine_get_judge_exemplars", {});
 }
 
+/* ── owner review verdicts: URLs the owner already resolved in the UI ── */
+
+/** Latest resolved review status per job URL (done/dismissed/closed).
+    The engine skips all of them — done/dismissed are owner decisions,
+    closed means the posting no longer accepts applications. */
+export async function listReviewedUrls() {
+  return rpc(loadLocalCreds(), "engine_list_reviewed_urls", {});
+}
+
 /* ── learned skill strikes (owner feedback loop) ───────────────────── */
 
 /** Skills the owner 👎-ed >= p_min times → hard-reject when a JD requires them. */
