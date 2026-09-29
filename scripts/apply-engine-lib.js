@@ -19,7 +19,7 @@ export const SITE_RULES = {
     jobsUrlHosts: ["linkedin.com"],
     loginPathHints: ["authwall", "/login", "checkpoint"],
     loggedInHint: "/feed",
-    applyButtonText: /easy\s*apply|apply (on|to) (the )?company (website|site)/i,
+    applyButtonText: /easy\s*apply|apply (on|to) (the )?company (website|site)|^\s*apply\s*$/i,
     steps: ["contact", "resume", "questions", "review"],
     autoSubmit: false, // owner decision: LinkedIn accounts are precious — review gate
     submitButtonText: /submit\s*application/i,
@@ -235,21 +235,17 @@ export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2, cri
   }
   const matched = required.filter((s) => prof.has(s));
   const missing = required.filter((s) => !prof.has(s));
-  /* repetition-weighted core detection: a skill the JD names ≥3× is core
-     even if the title forgot it ("Python… Python… Python" postings) */
-  const repeated = [...jdSkills].filter((s) => {
-    const esc = s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return (text.match(new RegExp("(?:^| )" + esc + "(?: |$)", "g")) ?? []).length >= 3;
-  });
   /* critical-and-missing, with source-correct semantics:
      - title-named → reject when the profile lacks it (even if the JD text
        never spells it out — the title already demanded it)
-     - JD-repeated ≥3× → same
      - LEARNED strikes (owner 👎) → reject only when THIS JD actually
-       requires it — a strike on python must not reject a python-free JD */
+       requires it — a strike on python must not reject a python-free JD.
+     JD-REPEATED skills are NOT critical: every modern JD's "Key
+     Technologies" list repeats its stack keywords 2-3× (a React role
+     listing GraphQL/REST three times is not a GraphQL job) — they weigh
+     in the coverage ratio above and the AI judge owns the borderline. */
   const critSet = new Set();
   for (const s of critical) if (!prof.has(s)) critSet.add(s);
-  for (const s of repeated) if (!prof.has(s)) critSet.add(s);
   for (const s of learnedCritical) if (missing.includes(s)) critSet.add(s);
   const criticalMissing = [...critSet];
   if (criticalMissing.length) {
@@ -451,7 +447,41 @@ export function formFieldsPreview(fields, plan) {
    renders a verdict with strict JSON — before any kit is built or form is
    touched. Rules remain the guardrails (cheap, instant, auditable); the
    judge is the reading comprehension layered on top of them. */
-export function judgeMessages(job, profile) {
+/* Learning window, part 2: the judge LEARNS from the owner's verdicts on
+   real postings. Positive/negative exemplars are short title+reason pairs
+   fed into the judge prompt so its future decisions generalize from them
+   ("this owner counts full-stack frontend with React+TS as a match even
+   when Python appears in the JD body; SDET roles are always skip"). */
+export function exemplarBlock(positive = [], negative = []) {
+  const lines = [];
+  for (const e of positive.slice(0, 5)) lines.push(`APPLY-EXAMPLE: ${String(e).slice(0, 160)}`);
+  for (const e of negative.slice(0, 5)) lines.push(`SKIP-EXAMPLE: ${String(e).slice(0, 160)}`);
+  return lines.length ? `Examples of this owner's past verdicts (follow their pattern):\n${lines.join("\n")}` : "";
+}
+
+/** Does this job carry an OWNER-POSITIVE exemplar? Owner 👍 on a posting is
+    the ground truth that overrides even a reasoned judge skip — that is the
+    whole learn-from-the-owner loop. Match by posting id when known, else by
+    title-token overlap (≥3 shared tokens ≥4 chars, or one ≥8-char token). */
+export function ownerExemplarFor(job, exemplars) {
+  const positives = (exemplars?.positive ?? []).map((s) => String(s));
+  if (!positives.length) return "";
+  const m = String(job?.url || "").match(/(?:jobs\/view\/|currentJobId=)(\d+)/);
+  if (m) { const hit = positives.find((s) => s.includes(m[1])); if (hit) return hit; }
+  const tokens = (s) => new Set(String(s || "").toLowerCase().match(/[a-z][a-z.+#]{3,}/g) ?? []);
+  const jt = tokens(job?.title);
+  let best = "", bestN = 0;
+  for (const s of positives) {
+    const st = tokens(s);
+    let n = 0;
+    for (const t of jt) if (st.has(t)) n++;
+    const strong = [...jt].some((t) => t.length >= 8 && st.has(t));
+    if (strong || n > bestN) { best = s; bestN = Math.max(n, strong ? 3 : n); }
+  }
+  return bestN >= 3 ? best : "";
+}
+
+export function judgeMessages(job, profile, exemplars = null) {
   const p = profile || {};
   const system = [
     "You are a strict hiring manager screening applications for a real candidate.",
@@ -459,7 +489,7 @@ export function judgeMessages(job, profile) {
     "Reject (verdict skip) when ANY of these hold:",
     "- a skill named in the job TITLE (e.g. Python, Java, React) is absent from the candidate's skills — the headline requirement is not negotiable",
     "- the role's core function differs from the candidate's demonstrated work (a frontend/product-engineer resume is NOT a QA-automation/SDET, data-engineering, or DevOps role even when some tools overlap)",
-    "- hard requirements (domain, seniority, stack) clearly outstrip the resume",
+    "- hard requirements (domain, stack) clearly outstrip the resume. Being MORE senior than the posting is NOT a rejection reason — experienced candidates apply to senior-adjacent roles all the time",
     "Apply (verdict apply) when the core function matches and most key requirements are genuinely on the resume; adjacent transferable experience counts.",
     "Be conservative about wasting the candidate's applications — a wrong application is worse than a missed one.",
     "Reply with ONLY this JSON, nothing else:",
@@ -468,8 +498,9 @@ export function judgeMessages(job, profile) {
   const user = [
     `CANDIDATE: ${p.headline || "engineer"}${p.years != null ? `, ${p.years} yrs` : ""}. Skills: ${(p.skills ?? []).join(", ") || "(none listed)"}.`,
     `POSTING: ${job?.title || "(untitled)"}${job?.company ? ` at ${job.company}` : ""}.`,
+    exemplars ? exemplarBlock(exemplars.positive, exemplars.negative) : "",
     `JD (may be truncated): ${(job?.description || "").slice(0, 3500)}`,
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   return { system, user };
 }
 

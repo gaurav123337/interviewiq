@@ -129,6 +129,18 @@ async function queueReview(entry) {
 /* Learned criticals: skills the owner 👎-ed >=2 times (via the report's
    feedback buttons) hard-reject any JD that requires them. Empty until the
    owner teaches — the loop is: engine applies → owner reacts → gate learns. */
+async function judgeExemplars() {
+  const db = await sitesDb();
+  if (!db?.getJudgeExemplars) return null;
+  try {
+    const rows = (await db.getJudgeExemplars()) ?? [];
+    return {
+      positive: rows.filter((r) => r.kind === "positive").map((r) => r.summary),
+      negative: rows.filter((r) => r.kind === "negative").map((r) => r.summary),
+    };
+  } catch { return null; }
+}
+
 async function learnedCriticalSkills() {
   const db = await sitesDb();
   if (!db?.getSkillStrikes) return [];
@@ -413,11 +425,48 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
 async function collectJobs(page, url, site, max) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  /* LinkedIn authwall: /jobs/view/<id>/ intermittently bounces to the
+     signup wall (stale/guest sessions). Guest access DOES pass sometimes —
+     retry fresh navigations (bounded) until document.title stops being a
+     wall title; only then give up for this collection. */
+  const wallTitle = () => page.evaluate(() => /sign (up|in)|join linkedin|authwall/i.test(document.title || ""))
+    .catch(() => true); // destroyed context mid-redirect = UNKNOWN → keep retrying (false-negatives here were the thin-capture bug)
+  if (site === "linkedin") {
+    for (let attempt = 0; attempt < 4 && (await wallTitle()); attempt++) {
+      await page.waitForTimeout(2500 + attempt * 1500);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+    }
+  }
   const state = await waitForStableState(page, rules, url); // SPA render + challenge clear + redirect settle
   if (state.kind === "challenge") throw new Error(`${rules.label}: bot-check did not clear — re-run headed (no --headless).`);
   if (state.kind === "login") throw new Error(`${rules.label}: session expired — re-run with --login-only to sign in again.`);
   const problem = detectAccountProblem(state.bodyText);
   if (problem) throw new Error(`${rules.label}: ${problem}`);
+  /* A direct /jobs/view/<id>/ URL IS the job: the page's main posting is
+     the target, NOT the similar-jobs links the generic collector would
+     scrape from the sidebar. Pin it first so dedupe keeps it. */
+  const direct = url.match(/linkedin\.com\/jobs\/view\/(\d+)/i);
+  if (direct) {
+    const head = await page.evaluate(() => {
+      /* document.title is the reliable source, but its SHAPE varies by wall
+         state: signed-in = "<Company> hiring <Title> in <Place> | LinkedIn";
+         walled = "<Title> - <Company> | LinkedIn" or just "<Title> | LinkedIn".
+         Reject wall/chrome titles explicitly, then parse what remains. */
+      const t = document.title || "";
+      const wall = /sign (up|in)|join linkedin|authwall|login/i.test(t);
+      const og = document.querySelector('meta[property="og:title"]')?.content ?? "";
+      const raw = wall && og ? og : t;
+      const m = raw.match(/^(.*?)\s+hiring\s+(.*?)\s+in\s+[^|]*\|/);
+      if (m) return { title: m[2].trim().slice(0, 140), company: m[1].trim().slice(0, 80) };
+      const bar = raw.split("|")[0].replace(/\s*[-–—]\s*LinkedIn\s*$/i, "").trim();
+      const dash = bar.match(/^(.*?)\s+[-–—]\s+(.*)$/); // "<Title> - <Company>"
+      if (dash) return { title: dash[2].trim().slice(0, 140), company: dash[1].trim().slice(0, 80) };
+      const h1 = (document.querySelector("h1")?.innerText ?? "").trim().split("\n")[0];
+      return { title: (h1 || bar).slice(0, 140), company: "" };
+    });
+    return [{ url: `https://www.linkedin.com/jobs/view/${direct[1]}/`, title: head.title || "LinkedIn posting " + direct[1], company: head.company }];
+  }
   /* auto-scroll to load lazy lists (LinkedIn/Instahyre paginate inside SPA) */
   for (let i = 0; i < 6; i++) {
     await page.mouse.wheel(0, 2400);
@@ -478,53 +527,189 @@ async function collectJobs(page, url, site, max) {
 
 /* ------------------------ job page + JD text ------------------------ */
 
+/* Cut page-text fallbacks at sidebar starts: promoted/similar-job rails
+   sit after the JD in the DOM, so naive page-text slices drag
+   "Technical Lead (Angular) at <other company>" ads into the judged text.
+   One such blob rejected a React role for a skill the posting never
+   mentioned. Conservative marker set — only obvious jobs-rail headers. */
+const trimSidebar = (t) => {
+  const m = t.search(/\n\s*(?:Promoted|Similar jobs|More jobs for you|People also viewed|Recommended jobs)\b/i);
+  return m >= 0 ? t.slice(0, m).trim() : t;
+};
+/* Template-B guest pages put the header FIRST, then the promoted-ad rail,
+   then the JD inside ONE main section — the JD is not always before the
+   first sidebar marker. Ads are chopped from each other by their own
+   "Promoted" lines; the JD body is one unbroken block — so split at every
+   marker and keep the LARGEST fragment (≥300 chars = real content). */
+const largestFragment = (t) => String(t || "")
+  .split(/\n\s*(?:Promoted|Similar jobs|More jobs for you|People also viewed|Recommended jobs)\b[^\n]*/i)
+  .map((s) => s.trim())
+  .filter((s) => s.length >= 300)
+  .sort((a, b) => b.length - a.length)[0] ?? "";
+
 async function openJob(page, job) {
   await page.goto(job.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(2500);
-  /* Boards clamp the JD behind a "see more"-style expander (LinkedIn only
-     renders ~2 paragraphs + "…see more") — expand it so the skill gate
-     judges the FULL posting, not the teaser. Tolerant: no expander → no-op. */
-  const seeMore = page
-    .locator("button:visible, [role=button]:visible, a:visible")
-    .filter({ hasText: /^(see more|show more|view more|read more|\.\.\.|…|more\.\.\.)$/i }) // NO bare "more" — that's the top-nav menu
-    .first();
-  if ((await seeMore.count()) > 0) await seeMore.click({ timeout: 3000 }).catch(() => {});
-  /* LinkedIn lazy-renders "About the job" — poll (bounded) until the JD body
-     is actually in the DOM; a single early snapshot yields nav chrome only. */
+  /* same wall retry as collection: openJob's OWN navigation hits the wall
+     again even when collection just got through (guest access is flaky) */
+  if (/linkedin\.com/i.test(job.url || "")) {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const wall = await page.evaluate(() => /sign (up|in)|join linkedin|authwall/i.test(document.title || ""))
+        .catch(() => true); // destroyed context = UNKNOWN → retry (was false → skipped retries)
+      if (!wall) break;
+      await page.waitForTimeout(2500 + attempt * 1500);
+      await page.goto(job.url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+    }
+  }
+  /* remember the settled URL — if the JD captures thin we re-navigate once
+     (guest hydration is flaky per-load; a fresh load usually fixes it) */
+  const settledUrl = page.url();
+  /* LEARNING WINDOW: explore the WHOLE page before judging it. Boards clamp
+     the JD behind "see more" expanders, lazy-render sections on scroll, and
+     reveal text only after interaction. So: click EVERY hidden/expander
+     button on the page (bounded), scroll the full height, and keep polling
+     until the captured JD text stops growing for 2 consecutive rounds or
+     the budget is spent — a snapshot of a half-open page is why real
+     frontend matches used to die as "JD mentions no specific skills". */
+  const expandAll = async () => {
+    let clicked = 0;
+    const startUrl = page.url();
+    try {
+      /* ONLY expanders inside/near the description region — clicking page-wide
+         buttons once navigated to the COMPANY page ("Ferguson India: Home")
+         and destroyed the very JD we were opening */
+      const handles = await page.$$(
+        ".jobs-description button:visible, .jobs-description [role=button]:visible, .show-more-less-html__button:visible, [class*='jobs-description'] button:visible, [class*='jobs-box__list-item'] button:visible, button:visible.show-more-less-html__button"
+      );
+      for (const h of handles) {
+        if (clicked >= 12) break; // bounded: never site-wrecking
+        const label = ((await h.innerText({ timeout: 800 }).catch(() => "")) || "").trim();
+        if (!/^(see more|show more|view more|read more|more\.\.\.|\.\.\.|…|expand|show all|full description)\b/i.test(label)) continue;
+        if (/^(apply|save|follow|dismiss|skip|share|message)/i.test(label)) continue;
+        await h.click({ timeout: 1500 }).catch(() => {});
+        clicked++;
+        await page.waitForTimeout(350);
+        if (page.url() !== startUrl) { // a click navigated — undo immediately
+          await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+          await page.waitForTimeout(1500);
+          break;
+        }
+      }
+    } catch { /* exploration is best-effort */ }
+    return clicked;
+  };
+  const scrollWholePage = async () => {
+    try {
+      await page.evaluate(async () => {
+        for (let y = 0; y < document.body.scrollHeight; y += 700) {
+          window.scrollTo(0, y);
+          await new Promise((r) => setTimeout(r, 120));
+        }
+        window.scrollTo(0, 0);
+      });
+    } catch { /* best-effort */ }
+  };
   let container = "";
   const grabDesc = () => page.evaluate(() => {
-    const sels = [".jobs-description__content", ".jobs-description", ".show-more-less-html__markup", "[class*='job-description']", "[class*='jobs-description']"];
+    /* signed-in LinkedIn renders the JD in .jobs-box__html-content (no
+       'description' in the class name); guest/other variants use
+       .show-more-less-html__markup, .description__text--rich or a
+       core-section-container description. Some variants hydrate LATE:
+       innerText of the clamped markup returns "" — fall back to
+       textContent so a not-yet-laid-out JD still counts as captured. */
+    const sels = [".jobs-box__html-content", ".jobs-description__content", ".jobs-description", ".show-more-less-html__markup", ".description__text--rich", "section[class*='show-more-less-html']", ".core-section-container.description", "[class*='job-description']", "[class*='jobs-description']", "[class*='jobs-box__html']"];
+    const txt = (el) => {
+      const t = (el.innerText || "").trim();
+      return t || (el.textContent || "").replace(/\s+/g, " ").trim();
+    };
     let best = "";
     for (const sel of sels) {
       for (const el of document.querySelectorAll(sel)) {
-        const t = (el.innerText || "").trim();
+        const t = txt(el);
         if (t.length > best.length && t.length >= 120) best = t;
       }
     }
-    return { container: best.slice(0, 4000), pageText: (document.body?.innerText ?? "").slice(0, 9000) };
+    /* most-specific rendered section: the main rail IS the JD page on
+       guest /jobs/view/<id> (right rail = promoted/similar ads we must
+       never judge on) */
+    let mainSection = "";
+    for (const el of document.querySelectorAll("main section")) {
+      if (!el.offsetParent) continue;
+      const t = txt(el);
+      if (t.length > mainSection.length && t.length <= 9000) mainSection = t;
+    }
+    return { container: best.slice(0, 6000), mainSection: mainSection.slice(0, 6000), pageText: (document.body?.innerText ?? "").slice(0, 12000) };
   });
-  for (let i = 0; i < 6; i++) {
+  let mainSection = "";
+  let stable = 0;
+  for (let i = 0; i < 10; i++) {
+    const clicks = await expandAll();
+    await scrollWholePage();
     const g = await grabDesc();
-    container = g.container;
+    if (g.container.length > container.length + 80) { container = g.container; stable = 0; }
+    else if (g.container.length === container.length) stable++;
+    if (g.mainSection.length > mainSection.length) mainSection = g.mainSection; // learned across rounds
     job.pageText = g.pageText;
-    const key = (job.title || "").toLowerCase().slice(0, 25).trim();
-    const at = key.length > 8 ? job.pageText.toLowerCase().indexOf(key) : -1;
-    if (container.length >= 120 || (at >= 0 && job.pageText.slice(at).length >= 600)) break;
-    await page.waitForTimeout(1500);
+    if ((container.length >= 400 && stable >= 2) || i === 9) break; // text settled or budget gone
+    await page.waitForTimeout(1400);
   }
   if (container.length >= 120) {
     job.description = container;
+    console.log(dim(`  📖 JD captured: ${container.length} chars (learning window)`));
   } else {
-    /* no known container (LinkedIn variants ship obfuscated classes): anchor
-       on the job TITLE — the JD body always follows it in the main section;
-       a page-head slice would only capture nav chrome + header meta. */
-    const key = (job.title || "").toLowerCase().slice(0, 25).trim();
-    const at = key.length > 8 ? job.pageText.toLowerCase().indexOf(key) : -1;
-    if (at >= 0) {
-      job.description = job.pageText.slice(at, at + 3500);
-    } else {
-      const m = job.pageText.match(/(?:about|description|the role|responsibilities)[\s\S]{200,3000}/i);
-      job.description = m ? m[0].slice(0, 3000) : job.pageText.slice(0, 1500);
+    /* thin capture — LinkedIn serves a second guest template with obfuscated
+       class names (no .show-more-less-html__markup at all) whose JD main
+       section hydrates only on a FRESH load (first-load interaction seems
+       to cancel the lazy JD fetch). Re-navigate once, re-grab BOTH the
+       semantic containers and the main-rail section, keep the bigger. */
+    let ms2 = "";
+    if (/^https?:/i.test(settledUrl || "")) {
+      await page.goto(settledUrl, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+      await page.waitForTimeout(2500);
+      const g2 = await grabDesc();
+      if (g2.container.length >= 120) {
+        job.description = g2.container;
+        console.log(dim(`  📖 JD captured on reload: ${g2.container.length} chars`));
+      }
+      ms2 = g2.mainSection;
+    }
+    const ms = mainSection.length > ms2.length ? mainSection : ms2;
+    if (!job.description && ms.length >= 500) {
+      /* the JD may sit before OR after the ad rail inside one section —
+         largest marker-split fragment wins (see largestFragment above) */
+      const frag = largestFragment(ms);
+      if (frag) {
+        job.description = frag.slice(0, 6000);
+        console.log(dim(`  📖 fallback: main-rail section ${ms.length} chars → JD fragment ${frag.length} chars`));
+      }
+    }
+    if (!job.description) {
+      const raw = await page.evaluate(() => {
+        const sec = document.querySelector("section[class*='show-more-less-html'] section, .show-more-less-html__markup, section.jobs-description__content section, main section:has([class*='show-more-less'])");
+        if (!sec) return "";
+        const t = (sec.innerText || "").trim();
+        return t || (sec.textContent || "").replace(/\s+/g, " ").trim();
+      }).catch(() => "");
+      const jdSection = raw.length >= 300 ? trimSidebar(raw.slice(0, 4000)) : "";
+      if (jdSection) {
+        job.description = jdSection;
+        console.log(dim(`  📖 fallback: DOM section ${jdSection.length} chars`));
+      }
+    }
+    if (!job.description) {
+      const anchor = job.pageText.match(/about (?:the )?(?:job|this role|opportunity)[\s\S]{400,4000}/i)
+        || job.pageText.match(/(?:description|the role|responsibilities)[\s\S]{300,3500}/i);
+      const key = (job.title || "").toLowerCase().slice(0, 25).trim();
+      const at = key.length > 8 ? job.pageText.toLowerCase().indexOf(key) : -1;
+      if (anchor) {
+        job.description = trimSidebar(anchor[0].slice(0, 4000));
+      } else if (at >= 0) {
+        job.description = trimSidebar(job.pageText.slice(at, at + 3500));
+      } else {
+        job.description = job.pageText.slice(0, 1500); // bare bones: title block only
+      }
+      console.log(dim(`  📖 fallback description: ${job.description.length} chars (anchors)`));
     }
   }
   const t = (job.pageText.match(/(?:at|·|—|\|)\s*([A-Z][\w&.\- ]{1,40}(?:Labs|Technologies|Solutions|Systems|Inc|Pvt)?)/) || [])[1];
@@ -685,8 +870,15 @@ async function runSingle(args) {
     }
     if (args["login-only"]) { console.log(green("Login saved. Re-run without --login-only to apply.")); return; }
 
-    const jobs = await collectJobs(page, args.url, site, args.max);
+    let jobs = await collectJobs(page, args.url, site, args.max);
     console.log(dim(`collected ${jobs.length} posting(s)`));
+    if (!jobs.length) {
+      /* LinkedIn wall flakiness: guest access alternates wall/pass between
+         navigations — one more collect attempt before declaring defeat */
+      await page.waitForTimeout(3000);
+      jobs = await collectJobs(page, args.url, site, args.max);
+      console.log(dim(`collected (retry) ${jobs.length} posting(s)`));
+    }
     if (!jobs.length) {
       /* honest diagnostics: dump exactly what the engine saw */
       const dbg = [
@@ -754,7 +946,7 @@ async function runSingle(args) {
            judge trouble never blocks the deterministic path. Runs BEFORE
            kit generation — a skip here saves two AI calls + form filling. */
         if (ai) {
-          job.__judge = await judgeFit(ai, job, profile);
+          job.__judge = await judgeFit(ai, job, profile, await judgeExemplars());
           if (job.__judge.verdict === "skip") {
             const why = `AI judge: ${job.__judge.reason || "not a realistic match"}`;
             recordResultBoth(report, job, "skipped", why);
@@ -785,6 +977,14 @@ async function runSingle(args) {
           if (applyCount > 0) break;
           await page.waitForTimeout(2000);
         }
+        if (applyCount === 0) {
+          /* guest preview CTAs expire after ~1 min — the AI judge/kit calls
+             burn exactly that budget, then the button is gone even though
+             the URL/title are unchanged. A fresh load always re-renders it. */
+          await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+          await page.waitForTimeout(2500);
+          applyCount = await applyBtn.count();
+        }
         if (applyCount > 0) {
           /* mode selector: "Easy Apply" (in-product) vs "Apply on company
              website" (external ATS, usually a NEW tab). External ATS forms
@@ -794,6 +994,17 @@ async function runSingle(args) {
           const how = await clickButton(page, applyBtn, rules.applyButtonText);
           console.log(dim(`  apply clicked (${how}${external ? " · external ATS" : ""})`));
           await page.waitForTimeout(3000);
+          /* guest (not signed-in) LinkedIn: Apply opens the contextual
+             sign-in modal — there is NO guest application flow. Queue for
+             the owner instead of "filling" the modal's email field. */
+          const guestModal = await page.$(".contextual-sign-in-modal").catch(() => null);
+          if (guestModal) {
+            recordResultBoth(report, job, "needsReview", "LinkedIn sign-in required to apply — finish manually (browser left on the posting)");
+            console.log(yellow("  ⏸ LinkedIn guest apply needs sign-in — queued for manual finish"));
+            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "LinkedIn sign-in required to apply", fit: job.__fit ?? null });
+            await page.waitForTimeout(rules.minIntervalMs);
+            continue;
+          }
           if (external) {
             let atsPage = null;
             for (const p of ctx.pages()) {
@@ -825,6 +1036,15 @@ async function runSingle(args) {
           }
         } else if (site === "instahyre" || site === "naukri") {
           /* some boards apply in-place — no separate form page */
+        } else if (site === "linkedin" && /linkedin\.com\/jobs\/view\/\d+/i.test(job.url || "")) {
+          /* LinkedIn also serves a sign-in-gated guest variant of /jobs/view
+             with NO apply CTA at all (nav buttons only). An owner-curated
+             direct URL means "this one matters" — queue it with the kit
+             rather than dead-ending; the owner applies signed-in. */
+          recordResultBoth(report, job, "needsReview", "guest view has no apply button — open signed-in and submit (kit in reports)");
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "no apply button on guest view — apply manually", fit: job.__fit ?? null });
+          console.log(yellow("  ⏸ no apply button on the guest view — queued for manual apply"));
+          continue;
         } else {
           recordResultBoth(report, job, "skipped", "no apply button found");
           console.log(dim("  ⏭ skipped — no apply button on the posting"));

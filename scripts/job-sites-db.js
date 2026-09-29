@@ -92,6 +92,12 @@ export async function getApplyConfig() {
   return rpc(loadLocalCreds(), "engine_get_apply_config", {});
 }
 
+/* ── judge exemplars (the judge's training set) ───────────────────── */
+
+export async function getJudgeExemplars() {
+  return rpc(loadLocalCreds(), "engine_get_judge_exemplars", {});
+}
+
 /* ── learned skill strikes (owner feedback loop) ───────────────────── */
 
 /** Skills the owner 👎-ed >= p_min times → hard-reject when a JD requires them. */
