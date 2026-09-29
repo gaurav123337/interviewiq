@@ -98,6 +98,12 @@ describe("review queue", () => {
     rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
     await expect(resolveJobReview("r1", "dismissed")).rejects.toThrow("forbidden");
   });
+
+  it("passes the closed status through (posting no longer accepting)", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await resolveJobReview("r2", "closed");
+    expect(rpc).toHaveBeenCalledWith("admin_resolve_job_review", { p_id: "r2", p_status: "closed" });
+  });
 });
 
 describe("apply mode config (off/local/cloud)", () => {

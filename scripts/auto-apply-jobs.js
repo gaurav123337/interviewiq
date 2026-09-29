@@ -129,6 +129,15 @@ async function queueReview(entry) {
 /* Learned criticals: skills the owner 👎-ed >=2 times (via the report's
    feedback buttons) hard-reject any JD that requires them. Empty until the
    owner teaches — the loop is: engine applies → owner reacts → gate learns. */
+/* Owner review verdicts (done/dismissed/closed in the review queue): the
+   engine must never re-open a posting the owner already handled — includes
+   "no longer accepting applications" (closed) and "not interested". */
+async function reviewedUrls() {
+  const db = await sitesDb();
+  if (!db?.listReviewedUrls) return new Map();
+  try { return new Map(((await db.listReviewedUrls()) ?? []).map((r) => [String(r.job_url || "").split("?")[0], r.review_status])); }
+  catch { return new Map(); }
+}
 async function judgeExemplars() {
   const db = await sitesDb();
   if (!db?.getJudgeExemplars) return null;
@@ -571,6 +580,11 @@ const largestFragment = (t) => String(t || "")
   .filter((s) => s.length >= 300)
   .sort((a, b) => b.length - a.length)[0] ?? "";
 
+/* LinkedIn shows a banner when a posting stopped accepting applications;
+   applying to closed postings wastes the owner's apply and teaches the
+   judge nothing — detect it right after the JD capture and skip. */
+const CLOSED_POSTING_RE = /no longer accepting applications|not accepting applications|no longer accepting job applications/i;
+
 async function openJob(page, job) {
   await page.goto(job.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await page.waitForTimeout(2500);
@@ -929,10 +943,20 @@ async function runSingle(args) {
       return;
     }
 
+    const reviewed = await reviewedUrls(); // owner verdicts from the review queue
     for (const job of jobs) {
       console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);        if (wasApplied(job.url)) {
           recordResultBoth(report, job, "skipped", "already applied (dedupe)");
         console.log(dim("  ⏭ skipped — already applied earlier"));
+        continue;
+      }
+      const reviewedState = reviewed.get(job.url.split("?")[0]);
+      if (reviewedState) {
+        const why = reviewedState === "done" ? "you already applied (review queue: Done)"
+          : reviewedState === "closed" ? "posting closed — no longer accepting applications (you marked it)"
+          : "you dismissed this posting (not interested)";
+        recordResultBoth(report, job, "skipped", why);
+        console.log(dim(`  ⏭ skipped — ${why}`));
         continue;
       }
       if (!titleRelevant(job.title, profile)) {
@@ -960,6 +984,15 @@ async function runSingle(args) {
       if (page.isClosed?.()) page = await ctx.newPage(); // watchdog closed it last job — fresh page
       try {
         await openJob(page, job);
+        /* closed posting: LinkedIn banners "No longer accepting applications"
+           — captured in the learning window's pageText. Skip BEFORE any AI
+           spend, and remember locally so future runs never re-open it. */
+        if (CLOSED_POSTING_RE.test(job.pageText || "")) {
+          recordResultBoth(report, job, "skipped", "posting closed — no longer accepting applications");
+          markApplied(job.url); // dedupe: never reopen a closed posting
+          console.log(dim("  ⏭ skipped — posting closed (no longer accepting applications)"));
+          continue;
+        }
         /* skill gate on the REAL JD text now that the page is open (cheap,
            deterministic: title-critical skills, coverage ratio) */
         const gate = postingRelevant({ title: job.title, description: job.description }, profile, { learnedCritical: await learnedCriticalSkills() });
