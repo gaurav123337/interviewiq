@@ -1098,7 +1098,10 @@ async function runSingle(args) {
         if (unfilledRequired.length) {
           recordResultBoth(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
-          if (!rules.autoSubmit && args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
+          /* ALWAYS queue (deduped per job URL) — the report's "needs you" row
+             must have a review-queue counterpart with one-click Open/Done */
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null });
+          if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           if (!rules.autoSubmit) await page.pause(); // review-gate sites: let the human finish here
           continue;
         }
@@ -1112,7 +1115,12 @@ async function runSingle(args) {
         } else {
           recordResultBoth(report, job, "needsReview", sub.note);
           console.log(yellow(`  ⏸ ${sub.note} — browser is open on the form; finish and submit manually.`));
-          if (args.unattended) { await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null }); console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
+          /* ALWAYS queue: the Applications report's "needs you" rows must have
+             a review-queue counterpart with one-click Open/Done (the RPC
+             dedupes per job URL — repeated runs never pile up). Attended
+             runs ALSO pause here so the human can finish immediately. */
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null });
+          if (args.unattended) { console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);

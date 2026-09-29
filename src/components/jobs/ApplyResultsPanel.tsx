@@ -116,7 +116,9 @@ export default function ApplyResultsPanel() {
               <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-bold text-zinc-400">via {sourceOf(r)}</span>
               <span className="min-w-0 flex-1 truncate">{r.detail || ""}</span>
               {r.result === "needs_review" ? (
-                <a href="#review-queue" className="shrink-0 font-bold text-amber-400 hover:text-amber-300">needs you → review queue</a>
+                <button onClick={() => document.getElementById("review-queue")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  title="Jump to the review queue — Open the form, submit, mark Done"
+                  className="shrink-0 font-bold text-amber-400 hover:text-amber-300">needs you → review queue</button>
               ) : r.job_url ? (
                 <a href={r.job_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-sky-500 hover:text-sky-400">open ↗</a>
               ) : null}
