@@ -35,7 +35,7 @@ import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, isExternalApplyButton,
-  normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
+  normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
 import { acquireApplyContext, isRemoteEndpoint } from "./apply-browser.js";
@@ -63,6 +63,7 @@ function parseArgs(argv) {
     else if (a === "--every") args.everyHours = Math.max(1, parseFloat(argv[++i]) || 0);
     else if (a === "--unattended") args.unattended = true; // scheduled runs: never page.pause() — skip review-gate sites instead
     else if (a === "--status") args.status = true; // send a Telegram summary of today's runs
+    else if (a === "--digest") args.digest = true; // weekly per-board digest (engine + owner decisions), also sent to Telegram
   }
   return args;
 }
@@ -862,21 +863,51 @@ async function trySubmit(page, site, rulesOverride) {
   const rules = rulesOverride ?? SITE_RULES[site] ?? SITE_RULES.generic;
   /* the FINAL button is usually NOT the opener — Instahyre: "Apply now" opens
      a modal, then a plain "Submit" button inside it sends the application */
-  const btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
+  let btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
+  if ((await btn.count()) === 0 && site === "linkedin") {
+    /* LinkedIn Easy Apply is a MULTI-STEP flow (Contact → Resume → Questions
+       → Review) that renders INLINE in the sidebar in current LinkedIn (no
+       dialog container — the old modal selectors find nothing). Drive the
+       Next/Review buttons via JS clicks (pointer clicks get swallowed by
+       the re-rendering flow), bounded — and stop the instant the real
+       "Submit application" button appears. */
+    for (let step = 0; step < 8; step++) {
+      if ((await btn.count()) > 0) break;
+      const advanced = await page.evaluate(() => {
+        const find = (re) => [...document.querySelectorAll("button, a[role=button]")]
+          .find((b) => b.offsetParent && !b.disabled && re.test((b.innerText || b.getAttribute("aria-label") || "").trim()));
+        const b = find(/^review$/i) || find(/^next$/i);
+        if (!b) return false;
+        b.click();
+        return true;
+      }).catch(() => false);
+      if (!advanced) break;
+      await page.waitForTimeout(2000);
+      btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
+    }
+  }
   if ((await btn.count()) === 0) {
-    /* LinkedIn Easy Apply is a MULTI-STEP modal: "Submit application" only
-       exists on its last step, so a missing button here means the modal is
-       mid-flow — NOT "already applied". Queue honestly instead of faking a
-       submission; in-place boards (Naukri/Instahyre) keep the old behavior. */
     if (site === "linkedin") return { auto: false, note: "Easy Apply modal mid-flow — form filled, finish the submit (2 clicks)" };
     if (rules.autoSubmit) return { auto: true, note: "submit button not found (may already be applied)" };
     return { auto: false, note: "review gate — human submits" };
   }
   if (rules.autoSubmit) {
+    /* SAFETY PRE-CHECK before the one-way click: every required field in
+       the form must hold a value — one empty required field = the ATS
+       would bounce it anyway; fail CLOSED to the review queue instead. */
+    const emptyRequired = await page.evaluate(() =>
+      [...document.querySelectorAll("input:not([type=hidden]), textarea, select")]
+        .filter((el) => el.required || el.closest("[aria-required=true]"))
+        .filter((el) => el.offsetParent) // visible only — hidden steps don't count
+        .filter((el) => (el.tagName === "SELECT" ? !el.value : !String(el.value ?? "").trim()))
+        .map((el) => el.getAttribute("name") || el.getAttribute("aria-label") || el.id || "(unlabeled)")
+        .slice(0, 5)
+    ).catch(() => ["(check failed)"]);
+    if (emptyRequired.length) return { auto: false, note: `cannot auto-submit — required fields empty: ${emptyRequired.join(", ")}` };
     await clickButton(page, btn, rules.submitButtonText ?? rules.applyButtonText);
     await page.waitForTimeout(4000);
     const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
-    return { auto: true, note: success ? "submitted" : "clicked submit; success text not detected" };
+    return { auto: true, note: success ? "submitted (auto)" : "clicked submit; success text not detected" };
   }
   return { auto: false, note: "review gate — human submits" };
 }
@@ -957,6 +988,7 @@ async function runSingle(args) {
     }
 
     const reviewed = await reviewedUrls(); // owner verdicts from the review queue
+    const exemplars = await judgeExemplars();
     for (const job of jobs) {
       console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);        if (wasApplied(job.url)) {
           recordResultBoth(report, job, "skipped", "already applied (dedupe)");
@@ -972,7 +1004,12 @@ async function runSingle(args) {
         console.log(dim(`  ⏭ skipped — ${why}`));
         continue;
       }
-      if (!titleRelevant(job.title, profile)) {
+      /* an OWNER-CONFIRMED posting (positive exemplar, by id or strong title
+         match) bypasses the cheap title gate: template-B titles mangle the
+         company into the title string ("Banking — Senior Frontend…") and
+         the owner already said this exact posting is relevant */
+      const ownerHit = ownerExemplarFor(job, exemplars);
+      if (!ownerHit && !titleRelevant(job.title, profile)) {
         recordResultBoth(report, job, "skipped", `not relevant to profile (${profile.headline || "no headline"})`);
         console.log(dim("  ⏭ skipped — not relevant to your profile"));
         continue;
@@ -982,7 +1019,7 @@ async function runSingle(args) {
          Pure/sync checks first (dedupe, title, pre-gate) stay OUTSIDE the
          watchdog: they cannot wedge, and arming the timer before them would
          leak it on every early skip (the process would linger 4 min). */
-      const pre = postingRelevant({ title: job.title, description: job.description ?? "" }, profile, { learnedCritical: await learnedCriticalSkills() });
+      const pre = postingRelevant({ title: job.title, description: job.description ?? "" }, profile, { learnedCritical: await learnedCriticalSkills(), ownerConfirmed: Boolean(ownerHit) });
       if (!pre.ok && pre.reason !== "JD mentions no specific skills" && /not on the resume|barely overlap|not relevant/.test(pre.reason)) {
         recordResultBoth(report, job, "skipped", pre.reason);
         console.log(dim(`  ⏭ skipped — ${pre.reason}`));
@@ -1006,9 +1043,11 @@ async function runSingle(args) {
           console.log(dim("  ⏭ skipped — posting closed (no longer accepting applications)"));
           continue;
         }
-        /* skill gate on the REAL JD text now that the page is open (cheap,
-           deterministic: title-critical skills, coverage ratio) */
-        const gate = postingRelevant({ title: job.title, description: job.description }, profile, { learnedCritical: await learnedCriticalSkills() });
+      /* skill gate on the REAL JD text now that the page is open (cheap,
+         deterministic: title-critical skills, coverage ratio). An owner-
+         confirmed posting (positive exemplar) bypasses the title leg —
+         the owner's verdict outranks board title mangling. */
+      const gate = postingRelevant({ title: job.title, description: job.description }, profile, { learnedCritical: await learnedCriticalSkills(), ownerConfirmed: Boolean(ownerHit) });
         if (!gate.ok) {
           recordResultBoth(report, job, "skipped", gate.reason);
           console.log(dim(`  ⏭ skipped — ${gate.reason}`));
@@ -1157,6 +1196,10 @@ async function runSingle(args) {
         if (sub.auto) {
           recordResultBoth(report, job, "submitted", sub.note);
           markApplied(job.url);
+          /* the queue must reflect reality: a pending row for a now-submitted
+             posting resolves itself (done) — no stale asks piling up */
+          const db2 = await sitesDb();
+          await db2?.resolveReviewByUrl?.(job.url, "done").catch(() => {});
           console.log(green(`  ✓ ${sub.note}`));
         } else {
           recordResultBoth(report, job, "needsReview", sub.note);
@@ -1317,6 +1360,17 @@ async function main() {
   if (args.watch) { teeWatchLog(); await runWatch(args); return; }
   if (args.all) { await runAll(args); return; }
   if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
+  if (args.digest) {
+    /* weekly per-board digest: what the engine did + what the owner did with it */
+    const db = await sitesDb();
+    const rows = (await db?.applyWeeklyDigest?.().catch(() => null)) ?? null;
+    if (!rows?.length) { console.log("No apply activity in the last 7 days."); return; }
+    const lines = rows.map((r) => `${r.site_host}: ✓${r.submitted} ⏸${r.needs_review} ⏭${r.skipped} ✗${r.errors} | you: ✓${r.owner_applied} ✕${r.owner_dismissed} 🚫${r.owner_closed}`);
+    const msg = `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}`;
+    console.log(msg);
+    await sendTelegramNotify(msg);
+    return;
+  }
   if (!args.url) {
     console.error(`Usage:
   node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only]

@@ -23,7 +23,7 @@ export const SITE_RULES = {
     steps: ["contact", "resume", "questions", "review"],
     autoSubmit: false, // owner decision: LinkedIn accounts are precious — review gate
     submitButtonText: /submit\s*application/i,
-    successText: /application\s+sent|your application was sent/i,
+    successText: /application\s+sent|your application was sent|application submitted/i,
     listSelectorHints: ["a[href*='/jobs/view/']", ".jobs-search-results__list-item", ".job-card-container"],
     minIntervalMs: 4000, // LinkedIn rate-limits hard; keep it slow
     sessionCookieNames: ["li_at"], // ground truth: guests never have li_at
@@ -280,9 +280,12 @@ function profHasPull(prof, text, minProfile) {
 
 /** The relevance gate for a posting: title + JD skills must BOTH agree.
     Title-derived critical skills come along automatically; the caller may
-    add learned strikes (owner feedback) via opts. */
+    add learned strikes (owner feedback) via opts. An owner-confirmed
+    posting (opts.ownerConfirmed) skips the title gate entirely: board
+    title mangling ("Banking — Senior Frontend Engineer (L5)") and template
+    quirks must not overrule the owner's explicit verdict on THIS posting. */
 export function postingRelevant({ title, description }, profile, opts = {}) {
-  if (!titleRelevant(title, profile)) return { ok: false, reason: "title not relevant to profile" };
+  if (!titleRelevant(title, profile) && !opts.ownerConfirmed) return { ok: false, reason: "title not relevant to profile" };
   const m = jdSkillMatch(String(description || ""), profile, {
     critical: titleSkills(title),
     learnedCritical: opts.learnedCritical ?? [],
