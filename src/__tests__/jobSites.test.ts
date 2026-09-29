@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar } from "../services/jobSites";
 
 const rpc = vi.fn();
 const client = { rpc };
@@ -86,6 +86,12 @@ describe("review queue", () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await resolveJobReview("r1", "done");
     expect(rpc).toHaveBeenCalledWith("admin_resolve_job_review", { p_id: "r1", p_status: "done" });
+  });
+
+  it("putJudgeExemplar writes the owner verdict with posting id when known", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await putJudgeExemplar("positive", "Senior Frontend Developer at Acme (4471345244): owner-confirmed relevant", "guest view", "https://www.linkedin.com/jobs/view/4471345244/");
+    expect(rpc).toHaveBeenCalledWith("admin_put_judge_exemplar", { p_kind: "positive", p_summary: "Senior Frontend Developer at Acme (4471345244): owner-confirmed relevant", p_reason: "guest view", p_source_url: "https://www.linkedin.com/jobs/view/4471345244/" });
   });
 
   it("propagates resolve errors", async () => {
