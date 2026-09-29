@@ -111,11 +111,24 @@ async function syncRunToDb(host, report) {
   } catch (e) { console.log(dim(`  (run not synced: ${e.message.slice(0, 80)})`)); }
 }
 
-/* --- review queue: unattended skips get recorded for one-click finish --- */
+/* --- review queue: needs-review outcomes recorded for one-click finish.
+     Returns true when the row was NEW — Telegram pings fire once per
+     posting, not on every rerun of a still-pending one. */
 async function queueReview(entry) {
   const db = await sitesDb();
-  if (!db?.queueJobReview) return;
+  if (!db?.queueJobReview) return false;
+  const wasPending = await db.hasPendingReview?.(entry.jobUrl).catch(() => false);
+  /* LinkedIn rewrites page.url() mid-modal to ITS canonical selection, so
+     pageUrl cannot be trusted for the Open-form link — derive the signed-in
+     Easy Apply URL from the posting id instead. */
+  const jid = String(entry.jobUrl || "").match(/linkedin\.com\/jobs\/view\/(\d+)/i)?.[1];
+  if (jid) entry.formUrl = `https://www.linkedin.com/jobs/search/?currentJobId=${jid}`;
   await db.queueJobReview(entry).catch((e) => console.log(dim(`  (queue: ${e.message.slice(0, 60)})`)));
+  if (wasPending) return false;
+  const when = entry.fit != null ? ` · fit ${entry.fit}` : "";
+  const ok = await sendTelegramNotify(`⏸ Freebuff apply · needs you: ${entry.title || "posting"}${entry.company ? ` — ${entry.company}` : ""}${when}\n${entry.reason || ""}\nFinish in the review queue: …/#/jobs`);
+  if (ok) console.log(dim("  📣 telegram: needs-you ping sent"));
+  return true;
 }
 
 /* --- owner mode switch: off (kill switch) / local / cloud ---
