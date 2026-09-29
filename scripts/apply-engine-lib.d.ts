@@ -190,7 +190,17 @@ export interface JudgeVerdict {
 
 export function judgeMessages(
   job: (ApplyJobLike & { description?: string | null }) | null | undefined,
-  profile: ApplyProfileLike | null | undefined
+  profile: ApplyProfileLike | null | undefined,
+  exemplars?: { positive?: string[]; negative?: string[] } | null
 ): { system: string; user: string };
+
+export function exemplarBlock(positive?: string[], negative?: string[]): string;
+
+/** Owner-confirmed-positive exemplar matching this job (by posting id or
+    strong title-token overlap) — empty string when none. */
+export function ownerExemplarFor(
+  job: { url?: string | null; title?: string | null } | null | undefined,
+  exemplars: { positive?: string[]; negative?: string[] } | null | undefined
+): string;
 
 export function parseJudgeReply(text: string | null | undefined): JudgeVerdict;

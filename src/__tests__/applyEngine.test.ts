@@ -10,7 +10,7 @@ import {
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
-  titleSkills, judgeMessages, parseJudgeReply,
+  titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("external apply buttons (company-website ATS)", () => {
@@ -326,7 +326,7 @@ describe("per-ATS selector packs", () => {
 });
 
 describe("critical-skill gate — title-named skills are not ratio-forgiven", () => {
-  const profile = { headline: "Staff Frontend Engineer", years: 14, skills: ["React", "TypeScript", "Testing", "Playwright", "Docker", "CI/CD"] };
+  const profile = { headline: "Staff Frontend Engineer", years: 14, skills: ["React", "TypeScript", "JavaScript", "Testing", "Playwright", "Docker", "CI/CD"] };
 
   it("extracts skills named in the posting title", () => {
     expect(titleSkills("Senior Python Full Stack Developer With React")).toContain("python");
@@ -347,10 +347,24 @@ describe("critical-skill gate — title-named skills are not ratio-forgiven", ()
     expect(m.ok).toBe(true);
   });
 
-  it("repeated ≥3× in the JD makes a skill critical even when the title omits it", () => {
+  it("a python-only JD still fails for a frontend profile — via ratio, not critical", () => {
     const m = postingRelevant({ title: "Platform Engineer", description: "python python python — everything here is python" }, profile);
     expect(m.ok).toBe(false);
-    expect(m.reason).toMatch(/core skill missing: python/);
+    expect(m.reason).toMatch(/python/);
+  });
+
+  it("stack keywords repeated in Key Technologies are NOT critical (Ferguson GraphQL/REST case)", () => {
+    // a React role whose JD lists GraphQL/REST 2-3× is not a GraphQL job:
+    // title/JD core (react/ts) matches → ratio passes → the AI judge owns the borderline
+    const m = postingRelevant({ title: "Senior Software Engineer Frontend", description: "React.js and TypeScript everywhere. Integrate with REST and GraphQL APIs. Key Technologies: React.js, JavaScript, TypeScript, GraphQL, REST APIs, HTML5, CSS3." }, profile);
+    expect(m.ok).toBe(true);
+    expect(m.reason).not.toMatch(/core skill missing/);
+  });
+
+  it("mission-statement ai boilerplate is not a required skill", () => {
+    // LinkedIn JDs say "AI" 3+ times in prose; bare ai/ml are excluded from the alias map
+    const m = postingRelevant({ title: "Senior Software Engineer Frontend", description: "Join our AI-first mission. We use AI to transform hiring. Our AI platform needs a strong frontend engineer with React, TypeScript and testing chops." }, profile);
+    expect(m.ok).toBe(true);
   });
 });
 
@@ -362,6 +376,19 @@ describe("AI judge — reading comprehension over regex gates", () => {
     expect(system).toMatch(/SDET/);
     expect(system).toMatch(/"verdict":"apply\|skip"/);
     expect(system).toMatch(/missingCore/);
+  });
+
+  it("the judge prompt does not reject overqualified-but-relevant candidates", () => {
+    const { system } = judgeMessages({ title: "Senior Frontend Developer", description: "React, TypeScript" }, profile);
+    expect(system).toMatch(/MORE senior than the posting is NOT a rejection/);
+  });
+
+  it("ownerExemplarFor matches by job id, then by title tokens, never weakly", () => {
+    const ex = { positive: ["Senior Frontend Developer Indiacharts 4471345244: owner-confirmed relevant"], negative: [] };
+    expect(ownerExemplarFor({ url: "https://www.linkedin.com/jobs/view/4471345244/", title: "Senior Frontend Developer" }, ex)).toMatch(/4471345244/);
+    expect(ownerExemplarFor({ url: "https://www.linkedin.com/jobs/view/999/", title: "Senior Frontend Developer" }, ex)).toMatch(/4471345244/);
+    expect(ownerExemplarFor({ url: "https://www.linkedin.com/jobs/view/999/", title: "Python Backend Engineer" }, ex)).toBe("");
+    expect(ownerExemplarFor({ title: "x" }, null)).toBe("");
   });
 
   it("parses a well-formed verdict and clamps/preserves fields", () => {

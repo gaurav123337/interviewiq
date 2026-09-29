@@ -190,3 +190,20 @@ export async function getSkillStrikes(): Promise<{ skill: string; strikes: numbe
   if (error) throw error;
   return ((data as { skill: string; strikes: number }[]) ?? []);
 }
+
+/* ── judge exemplars: real postings the owner labeled, fed into the judge prompt ── */
+
+export interface JudgeExemplar {
+  kind: "positive" | "negative";
+  summary: string;
+  reason: string | null;
+}
+
+export async function putJudgeExemplar(kind: "positive" | "negative", summary: string, reason?: string, sourceUrl?: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_put_judge_exemplar", {
+    p_kind: kind, p_summary: summary, p_reason: reason ?? null, p_source_url: sourceUrl ?? null,
+  });
+  if (error) throw error;
+}
