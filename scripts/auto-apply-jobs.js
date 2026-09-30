@@ -127,9 +127,16 @@ async function queueReview(entry) {
   await db.queueJobReview(entry).catch((e) => console.log(dim(`  (queue: ${e.message.slice(0, 60)})`)));
   if (wasPending) return false;
   const when = entry.fit != null ? ` · fit ${entry.fit}` : "";
-  /* actionable from the phone: the ping carries the DIRECT form link so the
-     Easy Apply modal opens without hunting through the review queue */
-  const ok = await sendTelegramNotify(`⏸ Freebuff apply · needs you: ${entry.title || "posting"}${entry.company ? ` — ${entry.company}` : ""}${when}\n${entry.reason || ""}\nOpen the form: ${entry.formUrl || "…/#/jobs"}\nThen mark it in the review queue: …/#/jobs`);
+  /* the ping carries the row's POSITION in the pending list so the owner can
+     reply "N done / N skip / N closed" to the listener from the phone, plus
+     the direct form link for the 2-click finish */
+  let ordinal = "";
+  try {
+    const pending = await db.listPendingReviews?.();
+    const i = (pending ?? []).findIndex(r => r.job_url === entry.jobUrl);
+    if (i >= 0) ordinal = `\nReply "${i + 1} done", "${i + 1} skip" or "${i + 1} closed" to handle it from here.`;
+  } catch { /* ordinal is best-effort */ }
+  const ok = await sendTelegramNotify(`⏸ Freebuff apply · needs you: ${entry.title || "posting"}${entry.company ? ` — ${entry.company}` : ""}${when}\n${entry.reason || ""}\nOpen the form: ${entry.formUrl || "…/#/jobs"}${ordinal}`);
   if (ok) console.log(dim("  📣 telegram: needs-you ping sent (with form link)"));
   else console.log(dim("  (telegram ping failed — check notify config)"));
   return true;
@@ -261,6 +268,60 @@ async function sendTelegramNotify(text) {
   }).catch(() => null);
   if (!res?.ok) { console.log(dim("  (telegram notify failed)")); return false; }
   return true;
+}
+
+/* --- Telegram command surface: reply Done/Skip/Closed to a ping ---
+   Pings carry the pending rows' ordinal positions; the owner replies
+   "1 done" / "2 skip" / "3 closed" and the listener resolves the rows —
+   Done and Skip teach the judge, Closed just stops retries. */
+async function telegramCommandLoop() {
+  const db = await sitesDb();
+  if (!db?.getNotifyConfig || !db?.listPendingReviews || !db?.resolveJobReview) {
+    console.error("listener needs the review-queue DB layer"); process.exit(1);
+  }
+  const cfg = await db.getNotifyConfig().catch(() => null);
+  if (!cfg?.bot_token) { console.error("no telegram binding — save it in the review queue first"); process.exit(1); }
+  const api = (m, body) => fetch(`https://api.telegram.org/bot${cfg.bot_token}/${m}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }).then(r => r.json()).catch(() => null);
+  const me = await api("getMe", {});
+  if (!me?.ok) { console.error("bad bot token"); process.exit(1); }
+  console.log(`telegram listener up as @${me.result.username} — reply "1 done" / "2 skip" / "3 closed" to a needs-you ping (Ctrl+C to stop)`);
+  let offset = 0;
+  for (;;) {
+    const upd = await api("getUpdates", { offset, timeout: 30, allowed_updates: ["message"] });
+    for (const u of upd?.result ?? []) {
+      offset = u.update_id + 1;
+      const text = String(u.message?.text ?? "").trim();
+      if (u.message?.chat?.id?.toString() !== cfg.chat_id?.toString()) continue; // only the bound chat
+      const m = text.match(/^(\d{1,2})\s*(done|skip|close[d]?|not interested|x|✕|✓)\s*$/i);
+      if (!m) {
+        if (/^(pending|queue|list)$/i.test(text)) {
+          const rows = await db.listPendingReviews().catch(() => []);
+          const msg = rows.length
+            ? rows.map((r, i) => `${i + 1}. ${r.title || "(untitled)"}${r.company ? ` — ${r.company}` : ""}${r.fit != null ? ` · fit ${r.fit}` : ""}`).join("\n")
+            : "Queue is empty — nothing waiting.";
+          await api("sendMessage", { chat_id: cfg.chat_id, text: msg.slice(0, 3900) });
+        } else if (text) {
+          await api("sendMessage", { chat_id: cfg.chat_id, text: 'Reply "1 done" / "2 skip" / "3 closed", or "pending" to list the queue.' });
+        }
+        continue;
+      }
+      const idx = parseInt(m[1], 10) - 1;
+      const status = /^(done|✓)/i.test(m[2]) ? "done" : /^(close)/i.test(m[2]) ? "closed" : "dismissed";
+      const rows = await db.listPendingReviews().catch(() => []);
+      const row = rows[idx];
+      if (!row) { await api("sendMessage", { chat_id: cfg.chat_id, text: `No row #${idx + 1} — send "pending" to see the current list.` }); continue; }
+      try {
+        await db.resolveJobReview(row.id, status);
+        const label = status === "done" ? "✓ Applied (judge taught)" : status === "closed" ? "🚫 Closed (no lesson)" : "✕ Not interested (judge taught)";
+        await api("sendMessage", { chat_id: cfg.chat_id, text: `${label}\n${row.title || "(untitled)"}${row.company ? ` — ${row.company}` : ""}` });
+        console.log(`resolved #${idx + 1} as ${status} via telegram`);
+      } catch (e) {
+        await api("sendMessage", { chat_id: cfg.chat_id, text: `Failed to resolve #${idx + 1}: ${e.message.slice(0, 100)}` });
+      }
+    }
+  }
 }
 
 /* Summarize today's run-*.json reports (used by --status and by the watcher). */
@@ -1370,13 +1431,24 @@ async function main() {
   if (args.watch) { teeWatchLog(); await runWatch(args); return; }
   if (args.all) { await runAll(args); return; }
   if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
+  if (args.listen) { await telegramCommandLoop(); return; }
   if (args.digest) {
-    /* weekly per-board digest: what the engine did + what the owner did with it */
+    /* weekly per-board digest + health watchdog: a silent digest is worse
+       than none — the task must SAY so when it couldn't compute one, and
+       when the whole week was a zero (watcher dead / kill switch left on) */
     const db = await sitesDb();
     const rows = (await db?.applyWeeklyDigest?.().catch(() => null)) ?? null;
-    if (!rows?.length) { console.log("No apply activity in the last 7 days."); return; }
+    if (!rows?.length) {
+      const msg = "⚠️ Freebuff weekly digest FAILED — could not read apply activity. Check the watcher/scheduled tasks; this alert fired INSTEAD of a silent no-digest.";
+      console.log(msg);
+      await sendTelegramNotify(msg);
+      return;
+    }
+    const tot = rows.reduce((a, r) => a + r.submitted + r.needs_review + r.skipped + r.errors + r.owner_applied + r.owner_dismissed + r.owner_closed, 0);
     const lines = rows.map((r) => `${r.site_host}: ✓${r.submitted} ⏸${r.needs_review} ⏭${r.skipped} ✗${r.errors} | you: ✓${r.owner_applied} ✕${r.owner_dismissed} 🚫${r.owner_closed}`);
-    const msg = `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}`;
+    const msg = tot === 0
+      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?`
+      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}`;
     console.log(msg);
     await sendTelegramNotify(msg);
     return;
