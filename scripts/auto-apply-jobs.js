@@ -545,7 +545,12 @@ async function collectJobs(page, url, site, max) {
       if (!title || title.length < 8 || junk.test(title)) continue;
       seen.add(m[1]);
       const lines = text.split("\n").map(s => s.trim()).filter(Boolean);
-      out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company: (lines.find(l => l !== title && l.length > 1 && l.length < 60) || "").slice(0, 80) });
+      /* company = first line that is not the title (or its "(Verified job)"
+         echo) — recruiter-posted cards repeat the title, which used to be
+         picked as the "company" ("Frontend Developer (Verified job)") */
+      const company = (lines.find(l => l !== title && l.replace(/\s*\(Verified job\)\s*$/i, "") !== title && l.length > 1 && l.length < 60) || "")
+        .replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 80);
+      out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company });
     }
     for (const sel of hints) {
       for (const a of document.querySelectorAll(sel)) {
@@ -1179,13 +1184,14 @@ async function runSingle(args) {
         }
 
         const mem = await loadAnswerMemory(site); // form-answer memory: stored labels reuse their last answer
-        const { filled, unfilledRequired } = await fillApplicationForm(page, { profile, job, resumePath, dryRun: args["dry-run"], siteHost: site, storedAnswers: mem });
+        const { filled, unfilledRequired, fields: ffFields, plan: ffPlan } = await fillApplicationForm(page, { profile, job, resumePath, dryRun: args["dry-run"], siteHost: site, storedAnswers: mem });
+        const ffPreview = formFieldsPreview(ffFields, ffPlan); // the queue must show WHAT was filled
         if (unfilledRequired.length) {
           recordResultBoth(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
           /* ALWAYS queue (deduped per job URL) — the report's "needs you" row
              must have a review-queue counterpart with one-click Open/Done */
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview });
           if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           if (!rules.autoSubmit) await page.pause(); // review-gate sites: let the human finish here
           continue;
@@ -1208,7 +1214,7 @@ async function runSingle(args) {
              a review-queue counterpart with one-click Open/Done (the RPC
              dedupes per job URL — repeated runs never pile up). Attended
              runs ALSO pause here so the human can finish immediately. */
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null, formFields: ffPreview });
           if (args.unattended) { console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
           await page.pause();
         }
