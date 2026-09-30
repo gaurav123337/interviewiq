@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig } from "../services/jobSites";
 
 const rpc = vi.fn();
 const client = { rpc };
@@ -103,6 +103,54 @@ describe("review queue", () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await resolveJobReview("r2", "closed");
     expect(rpc).toHaveBeenCalledWith("admin_resolve_job_review", { p_id: "r2", p_status: "closed" });
+  });
+});
+
+describe("judge exemplar management", () => {
+  it("lists every taught exemplar with ids via admin_list_judge_exemplars", async () => {
+    rpc.mockResolvedValueOnce({
+      data: [
+        { id: "e1", kind: "positive", summary: "Senior Frontend Developer at Acme (4471345244): owner-confirmed relevant", reason: "owner applied", source_url: "https://x/j", created_at: "2026-09-29T16:22:00Z" },
+        { id: "e2", kind: "negative", summary: "DevOps Engineer at CloudCo: owner not interested", reason: null, source_url: null, created_at: "2026-09-28T10:00:00Z" },
+      ],
+      error: null,
+    });
+    const rows = await listJudgeExemplars();
+    expect(rpc).toHaveBeenCalledWith("admin_list_judge_exemplars");
+    expect(rows).toHaveLength(2);
+    expect(rows[0].kind).toBe("positive");
+    expect(rows[0].source_url).toBe("https://x/j");
+  });
+
+  it("deletes one lesson via admin_delete_judge_exemplar", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await deleteJudgeExemplar("e2");
+    expect(rpc).toHaveBeenCalledWith("admin_delete_judge_exemplar", { p_id: "e2" });
+  });
+
+  it("propagates exemplar list errors", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
+    await expect(listJudgeExemplars()).rejects.toThrow("forbidden");
+  });
+});
+
+describe("notify test-fire", () => {
+  it("returns the server-reported delivery status", async () => {
+    rpc.mockResolvedValueOnce({ data: "sent", error: null });
+    const res = await testNotifyConfig();
+    expect(rpc).toHaveBeenCalledWith("admin_test_notify_config");
+    expect(res).toBe("sent");
+  });
+
+  it("surfaces config errors from the RPC (bad token etc.)", async () => {
+    rpc.mockResolvedValueOnce({ data: "error 401: Unauthorized", error: null });
+    const res = await testNotifyConfig();
+    expect(res).toMatch(/error 401/);
+  });
+
+  it("propagates RPC errors", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
+    await expect(testNotifyConfig()).rejects.toThrow("forbidden");
   });
 });
 

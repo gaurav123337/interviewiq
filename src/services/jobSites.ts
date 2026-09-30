@@ -198,6 +198,7 @@ export interface JudgeExemplar {
   summary: string;
   reason: string | null;
 }
+/* full row shape (id + source_url + created_at) is JudgeExemplarRow below */
 
 export async function putJudgeExemplar(kind: "positive" | "negative", summary: string, reason?: string, sourceUrl?: string): Promise<void> {
   const client = await getSupabaseClient();
@@ -206,4 +207,37 @@ export async function putJudgeExemplar(kind: "positive" | "negative", summary: s
     p_kind: kind, p_summary: summary, p_reason: reason ?? null, p_source_url: sourceUrl ?? null,
   });
   if (error) throw error;
+}
+
+/* ── exemplar management: the owner sees and prunes what the judge was taught ── */
+
+export interface JudgeExemplarRow extends JudgeExemplar {
+  id: string;
+  source_url: string | null;
+  created_at: string;
+}
+
+export async function listJudgeExemplars(): Promise<JudgeExemplarRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_list_judge_exemplars");
+  if (error) throw error;
+  return (data ?? []) as JudgeExemplarRow[];
+}
+
+export async function deleteJudgeExemplar(id: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_delete_judge_exemplar", { p_id: id });
+  if (error) throw error;
+}
+
+/* ── notify test-fire: server sends the digest DM, returns delivery status ── */
+
+export async function testNotifyConfig(): Promise<string> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_test_notify_config");
+  if (error) throw error;
+  return String(data ?? "");
 }

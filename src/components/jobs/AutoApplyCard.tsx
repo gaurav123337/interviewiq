@@ -11,6 +11,7 @@ import JobSitesPanel from "./JobSitesPanel";
 import ApplyModePanel from "./ApplyModePanel";
 import ApplyResultsPanel from "./ApplyResultsPanel";
 import ReviewQueuePanel from "./ReviewQueuePanel";
+import ExemplarsPanel from "./ExemplarsPanel";
 
 export function AutoApplyCard({ locked, onUpgrade, platinum }: {
   locked: boolean;
@@ -121,6 +122,8 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
           <JobSitesPanel />
 
           <ReviewQueuePanel />
+
+          <ExemplarsPanel />
 
           <div className="mt-3 rounded-lg border border-line/10 bg-deep/40 p-3">
             <div className="text-[12.5px] font-bold text-fnt">♻️ Keep applying (watch mode)</div>
