@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, putJudgeExemplar,
+  listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, putJudgeExemplar, testNotifyConfig,
   type ReviewItem, type ReviewFormField,
 } from "../../services/jobSites.ts";
 
@@ -108,7 +108,11 @@ export default function ReviewQueuePanel() {
     try {
       await setNotifyConfig(chatId.trim(), botToken.trim());
       setNotifySaved(Boolean(chatId.trim() && botToken.trim()));
-      setNotifyState("✓ saved — the engine will DM summaries after each batch (test: `node scripts/auto-apply-jobs.js --status`)");
+      setNotifyState("✓ saved — sending a test DM now (it carries the weekly digest)…");
+      const res = await testNotifyConfig();
+      setNotifyState(res === "sent"
+        ? "✓ Test DM delivered — check Telegram. Every new needs-review row will ping this chat."
+        : `⚠ ${res}`);
     } catch (e) {
       setNotifyState(e instanceof Error ? e.message : String(e));
     }
