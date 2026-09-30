@@ -153,6 +153,12 @@ export async function resolveJobReview(id, status) {
   return rpc(loadLocalCreds(), "admin_resolve_job_review", { p_id: id, p_status: status });
 }
 
+/** The credential bound to a site (secret included) — engine auto-login. */
+export async function credentialForSite(host) {
+  const rows = await rpc(loadLocalCreds(), "engine_credential_for_site", { p_host: host });
+  return rows?.[0] ?? null;
+}
+
 /** Telegram notify config for pings: resolves the per-user ENTITLED row
     (platinum/addon, admin bypass included) via engine_notify_config();
     falls back to the legacy admin row when the RPC is missing. */

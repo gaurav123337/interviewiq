@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { cardCls, btnGhost, btnOk, btnPrimary, btnSm, Chip } from "../ui";
 import { APPLY_SITES, engineCommands, exportProfileJson, platinumActive } from "../../services/autoApply";
 import JobSitesPanel from "./JobSitesPanel";
+import CredentialsPanel from "./CredentialsPanel";
 import ApplyModePanel from "./ApplyModePanel";
 import ApplyResultsPanel from "./ApplyResultsPanel";
 import ReviewQueuePanel from "./ReviewQueuePanel";
@@ -120,6 +121,8 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
           <ApplyResultsPanel />
 
           <JobSitesPanel />
+
+          <CredentialsPanel />
 
           <ReviewQueuePanel />
 

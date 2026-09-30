@@ -453,8 +453,45 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
      wedge: remote relay runs hit a challenge/login and sat out the clock. */
   const humanAvailable = !args_unattended;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
-  const state = await waitForStableState(page, rules, url);
+  let state = await waitForStableState(page, rules, url);
   const onLogin = () => rules.loginPathHints.some(h => page.url().toLowerCase().includes(h.toLowerCase()));
+  /* stored-credential auto-login: when a session died and the owner bound a
+     credential to this site, try the stored username+secret ONCE (kind
+     'password' only — oauth/otp need the human by design). Works attended
+     and unattended: this is the owner's own stored secret. */
+  if (state.kind !== "loggedIn" && (onLogin() || loginOnly || state.kind !== "login")) {
+    try {
+      const db = await sitesDb();
+      const host = new URL(url).hostname.replace(/^www\./, "");
+      const cred = await db?.credentialForSite?.(host).catch(() => null);
+      if (cred?.kind === "password" && cred.username && cred.secret) {
+        console.log(dim(`  🔑 stored credential "${cred.label}" bound to ${host} — attempting auto-login`));
+        const userSel = "input[type='email'], input[name*='user' i], input[name*='email' i], input[name*='login' i], input[name*='phone' i]";
+        const passSel = "input[type='password']";
+        const userField = page.locator(userSel).first();
+        const passField = page.locator(passSel).first();
+        if (await userField.isVisible({ timeout: 5000 }).catch(() => false)) {
+          await userField.fill(cred.username).catch(() => {});
+          if (await passField.isVisible({ timeout: 4000 }).catch(() => false)) {
+            await passField.fill(cred.secret).catch(() => {});
+            await page.keyboard.press("Enter");
+            await page.waitForTimeout(6000);
+            state = await waitForStableState(page, rules, url, { settleMs: 0 });
+            if (state.kind === "loggedIn") {
+              console.log(green(`  ✓ auto-login with the stored credential succeeded`));
+              if (!loginOnly) {
+                const problem = detectAccountProblem(state.bodyText);
+                if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
+                return true;
+              }
+            } else {
+              console.log(yellow("  ⏸ auto-login did not land on a signed-in state (captcha/OTP/change-wall?) — falling back to the human flow"));
+            }
+          }
+        }
+      }
+    } catch { /* credential path is best-effort — the human flow continues */ }
+  }
   if (!loginOnly && state.kind === "loggedIn") {
     const problem = detectAccountProblem(state.bodyText);
     if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }

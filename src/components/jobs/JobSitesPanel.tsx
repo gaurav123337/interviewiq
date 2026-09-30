@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, type JobSite } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, type JobSite } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -16,6 +16,8 @@ export default function JobSitesPanel() {
   const [sites, setSites] = useState<JobSite[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [url, setUrl] = useState("");
+  const [urlNote, setUrlNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -41,6 +43,18 @@ export default function JobSitesPanel() {
     }
   };
 
+  const addUrl = async () => {
+    if (!/^https?:\/\//.test(url.trim())) { setUrlNote("Paste a full URL starting with https://"); return; }
+    setBusy("url");
+    try {
+      const res = await addJobSiteUrl(url.trim());
+      setUrlNote(`✓ ${res}`);
+      setUrl("");
+      await refresh();
+    } catch (e) { setUrlNote((e as Error).message); }
+    finally { setBusy(null); }
+  };
+
   if (sites === null) return <div className="text-xs text-zinc-500">Loading job sites…</div>;
 
   return (
@@ -53,6 +67,12 @@ export default function JobSitesPanel() {
         The discovery engine registers promising boards as <b>pending</b>; approve them to add the board to
         <code className="mx-1 rounded bg-zinc-800 px-1">--all</code> runs. Only active sites are auto-applied.
       </div>
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="+ add a job-board URL (https://…/jobs)"
+          className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
+        <button onClick={() => void addUrl()} disabled={busy === "url"} className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50">Add</button>
+      </div>
+      {urlNote && <div className="mb-2 text-[11px] text-zinc-400">{urlNote}</div>}
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!sites.length && <div className="text-xs text-zinc-500">No sites registered yet — run <code className="rounded bg-zinc-800 px-1">node scripts/auto-apply-jobs.js --discover</code>.</div>}
       <div className="space-y-2">

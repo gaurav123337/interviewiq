@@ -12,6 +12,7 @@ export interface JobSite {
   jobs_url: string | null;
   status: "pending" | "active" | "disabled" | "dead";
   source: "builtin" | "discovered" | "manual";
+  credential_id: string | null;
   rules: Record<string, unknown>;
   session_ok: boolean;
   last_run_at: string | null;
@@ -161,6 +162,57 @@ export async function getUserActivity(userId: string): Promise<UserActivity> {
     reviewRows: (reviewRows.data ?? []) as UserReviewRow[],
     notify: ((notify.data as UserNotifyRow[]) ?? [])[0] ?? null,
   };
+}
+
+/* ── site credentials (admin): store logins per site, clubbed when sites
+   share auth; the engine uses them to re-login when a session dies ── */
+
+export interface SiteCredential {
+  id: string;
+  label: string;
+  kind: "password" | "oauth" | "otp" | "manual";
+  username: string | null;
+  secret_prefix: string | null;
+  bound_sites: string;
+  updated_at: string;
+}
+
+export async function listCredentials(): Promise<SiteCredential[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_list_credentials");
+  if (error) throw error;
+  return (data ?? []) as SiteCredential[];
+}
+
+export async function putCredential(id: string | null, label: string, kind: SiteCredential["kind"], username: string, secret: string): Promise<string> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_put_credential", { p_id: id, p_label: label, p_kind: kind, p_username: username, p_secret: secret });
+  if (error) throw error;
+  return String(data ?? "");
+}
+
+export async function deleteCredential(id: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_delete_credential", { p_id: id });
+  if (error) throw error;
+}
+
+export async function bindCredential(host: string, credentialId: string | null): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_bind_credential", { p_host: host, p_credential_id: credentialId });
+  if (error) throw error;
+}
+
+export async function addJobSiteUrl(jobsUrl: string, label?: string): Promise<string> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_add_job_site", { p_jobs_url: jobsUrl, p_label: label ?? null });
+  if (error) throw error;
+  return String(data ?? "");
 }
 
 /* ── Apply mode control: off (kill switch) / local machine / cloud session ── */
