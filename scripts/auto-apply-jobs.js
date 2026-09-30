@@ -330,7 +330,7 @@ async function telegramCommandLoop() {
       const { spawn } = await import("node:child_process");
       const logFile = path.join(REPORTS_DIR, "run-now.log");
       const outFd = openSync(logFile, "a");
-      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--all"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, "..") });
+      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--all"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, ".."), env: { ...process.env, FREEBUFF_APP_TRIGGERED: "1" } });
       child.unref();
       closeSync(outFd);
       child.once("exit", (code) => {
@@ -1166,7 +1166,29 @@ async function trySubmit(page, site, rulesOverride) {
     }
   }
   if ((await btn.count()) === 0) {
-    if (site === "linkedin") return { auto: false, note: "Easy Apply modal mid-flow — form filled, finish the submit (2 clicks)" };
+    if (site === "linkedin") {
+      /* one more belt before giving up: the flow re-renders constantly, so
+         locate "Submit application" by text/aria and JS-click it (the
+         pointer locator keeps missing it); LinkedIn's own validation gates
+         the click, so an empty required field cannot slip through. */
+      const clicked = await page.evaluate(() => {
+        const b = [...document.querySelectorAll("button")]
+          .find((x) => x.offsetParent && !x.disabled && /submit application/i.test((x.innerText || x.getAttribute("aria-label") || "").trim()));
+        if (!b) return false;
+        b.click();
+        return true;
+      }).catch(() => false);
+      if (clicked) {
+        await page.waitForTimeout(4000);
+        const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
+        return { auto: true, note: success ? "submitted (auto, js)" : "clicked submit; success text not detected" };
+      }
+      /* still stuck: surface WHY (LinkedIn's validation error if present) */
+      const blocker = await page.evaluate(() =>
+        document.querySelector("[role=alert], .artdeco-inline-feedback__message")?.innerText?.trim() ?? ""
+      ).catch(() => "");
+      return { auto: false, note: `Easy Apply mid-flow${blocker ? ` — ${blocker.slice(0, 80)}` : " — submit never appeared"} — queued for one-click finish` };
+    }
     if (rules.autoSubmit) return { auto: true, note: "submit button not found (may already be applied)" };
     return { auto: false, note: "review gate — human submits" };
   }
@@ -1214,6 +1236,7 @@ async function runSingle(args) {
   console.log(`apply-engine → ${rules.label} · ${args.url} · max ${args.max}${ai ? ` · AI: ${ai.model}` : " · AI: OFF (templates)"}`);
   /* owner kill switch: a manual single run fails open when the config is
      unreadable (the owner is running it on purpose), but honors off/cloud */
+  const appTriggered = !args.unattended && process.env.FREEBUFF_APP_TRIGGERED === "1";
   if (!args["login-only"]) {
     const blocked = await applyModeBlocked(false);
     if (blocked) { console.error(red(`✗ apply engine disabled: ${blocked}.`)); return; }
@@ -1491,8 +1514,11 @@ async function runSingle(args) {
           /* ALWAYS queue (deduped per job URL) — the report's "needs you" row
              must have a review-queue counterpart with one-click Open/Done */
           await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview });
-          if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
-          if (!rules.autoSubmit) await page.pause(); // review-gate sites: let the human finish here
+          /* NEVER page.pause() from an APP-TRIGGERED Run-now: it freezes the
+             cycle on the Playwright Inspector (the "record window / stuck in
+             debugger" the owner hit). Queued rows carry one-click Open/Done. */
+          if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ queued for one-click review")); continue; }
+          if (!rules.autoSubmit && !appTriggered) await page.pause(); // attended MANUAL runs: let the human finish here
           continue;
         }
         if (args["dry-run"]) { recordResultBoth(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
@@ -1514,7 +1540,7 @@ async function runSingle(args) {
              dedupes per job URL — repeated runs never pile up). Attended
              runs ALSO pause here so the human can finish immediately. */
           await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null, formFields: ffPreview });
-          if (args.unattended) { console.log(dim("  ⏭ unattended: queued for one-click review")); continue; }
+          if (args.unattended || appTriggered) { console.log(dim("  ⏭ queued for one-click review")); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);
