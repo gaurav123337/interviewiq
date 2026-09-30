@@ -31,6 +31,11 @@ const PROJECT = path.resolve(ROOT, "..");
 const ENGINE = path.join(ROOT, "auto-apply-jobs.js");
 const LOG = path.join(PROJECT, "freebuff-apply-reports", "watch.log");
 const MARKER = "auto-apply-jobs.js --watch";
+/* sign-in handoff: while a 🔑 Sign-in window is requested, the supervisor
+   does NOT respawn the watcher — the watcher's profile use would kill the
+   sign-in window (the #141–#145 crash loop). The listener removes this
+   file when the login-only run finishes. */
+const SIGNIN_LOCK = path.join(PROJECT, "freebuff-apply-reports", "signin-active.lock");
 
 const isWindows = process.platform === "win32";
 
@@ -105,6 +110,13 @@ if (pids == null) pids = await listWatcherPidsPs();
 
 if (pids.length > 0) {
   console.log(`apply watcher already running (pid ${pids.join(", ")}) — nothing to do`);
+  process.exit(0);
+}
+
+/* sign-in handoff: a 🔑 Sign-in window is in progress — hold off so the
+   watcher cannot steal the engine profile out from under it */
+if (existsSync(SIGNIN_LOCK)) {
+  console.log("sign-in in progress (signin-active.lock present) — watcher start deferred");
   process.exit(0);
 }
 
