@@ -545,10 +545,11 @@ async function collectJobs(page, url, site, max) {
       if (!title || title.length < 8 || junk.test(title)) continue;
       seen.add(m[1]);
       const lines = text.split("\n").map(s => s.trim()).filter(Boolean);
-      /* company = first line that is not the title (or its "(Verified job)"
-         echo) — recruiter-posted cards repeat the title, which used to be
-         picked as the "company" ("Frontend Developer (Verified job)") */
-      const company = (lines.find(l => l !== title && l.replace(/\s*\(Verified job\)\s*$/i, "") !== title && l.length > 1 && l.length < 60) || "")
+      /* company = first line that is not the title echo, social-proof noise
+         ("Over 100 people clicked apply"), a recency stamp or a UI verb —
+         recruiter cards repeat the title, search cards add stats lines */
+      const noise = /^(promoted|view job|save|apply|show more|verified job|see more|\d+\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|[mhd])\s* ago)|people clicked apply|clicks|applicants?\s*$|reviews?\s*$|stars?\s*$/i;
+      const company = (lines.find(l => l !== title && l.replace(/\s*\(Verified job\)\s*$/i, "") !== title && l.length > 1 && l.length < 60 && !noise.test(l)) || "")
         .replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 80);
       out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company });
     }
