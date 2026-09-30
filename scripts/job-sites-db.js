@@ -165,6 +165,17 @@ export async function pendingLoginRequest() {
   return rows?.[0] ?? null;
 }
 
+/** Persist the verified session state after a login-only run (app reflects it). */
+export async function setSiteSession(host, ok) {
+  const creds = loadLocalCreds();
+  const res = await fetch(`${creds.base}/rest/v1/job_sites?host=eq.${encodeURIComponent(host)}`, {
+    method: "PATCH",
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}`, "Content-Type": "application/json", Prefer: "return=minimal" },
+    body: JSON.stringify({ session_ok: !!ok }),
+  });
+  if (!res.ok) throw new Error(`session write ${res.status}`);
+}
+
 /** Mark a sign-in request handled (the listener spawned the login window). */
 export async function fulfillLoginRequest(host) {
   return rpc(loadLocalCreds(), "engine_fulfill_login_request", { p_host: host });

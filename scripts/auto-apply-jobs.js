@@ -574,8 +574,13 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
       }
       return { kind: "login", title: "", bodyText: "" };
     };
-    const t0 = Date.now();
-    while (Date.now() - t0 < 10 * 60_000) {
+    /* NO TIMEOUT: the window stays open until the human finishes (Google
+       OAuth, 2FA, email verification can take as long as they take) — the
+       only exits are success or the owner closing the window themselves. */
+    console.log(dim("   (the window stays open until you finish signing in — close it only when done)"));
+    for (;;) {
+      const gone = (() => { try { return page.isClosed() || !page.browser()?.isConnected?.(); } catch { return true; } })();
+      if (gone) { console.log(yellow("⏸ window closed by the user before the sign-in completed — nothing saved.")); return false; }
       await page.waitForTimeout(2000);
       let st;
       try { st = await waitForStableState(page, rules, url, { settleMs: 0 }); } catch { continue; }
@@ -589,8 +594,6 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
         return true;
       }
     }
-    console.error(red(`✗ ${rules.label}: login not completed within 10 minutes.`));
-    return false;
   }
   return true;
 }
@@ -1084,7 +1087,22 @@ async function runSingle(args) {
       console.error(red("Login required — aborting (nothing was submitted)."));
       return;
     }
-    if (args["login-only"]) { console.log(green("Login saved. Re-run without --login-only to apply.")); return; }
+    if (args["login-only"]) {
+      /* reflect the verified session state on the site row so the APP shows it */
+      const host = new URL(args.url).hostname.replace(/^www\./, "");
+      const db2 = await sitesDb();
+      const names = rules.sessionCookieNames ?? [];
+      let ok = true;
+      if (names.length) {
+        const cookies = await page.context().cookies(args.url).catch(() => []);
+        ok = names.some((n) => cookies.find((c) => c.name === n && c.value));
+      }
+      await db2?.setSiteSession?.(host, ok).catch(() => {});
+      console.log(green(ok
+        ? `Login saved and VERIFIED for ${host} — the app's site row now shows session ✓.`
+        : `Login window closed without a verified session for ${host} — the row shows session ✗. Re-run 🔑 Sign in to retry.`));
+      return;
+    }
 
     let jobs = await collectJobs(page, args.url, site, args.max);
     console.log(dim(`collected ${jobs.length} posting(s)`));
