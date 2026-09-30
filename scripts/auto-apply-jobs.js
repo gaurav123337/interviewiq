@@ -1133,6 +1133,10 @@ async function runSingle(args) {
       console.log(green(ok
         ? `Login saved and VERIFIED for ${host} — the app's site row now shows session ✓.`
         : `Login window closed without a verified session for ${host} — the row shows session ✗. Re-run 🔑 Sign in to retry.`));
+      /* the owner may have missed the window entirely — every outcome DMs */
+      await sendTelegramNotify(ok
+        ? `✅ ${host} sign-in verified — the site row now shows session ✓ and future runs are signed-in.`
+        : `⚠️ The ${host} sign-in window closed WITHOUT a completed sign-in (missed it, or the browser died). The site row shows session ✗ — click 🔑 Sign in again when ready.`).catch(() => {});
       return;
     }
 
