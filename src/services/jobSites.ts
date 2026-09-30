@@ -131,6 +131,38 @@ export async function clearUserNotifyBinding(userId: string): Promise<void> {
   if (error) throw error;
 }
 
+/* ── per-user activity drawer (admin): usage timeline + engine history + binding ── */
+
+export interface UserUsageRow { kind: string; meta: Record<string, unknown> | null; created_at: string }
+export interface UserApplyRow { site_host: string; job_url: string; title: string | null; company: string | null; result: string; detail: string | null; fit: number | null; created_at: string }
+export interface UserReviewRow { job_url: string; title: string | null; company: string | null; status: string; reason: string | null; fit: number | null; created_at: string; resolved_at: string | null }
+export interface UserNotifyRow { chat_id: string | null; token_prefix: string | null; updated_at: string | null }
+
+export interface UserActivity {
+  usage: UserUsageRow[];
+  applyRows: UserApplyRow[];
+  reviewRows: UserReviewRow[];
+  notify: UserNotifyRow | null;
+}
+
+export async function getUserActivity(userId: string): Promise<UserActivity> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const [usage, applyRows, reviewRows, notify] = await Promise.all([
+    client.rpc("admin_user_usage", { p_user: userId, p_limit: 40 }),
+    client.rpc("admin_user_apply_rows", { p_limit: 30 }),
+    client.rpc("admin_user_review_rows"),
+    client.rpc("admin_user_notify_row", { p_user: userId }),
+  ]);
+  for (const r of [usage, applyRows, reviewRows, notify]) if (r.error) throw r.error;
+  return {
+    usage: (usage.data ?? []) as UserUsageRow[],
+    applyRows: (applyRows.data ?? []) as UserApplyRow[],
+    reviewRows: (reviewRows.data ?? []) as UserReviewRow[],
+    notify: ((notify.data as UserNotifyRow[]) ?? [])[0] ?? null,
+  };
+}
+
 /* ── Apply mode control: off (kill switch) / local machine / cloud session ── */
 
 export type ApplyMode = "off" | "local" | "cloud";
