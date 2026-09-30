@@ -321,8 +321,18 @@ async function telegramCommandLoop() {
           for (const pid of pids) { try { execSync(`taskkill /F /T /PID ${pid}`, { timeout: 10000 }); freed++; } catch { /* already gone */ } }
           await new Promise((r) => setTimeout(r, 2500)); // let Windows release the ProcessSingleton lock
         }
+        /* ALSO free the engine's own NODE runs holding the profile (a watcher
+           cycle mid-job keeps its browser alive even if chrome was killed) */
+        const nodeBlocks = String(execSync(`wmic process where "name='node.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 }))
+          .split(/\r?\n\r?\n/);
+        for (const b of nodeBlocks) {
+          if (!/auto-apply-jobs\.js (--all|--url|--watch)/.test(b)) continue; // never the listener itself (--listen is skipped by this pattern)
+          const pid = /ProcessId=(\d+)/.exec(b)?.[1];
+          if (pid && String(pid) !== String(process.pid)) { try { execSync(`taskkill /F /T /PID ${pid}`, { timeout: 10000 }); freed++; } catch { /* already gone */ } }
+        }
+        await new Promise((r) => setTimeout(r, 3000));
       } catch { /* best-effort */ }
-      if (freed) console.log(dim(`  freed ${freed} stale engine browser process(es) holding the profile`));
+      if (freed) console.log(dim(`  freed ${freed} stale engine process(es) holding the profile`));
       const { spawn } = await import("node:child_process");
       const logFile = path.join(REPORTS_DIR, `login-${req.host.replace(/[^a-z0-9.-]/gi, "_")}.log`);
       const outFd = openSync(logFile, "a");
