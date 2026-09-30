@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig } from "../services/jobSites";
 
 const rpc = vi.fn();
 const invoke = vi.fn();
@@ -289,5 +289,23 @@ describe("notify config (per-user, RLS-scoped)", () => {
     clientFn.value = { rpc, functions: { invoke } };
     const res = await testNotifyConfig();
     expect(res).toMatch(/Platinum/);
+  });
+});
+
+describe("admin notify bindings", () => {
+  it("lists every user's binding via admin_list_user_notify", async () => {
+    rpc.mockResolvedValueOnce({
+      data: [{ user_id: "u1", email: "a@b.c", chat_id: "42", token_prefix: "86499464", updated_at: "2026-09-30T09:00:00Z" }],
+      error: null,
+    });
+    const rows = await listUserNotifyBindings();
+    expect(rpc).toHaveBeenCalledWith("admin_list_user_notify");
+    expect(rows[0].email).toBe("a@b.c");
+  });
+
+  it("clears one binding via admin_clear_user_notify", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await clearUserNotifyBinding("u1");
+    expect(rpc).toHaveBeenCalledWith("admin_clear_user_notify", { p_user: "u1" });
   });
 });

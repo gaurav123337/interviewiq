@@ -106,6 +106,31 @@ export async function setNotifyConfig(chatId: string, botToken: string): Promise
   if (error) throw error;
 }
 
+/* ── admin view of every user's binding (admin_list_user_notify RPC) ── */
+
+export interface UserNotifyBinding {
+  user_id: string;
+  email: string | null;
+  chat_id: string | null;
+  token_prefix: string | null;
+  updated_at: string | null;
+}
+
+export async function listUserNotifyBindings(): Promise<UserNotifyBinding[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_list_user_notify");
+  if (error) throw error;
+  return (data ?? []) as UserNotifyBinding[];
+}
+
+export async function clearUserNotifyBinding(userId: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_clear_user_notify", { p_user: userId });
+  if (error) throw error;
+}
+
 /* ── Apply mode control: off (kill switch) / local machine / cloud session ── */
 
 export type ApplyMode = "off" | "local" | "cloud";

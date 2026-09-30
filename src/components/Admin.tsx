@@ -11,6 +11,7 @@ import { toast } from "../toast";
 
 const OverviewSection = lazy(() => import("./admin/OverviewSection").then(m => ({ default: m.OverviewSection })));
 const UsersSection = lazy(() => import("./admin/UsersSection").then(m => ({ default: m.UsersSection })));
+const NotifyBindingsCard = lazy(() => import("./admin/UsersSection").then(m => ({ default: m.NotifyBindingsCard })));
 const AnnouncementsSection = lazy(() => import("./admin/AnnouncementsSection").then(m => ({ default: m.AnnouncementsSection })));
 const QuestionsSection = lazy(() => import("./admin/QuestionsSection").then(m => ({ default: m.QuestionsSection })));
 const ReviewInbox = lazy(() => import("./admin/ReviewInbox").then(m => ({ default: m.ReviewInbox })));
@@ -235,6 +236,7 @@ export function Admin() {
           <Suspense fallback={<SectionSkeleton />}>
             {section === "overview" && <OverviewSection metrics={metrics} loading={loading} onOpenSecrets={() => setSection("secrets")} />}
             {section === "users" && <UsersSection users={users} admins={admins} busy={busy} setBusy={setBusy} onChanged={load} />}
+            {section === "users" && <NotifyBindingsCard />}
         {section === "announcements" && (
           <AnnouncementsSection list={announcements} busy={busy} setBusy={setBusy} onChanged={async () => { setAnnouncements(getAnnouncements()); }} />
         )}

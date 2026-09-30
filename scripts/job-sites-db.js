@@ -148,6 +148,11 @@ export async function listPendingReviews() {
   return rpc(loadLocalCreds(), "admin_list_job_reviews", {});
 }
 
+/** Resolve a review row (done/dismissed/closed) — the Telegram listener's write path. */
+export async function resolveJobReview(id, status) {
+  return rpc(loadLocalCreds(), "admin_resolve_job_review", { p_id: id, p_status: status });
+}
+
 /** Telegram notify config for pings: resolves the per-user ENTITLED row
     (platinum/addon, admin bypass included) via engine_notify_config();
     falls back to the legacy admin row when the RPC is missing. */
