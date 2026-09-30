@@ -23,6 +23,7 @@ export default function CredentialsPanel() {
   const [secret, setSecret] = useState("");
   const [url, setUrl] = useState("");
   const [urlNote, setUrlNote] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -80,9 +81,14 @@ export default function CredentialsPanel() {
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
       <div className="mb-1 flex items-center justify-between">
-        <div className="text-sm font-semibold text-zinc-200">🔑 Logins & credentials</div>
+        <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
+          🔑 Logins & credentials
+          {creds && creds.length > 0 && <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400">{creds.length}</span>}
+          <span className="text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+        </button>
         <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
       </div>
+      {open && (<>
       <div className="mb-2 text-xs text-zinc-500">
         Store a login once and bind it to every board that shares it — the engine re-logins automatically when a saved
         session dies. Secrets stay server-side; this list shows prefixes only. Add new job URLs below too — manual adds
@@ -151,6 +157,7 @@ export default function CredentialsPanel() {
           </div>
         ))}
       </div>
+      </>)}
     </div>
   );
 }

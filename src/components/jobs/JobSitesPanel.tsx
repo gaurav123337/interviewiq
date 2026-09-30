@@ -18,6 +18,7 @@ export default function JobSitesPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [url, setUrl] = useState("");
   const [urlNote, setUrlNote] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -75,9 +76,18 @@ export default function JobSitesPanel() {
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-semibold text-zinc-200">🌐 Job sites registry</div>
+        <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
+          🌐 Job sites registry
+          {sites && sites.length > 0 && (
+            <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400">
+              {sites.filter((s) => s.status === "active").length}/{sites.length} active
+            </span>
+          )}
+          <span className="text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+        </button>
         <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
       </div>
+      {open && (<>
       <div className="mb-2 text-xs text-zinc-500">
         The discovery engine registers promising boards as <b>pending</b>; approve them to add the board to
         <code className="mx-1 rounded bg-zinc-800 px-1">--all</code> runs. Only active sites are auto-applied.
@@ -127,6 +137,7 @@ export default function JobSitesPanel() {
           </div>
         ))}
       </div>
+      </>)}
     </div>
   );
 }
