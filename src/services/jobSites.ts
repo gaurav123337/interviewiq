@@ -232,12 +232,16 @@ export async function deleteJudgeExemplar(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/* ── notify test-fire: server sends the digest DM, returns delivery status ── */
+/* ── notify test-fire: the send-notify-test edge function sends the digest DM
+   server-side (pg_net is unavailable on the hosted project) and returns
+   Telegram's REAL verdict — the panel surfaces bad tokens / chat ids. ── */
 
 export async function testNotifyConfig(): Promise<string> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_test_notify_config");
+  const { data, error } = await client.functions.invoke("send-notify-test");
   if (error) throw error;
-  return String(data ?? "");
+  const res = (data ?? {}) as { sent?: boolean; reason?: string };
+  if (res.sent) return "sent";
+  return res.reason || "unknown failure";
 }
