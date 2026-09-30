@@ -253,22 +253,41 @@ describe("feedback learning loop (👍/👎 → learned strikes)", () => {
   });
 });
 
-describe("notify config", () => {
-  it("reads the telegram row via admin_get_notify_config", async () => {
-    rpc.mockResolvedValueOnce({ data: [{ chat_id: "42", bot_token: "tok", updated_at: "2026-09-27T09:00:00Z" }], error: null });
+describe("notify config (per-user, RLS-scoped)", () => {
+  it("reads the user's own row from user_notify_config", async () => {
+    const from = vi.fn(() => ({
+      select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: { chat_id: "42", bot_token: "tok", updated_at: "2026-09-30T09:00:00Z" }, error: null }),
+    }));
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    clientFn.value = { rpc, from };
     const cfg = await getNotifyConfig();
-    expect(rpc).toHaveBeenCalledWith("admin_get_notify_config");
+    expect(from).toHaveBeenCalledWith("user_notify_config");
     expect(cfg?.chat_id).toBe("42");
   });
 
   it("returns null when unset", async () => {
-    rpc.mockResolvedValueOnce({ data: [], error: null });
+    const from = vi.fn(() => ({
+      select: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    }));
+    clientFn.value = { rpc, from };
     expect(await getNotifyConfig()).toBeNull();
   });
 
-  it("saves via admin_set_notify_config", async () => {
-    rpc.mockResolvedValueOnce({ data: null, error: null });
+  it("upserts the user's own binding", async () => {
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    const from = vi.fn(() => ({ upsert }));
+    clientFn.value = { rpc, from };
     await setNotifyConfig("42", "tok");
-    expect(rpc).toHaveBeenCalledWith("admin_set_notify_config", { p_chat_id: "42", p_bot_token: "tok" });
+    expect(from).toHaveBeenCalledWith("user_notify_config");
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ chat_id: "42", bot_token: "tok" }));
+  });
+
+  it("testNotifyConfig surfaces the Platinum upsell for free users", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "💎 Telegram pings are part of the auto-apply engine (Platinum or the auto-apply add-on). Upgrade to bind your chat." }, error: null });
+    clientFn.value = { rpc, functions: { invoke } };
+    const res = await testNotifyConfig();
+    expect(res).toMatch(/Platinum/);
   });
 });

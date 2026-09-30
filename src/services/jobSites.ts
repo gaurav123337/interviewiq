@@ -80,7 +80,10 @@ export async function resolveJobReview(id: string, status: "done" | "dismissed" 
   if (error) throw error;
 }
 
-/* ── Telegram notify config (used by the engine's post-batch summary) ──── */
+/* ── Telegram notify config — PER-USER since #135 ──────────────────────
+   Every signed-in Platinum/add-on user binds their own bot + chat id
+   (RLS scopes the row to auth.uid()); the engine pings the entitled
+   row via engine_notify_config(). Free users see the upsell instead. */
 
 export interface NotifyConfig {
   chat_id: string | null;
@@ -91,15 +94,15 @@ export interface NotifyConfig {
 export async function getNotifyConfig(): Promise<NotifyConfig | null> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_get_notify_config");
+  const { data, error } = await client.from("user_notify_config").select("chat_id, bot_token, updated_at").maybeSingle();
   if (error) throw error;
-  return ((data as NotifyConfig[]) ?? [])[0] ?? null;
+  return (data as NotifyConfig | null) ?? null;
 }
 
 export async function setNotifyConfig(chatId: string, botToken: string): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
-  const { error } = await client.rpc("admin_set_notify_config", { p_chat_id: chatId, p_bot_token: botToken });
+  const { error } = await client.from("user_notify_config").upsert({ chat_id: chatId, bot_token: botToken, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
 
@@ -233,8 +236,9 @@ export async function deleteJudgeExemplar(id: string): Promise<void> {
 }
 
 /* ── notify test-fire: the send-notify-test edge function sends the digest DM
-   server-side (pg_net is unavailable on the hosted project) and returns
-   Telegram's REAL verdict — the panel surfaces bad tokens / chat ids. ── */
+   server-side and returns Telegram's REAL verdict. Per-user since #135: the
+   signed-in user tests their OWN binding, gated on Platinum/add-on (the
+   function enforces it server-side; free users get the upsell message). ── */
 
 export async function testNotifyConfig(): Promise<string> {
   const client = await getSupabaseClient();

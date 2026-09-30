@@ -143,13 +143,29 @@ export async function recordApplyResult({ siteHost, jobUrl, title, company, resu
   });
 }
 
-/** Telegram notify config for post-batch summaries (nulls when unset). */
+/** Pending review rows (the Telegram listener resolves them by ordinal). */
+export async function listPendingReviews() {
+  return rpc(loadLocalCreds(), "admin_list_job_reviews", {});
+}
+
+/** Telegram notify config for pings: resolves the per-user ENTITLED row
+    (platinum/addon, admin bypass included) via engine_notify_config();
+    falls back to the legacy admin row when the RPC is missing. */
 export async function getNotifyConfig() {
   const creds = loadLocalCreds();
-  const res = await fetch(`${creds.base}/rest/v1/notify_config?select=*&key=eq.telegram`, {
+  const res = await fetch(`${creds.base}/rest/v1/rpc/engine_notify_config`, {
+    method: "POST",
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (res.ok) {
+    const rows = await res.json();
+    if (rows?.[0]) return rows[0];
+  }
+  const legacy = await fetch(`${creds.base}/rest/v1/notify_config?select=*&key=eq.telegram`, {
     headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
   });
-  if (!res.ok) throw new Error(`notify_config read ${res.status}`);
-  const rows = await res.json();
-  return rows[0] ?? null;
+  if (!legacy.ok) throw new Error(`notify_config read ${legacy.status}`);
+  const rows2 = await legacy.json();
+  return rows2[0] ?? null;
 }
