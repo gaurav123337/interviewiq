@@ -166,10 +166,13 @@ export async function acquireApplyContext({ headless = false, endpoint = "", sig
        here. No retry loop needed: the clone can never be "in use". */
     const hadCookies = cloneApplyProfileForSignin();
     console.log(`  🔐 independent sign-in browser: cloned freebuff-apply-profile → freebuff-apply-signin-profile${hadCookies ? " (saved sessions carried over)" : " (fresh — no saved sessions yet)"}`);
+    /* MAXIMIZED real OS window: the sign-in window kept losing the z-order
+       battle against the owner's browser/editor and sat hidden behind them
+       ("nothing is happening") — a maximized launch cannot be missed. */
     const ctx = await chromium.launchPersistentContext(SIGNIN_PROFILE_DIR, {
       headless,
-      viewport: { width: 1380, height: 900 },
-      args: ["--disable-blink-features=AutomationControlled"],
+      viewport: null,
+      args: ["--disable-blink-features=AutomationControlled", "--start-maximized"],
     });
     return { ctx, cleanup: () => ctx.close().catch(() => {}), remote: false, reused: false };
   }
