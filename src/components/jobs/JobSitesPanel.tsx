@@ -99,7 +99,12 @@ export default function JobSitesPanel() {
                 {s.label} <span className="text-zinc-500">· {s.host}</span>
                 {s.source === "discovered" && <span className="ml-1 text-[10px] uppercase tracking-wide text-sky-400">discovered</span>}
               </div>
-              <div className="truncate text-xs text-zinc-500">{summarizeSite(s)}{s.session_ok ? " · session ✓" : ""}</div>
+              <div className="flex items-center gap-1.5 truncate text-xs text-zinc-500">
+                {summarizeSite(s)}
+                <span className={`rounded px-1 py-0.5 text-[10px] font-bold ${s.session_ok ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
+                  {s.session_ok ? "session ✓" : "session ✗"}
+                </span>
+              </div>
             </div>
             {busy === s.id ? (
               <span className="text-xs text-zinc-500">…</span>
