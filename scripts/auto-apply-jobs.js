@@ -302,22 +302,27 @@ async function telegramCommandLoop() {
       const loginUrl = req.jobs_url || `https://${req.host}/`;
       console.log(`🔑 app requested sign-in for ${req.host} — opening the engine login window`);
       await api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 Opening the engine's sign-in window for ${req.host} — complete Google/OTP there; the session persists for every future run.` }).catch(() => {});
-      /* free OUR OWN stale engine browsers first — a lingering engine
-         Chromium holds the profile and any new launch dies instantly
-         (matched by OUR profile dir in its command line; the owner's
-         personal Chrome and the relay's separate profile are untouched) */
+      /* free OUR OWN stale engine browsers first — "Opening in existing
+         browser session" means a leftover engine Chromium still holds the
+         profile and every new launch just forwards to it and exits. Kill
+         the WHOLE TREE (/T — children hold subprocess handles too) and
+         verify zero remain before spawning. Matched by OUR profile dir in
+         the command line: the owner's personal Chrome (no such flag) and
+         the relay's separate profile are untouched. */
       let freed = 0;
       try {
         const { execSync } = await import("node:child_process");
-        const blocks = String(execSync(`wmic process where "name='chrome.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 }))
-          .split(/\r?\n\r?\n/);
-        for (const b of blocks) {
-          if (!/freebuff-apply-profile/i.test(b)) continue; // relay profile does NOT match this substring
-          const pid = /ProcessId=(\d+)/.exec(b)?.[1];
-          if (pid) { try { execSync(`taskkill /F /PID ${pid}`, { timeout: 10000 }); freed++; } catch { /* already gone */ } }
+        for (let round = 0; round < 3; round++) {
+          const blocks = String(execSync(`wmic process where "name='chrome.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 }))
+            .split(/\r?\n\r?\n/);
+          const pids = blocks.filter(b => /freebuff-apply-profile/i.test(b))
+            .map(b => /ProcessId=(\d+)/.exec(b)?.[1]).filter(Boolean);
+          if (!pids.length) break;
+          for (const pid of pids) { try { execSync(`taskkill /F /T /PID ${pid}`, { timeout: 10000 }); freed++; } catch { /* already gone */ } }
+          await new Promise((r) => setTimeout(r, 2500)); // let Windows release the ProcessSingleton lock
         }
       } catch { /* best-effort */ }
-      if (freed) console.log(dim(`  freed ${freed} stale engine browser window(s) holding the profile`));
+      if (freed) console.log(dim(`  freed ${freed} stale engine browser process(es) holding the profile`));
       const { spawn } = await import("node:child_process");
       const logFile = path.join(REPORTS_DIR, `login-${req.host.replace(/[^a-z0-9.-]/gi, "_")}.log`);
       const outFd = openSync(logFile, "a");
