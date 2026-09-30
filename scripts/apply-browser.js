@@ -122,6 +122,21 @@ function mergeInto(dest, src) {
   return merged;
 }
 
+/** Wait for Chromium to publish its ephemeral CDP port (first line of the
+    DevToolsActivePort file inside the profile) — the --all parent uses this
+    to hand ONE shared browser to its per-site children (tabs, not windows). */
+export async function readLocalCdpEndpoint(retries = 20) {
+  const f = path.join(PROFILE_DIR, "DevToolsActivePort");
+  for (let i = 0; i < retries; i++) {
+    try {
+      const port = readFileSync(f, "utf8").split(/\r?\n/)[0].trim();
+      if (port) return `http://127.0.0.1:${port}`;
+    } catch { /* not written yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("DevToolsActivePort never appeared");
+}
+
 /** True when the clone profile is currently OWNED by a live sign-in run
     (owner marker present + its pid alive) — listeners use this to skip a
     whole flow cycle instead of walking into the clone mid-launch. */
@@ -143,7 +158,7 @@ export function isRemoteEndpoint(endpoint) {
  * Acquire the apply browser context.
  * @returns {Promise<{ctx: import("playwright").BrowserContext, cleanup: () => Promise<void>, remote: boolean, reused: boolean}>}
  */
-export async function acquireApplyContext({ headless = false, endpoint = "", signIn = false } = {}) {
+export async function acquireApplyContext({ headless = false, endpoint = "", signIn = false, extraArgs = [] } = {}) {
   /* computed specifier so vite/vitest never statically resolve playwright
      (same trick as the engine's launchBrowser) */
   const spec = ["play", "wright"].join("");
@@ -202,7 +217,7 @@ export async function acquireApplyContext({ headless = false, endpoint = "", sig
       const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
         headless,
         viewport: { width: 1380, height: 900 },
-        args: ["--disable-blink-features=AutomationControlled"],
+        args: ["--disable-blink-features=AutomationControlled", ...extraArgs],
       });
       return { ctx, cleanup: () => ctx.close().catch(() => {}), remote: false, reused: false };
     } catch (e) {
