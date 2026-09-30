@@ -293,13 +293,40 @@ async function telegramCommandLoop() {
   /* app → desktop bridge: every ~30s, check for a 🔑 Sign-in request made
      from the app UI; spawn --login-only for that host so the owner can
      complete Google/OTP in the ENGINE's own window (sessions persist) */
+  /* sign-in FLOW lock (cross-process): duplicate listeners/watchdogs and
+     back-to-back polls must never run the sign-in flow twice — a second flow
+     would rmSync the clone dir out from under the first flow's live window
+     and launch a second Chromium on the same clone (ProcessSingleton). Held
+     until the spawned login process exits; a dead holder's lock is reclaimed. */
+  const FLOW_LOCK = path.join(REPORTS_DIR, "signin-flow.lock");
+  const acquireSigninFlow = () => {
+    try {
+      const { pid } = JSON.parse(readFileSync(FLOW_LOCK, "utf8"));
+      try { process.kill(pid, 0); return false; } catch { /* holder died — reclaim */ }
+    } catch { /* no lock file */ }
+    try { writeFileSync(FLOW_LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: "wx" }); return true; }
+    catch { return false; } // lost a creation race
+  };
+  const releaseSigninFlow = () => { try { unlinkSync(FLOW_LOCK); } catch { /* gone */ } };
   const pollLoginRequests = async () => {
     if (Date.now() - lastLoginPoll < 30_000) return;
     lastLoginPoll = Date.now();
     try {
       const req = await db.pendingLoginRequest?.();
       if (!req?.host) return;
+      if (!acquireSigninFlow()) { console.log("sign-in flow already in progress — skipping this cycle"); return; }
       const loginUrl = req.jobs_url || `https://${req.host}/`;
+      /* an INDEPENDENT sign-in window may already be open (duplicate request,
+         a failed fulfill, or the owner re-clicking 🔑): it WINS — bail before
+         any killing, a second cycle must never murder the live window */
+      try {
+        const { execSync: probe } = await import("node:child_process");
+        const blocks0 = String(probe(`wmic process where "name='chrome.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 })).split(/\r?\n\r?\n/);
+        if (blocks0.some((b) => /freebuff-apply-signin-profile/i.test(b))) {
+          console.log(`sign-in window already open for ${req.host} — leaving it alone (a live sign-in wins over any new request)`);
+          return;
+        }
+      } catch { /* probe failed — continue with the normal flow */ }
       console.log(`🔑 app requested sign-in for ${req.host} — opening the engine login window`);
       await api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 Opening the engine's sign-in window for ${req.host} — complete Google/OTP there; the session persists for every future run.` }).catch(() => {});
       /* free OUR OWN stale engine browsers first — "Opening in existing
@@ -326,6 +353,7 @@ async function telegramCommandLoop() {
         const nodeBlocks = String(execSync(`wmic process where "name='node.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 }))
           .split(/\r?\n\r?\n/);
         for (const b of nodeBlocks) {
+          if (/--login-only/.test(b)) continue; // never kill the sign-in window's own run
           if (!/auto-apply-jobs\.js (--all|--url|--watch)/.test(b)) continue; // never the listener itself (--listen is skipped by this pattern)
           const pid = /ProcessId=(\d+)/.exec(b)?.[1];
           if (pid && String(pid) !== String(process.pid)) { try { execSync(`taskkill /F /T /PID ${pid}`, { timeout: 10000 }); freed++; } catch { /* already gone */ } }
@@ -353,7 +381,10 @@ async function telegramCommandLoop() {
       });
       /* remove the supervisor block when the login process exits (success,
          failure or crash — the watcher must always come back) */
-      child.once("exit", () => { try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ } });
+      child.once("exit", () => {
+        try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ }
+        releaseSigninFlow(); // the flow is over only when its window is gone
+      });
       await db.fulfillLoginRequest?.(req.host).catch(() => {});
     } catch { /* polling is best-effort */ }
   };
