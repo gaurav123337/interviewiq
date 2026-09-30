@@ -4,9 +4,10 @@
    copy-paste run commands per job board. The engine itself runs locally —
    the card never applies anything server-side. */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { cardCls, btnGhost, btnOk, btnPrimary, btnSm, Chip } from "../ui";
 import { APPLY_SITES, engineCommands, exportProfileJson, platinumActive } from "../../services/autoApply";
+import { requestRunNow, fetchRunStatus, type RunLifecycle } from "../../services/jobSites";
 import JobSitesPanel from "./JobSitesPanel";
 import CredentialsPanel from "./CredentialsPanel";
 import ApplyModePanel from "./ApplyModePanel";
@@ -21,6 +22,30 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
 }) {
   const [openSite, setOpenSite] = useState<string | null>(null);
   const active = platinum && !locked;
+
+  /* ⚡ Run now: queue a full cycle on the desktop engine and poll the
+     lifecycle (queued → running → done-with-summary / failed) so the owner
+     sees progress instead of a dead button. */
+  const [runState, setRunState] = useState<{ status: RunLifecycle; detail: string | null } | null>(null);
+  const runNow = useCallback(async () => {
+    setRunState({ status: "requested", detail: null });
+    try {
+      await requestRunNow();
+      const deadline = Date.now() + 40 * 60_000; // a full cycle can take many minutes
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 10_000));
+        if (Date.now() > deadline) { setRunState({ status: "done", detail: "poll timed out — check the Applications report" }); return; }
+        const { status, detail } = await fetchRunStatus().catch(() => ({ status: null, detail: null }));
+        if (!status || status === "requested") continue; // listener hasn't picked it up yet
+        setRunState({ status, detail });
+        if (status === "running") continue; // keep watching until done/failed
+        return;
+      }
+    } catch (e) {
+      setRunState({ status: "failed", detail: (e as Error).message });
+    }
+  }, []);
+  useEffect(() => { if (runState?.status === "done" || runState?.status === "failed") { const t = setTimeout(() => setRunState(null), 60_000); return () => clearTimeout(t); } }, [runState?.status]);
   const profileJson = useMemo(() => (active ? exportProfileJson() : ""), [active]);
   const missing = useMemo(() => {
     if (!active) return [];
@@ -76,10 +101,21 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
             </p>
           )}
           <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button className={btnPrimary + btnSm} disabled={runState?.status === "requested" || runState?.status === "running"} onClick={() => void runNow()}>
+              {runState?.status === "requested" ? "⏳ queued…" : runState?.status === "running" ? "⚙️ running — cycling active sites…" : "⚡ Run now"}
+            </button>
             <button className={btnOk + btnSm} onClick={download}>⬇️ Download apply-profile.json</button>
             <button className={btnGhost + btnSm} onClick={() => void copy(profileJson)}>📋 Copy JSON</button>
             <span className="text-[11px] text-mut">save it to the repo root (next to package.json)</span>
           </div>
+          {runState && (
+            <p className={`mb-3 rounded-lg px-3 py-2 text-[12px] ${runState.status === "failed" ? "border border-red-500/30 bg-red-500/10 text-red-300" : "border border-ok/30 bg-ok/10 text-ink"}`}>
+              {runState.status === "requested" && "⏳ Run queued — the desktop engine picks it up within ~30s, then cycles every ACTIVE site."}
+              {runState.status === "running" && "⚙️ Engine is running a full cycle now — this updates when it finishes."}
+              {runState.status === "done" && (runState.detail ?? "Run finished — see the Applications report below.")}
+              {runState.status === "failed" && (runState.detail ?? "Run failed — check the engine logs.")}
+            </p>
+          )}
 
           <div className="space-y-2">
             {APPLY_SITES.map(s => (

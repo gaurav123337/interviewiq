@@ -313,6 +313,41 @@ async function telegramCommandLoop() {
     catch { return false; } // lost a creation race
   };
   const releaseSigninFlow = () => { try { unlinkSync(FLOW_LOCK); } catch { /* gone */ } };
+  /* ⚡ Run-now bridge (app → desktop): every ~30s poll, check whether the
+     owner pressed ⚡ Run now in the UI; spawn --all exactly like the
+     scheduled watcher would (signin-active.lock defers it, flow rules
+     identical), and report lifecycle back so the button shows progress. */
+  let lastRunPoll = 0;
+  const pollRunRequests = async () => {
+    if (Date.now() - lastRunPoll < 30_000) return;
+    lastRunPoll = Date.now();
+    try {
+      const req = await db.pendingRunRequest?.();
+      if (!req) return;
+      await db.fulfillRunRequest?.().catch(() => {});
+      await db.reportRunStatus?.("running", "engine picked up the ⚡ Run now request — cycling every ACTIVE site").catch(() => {});
+      console.log("⚡ app requested a run — spawning --all");
+      const { spawn } = await import("node:child_process");
+      const logFile = path.join(REPORTS_DIR, "run-now.log");
+      const outFd = openSync(logFile, "a");
+      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--all"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, "..") });
+      child.unref();
+      closeSync(outFd);
+      child.once("exit", (code) => {
+        if (code && code !== 0) {
+          db.reportRunStatus?.("failed", `run exited with code ${code} — see freebuff-apply-reports/run-now.log`).catch(() => {});
+          return;
+        }
+        /* summarize the freshest report so the button shows real numbers */
+        try {
+          const files = readdirSync(REPORTS_DIR).filter((f) => /^run-\d{4}-\d{2}-\d{2}T.*\.json$/.test(f)).sort();
+          const latest = JSON.parse(readFileSync(path.join(REPORTS_DIR, files[files.length - 1]), "utf8"));
+          const rs = latest.results ?? [];
+          db.reportRunStatus?.("done", `✅ ${rs.filter((r) => r.result === "submitted").length} submitted · ⏸ ${rs.filter((r) => r.result === "needs_review").length} review · ⏭ ${rs.filter((r) => r.result === "skipped").length} skipped (judge) · ✗ ${rs.filter((r) => r.result === "error").length} errors`).catch(() => {});
+        } catch { db.reportRunStatus?.("done", "run finished — see the Applications report").catch(() => {}); }
+      });
+    } catch { /* polling is best-effort */ }
+  };
   const pollLoginRequests = async () => {
     if (Date.now() - lastLoginPoll < 30_000) return;
     lastLoginPoll = Date.now();
@@ -404,6 +439,7 @@ async function telegramCommandLoop() {
   };
   for (;;) {
     await pollLoginRequests();
+    await pollRunRequests();
     const upd = await api("getUpdates", { offset, timeout: 30, allowed_updates: ["message"] });
     for (const u of upd?.result ?? []) {
       offset = u.update_id + 1;
