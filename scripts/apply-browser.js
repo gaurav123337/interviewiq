@@ -29,16 +29,22 @@
  * context's pages behave like local ones.
  */
 
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
-/* independent sign-in window: a THROWAWAY clone of the engine profile. The
-   real profile stays untouched (and lockable) while the owner signs in —
-   then the fresh cookies are merged back. Gitignored; never shipped. */
-const SIGNIN_PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-signin-profile");
+/* independent sign-in window: a THROWAWAY clone of the engine profile. It
+   deliberately lives OUTSIDE the repo (LOCALAPPDATA, not OneDrive): the repo
+   tree syncs to OneDrive, and a Chromium profile is thousands of tiny files
+   being written and deleted continuously — sync churn + hydration kills
+   browsers. The real profile stays untouched (and lockable) while the owner
+   signs in — then the fresh cookies are merged back. Never shipped. */
+const SIGNIN_PROFILE_DIR = process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile")
+  : path.join(ROOT, "..", "freebuff-apply-signin-profile");
+const CLONE_OWNER_MARKER = "owner-alive.json";
 
 /* Chromium's live-process lock files — copying ANY of them into the clone
    guarantees the "profile in use" crash the sign-in window exists to escape.
@@ -54,11 +60,18 @@ function isProfileLockEntry(name) {
 /** Copy the engine profile → the throwaway sign-in clone, skipping every
     live-process lock file (any depth). Best-effort per file: something held
     exclusively by the running browser is simply left out — the clone lives
-    without it. Returns true when real session data was carried over. */
+    without it. Returns true when real session data was carried over.
+    THROWS when a LIVE sign-in run already owns the clone (its owner marker
+    pid is alive) — no second run may ever wipe a live window's profile. */
 export function cloneApplyProfileForSignin() {
-  rmSync(SIGNIN_PROFILE_DIR, { recursive: true, force: true }); // stale clone from a crashed sign-in
+  try {
+    const owner = JSON.parse(readFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), "utf8"));
+    try { process.kill(owner.pid, 0); throw new Error(`sign-in already in progress — the clone profile is owned by a live run (pid ${owner.pid}); refusing to wipe it`); } catch (e) { if (e.code !== "ESRCH" && String(e.message).includes("refusing")) throw e; }
+  } catch (e) { if (String(e.message).includes("refusing")) throw e; }
+  rmSync(SIGNIN_PROFILE_DIR, { recursive: true, force: true }); // stale clone from a dead sign-in
   mkdirSync(SIGNIN_PROFILE_DIR, { recursive: true });
   cpFilter(PROFILE_DIR, SIGNIN_PROFILE_DIR);
+  try { writeFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* best-effort claim */ }
   return existsSync(path.join(SIGNIN_PROFILE_DIR, "Default", "Cookies"));
 }
 
@@ -85,6 +98,7 @@ export function mergeSigninProfileBack() {
   let merged = 0;
   try {
     if (!existsSync(SIGNIN_PROFILE_DIR)) return 0;
+    try { rmSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), { force: true }); } catch { /* best-effort */ }
     mkdirSync(PROFILE_DIR, { recursive: true });
     merged = mergeInto(PROFILE_DIR, SIGNIN_PROFILE_DIR);
   } catch { /* best-effort — the verified cookie set still lives in the DB */ }
@@ -106,6 +120,16 @@ function mergeInto(dest, src) {
     } catch { /* locked file in the real profile — skip it */ }
   }
   return merged;
+}
+
+/** True when the clone profile is currently OWNED by a live sign-in run
+    (owner marker present + its pid alive) — listeners use this to skip a
+    whole flow cycle instead of walking into the clone mid-launch. */
+export function signinCloneOwnedByLiveRun() {
+  try {
+    const owner = JSON.parse(readFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), "utf8"));
+    try { process.kill(owner.pid, 0); return true; } catch { return false; }
+  } catch { return false; }
 }
 
 /** True when the endpoint is a CDP endpoint (ws/wss websocket or http(s)

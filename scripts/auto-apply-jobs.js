@@ -38,7 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
-import { acquireApplyContext, isRemoteEndpoint, mergeSigninProfileBack } from "./apply-browser.js";
+import { acquireApplyContext, isRemoteEndpoint, mergeSigninProfileBack, signinCloneOwnedByLiveRun } from "./apply-browser.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
@@ -318,7 +318,13 @@ async function telegramCommandLoop() {
       const loginUrl = req.jobs_url || `https://${req.host}/`;
       /* an INDEPENDENT sign-in window may already be open (duplicate request,
          a failed fulfill, or the owner re-clicking 🔑): it WINS — bail before
-         any killing, a second cycle must never murder the live window */
+         any killing, a second cycle must never murder the live window.
+         TWO probes: the clone owner marker (covers the clone/launch phase,
+         before any chrome exists) AND running chrome on the clone dir. */
+      if (signinCloneOwnedByLiveRun()) {
+        console.log("sign-in already in progress (clone profile owned by a live run) — leaving it alone");
+        return;
+      }
       try {
         const { execSync: probe } = await import("node:child_process");
         const blocks0 = String(probe(`wmic process where "name='chrome.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 })).split(/\r?\n\r?\n/);
