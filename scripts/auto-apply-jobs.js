@@ -28,7 +28,7 @@
  * No credentials are stored or typed by this script — logins are manual once.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, createWriteStream } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, createWriteStream, openSync, closeSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -302,9 +302,36 @@ async function telegramCommandLoop() {
       const loginUrl = req.jobs_url || `https://${req.host}/`;
       console.log(`🔑 app requested sign-in for ${req.host} — opening the engine login window`);
       await api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 Opening the engine's sign-in window for ${req.host} — complete Google/OTP there; the session persists for every future run.` }).catch(() => {});
+      /* free OUR OWN stale engine browsers first — a lingering engine
+         Chromium holds the profile and any new launch dies instantly
+         (matched by OUR profile dir in its command line; the owner's
+         personal Chrome and the relay's separate profile are untouched) */
+      let freed = 0;
+      try {
+        const { execSync } = await import("node:child_process");
+        const blocks = String(execSync(`wmic process where "name='chrome.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 }))
+          .split(/\r?\n\r?\n/);
+        for (const b of blocks) {
+          if (!/freebuff-apply-profile/i.test(b)) continue; // relay profile does NOT match this substring
+          const pid = /ProcessId=(\d+)/.exec(b)?.[1];
+          if (pid) { try { execSync(`taskkill /F /PID ${pid}`, { timeout: 10000 }); freed++; } catch { /* already gone */ } }
+        }
+      } catch { /* best-effort */ }
+      if (freed) console.log(dim(`  freed ${freed} stale engine browser window(s) holding the profile`));
       const { spawn } = await import("node:child_process");
-      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: "ignore", cwd: path.join(ROOT, "..") });
+      const logFile = path.join(REPORTS_DIR, `login-${req.host.replace(/[^a-z0-9.-]/gi, "_")}.log`);
+      const outFd = openSync(logFile, "a");
+      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, "..") });
       child.unref();
+      closeSync(outFd);
+      /* immediate death is a REAL failure (profile lock, playwright missing)
+         — stdio used to swallow it; now the owner hears about it */
+      child.once("exit", (code) => {
+        if (code && code !== 0) {
+          console.error(red(`✗ login window for ${req.host} crashed (exit ${code}) — see ${logFile}`));
+          api("sendMessage", { chat_id: cfg.chat_id, text: `✗ The ${req.host} sign-in window crashed immediately (exit ${code}). Tail of ${path.basename(logFile)}:\n${(() => { try { return readFileSync(logFile, "utf8").slice(-400); } catch { return "(unreadable)"; } })()}` }).catch(() => {});
+        }
+      });
       await db.fulfillLoginRequest?.(req.host).catch(() => {});
     } catch { /* polling is best-effort */ }
   };
