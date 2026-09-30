@@ -240,6 +240,27 @@ export async function fetchLoginStatus(host: string): Promise<LoginLifecycle | n
   return (row?.status as LoginLifecycle) ?? null;
 }
 
+/* ⚡ Run now: queue a full --all cycle on the desktop engine (the listener
+   picks it up within ~30s), then poll the lifecycle for the button. */
+export type RunLifecycle = "requested" | "running" | "done" | "failed";
+
+export async function requestRunNow(): Promise<string> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_request_run");
+  if (error) throw error;
+  return String(data ?? "run requested");
+}
+
+export async function fetchRunStatus(): Promise<{ status: RunLifecycle | null; detail: string | null }> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_run_status");
+  if (error) throw error;
+  const row = (data as { status: string; detail: string }[] | null)?.[0];
+  return { status: (row?.status as RunLifecycle) ?? null, detail: row?.detail ?? null };
+}
+
 /* ── Apply mode control: off (kill switch) / local machine / cloud session ── */
 
 export type ApplyMode = "off" | "local" | "cloud";

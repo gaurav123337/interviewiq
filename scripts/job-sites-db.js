@@ -190,6 +190,23 @@ export async function reportLoginStatus(host, status, detail) {
   });
 }
 
+/* ⚡ Run-now bridge: the app queues a request; the listener polls it and
+   spawns --all. Same shape as the sign-in bridge. */
+export async function pendingRunRequest() {
+  const rows = await rpc(loadLocalCreds(), "engine_pending_run_request", {});
+  return rows?.[0] ?? null;
+}
+
+export async function fulfillRunRequest() {
+  return rpc(loadLocalCreds(), "engine_fulfill_run_request", {});
+}
+
+export async function reportRunStatus(status, detail) {
+  return rpc(loadLocalCreds(), "engine_report_run_status", {
+    p_status: status, p_detail: detail ?? null,
+  });
+}
+
 /** Telegram notify config for pings: resolves the per-user ENTITLED row
     (platinum/addon, admin bypass included) via engine_notify_config();
     falls back to the legacy admin row when the RPC is missing. */
