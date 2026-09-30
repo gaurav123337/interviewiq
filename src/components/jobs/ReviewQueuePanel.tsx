@@ -3,7 +3,7 @@
    (open → submit manually → Done) or dismisses them. Also hosts the optional
    Telegram notify config the engine uses for post-batch summaries. */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, putJudgeExemplar, testNotifyConfig,
   type ReviewItem, type ReviewFormField,
@@ -39,6 +39,7 @@ export default function ReviewQueuePanel() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notifyOpen, setNotifyOpen] = useState(false);
+  const notifyRef = useRef<HTMLDivElement | null>(null);
   const [chatId, setChatId] = useState("");
   const [botToken, setBotToken] = useState("");
   const [notifyState, setNotifyState] = useState<string | null>(null);
@@ -113,6 +114,13 @@ export default function ReviewQueuePanel() {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
+  /* open + reveal: the form renders above the row list, but long queues
+     can still push it off-screen — scroll it into view on open */
+  const openNotify = () => {
+    setNotifyOpen(true);
+    requestAnimationFrame(() => notifyRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  };
+
   const saveNotify = async () => {
     setNotifyState(null);
     try {
@@ -141,7 +149,7 @@ export default function ReviewQueuePanel() {
           📥 Review queue {items.length > 0 && <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">{items.length} waiting</span>}
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setNotifyOpen(o => !o)}
+          <button onClick={() => (notifyOpen ? setNotifyOpen(false) : openNotify())}
             title="Bind Telegram: get a DM the moment a job needs you"
             className={`rounded px-2 py-1 text-xs font-medium ${notifySaved ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"}`}>
             🔔 Telegram {notifySaved ? "· on" : "· not set up"}
@@ -153,8 +161,25 @@ export default function ReviewQueuePanel() {
         Review-gate forms the engine skipped in <code className="rounded bg-zinc-800 px-1">--unattended</code> mode wait here with their
         link — open, submit by hand, then record the outcome: <b className="text-zinc-400">✓ Applied</b> and <b className="text-zinc-400">✕ Not interested</b> teach the
         AI judge your preference for similar postings; <b className="text-zinc-400">🚫 Closed</b> (no longer accepting) just stops the engine from retrying.
-        {!notifySaved && <> Want a phone ping when something lands here? <button onClick={() => setNotifyOpen(true)} className="text-amber-400 underline underline-offset-2 hover:text-amber-300">Bind Telegram →</button></>}
+        {!notifySaved && <> Want a phone ping when something lands here? <button onClick={openNotify} className="text-amber-400 underline underline-offset-2 hover:text-amber-300">Bind Telegram →</button></>}
       </div>
+      {notifyOpen && (
+        <div ref={notifyRef} className="mb-3 space-y-2 rounded-md border border-amber-500/30 bg-zinc-900 px-2.5 py-2.5">
+          <div className="text-xs font-semibold text-zinc-300">Telegram notifications {notifySaved && <span className="ml-1 text-emerald-400">· enabled</span>}</div>
+          <p className="text-[11px] text-zinc-500">
+            Create a bot with @BotFather (paste its token), send <code className="rounded bg-zinc-800 px-1">/start</code> to it once, then paste the chat id.
+            Saving sends a test DM carrying the weekly digest so you can verify delivery instantly.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <input value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="chat id (e.g. 123456789)"
+              className="w-44 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
+            <input value={botToken} onChange={(e) => setBotToken(e.target.value)} placeholder="bot token (123456:ABC-DEF…)" type="password"
+              className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
+            <button onClick={() => void saveNotify()} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Save</button>
+          </div>
+          {notifyState && <div className="text-[11px] text-zinc-400">{notifyState}</div>}
+        </div>
+      )}
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!items.length && <div className="text-xs text-zinc-500">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
       <div className="space-y-2">
@@ -188,24 +213,6 @@ export default function ReviewQueuePanel() {
           </div>
         ))}
       </div>
-
-      {notifyOpen && (
-        <div className="mt-3 space-y-2 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-2.5">
-          <div className="text-xs font-semibold text-zinc-300">Telegram notifications {notifySaved && <span className="ml-1 text-emerald-400">· enabled</span>}</div>
-          <p className="text-[11px] text-zinc-500">
-            Create a bot with @BotFather (paste its token), send <code className="rounded bg-zinc-800 px-1">/start</code> to it once, then paste the chat id.
-            The engine DMs a ✅/⏸/✗ summary after every batch.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <input value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="chat id (e.g. 123456789)"
-              className="w-44 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
-            <input value={botToken} onChange={(e) => setBotToken(e.target.value)} placeholder="bot token (123456:ABC-DEF…)" type="password"
-              className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
-            <button onClick={() => void saveNotify()} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Save</button>
-          </div>
-          {notifyState && <div className="text-[11px] text-zinc-400">{notifyState}</div>}
-        </div>
-      )}
     </div>
   );
 }
