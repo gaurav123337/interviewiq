@@ -10,7 +10,8 @@ vi.mock("../services/cloud", () => ({
 import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig } from "../services/jobSites";
 
 const rpc = vi.fn();
-const client = { rpc };
+const invoke = vi.fn();
+const client = { rpc, functions: { invoke } };
 
 beforeEach(() => {
   rpc.mockReset();
@@ -134,22 +135,22 @@ describe("judge exemplar management", () => {
   });
 });
 
-describe("notify test-fire", () => {
-  it("returns the server-reported delivery status", async () => {
-    rpc.mockResolvedValueOnce({ data: "sent", error: null });
+describe("notify test-fire (send-notify-test edge function)", () => {
+  it("invokes the function and reports delivery", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: true, message_id: 5 }, error: null });
     const res = await testNotifyConfig();
-    expect(rpc).toHaveBeenCalledWith("admin_test_notify_config");
+    expect(invoke).toHaveBeenCalledWith("send-notify-test");
     expect(res).toBe("sent");
   });
 
-  it("surfaces config errors from the RPC (bad token etc.)", async () => {
-    rpc.mockResolvedValueOnce({ data: "error 401: Unauthorized", error: null });
+  it("surfaces Telegram's real failure reason (bad token etc.)", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "Unauthorized" }, error: null });
     const res = await testNotifyConfig();
-    expect(res).toMatch(/error 401/);
+    expect(res).toBe("Unauthorized");
   });
 
-  it("propagates RPC errors", async () => {
-    rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
+  it("propagates invoke errors", async () => {
+    invoke.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
     await expect(testNotifyConfig()).rejects.toThrow("forbidden");
   });
 });
