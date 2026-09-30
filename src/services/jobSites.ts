@@ -226,6 +226,20 @@ export async function requestSiteLogin(host: string): Promise<string> {
   return String(data ?? "");
 }
 
+export type LoginLifecycle = "requested" | "opened" | "crashed" | "verified" | "failed";
+
+/* The engine reports every sign-in transition here; the 🔑 row polls this
+   so the owner sees "window open — act now" / "crashed" / "verified" /
+   "failed" in the app instead of the flow going dark after the click. */
+export async function fetchLoginStatus(host: string): Promise<LoginLifecycle | null> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_login_status", { p_host: host });
+  if (error) throw error;
+  const row = (data as { status: string }[] | null)?.[0];
+  return (row?.status as LoginLifecycle) ?? null;
+}
+
 /* ── Apply mode control: off (kill switch) / local machine / cloud session ── */
 
 export type ApplyMode = "off" | "local" | "cloud";
