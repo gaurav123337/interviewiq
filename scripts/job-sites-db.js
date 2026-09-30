@@ -181,6 +181,15 @@ export async function fulfillLoginRequest(host) {
   return rpc(loadLocalCreds(), "engine_fulfill_login_request", { p_host: host });
 }
 
+/** Report a sign-in lifecycle transition (opened / crashed / verified /
+    failed) so the APP can show the owner what the sign-in is doing live
+    instead of going dark after the 🔑 click. */
+export async function reportLoginStatus(host, status, detail) {
+  return rpc(loadLocalCreds(), "engine_report_login_status", {
+    p_host: host, p_status: status, p_detail: detail ?? null,
+  });
+}
+
 /** Telegram notify config for pings: resolves the per-user ENTITLED row
     (platinum/addon, admin bypass included) via engine_notify_config();
     falls back to the legacy admin row when the RPC is missing. */

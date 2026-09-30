@@ -3,13 +3,23 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, requestSiteLogin, type JobSite } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   pending: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   disabled: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
   dead: "bg-red-500/15 text-red-400 border-red-500/30",
+};
+
+/* the engine reports each sign-in transition; these are the owner-facing
+   lines shown under the clicked row while the flow runs / resolves */
+const SIGNIN_STATUS_TEXT: Record<LoginLifecycle, { text: string; cls: string }> = {
+  requested: { text: "🔑 Sign-in requested — the engine's window opens on the desktop within ~30s; complete Google/OTP there.", cls: "bg-zinc-800/60 text-zinc-300" },
+  opened: { text: "🟢 Sign-in window is OPEN on your desktop NOW — complete Google/OTP in it. This line updates when it closes.", cls: "bg-emerald-500/10 text-emerald-300" },
+  crashed: { text: "✗ The sign-in run crashed — see the engine report; click 🔑 Sign in to try again.", cls: "bg-red-500/10 text-red-300" },
+  verified: { text: "✅ Session verified — this site's future runs are signed-in.", cls: "bg-emerald-500/15 text-emerald-300" },
+  failed: { text: "⚠️ The sign-in window closed without a completed sign-in — click 🔑 Sign in to retry.", cls: "bg-amber-500/10 text-amber-300" },
 };
 
 export default function JobSitesPanel() {
@@ -34,13 +44,27 @@ export default function JobSitesPanel() {
 
   /* 🔑 app-triggered sign-in: the desktop listener opens the engine's own
      window for this host within ~30s — the owner completes Google/OTP there
-     (typed automation is blocked by Google; the session then persists) */
+     (typed automation is blocked by Google; the session then persists).
+     After the click, poll the engine-reported lifecycle so the row shows
+     window-open / crashed / verified / failed instead of going dark. */
+  const [signinStatus, setSigninStatus] = useState<{ host: string; status: LoginLifecycle } | null>(null);
   const signIn = async (s: JobSite) => {
     setBusy(s.id);
+    setSigninStatus({ host: s.host, status: "requested" });
     try {
-      const res = await requestSiteLogin(s.host);
-      setUrlNote(`🔑 ${res} — the engine's sign-in window opens on your desktop within ~30s; complete Google/OTP there.`);
+      await requestSiteLogin(s.host);
+      const deadline = Date.now() + 30 * 60_000; // a sign-in can take a while — poll 30 min
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        if (Date.now() > deadline) { setSigninStatus({ host: s.host, status: "failed" }); return; }
+        const st = await fetchLoginStatus(s.host).catch(() => null);
+        if (!st || st === "requested") continue; // listener hasn't picked it up yet
+        setSigninStatus({ host: s.host, status: st });
+        if (st === "opened") { void refresh(); continue; } // window open — keep watching for the outcome
+        return; // crashed / verified / failed = terminal
+      }
     } catch (e) {
+      setSigninStatus(null);
       setUrlNote(`✗ ${(e as Error).message}`);
     } finally {
       setBusy(null);
@@ -133,6 +157,11 @@ export default function JobSitesPanel() {
                 <button onClick={() => void flip(s, "active")} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Re-enable</button>
               ) : null}
               </>
+            )}
+            {signinStatus?.host === s.host && (
+              <div className={`w-full rounded px-2 py-1 text-[11px] ${SIGNIN_STATUS_TEXT[signinStatus.status].cls}`}>
+                {SIGNIN_STATUS_TEXT[signinStatus.status].text}
+              </div>
             )}
           </div>
         ))}

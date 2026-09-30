@@ -382,6 +382,7 @@ async function telegramCommandLoop() {
       child.once("exit", (code) => {
         if (code && code !== 0) {
           console.error(red(`✗ login window for ${req.host} crashed (exit ${code}) — see ${logFile}`));
+          db.reportLoginStatus?.(req.host, "crashed", `exit code ${code} — the sign-in run died before completing; check freebuff-apply-reports/${path.basename(logFile)}`).catch(() => {});
           api("sendMessage", { chat_id: cfg.chat_id, text: `✗ The ${req.host} sign-in window crashed immediately (exit ${code}). Tail of ${path.basename(logFile)}:\n${(() => { try { return readFileSync(logFile, "utf8").slice(-400); } catch { return "(unreadable)"; } })()}` }).catch(() => {});
         }
       });
@@ -391,6 +392,8 @@ async function telegramCommandLoop() {
         try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ }
         releaseSigninFlow(); // the flow is over only when its window is gone
       });
+      /* tell the app the window is UP — the owner should go act in it now */
+      db.reportLoginStatus?.(req.host, "opened", "independent sign-in window is open on the desktop — complete Google/OTP there now").catch(() => {});
       await db.fulfillLoginRequest?.(req.host).catch(() => {});
     } catch { /* polling is best-effort */ }
   };
@@ -1197,6 +1200,11 @@ async function runSingle(args) {
       }
       try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ }
       await db2?.setSiteSession?.(host, ok).catch(() => {});
+      /* lifecycle → app: verified (cookie seen) or failed (closed without a
+         completed sign-in) — the 🔑 row stops guessing and shows the outcome */
+      await db2?.reportLoginStatus?.(host, ok ? "verified" : "failed",
+        ok ? "session verified (cookie present) — future runs are signed-in"
+           : "window closed without a completed sign-in — click 🔑 Sign in to retry").catch(() => {});
       console.log(green(ok
         ? `Login saved and VERIFIED for ${host} — the app's site row now shows session ✓.`
         : `Login window closed without a verified session for ${host} — the row shows session ✗. Re-run 🔑 Sign in to retry.`));
