@@ -215,6 +215,17 @@ export async function addJobSiteUrl(jobsUrl: string, label?: string): Promise<st
   return String(data ?? "");
 }
 
+/* 🔑 Sign in from the app: queues a login request the desktop listener
+   picks up within ~30s and opens the engine's own sign-in window (the
+   only safe way to use Google OAuth — the human types it, once). */
+export async function requestSiteLogin(host: string): Promise<string> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_request_login", { p_host: host });
+  if (error) throw error;
+  return String(data ?? "");
+}
+
 /* ── Apply mode control: off (kill switch) / local machine / cloud session ── */
 
 export type ApplyMode = "off" | "local" | "cloud";

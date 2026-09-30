@@ -159,6 +159,17 @@ export async function credentialForSite(host) {
   return rows?.[0] ?? null;
 }
 
+/** App → desktop bridge: the listener's pending 🔑 Sign-in request (if any). */
+export async function pendingLoginRequest() {
+  const rows = await rpc(loadLocalCreds(), "engine_pending_login_request", {});
+  return rows?.[0] ?? null;
+}
+
+/** Mark a sign-in request handled (the listener spawned the login window). */
+export async function fulfillLoginRequest(host) {
+  return rpc(loadLocalCreds(), "engine_fulfill_login_request", { p_host: host });
+}
+
 /** Telegram notify config for pings: resolves the per-user ENTITLED row
     (platinum/addon, admin bypass included) via engine_notify_config();
     falls back to the legacy admin row when the RPC is missing. */

@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, type JobSite } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, requestSiteLogin, type JobSite } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -30,6 +30,21 @@ export default function JobSitesPanel() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  /* 🔑 app-triggered sign-in: the desktop listener opens the engine's own
+     window for this host within ~30s — the owner completes Google/OTP there
+     (typed automation is blocked by Google; the session then persists) */
+  const signIn = async (s: JobSite) => {
+    setBusy(s.id);
+    try {
+      const res = await requestSiteLogin(s.host);
+      setUrlNote(`🔑 ${res} — the engine's sign-in window opens on your desktop within ~30s; complete Google/OTP there.`);
+    } catch (e) {
+      setUrlNote(`✗ ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const flip = async (s: JobSite, status: JobSite["status"]) => {
     setBusy(s.id);
@@ -88,16 +103,22 @@ export default function JobSitesPanel() {
             </div>
             {busy === s.id ? (
               <span className="text-xs text-zinc-500">…</span>
-            ) : s.status === "pending" ? (
+            ) : (
+              <>
+                <button onClick={() => void signIn(s)} title="Open the engine's sign-in window for this site — complete Google/OTP there once; the session persists for every future run"
+                  className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-500">🔑 Sign in</button>
+            {s.status === "pending" ? (
               <>
                 <button onClick={() => void flip(s, "active")} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Approve</button>
                 <button onClick={() => void flip(s, "dead")} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">Reject</button>
               </>
             ) : s.status === "active" ? (
-              <button onClick={() => void flip(s, "disabled")} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">Disable</button>
-            ) : s.status === "disabled" ? (
-              <button onClick={() => void flip(s, "active")} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Re-enable</button>
-            ) : null}
+                <button onClick={() => void flip(s, "disabled")} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">Disable</button>
+              ) : s.status === "disabled" ? (
+                <button onClick={() => void flip(s, "active")} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Re-enable</button>
+              ) : null}
+              </>
+            )}
           </div>
         ))}
       </div>
