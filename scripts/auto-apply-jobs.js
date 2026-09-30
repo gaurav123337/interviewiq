@@ -28,7 +28,7 @@
  * No credentials are stored or typed by this script — logins are manual once.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, createWriteStream, openSync, closeSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, createWriteStream, openSync, closeSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -335,6 +335,10 @@ async function telegramCommandLoop() {
       if (freed) console.log(dim(`  freed ${freed} stale engine process(es) holding the profile`));
       const { spawn } = await import("node:child_process");
       const logFile = path.join(REPORTS_DIR, `login-${req.host.replace(/[^a-z0-9.-]/gi, "_")}.log`);
+      /* sign-in handoff: block the watcher supervisor from respawning the
+         watcher while the window is open (it would steal the profile and
+         kill the sign-in — the #141–#145 crash loop) */
+      try { writeFileSync(path.join(REPORTS_DIR, "signin-active.lock"), new Date().toISOString()); } catch { /* lock is best-effort */ }
       const outFd = openSync(logFile, "a");
       const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, "..") });
       child.unref();
@@ -347,6 +351,9 @@ async function telegramCommandLoop() {
           api("sendMessage", { chat_id: cfg.chat_id, text: `✗ The ${req.host} sign-in window crashed immediately (exit ${code}). Tail of ${path.basename(logFile)}:\n${(() => { try { return readFileSync(logFile, "utf8").slice(-400); } catch { return "(unreadable)"; } })()}` }).catch(() => {});
         }
       });
+      /* remove the supervisor block when the login process exits (success,
+         failure or crash — the watcher must always come back) */
+      child.once("exit", () => { try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ } });
       await db.fulfillLoginRequest?.(req.host).catch(() => {});
     } catch { /* polling is best-effort */ }
   };
@@ -1139,6 +1146,7 @@ async function runSingle(args) {
         const cookies = await page.context().cookies(args.url).catch(() => []);
         ok = names.some((n) => cookies.find((c) => c.name === n && c.value));
       }
+      try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ }
       await db2?.setSiteSession?.(host, ok).catch(() => {});
       console.log(green(ok
         ? `Login saved and VERIFIED for ${host} — the app's site row now shows session ✓.`
