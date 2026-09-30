@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { amOwner, grantAdmin, revokeAdmin, type AdminUserRow } from "../../services/admin";
 import { adminListEntitlements, adminSetEntitlement, type AdminEntitlementRow } from "../../services/entitlement";
-import { listUserNotifyBindings, clearUserNotifyBinding } from "../../services/jobSites";
+import { listUserNotifyBindings, clearUserNotifyBinding, getUserActivity, type UserActivity } from "../../services/jobSites";
 import { adminListPayments, adminListSubscriptions, adminBillingActions, fmtMinor, type AdminPaymentRow, type AdminSubscriptionRow, type BillingActionRow } from "../../services/billing";
 import { CONFIG } from "../../config";
 import { toast } from "../../toast";
@@ -19,6 +19,7 @@ export function UsersSection({ users, admins, busy, setBusy, onChanged }: {
 }) {
   const [grantEmail, setGrantEmail] = useState("");
   const [billingUser, setBillingUser] = useState<{ id: string; email: string } | null>(null);
+  const [activityUser, setActivityUser] = useState<{ id: string; email: string } | null>(null);
   const [planBusy, setPlanBusy] = useState<string | null>(null);
   const [entitlements, setEntitlements] = useState<AdminEntitlementRow[]>([]);
   const owner = amOwner();
@@ -154,9 +155,14 @@ export function UsersSection({ users, admins, busy, setBusy, onChanged }: {
                     )}
                   </td>
                   <td className="px-5 py-3">
-                    <button className={btnGhost + btnSm} onClick={() => setBillingUser({ id: u.id, email: u.email })} title="Entitlements, payments, subscriptions and audit trail for this user">
-                      💰 Billing
-                    </button>
+                    <div className="flex gap-1.5">
+                      <button className={btnGhost + btnSm} onClick={() => setActivityUser({ id: u.id, email: u.email })} title="Usage timeline, engine history and Telegram binding for this user">
+                        📊 Activity
+                      </button>
+                      <button className={btnGhost + btnSm} onClick={() => setBillingUser({ id: u.id, email: u.email })} title="Entitlements, payments, subscriptions and audit trail for this user">
+                        💰 Billing
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -165,7 +171,94 @@ export function UsersSection({ users, admins, busy, setBusy, onChanged }: {
         </table>
       </div>
       {billingUser && <UserBillingDrawer userId={billingUser.id} email={billingUser.email} onClose={() => setBillingUser(null)} />}
+      {activityUser && <UserActivityDrawer userId={activityUser.id} email={activityUser.email} onClose={() => setActivityUser(null)} />}
     </div>
+  );
+}
+
+/* Per-user activity drawer — usage timeline, the shared engine's recent
+   decisions (apply_results carry no user_id: the local engine runs as the
+   owner) and this user's Telegram binding. */
+function UserActivityDrawer({ userId, email, onClose }: { userId: string; email: string; onClose: () => void }) {
+  const [state, setState] = useState<UserActivity | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getUserActivity(userId)
+      .then(a => { if (alive) setState(a); })
+      .catch(e => { if (alive) { setErr((e as Error).message); setState({ usage: [], applyRows: [], reviewRows: [], notify: null }); } });
+    return () => { alive = false; };
+  }, [userId]);
+
+  const counts = state ? {
+    events: state.usage.length,
+    engine: state.applyRows.length,
+    queue: state.reviewRows.length,
+  } : null;
+
+  return (
+    <Modal onClose={onClose} title={`📊 Activity — ${email}`} desc="Usage timeline, the apply engine's recent decisions and this account's Telegram binding.">
+      {err && <div className="rounded bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{err}</div>}
+      {!state ? (
+        <p className="py-6 text-center text-mut">Loading activity…</p>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2 text-[12px]">
+            <Chip tone="lvl">{counts?.events ?? 0} usage events</Chip>
+            <Chip tone="lvl">engine: {counts?.engine ?? 0} recent rows</Chip>
+            <Chip tone="lvl">queue: {counts?.queue ?? 0} rows</Chip>
+            <Chip tone={state.notify ? "ok" : "default"}>{state.notify ? `🔔 bound · chat ${state.notify.chat_id}` : "🔔 not bound"}</Chip>
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Usage timeline (newest first)</div>
+            {state.usage.length === 0 ? <p className="text-[12.5px] text-fnt">No usage events yet.</p> : (
+              <div className="max-h-[180px] space-y-1 overflow-y-auto">
+                {state.usage.map((e, i) => (
+                  <div key={i} className="flex items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
+                    <Chip>{e.kind}</Chip>
+                    {e.meta && Object.keys(e.meta).length > 0 && <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-fnt">{JSON.stringify(e.meta).slice(0, 90)}</span>}
+                    <span className="ml-auto shrink-0 text-[10.5px] text-fnt">{new Date(e.created_at).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Apply engine — recent decisions (shared, runs on the owner's machine)</div>
+            {state.applyRows.length === 0 ? <p className="text-[12.5px] text-fnt">No engine runs recorded yet.</p> : (
+              <div className="max-h-[200px] space-y-1 overflow-y-auto">
+                {state.applyRows.map((r, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
+                    <Chip tone={r.result === "submitted" ? "ok" : r.result === "error" ? "bad" : r.result === "needs_review" ? "warn" : "default"}>{r.result}</Chip>
+                    <span className="min-w-0 flex-1 truncate">{r.title || r.job_url}{r.company ? ` — ${r.company}` : ""}</span>
+                    {r.fit != null && <Chip tone="lvl">fit {r.fit}</Chip>}
+                    <span className="ml-auto shrink-0 text-[10.5px] text-fnt">{r.site_host} · {new Date(r.created_at).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Review queue (all rows)</div>
+            {state.reviewRows.length === 0 ? <p className="text-[12.5px] text-fnt">Queue is empty.</p> : (
+              <div className="max-h-[160px] space-y-1 overflow-y-auto">
+                {state.reviewRows.map((r, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
+                    <Chip tone={r.status === "pending" ? "warn" : r.status === "done" ? "ok" : "default"}>{r.status}</Chip>
+                    <span className="min-w-0 flex-1 truncate">{r.title || r.job_url}</span>
+                    <span className="ml-auto shrink-0 text-[10.5px] text-fnt">{new Date(r.created_at).toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

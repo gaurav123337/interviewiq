@@ -53,6 +53,22 @@ export const SITE_RULES = {
     successText: /applied|application sent|we'll be in touch/i,
     listSelectorHints: ["a[href*='/job-']", "a[href*='/candidate/opportunities/']"],
     minIntervalMs: 2500,
+    sessionCookieNames: ["sessionid"], // ground truth (verified live: guests never carry sessionid)
+  },
+  indeed: {
+    label: "Indeed",
+    jobsUrlHosts: ["indeed.com", "indeed.co.in"],
+    loginPathHints: ["/accounts/login", "signin", "authuser"],
+    loggedInHint: "",
+    applyButtonText: /apply( now)?/i,
+    steps: ["apply"],
+    autoSubmit: false, // indeed's flow varies per employer — review gate
+    submitButtonText: /^submit( application)?$/i,
+    successText: /application (was|has been) (sent|submitted)|thanks for applying/i,
+    listSelectorHints: ["a[href*='/viewjob']", "a[href*='/cmp/']", "td.resultContent"],
+    minIntervalMs: 3000,
+    /* no durable named session cookie (indeed rotates analytics ids) —
+       login verification stays page-based for this site */
   },
   generic: {
     label: "Generic",

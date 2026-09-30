@@ -496,7 +496,13 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
        saved" runs in a row stored NO session cookie at all). */
     const verifySession = async () => {
       const names = rules.sessionCookieNames ?? [];
-      if (!names.length) return waitForStableState(page, rules, url, { settleMs: 0 });
+      if (!names.length) {
+        /* page-based verification only (site has no durable named session
+           cookie) — say so, so a false positive is diagnosable in the log */
+        const st = await waitForStableState(page, rules, url, { settleMs: 0 });
+        if (st.kind === "loggedIn") console.log(dim("  (page-verified login — no named session cookie to check for this site)"));
+        return st;
+      }
       for (let i = 0; i < 3; i++) {
         const cookies = await page.context().cookies(url).catch(() => []);
         const hit = names.map((n) => cookies.find((c) => c.name === n)).find(Boolean);
