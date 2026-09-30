@@ -127,8 +127,11 @@ async function queueReview(entry) {
   await db.queueJobReview(entry).catch((e) => console.log(dim(`  (queue: ${e.message.slice(0, 60)})`)));
   if (wasPending) return false;
   const when = entry.fit != null ? ` · fit ${entry.fit}` : "";
-  const ok = await sendTelegramNotify(`⏸ Freebuff apply · needs you: ${entry.title || "posting"}${entry.company ? ` — ${entry.company}` : ""}${when}\n${entry.reason || ""}\nFinish in the review queue: …/#/jobs`);
-  if (ok) console.log(dim("  📣 telegram: needs-you ping sent"));
+  /* actionable from the phone: the ping carries the DIRECT form link so the
+     Easy Apply modal opens without hunting through the review queue */
+  const ok = await sendTelegramNotify(`⏸ Freebuff apply · needs you: ${entry.title || "posting"}${entry.company ? ` — ${entry.company}` : ""}${when}\n${entry.reason || ""}\nOpen the form: ${entry.formUrl || "…/#/jobs"}\nThen mark it in the review queue: …/#/jobs`);
+  if (ok) console.log(dim("  📣 telegram: needs-you ping sent (with form link)"));
+  else console.log(dim("  (telegram ping failed — check notify config)"));
   return true;
 }
 
