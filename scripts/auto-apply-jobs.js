@@ -38,7 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
-import { acquireApplyContext, isRemoteEndpoint, mergeSigninProfileBack, signinCloneOwnedByLiveRun } from "./apply-browser.js";
+import { acquireApplyContext, isRemoteEndpoint, mergeSigninProfileBack, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
@@ -787,6 +787,22 @@ async function collectJobs(page, url, site, max) {
     });
     return [{ url: `https://www.linkedin.com/jobs/view/${direct[1]}/`, title: head.title || "LinkedIn posting " + direct[1], company: head.company }];
   }
+  /* ANY pasted posting deep-link IS the job: /jobs/<id>-slug (YC, greenhouse,
+     lever), /jobs/view/<id>, ?jobId= ATS links — pin THIS page as the single
+     posting instead of running the generic list collector on it (on a
+     single-posting page the collector only finds category/nav junk —
+     "Startup Jobs", "Design & UI/UX" — and the real posting is never
+     applied to). List URLs (/jobs, /jobs?query, /search-jobs?...) do NOT
+     match: the pin needs a segment AFTER /jobs/. */
+  const postingPin = url.match(/\/(jobs?|positions?|openings?)\/([^/?#]{3,})/i) || (/[?&](jobid|gh_jid|lever_job_id|ashby_jid)=/i.test(url) ? [null, "", ""] : null);
+  if (postingPin && !/\.com\/jobs?\/?$/i.test(url)) {
+    const head = await page.evaluate(() => {
+      const h1 = (document.querySelector("h1")?.innerText ?? "").trim().split("\n")[0];
+      const og = document.querySelector('meta[property="og:title"]')?.content ?? "";
+      return { title: (h1 || og || document.title || "").replace(/\s*\|\s*Y Combinator\s*$/i, "").slice(0, 140) };
+    });
+    return [{ url, title: head.title || "(pasted posting)", company: "" }];
+  }
   /* auto-scroll to load lazy lists (LinkedIn/Instahyre paginate inside SPA) */
   for (let i = 0; i < 6; i++) {
     await page.mouse.wheel(0, 2400);
@@ -1215,7 +1231,7 @@ async function trySubmit(page, site, rulesOverride) {
 
 /* ------------------------------- main ------------------------------- */
 
-async function runSingle(args) {
+async function runSingle(args, { existingCtx = null } = {}) {
   if (!args.url) {
     console.error(`Usage: node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only] [--headless] [--profile file]`);
     process.exit(1);
@@ -1237,14 +1253,30 @@ async function runSingle(args) {
   /* owner kill switch: a manual single run fails open when the config is
      unreadable (the owner is running it on purpose), but honors off/cloud */
   const appTriggered = !args.unattended && process.env.FREEBUFF_APP_TRIGGERED === "1";
-  if (!args["login-only"]) {
+  /* --all shares ONE browser across sites (existingCtx): the N-Chromium
+     storm confused the owner and burned a launch per site. The shared
+     browser's cleanup belongs to runAll — runSingle must not close it. */
+  /* child of a shared --all browser: the parent passed its CDP endpoint —
+     connect to THAT browser (tab, not a new window). The parent owns the
+     browser's lifecycle; a child never closes it. */
+  const sharedEp = String(process.env.FREEBUFF_SHARED_CDP_EP || "").trim();
+  let sharedChildCtx = null;
+  if (sharedEp && !args["login-only"]) {
+    try {
+      const shared = await acquireApplyContext({ headless: args.headless, endpoint: sharedEp });
+      sharedChildCtx = shared.ctx; // connect-only: remote cleanup is a no-op for us — the parent closes it
+      console.log(dim("  🪟 running as a tab in the shared --all browser"));
+    } catch (e) { console.log(yellow(`  (shared browser unreachable: ${e.message.slice(0, 70)} — launching own)`)); }
+  }
+  if (!sharedChildCtx) {
     const blocked = await applyModeBlocked(false);
     if (blocked) { console.error(red(`✗ apply engine disabled: ${blocked}.`)); return; }
   }
 
-  const ctx = await launchBrowser(args.headless, { signIn: args["login-only"] });
+  const ctx = existingCtx ?? sharedChildCtx ?? await launchBrowser(args.headless, { signIn: args["login-only"] });
   let page = ctx.pages()[0] ?? (await ctx.newPage());
   const report = newReport(args.url, site);
+  let warnedAiState = false; // AI-off / AI-down warning: once per run, not per job
   mkdirSync(REPORTS_DIR, { recursive: true });
 
   try {
@@ -1385,8 +1417,19 @@ async function runSingle(args) {
            backend-core-under-frontend-words JDs). Fail-open to unknown:
            judge trouble never blocks the deterministic path. Runs BEFORE
            kit generation — a skip here saves two AI calls + form filling. */
+        /* AI JUDGE — TRANSPARENT when absent: without it only regex gates
+           decide, and they WILL misjudge postings (a JD under a mangled
+           title, transferable-skill gaps, L&D-vs-engineering wording).
+           The owner must know the safety net is down, not wonder later.
+           Warned ONCE per run — per-job would spam every row. */
+        if (!warnedAiState) {
+          warnedAiState = true;
+          if (!ai) console.log(yellow("  ⚠️ AI judge is OFF (no provider configured) — only basic keyword gates are deciding now; the app WILL make relevance mistakes. Fix: Admin → AI provider, then re-run."));
+          else if (ai.__unhealthy) console.log(yellow(`  ⚠️ AI judge is DOWN (${ai.__unhealthy}) — keyword gates are deciding this run and kits fall back to TEMPLATES. Fix the provider and re-run.`));
+        }
         if (ai) {
           job.__judge = await judgeFit(ai, job, profile, await judgeExemplars());
+          if (job.__judge.verdict === "unknown" && /HTTP|fetch|timeout|ENOTFOUND|ECONNREFUSED/i.test(job.__judge.reason || "")) ai.__unhealthy = job.__judge.reason;
           if (job.__judge.verdict === "skip") {
             const why = `AI judge: ${job.__judge.reason || "not a realistic match"}`;
             recordResultBoth(report, job, "skipped", why);
@@ -1397,6 +1440,7 @@ async function runSingle(args) {
           else console.log(dim(`  🧠 judge: unsure (${job.__judge.reason || "no verdict"}) — proceeding on gates`));
         }
         const kit = await buildKit(ai, profile, { title: job.title, company: job.company, skills: (job.description.match(/\b(Node\.js|React|TypeScript|Python|AWS|Kubernetes|PostgreSQL|Docker|GraphQL|Kafka|System Design|Machine Learning)\b/gi) ?? []).slice(0, 8).map(s => s[0].toUpperCase() + s.slice(1)) });
+        if (!kit.ai) { console.log(yellow("  ⚠️ kit fell back to TEMPLATES (AI provider failed) — the submitted resume/cover are generic, not JD-tailored.")); }
         if (looksLikeRefusal(kit.resume) || looksLikeRefusal(kit.coverLetter)) {
           throw new Error("AI refused to tailor this kit (role mismatch?) — not submitting");
         }
@@ -1568,9 +1612,12 @@ async function runSingle(args) {
       await sendTelegramNotify(`Freebuff apply · ${site}: ✅ ${n} submitted · ⏸ ${q} review · ✗ ${er} errors`).catch(() => {});
     }
     /* remote sessions: DISCONNECT ONLY — browser.close() over CDP keeps the
-       hosted session (and its logins) alive for the next run */
-    if (__browserCleanup) await __browserCleanup().catch(() => {});
-    else await ctx.close().catch(() => {});
+       hosted session (and its logins) alive for the next run. A SHARED --all
+       browser (existingCtx or parent-provided) closes in runAll, never here. */
+    if (!existingCtx && !sharedChildCtx) {
+      if (__browserCleanup) await __browserCleanup().catch(() => {});
+      else await ctx.close().catch(() => {});
+    }
   }
 }
 
@@ -1598,20 +1645,30 @@ async function runAll(args) {
      all stop the cycle (unknown = config unreadable → stop too) */
   const blocked = await applyModeBlocked(true);
   if (blocked) { console.log(yellow(`⏸ apply engine disabled: ${blocked} — skipping this cycle.`)); return; }
+  /* ONE SHARED BROWSER for the whole cycle: launch it here, hand its CDP
+     endpoint to each per-site child via env (they open TABS in it), and
+     close it once after the last site — no more per-site window storms. */
+  let sharedEp = "", sharedCleanup = null;
+  try {
+    await launchBrowser(false, args_isCloudMode ? {} : { extraArgs: ["--remote-debugging-port=0"] });
+    sharedCleanup = __browserCleanup;
+    if (!args_isCloudMode) sharedEp = await readLocalCdpEndpoint();
+    else sharedEp = (await readApplyMode()).endpoint ?? "";
+    console.log(dim("  🪟 one shared browser for the whole cycle — sites open as tabs"));
+  } catch (e) { console.log(yellow(`  (shared browser unavailable: ${e.message.slice(0, 80)} — falling back to per-site browsers)`)); sharedEp = ""; }
   const totals = { submitted: 0, skipped: 0, errors: 0 };
   for (const s of sites) {
     console.log(`\n━━━ ${s.label} (${s.host}) ━━━`);
     try {
-      /* re-invoke this script per site so every run gets its own report + sync.
-         Hard watchdog: a site that wedges (hung page/network) must never stall
-         a scheduled cycle — kill it after 12 min and move on to the next site. */
       const { spawn } = await import("node:child_process");
       const SITE_TIMEOUT_MS = 12 * 60_000;
+      const env = { ...process.env };
+      if (sharedEp) env.FREEBUFF_SHARED_CDP_EP = sharedEp;
       const child = spawn(process.execPath, [
         path.join(ROOT, "auto-apply-jobs.js"), "--url", s.url, "--max", String(args.max),
         ...(args["dry-run"] ? ["--dry-run"] : []),
         ...(args.unattended ? ["--unattended"] : []),
-      ], { stdio: "inherit", cwd: path.join(ROOT, "..") });
+      ], { stdio: "inherit", cwd: path.join(ROOT, ".."), env });
       const code = await new Promise((resolve) => {
         const t = setTimeout(() => { console.log(yellow(`  ⏱ site timed out after 12 min — killed, moving on`)); child.kill(); resolve(-1); }, SITE_TIMEOUT_MS);
         child.on("exit", (c) => { clearTimeout(t); resolve(c ?? -1); });
@@ -1624,6 +1681,8 @@ async function runAll(args) {
     }
   }
   console.log(`\n--all complete (${sites.length} sites).`);
+  /* the shared browser dies HERE, once, after the last site — not per site */
+  if (sharedCleanup) await sharedCleanup().catch(() => {});
 }
 
 /* ----------------------- --watch: keep applying ----------------------- */
