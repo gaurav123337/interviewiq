@@ -38,7 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
-import { acquireApplyContext, isRemoteEndpoint } from "./apply-browser.js";
+import { acquireApplyContext, isRemoteEndpoint, mergeSigninProfileBack } from "./apply-browser.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
@@ -468,13 +468,25 @@ function loadApplyProfile(file) {
    says cloud. runSingle carries the cleanup fn — remote connections must
    DISCONNECT (browser.close on CDP), never kill the hosted session. */
 let __browserCleanup = null;
-async function launchBrowser(headless) {
+async function launchBrowser(headless, { signIn = false } = {}) {
   let endpoint = "";
   if (args_isCloudMode) endpoint = (await readApplyMode()).endpoint ?? "";
-  const { ctx, cleanup, remote } = await acquireApplyContext({ headless, endpoint });
+  /* --login-only never touches the cloud/CDP path: the owner is signing in
+     on THIS machine, and the session must land in the local profile */
+  const { ctx, cleanup, remote } = await acquireApplyContext({ headless, endpoint: signIn ? "" : endpoint, signIn });
   __browserCleanup = cleanup;
   if (remote) console.log(dim("  ☁️ connected to remote persistent browser session"));
   return ctx;
+}
+
+/* --login-only close hook: fold the independent sign-in browser's fresh
+   cookies back into the REAL engine profile and delete the throwaway clone.
+   Runs after browser close (the cookie DB is only flushed to disk then) and
+   ALWAYS (success or not — an unfinished sign-in must never orphan the clone
+   or leave the next run contending with a phantom profile). */
+async function mergeAfterSignin() {
+  const merged = mergeSigninProfileBack();
+  if (merged > 0) console.log(dim(`  🔐 merged ${merged} file(s) from the sign-in browser back into freebuff-apply-profile`));
 }
 /* set once in main() from the apply_config read — avoids re-reading per run */
 let args_isCloudMode = false;
@@ -1126,7 +1138,7 @@ async function runSingle(args) {
     if (blocked) { console.error(red(`✗ apply engine disabled: ${blocked}.`)); return; }
   }
 
-  const ctx = await launchBrowser(args.headless);
+  const ctx = await launchBrowser(args.headless, { signIn: args["login-only"] });
   let page = ctx.pages()[0] ?? (await ctx.newPage());
   const report = newReport(args.url, site);
   mkdirSync(REPORTS_DIR, { recursive: true });
@@ -1436,6 +1448,7 @@ async function runSingle(args) {
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
     await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
     await learnRules(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
+    if (args["login-only"]) await mergeAfterSignin().catch(() => {}); // clone cookies → real profile (must run after ctx close)
     if (!args["dry-run"]) {
       const n = report.results.filter((r) => r.result === "submitted").length;
       const q = report.results.filter((r) => r.result === "needsReview").length;

@@ -38,6 +38,7 @@ function ago(iso: string): string {
 
 export default function ReviewQueuePanel() {
   const [items, setItems] = useState<ReviewItem[] | null>(null);
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notifyOpen, setNotifyOpen] = useState(false);
@@ -151,9 +152,11 @@ export default function ReviewQueuePanel() {
   return (
     <div id="review-queue" className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-sm font-semibold text-zinc-200">
-          📥 Review queue {items.length > 0 && <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">{items.length} waiting</span>}
-        </div>
+        <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
+          📥 Review queue
+          {items.length > 0 && <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">{items.length} waiting</span>}
+          <span className="text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+        </button>
         <div className="flex items-center gap-3">
           <button onClick={() => (notifyOpen ? setNotifyOpen(false) : openNotify())}
             title="Bind Telegram: get a DM the moment a job needs you (💎 Platinum or the auto-apply add-on)"
@@ -163,6 +166,7 @@ export default function ReviewQueuePanel() {
           <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
         </div>
       </div>
+      {open && (<>
       <div className="mb-2 text-xs text-zinc-500">
         Review-gate forms the engine skipped in <code className="rounded bg-zinc-800 px-1">--unattended</code> mode wait here with their
         link — open, submit by hand, then record the outcome: <b className="text-zinc-400">✓ Applied</b> and <b className="text-zinc-400">✕ Not interested</b> teach the
@@ -225,6 +229,7 @@ export default function ReviewQueuePanel() {
           </div>
         ))}
       </div>
+      </>)}
     </div>
   );
 }

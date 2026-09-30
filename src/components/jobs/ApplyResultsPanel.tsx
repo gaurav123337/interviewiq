@@ -36,6 +36,7 @@ export default function ApplyResultsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ApplyResultRow["result"] | "all">("all");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -58,6 +59,9 @@ export default function ApplyResultsPanel() {
     try {
       const skills = r.detail?.match(/missing:\s*([a-z0-9,. ]+)/i)?.[1]
         ?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+      /* optimistic lock: the choice is final the moment it lands — no double-click
+         window before the refetched rows come back with feedback set */
+      setRows((prev) => (prev ?? []).map((x) => (x.id === r.id ? { ...x, feedback: verdict } : x)));
       await sendApplyFeedback(r.id, verdict, skills);
       await refresh();
     } catch (e) {
@@ -75,9 +79,14 @@ export default function ApplyResultsPanel() {
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-zinc-200">📊 Applications report</div>
+        <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
+          📊 Applications report
+          {rows.length > 0 && <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400">{rows.length}</span>}
+          <span className="text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+        </button>
         <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
       </div>
+      {open && (<>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {(["submitted", "needs_review", "skipped", "error"] as const).map((k) => (
           <button key={k} onClick={() => setFilter(filter === k ? "all" : k)}
@@ -124,12 +133,12 @@ export default function ApplyResultsPanel() {
               ) : null}
               {(r.result === "submitted" || r.result === "needs_review") && (
                 <span className="ml-auto flex shrink-0 items-center gap-1">
-                  <button disabled={busyId === r.id} title="Good match — also clears any learned strikes on this row's missing skills"
+                  <button disabled={busyId === r.id || r.feedback === "good"} title="Good match — also clears any learned strikes on this row's missing skills (one choice per row — locked after clicking)"
                     onClick={() => void learn(r, "good")}
-                    className={`rounded border px-1.5 py-0.5 ${r.feedback === "good" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300" : "border-zinc-700 text-zinc-400 hover:border-emerald-600 hover:text-emerald-400"} disabled:opacity-40`}>👍</button>
-                  <button disabled={busyId === r.id} title="Wrong application — its missing-core skills get a strike (2 strikes = auto-reject forever)"
+                    className={`rounded border px-1.5 py-0.5 ${r.feedback === "good" ? "border-emerald-500/60 bg-emerald-500/15 text-emerald-300" : "border-zinc-700 text-zinc-400 hover:border-emerald-600 hover:text-emerald-400"} disabled:opacity-40 disabled:hover:border-zinc-700`}>👍</button>
+                  <button disabled={busyId === r.id || r.feedback === "bad"} title="Wrong application — its missing-core skills get a strike (2 strikes = auto-reject forever; one choice per row — locked after clicking)"
                     onClick={() => void learn(r, "bad")}
-                    className={`rounded border px-1.5 py-0.5 ${r.feedback === "bad" ? "border-red-500/60 bg-red-500/15 text-red-300" : "border-zinc-700 text-zinc-400 hover:border-red-600 hover:text-red-400"} disabled:opacity-40`}>👎</button>
+                    className={`rounded border px-1.5 py-0.5 ${r.feedback === "bad" ? "border-red-500/60 bg-red-500/15 text-red-300" : "border-zinc-700 text-zinc-400 hover:border-red-600 hover:text-red-400"} disabled:opacity-40 disabled:hover:border-zinc-700`}>👎</button>
                 </span>
               )}
             </div>
@@ -137,6 +146,7 @@ export default function ApplyResultsPanel() {
         ))}
         {!shown.length && rows.length > 0 && <div className="text-xs text-zinc-500">No rows for this filter.</div>}
       </div>
+      </>)}
     </div>
   );
 }
