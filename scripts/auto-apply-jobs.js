@@ -289,7 +289,27 @@ async function telegramCommandLoop() {
   if (!me?.ok) { console.error("bad bot token"); process.exit(1); }
   console.log(`telegram listener up as @${me.result.username} — reply "1 done" / "2 skip" / "3 closed" to a needs-you ping (Ctrl+C to stop)`);
   let offset = 0;
+  let lastLoginPoll = 0;
+  /* app → desktop bridge: every ~30s, check for a 🔑 Sign-in request made
+     from the app UI; spawn --login-only for that host so the owner can
+     complete Google/OTP in the ENGINE's own window (sessions persist) */
+  const pollLoginRequests = async () => {
+    if (Date.now() - lastLoginPoll < 30_000) return;
+    lastLoginPoll = Date.now();
+    try {
+      const req = await db.pendingLoginRequest?.();
+      if (!req?.host) return;
+      const loginUrl = req.jobs_url || `https://${req.host}/`;
+      console.log(`🔑 app requested sign-in for ${req.host} — opening the engine login window`);
+      await api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 Opening the engine's sign-in window for ${req.host} — complete Google/OTP there; the session persists for every future run.` }).catch(() => {});
+      const { spawn } = await import("node:child_process");
+      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: "ignore", cwd: path.join(ROOT, "..") });
+      child.unref();
+      await db.fulfillLoginRequest?.(req.host).catch(() => {});
+    } catch { /* polling is best-effort */ }
+  };
   for (;;) {
+    await pollLoginRequests();
     const upd = await api("getUpdates", { offset, timeout: 30, allowed_updates: ["message"] });
     for (const u of upd?.result ?? []) {
       offset = u.update_id + 1;
