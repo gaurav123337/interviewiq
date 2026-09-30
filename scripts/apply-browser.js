@@ -168,12 +168,26 @@ export async function acquireApplyContext({ headless = false, endpoint = "", sig
     console.log(`  🔐 independent sign-in browser: cloned freebuff-apply-profile → freebuff-apply-signin-profile${hadCookies ? " (saved sessions carried over)" : " (fresh — no saved sessions yet)"}`);
     /* MAXIMIZED real OS window: the sign-in window kept losing the z-order
        battle against the owner's browser/editor and sat hidden behind them
-       ("nothing is happening") — a maximized launch cannot be missed. */
-    const ctx = await chromium.launchPersistentContext(SIGNIN_PROFILE_DIR, {
+       ("nothing is happening") — a maximized launch cannot be missed.
+       GOOGLE OAUTH NEEDS A BRANDED BROWSER: Playwright's bundled Chromium
+       reports the "Chromium" brand and Google answers "This browser or app
+       may not be secure" — the owner sat at a wall that could never submit.
+       The sign-in window therefore uses the machine's INSTALLED Google Chrome
+       (channel: "chrome") while still running on the isolated clone profile;
+       fall back to bundled Chromium when Chrome is not installed. */
+    const launchOpts = {
       headless,
       viewport: null,
       args: ["--disable-blink-features=AutomationControlled", "--start-maximized"],
-    });
+    };
+    let ctx;
+    try {
+      ctx = await chromium.launchPersistentContext(SIGNIN_PROFILE_DIR, { ...launchOpts, channel: "chrome" });
+      console.log("  🌐 sign-in window: installed Google Chrome (Google OAuth accepts it) on the isolated clone profile");
+    } catch {
+      ctx = await chromium.launchPersistentContext(SIGNIN_PROFILE_DIR, launchOpts);
+      console.log("  🌐 sign-in window: bundled Chromium (installed Chrome not found — Google OAuth may refuse it; use email/OTP)");
+    }
     return { ctx, cleanup: () => ctx.close().catch(() => {}), remote: false, reused: false };
   }
 
