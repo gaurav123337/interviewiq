@@ -103,7 +103,12 @@ async function syncRunToDb(host, report) {
   if (!db) return;
   try {
     await db.recordRun({
-      host, ok: report.results.some((r) => r.result === "submitted"),
+      /* "ok" = the engine reached the jobs and made real decisions
+         (submitted / judge-skipped / needs-review). Judge-skips are the
+         system WORKING — the old criterion (>=1 submission) stamped every
+         all-skipped run "failed" and lied in the UI. A run that found
+         NOTHING (login wall, scrape breakage) stays failed. */
+      host, ok: report.results.some((r) => r.result !== "error"),
       collected: report.results.length,
       submitted: report.results.filter((r) => r.result === "submitted").length,
       skipped: report.results.filter((r) => r.result === "skipped").length,
