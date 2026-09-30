@@ -58,10 +58,23 @@ export async function acquireApplyContext({ headless = false, endpoint = "" } = 
   }
 
   mkdirSync(PROFILE_DIR, { recursive: true });
-  const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
-    headless,
-    viewport: { width: 1380, height: 900 },
-    args: ["--disable-blink-features=AutomationControlled"],
-  });
-  return { ctx, cleanup: () => ctx.close().catch(() => {}), remote: false, reused: false };
+  /* RETRY the launch: a freshly-killed stale engine browser releases its
+     ProcessSingleton lock a few seconds AFTER taskkill returns (Windows
+     handle cleanup is async) — first attempt can fail with the profile
+     "in use" while the second succeeds. Bounded at 4 tries / ~18s. */
+  let lastErr;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
+        headless,
+        viewport: { width: 1380, height: 900 },
+        args: ["--disable-blink-features=AutomationControlled"],
+      });
+      return { ctx, cleanup: () => ctx.close().catch(() => {}), remote: false, reused: false };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 4) await new Promise((r) => setTimeout(r, 6000));
+    }
+  }
+  throw lastErr;
 }
