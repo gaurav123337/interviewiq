@@ -57,6 +57,16 @@ export default function ReviewQueuePanel() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  /* badge truth on mount: whether Telegram is already bound (read-only peek) */
+  useEffect(() => {
+    void (async () => {
+      try {
+        const cfg = await getNotifyConfig();
+        setNotifySaved(Boolean(cfg?.chat_id && cfg?.bot_token));
+      } catch { /* config read failing shouldn't break the panel */ }
+    })();
+  }, []);
+
   useEffect(() => {
     if (!notifyOpen) return;
     void (async () => {
@@ -131,7 +141,11 @@ export default function ReviewQueuePanel() {
           📥 Review queue {items.length > 0 && <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">{items.length} waiting</span>}
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setNotifyOpen(o => !o)} className="text-xs text-zinc-400 hover:text-zinc-200">🔔 notify</button>
+          <button onClick={() => setNotifyOpen(o => !o)}
+            title="Bind Telegram: get a DM the moment a job needs you"
+            className={`rounded px-2 py-1 text-xs font-medium ${notifySaved ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"}`}>
+            🔔 Telegram {notifySaved ? "· on" : "· not set up"}
+          </button>
           <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
         </div>
       </div>
@@ -139,6 +153,7 @@ export default function ReviewQueuePanel() {
         Review-gate forms the engine skipped in <code className="rounded bg-zinc-800 px-1">--unattended</code> mode wait here with their
         link — open, submit by hand, then record the outcome: <b className="text-zinc-400">✓ Applied</b> and <b className="text-zinc-400">✕ Not interested</b> teach the
         AI judge your preference for similar postings; <b className="text-zinc-400">🚫 Closed</b> (no longer accepting) just stops the engine from retrying.
+        {!notifySaved && <> Want a phone ping when something lands here? <button onClick={() => setNotifyOpen(true)} className="text-amber-400 underline underline-offset-2 hover:text-amber-300">Bind Telegram →</button></>}
       </div>
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!items.length && <div className="text-xs text-zinc-500">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
