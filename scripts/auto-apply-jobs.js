@@ -47,7 +47,7 @@ const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
 /* ----------------------------- CLI args ----------------------------- */
 
 function parseArgs(argv) {
-  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false };
+  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false, digest: false, listen: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") args.url = argv[++i] ?? "";
@@ -64,6 +64,7 @@ function parseArgs(argv) {
     else if (a === "--unattended") args.unattended = true; // scheduled runs: never page.pause() — skip review-gate sites instead
     else if (a === "--status") args.status = true; // send a Telegram summary of today's runs
     else if (a === "--digest") args.digest = true; // weekly per-board digest (engine + owner decisions), also sent to Telegram
+    else if (a === "--listen") args.listen = true; // Telegram command surface: resolve review rows from the chat
   }
   return args;
 }

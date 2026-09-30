@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { amOwner, grantAdmin, revokeAdmin, type AdminUserRow } from "../../services/admin";
-import { adminListEntitlements, type AdminEntitlementRow } from "../../services/entitlement";
+import { adminListEntitlements, adminSetEntitlement, type AdminEntitlementRow } from "../../services/entitlement";
+import { listUserNotifyBindings, clearUserNotifyBinding } from "../../services/jobSites";
 import { adminListPayments, adminListSubscriptions, adminBillingActions, fmtMinor, type AdminPaymentRow, type AdminSubscriptionRow, type BillingActionRow } from "../../services/billing";
 import { CONFIG } from "../../config";
 import { toast } from "../../toast";
@@ -18,8 +19,30 @@ export function UsersSection({ users, admins, busy, setBusy, onChanged }: {
 }) {
   const [grantEmail, setGrantEmail] = useState("");
   const [billingUser, setBillingUser] = useState<{ id: string; email: string } | null>(null);
+  const [planBusy, setPlanBusy] = useState<string | null>(null);
+  const [entitlements, setEntitlements] = useState<AdminEntitlementRow[]>([]);
   const owner = amOwner();
   const ownerEmail = (CONFIG.ownerEmail ?? "").toLowerCase();
+
+  /* entitlement plans feed the lifetime-preserve logic in changePlan */
+  useEffect(() => { void adminListEntitlements().then(setEntitlements).catch(() => setEntitlements([])); }, []);
+
+  /* per-row plan editor: the admin changes any user's tier inline —
+     server RPC re-gates admin + writes the audit trail */
+  const changePlan = async (u: AdminUserRow, tier: "free" | "pro" | "platinum") => {
+    if (u.tier === tier) return;
+    setPlanBusy(u.id);
+    try {
+      /* lifetime keeps its plan; dated plans map to monthly with a 30d expiry;
+         free clears plan+expiry (admin_set_entitlement handles the row) */
+      const current = entitlements.find(e => e.userId === u.id);
+      const keepLifetime = tier !== "free" && current?.plan === "lifetime";
+      await adminSetEntitlement(u.id, tier, keepLifetime ? "lifetime" : tier === "free" ? null : "monthly", tier === "free" ? null : keepLifetime ? null : new Date(Date.now() + 30 * 86_400_000).toISOString());
+      toast(`✅ ${u.email} → ${tier}`);
+      await onChanged();
+    } catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setPlanBusy(null); }
+  };
 
   const doGrant = async () => {
     if (!grantEmail.trim()) { toast("Enter an email"); return; }
@@ -98,7 +121,20 @@ export function UsersSection({ users, admins, busy, setBusy, onChanged }: {
                   </td>
                   <td className="px-3 py-3"><Chip tone={st.tone}>{st.label}</Chip></td>
                   <td className="px-3 py-3">
-                    <Chip tone={u.tier === "pro" ? "co" : "default"}>{u.tier === "pro" ? "💎 Pro" : "Free"}</Chip>
+                    {planBusy === u.id ? (
+                      <span className="text-[11px] text-mut">…</span>
+                    ) : (
+                      <select
+                        value={u.tier}
+                        onChange={e => void changePlan(u, e.target.value as "free" | "pro" | "platinum")}
+                        title="Change this user's plan — server-gated, audited"
+                        className="rounded-lg border border-line/15 bg-deep/80 px-2 py-1 text-[11.5px] font-bold text-fnt focus:border-acc1/80 focus:outline-none"
+                      >
+                        <option value="free">Free</option>
+                        <option value="pro">💎 Pro</option>
+                        <option value="platinum">👑 Platinum</option>
+                      </select>
+                    )}
                   </td>
                   <td className="px-3 py-3 font-bold tabular-nums">{u.streak}</td>
                   <td className="px-3 py-3 tabular-nums">{u.sessions_count}</td>
@@ -129,6 +165,56 @@ export function UsersSection({ users, admins, busy, setBusy, onChanged }: {
         </table>
       </div>
       {billingUser && <UserBillingDrawer userId={billingUser.id} email={billingUser.email} onClose={() => setBillingUser(null)} />}
+    </div>
+  );
+}
+
+/* 🔔 Per-user Telegram bindings (admin view): who bound which bot/chat,
+   with a clear action — the engine only pings ENTITLED users' rows, but
+   the admin can still revoke a binding outright (lost phone, dispute). */
+export function NotifyBindingsCard() {
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof listUserNotifyBindings>> | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const refresh = () => {
+    setErr(null);
+    listUserNotifyBindings().then(setRows).catch(e => { setErr((e as Error).message); setRows([]); });
+  };
+  useEffect(refresh, []);
+
+  const clear = async (userId: string, email: string | null) => {
+    setBusy(userId);
+    try { await clearUserNotifyBinding(userId); toast("Binding cleared"); refresh(); }
+    catch (e) { toast("✗ " + ((e as Error).message || "Failed")); }
+    finally { setBusy(null); }
+  };
+
+  return (
+    <div className={`${cardCls} mt-5 overflow-hidden`}>
+      <div className="flex flex-wrap items-center gap-3 border-b border-line/10 p-5">
+        <div className="flex-1">
+          <h2 className="text-[16px] font-extrabold">🔔 Telegram bindings ({rows?.length ?? 0})</h2>
+          <p className="text-[12.5px] text-mut">Per-user pings are Platinum/auto-apply-gated; the engine pings the newest entitled binding. Clearing removes the row.</p>
+        </div>
+        <button className={btnGhost + btnSm} onClick={refresh}>↻ refresh</button>
+      </div>
+      {err && <div className="mx-5 mt-3 rounded bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{err}</div>}
+      <div className="space-y-1.5 p-5">
+        {rows === null && <p className="text-[12.5px] text-mut">Loading bindings…</p>}
+        {rows?.length === 0 && <p className="text-[12.5px] text-mut">No user has bound Telegram yet.</p>}
+        {rows?.map(r => (
+          <div key={r.user_id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+            <span className="font-bold">{r.email || "(no profile)"}</span>
+            <Chip>chat {r.chat_id ?? "—"}</Chip>
+            <Chip tone="lvl">token {r.token_prefix ?? "—"}…</Chip>
+            <span className="ml-auto text-[11px] text-fnt">{r.updated_at ? new Date(r.updated_at).toLocaleString() : "—"}</span>
+            {busy === r.user_id ? <span className="text-[11px] text-mut">…</span> : (
+              <button className={btnDanger + btnSm} onClick={() => void clear(r.user_id, r.email)} title="Delete this binding — the user can re-bind from their review queue">Clear</button>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
