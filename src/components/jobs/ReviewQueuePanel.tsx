@@ -94,8 +94,25 @@ export default function ReviewQueuePanel() {
     return m ? m[1] : null;
   };
 
+  /* one posting = one URL: strip tracking params + trailing slash so the
+     optimistic removal below matches the server's variant folding (#160 —
+     the same job used to arrive as /view/<id> AND /view/<id>/ and the
+     identical-looking twin kept the row alive after every resolve) */
+  const canonicJobUrl = (u: string | null): string => {
+    try {
+      const p = new URL(u || "");
+      const keep = new URLSearchParams();
+      for (const [k, v] of p.searchParams) {
+        if (!/^(ebP|refId|trackingId|trk|gclid|fbclid|utm_.*)$/i.test(k)) keep.append(k, v);
+      }
+      const qs = keep.toString();
+      return `${p.host}${p.pathname.replace(/\/+$/, "")}${qs ? `?${qs}` : ""}`;
+    } catch { return u || ""; }
+  };
+
   const resolve = async (it: ReviewItem, status: "done" | "dismissed" | "closed") => {
     setBusy(it.id);
+    setError(null);
     try {
       /* Applied/Not-interested TEACH the judge (what the owner wants);
          Closed teaches NOTHING — a shut posting is the company's state,
@@ -108,6 +125,11 @@ export default function ReviewQueuePanel() {
         await putJudgeExemplar("negative", `${base}: owner not interested — dismissed from review queue`, it.reason ?? undefined, it.job_url).catch(() => {});
       }
       await resolveJobReview(it.id, status);
+      /* OPTIMISTIC: the resolver folds the verdict into every URL variant
+         of this posting server-side — mirror that locally so the row (and
+         any twin) leaves the list INSTANTLY; refresh() stays the truth */
+      const key = canonicJobUrl(it.job_url);
+      setItems((prev) => (prev ?? []).filter((r) => canonicJobUrl(r.job_url) !== key));
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
