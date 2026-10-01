@@ -445,6 +445,7 @@ async function telegramCommandLoop() {
       await db.fulfillLoginRequest?.(req.host).catch(() => {});
     } catch { /* polling is best-effort */ }
   };
+  let lastBeat = 0;
   for (;;) {
     /* kill switch as a KILL switch: when the owner sets Off, this process
        sweeps the rest of the engine (watcher, run children, engine/relay
@@ -452,12 +453,21 @@ async function telegramCommandLoop() {
        Off. The 🔑 sign-in and ⚡ Run-now bridges go dark with it and come
        back with the switch (run requests expire after 1h, sign-in requests
        are fulfilled on return). A read failure never kills (fail-open). */
-    if ((await readApplyMode()).mode === "off") {
+    const mode = (await readApplyMode()).mode;
+    if (mode === "off") {
       const runPid = runInFlight.child?.pid ?? 0;
+      await db.reportEngineState?.("stopped", "apply mode Off — engine processes killed; nothing runs until you switch back on").catch(() => {});
       const r = await sweepEngineProcesses({ killListener: true, selfPid: process.pid });
       if (runPid) db.reportRunStatus?.("failed", "owner switched apply mode Off — the run was killed with the rest of the engine").catch(() => {});
       console.log(`🛑 apply mode is OFF — engine killed (${r.killed} process(es)); listener stopped until the switch is back on`);
       process.exit(0);
+    }
+    /* 🫀 heartbeat: the app shows a live 🟢 running / 🔴 stopped badge from
+       this row — a stale beat reads as stopped, so a crashed listener can
+       never look alive. Every ~2 min keeps the write volume trivial. */
+    if (Date.now() - lastBeat > 120_000) {
+      lastBeat = Date.now();
+      db.reportEngineState?.("running", `listener up — apply mode ${mode}`).catch(() => {});
     }
     await pollLoginRequests();
     await pollRunRequests();

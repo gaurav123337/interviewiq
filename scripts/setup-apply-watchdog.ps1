@@ -25,11 +25,15 @@ param([switch]$Admin)
 
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot   # scripts/ -> repo root
+$vbs = Join-Path $repo "scripts\hidden-run.vbs"
 $shim = Join-Path $repo "scripts\ensure-apply-watcher.cmd"
 
 # -- primary: user-level watchdog, every 15 min, no admin needed ----------
-schtasks /create /tn "FreebuffApplyWatchdogU" /sc minute /mo 15 /f /tr "`"$shim`""
-Write-Host "OK FreebuffApplyWatchdogU - user task, every 15 min (no admin needed)"
+# Hidden launch (wscript -> hidden-run.vbs -> shim): no console flash every
+# tick. scripts\setup-apply-tasks.ps1 (re)registers ALL THREE tasks hidden.
+$tr = "wscript.exe `"$vbs`" `"$shim`""
+schtasks /create /tn "FreebuffApplyWatchdogU" /sc minute /mo 15 /f /tr "$tr"
+Write-Host "OK FreebuffApplyWatchdogU - user task, every 15 min, hidden (no admin needed)"
 Write-Host "   supervisor: scripts\ensure-apply-watcher.js (starts watcher only when absent)"
 
 if ($Admin) {

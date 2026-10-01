@@ -41,13 +41,29 @@ const SIGNIN_LOCK = path.join(REPORTS_DIR, "signin-active.lock");
 
 export const isWindows = process.platform === "win32";
 
+/** The owner's apply_config row (mode + cloud endpoint). Any read failure
+ *  returns mode "unknown" — callers decide their own fail direction. */
+export async function readApplyModeConfig() {
+  try {
+    const rows = await getApplyConfig();
+    const row = (rows ?? [])[0];
+    if (!row) return { mode: "unknown", endpoint: null };
+    return { mode: row.mode, endpoint: row.cloud_endpoint ?? null };
+  } catch { return { mode: "unknown", endpoint: null }; }
+}
+
 /** True ONLY when apply_config.mode is confirmed "off". Any read failure
  *  returns false — supervisors must not kill on a maybe. */
 export async function isApplyOff() {
-  try {
-    const rows = await getApplyConfig();
-    return (rows ?? [])[0]?.mode === "off";
-  } catch { return false; }
+  return (await readApplyModeConfig()).mode === "off";
+}
+
+/** The HOME relay is this machine serving CDP on port 9222 — loopback,
+ *  localhost, or this machine's tailnet IP all point at the same browser.
+ *  A vendor endpoint (wss://…) means cloud runs REMOTELY and this machine
+ *  must not keep a relay browser alive for nothing. */
+export function isHomeRelayEndpoint(endpoint) {
+  return /^https?:\/\/[^\s/:]+:9222\/?$/i.test(String(endpoint ?? ""));
 }
 
 /* ── process listing (wmic with a PowerShell CIM fallback) ──────────── */
@@ -192,4 +208,16 @@ export async function sweepEngineProcesses({ killListener = true, selfPid = 0 } 
     if (await killTree(pid)) killed++;
   }
   return { killed, deferredListener: deferListener };
+}
+
+/** Kill ONLY the relay (its node wrapper + its Chromium tree) — used when
+ *  the mode does not need it (local mode, or cloud against a vendor). The
+ *  watcher/listener/runs are untouched: the caller may need them. */
+export async function sweepRelayOnly() {
+  const procs = await listEngineProcesses();
+  let killed = 0;
+  for (const pid of [...procs.relayNodePids, ...procs.relayChromePids]) {
+    if (await killTree(pid)) killed++;
+  }
+  return { killed };
 }

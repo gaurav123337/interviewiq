@@ -28,7 +28,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isApplyOff, sweepEngineProcesses } from "./engine-lifecycle.js";
+import { readApplyModeConfig, isHomeRelayEndpoint, sweepEngineProcesses, sweepRelayOnly } from "./engine-lifecycle.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const RELAY_PROFILE = path.join(ROOT, "..", "freebuff-apply-relay-profile");
@@ -95,14 +95,25 @@ const foreground = process.argv.includes("--foreground");
 if (foreground) {
   await spawnRelay();
 } else {
-  /* apply-mode gate FIRST: Off also kills the relay. This task used to
-     resurrect the relay Chromium every 5 minutes even with the switch off —
-     a whole headed browser burning resources for zero work. The kill sweep
-     (listener, watcher, engine browsers) piggybacks here too, so an Off
-     flip is enforced at 5-min cadence as well as every minute. */
-  if (await isApplyOff()) {
+  /* apply-mode gate FIRST: the relay is the HOME piece of CLOUD mode only —
+     it must not burn a headed browser in any other state. Off: full engine
+     sweep (enforced at 5-min cadence as well as every minute). Local mode:
+     the engine drives its own browser, so an idle relay is killed too.
+     Cloud against a VENDOR endpoint (wss://…): the remote session serves
+     CDP, so the home relay is killed as well. Cloud WITH a home-relay
+     endpoint (http://…:9222): start it when down, as always. Unknown
+     (config unreadable): start nothing, kill nothing — the next tick
+     decides with real data. */
+  const cfg = await readApplyModeConfig();
+  if (cfg.mode === "off") {
     const r = await sweepEngineProcesses({ killListener: true });
     console.log(`apply mode OFF — relay not started; killed ${r.killed} engine process(es)`);
+    process.exit(0);
+  }
+  if (cfg.mode !== "cloud" || !isHomeRelayEndpoint(cfg.endpoint)) {
+    const r = await sweepRelayOnly();
+    console.log(`apply mode ${cfg.mode}${isHomeRelayEndpoint(cfg.endpoint) ? "" : " (non-home relay endpoint)"} — relay not needed`
+      + (r.killed ? `; killed ${r.killed} relay process(es)` : ""));
     process.exit(0);
   }
   if (await cdpAlive()) {
