@@ -5,9 +5,16 @@
    RPCs (service-role gated server-side). */
 
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+/* ABSOLUTE path: supervisor processes (relay shim, watchdogs) run from the
+   task scheduler with an arbitrary cwd (often system32) — a relative read
+   would throw there and silently fail every apply-mode gate. */
+const SETTINGS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".claude", "settings.local.json");
 
 export function loadLocalCreds() {
-  const settings = JSON.parse(readFileSync(".claude/settings.local.json", "utf8"));
+  const settings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8"));
   const rule = (settings.permissions?.allow ?? []).find(
     (r) => typeof r === "string" && /Bash\(SUPA_URL=/.test(r)
   );

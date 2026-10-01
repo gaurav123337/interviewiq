@@ -26,6 +26,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { exec } from "node:child_process";
+import { isApplyOff, sweepEngineProcesses, lockHolderAlive } from "./engine-lifecycle.js";
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT = path.resolve(ROOT, "..");
 const ENGINE = path.join(ROOT, "auto-apply-jobs.js");
@@ -38,6 +39,18 @@ const MARKER = "auto-apply-jobs.js --watch";
 const SIGNIN_LOCK = path.join(PROJECT, "freebuff-apply-reports", "signin-active.lock");
 
 const isWindows = process.platform === "win32";
+
+/* kill switch FIRST, before any "is it running" logic: Off now KILLS the
+   engine instead of just skipping cycles — the owner asked for the machine
+   back. This supervisor kills any running watcher and respawns nothing;
+   the minute-level listen watchdog sweeps the rest (listener, runs, browsers). */
+if (isWindows && await isApplyOff()) {
+  const r = await sweepEngineProcesses({ killListener: true });
+  console.log(`apply mode is OFF — killed ${r.killed} engine process(es)`
+    + `${r.deferredListener ? " (listener spared: a sign-in window is live)" : ""}`
+    + "; watcher not respawned while the switch is off");
+  process.exit(0);
+}
 
 /** Collect PIDs of node.exe processes whose command line contains MARKER. */
 function listWatcherPids() {
@@ -114,9 +127,11 @@ if (pids.length > 0) {
 }
 
 /* sign-in handoff: a 🔑 Sign-in window is in progress — hold off so the
-   watcher cannot steal the engine profile out from under it */
-if (existsSync(SIGNIN_LOCK)) {
-  console.log("sign-in in progress (signin-active.lock present) — watcher start deferred");
+   watcher cannot steal the engine profile out from under it. The lock is
+   pid-liveness aware now: an orphaned lock (the listener was killed
+   mid-sign-in) no longer defers the watcher forever. */
+if (lockHolderAlive(SIGNIN_LOCK)) {
+  console.log("sign-in in progress (signin-active.lock held by a live process) — watcher start deferred");
   process.exit(0);
 }
 

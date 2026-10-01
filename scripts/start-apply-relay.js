@@ -28,6 +28,8 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isApplyOff, sweepEngineProcesses } from "./engine-lifecycle.js";
+
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const RELAY_PROFILE = path.join(ROOT, "..", "freebuff-apply-relay-profile");
 const CDP_PORT = 9222;
@@ -93,6 +95,16 @@ const foreground = process.argv.includes("--foreground");
 if (foreground) {
   await spawnRelay();
 } else {
+  /* apply-mode gate FIRST: Off also kills the relay. This task used to
+     resurrect the relay Chromium every 5 minutes even with the switch off —
+     a whole headed browser burning resources for zero work. The kill sweep
+     (listener, watcher, engine browsers) piggybacks here too, so an Off
+     flip is enforced at 5-min cadence as well as every minute. */
+  if (await isApplyOff()) {
+    const r = await sweepEngineProcesses({ killListener: true });
+    console.log(`apply mode OFF — relay not started; killed ${r.killed} engine process(es)`);
+    process.exit(0);
+  }
   if (await cdpAlive()) {
     console.log(`apply relay already up — ${CDP_URL}`);
     process.exit(0);
