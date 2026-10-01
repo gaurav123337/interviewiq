@@ -39,6 +39,7 @@ import {
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
 import { acquireApplyContext, isRemoteEndpoint, mergeSigninProfileBack, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
+import { sweepEngineProcesses } from "./engine-lifecycle.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
@@ -318,6 +319,7 @@ async function telegramCommandLoop() {
      scheduled watcher would (signin-active.lock defers it, flow rules
      identical), and report lifecycle back so the button shows progress. */
   let lastRunPoll = 0;
+  const runInFlight = { child: null }; // tracked so an Off flip can report the kill honestly
   const pollRunRequests = async () => {
     if (Date.now() - lastRunPoll < 30_000) return;
     lastRunPoll = Date.now();
@@ -333,7 +335,9 @@ async function telegramCommandLoop() {
       const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--all"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, ".."), env: { ...process.env, FREEBUFF_APP_TRIGGERED: "1" } });
       child.unref();
       closeSync(outFd);
+      runInFlight.child = child;
       child.once("exit", (code) => {
+        runInFlight.child = null;
         if (code && code !== 0) {
           db.reportRunStatus?.("failed", `run exited with code ${code} — see freebuff-apply-reports/run-now.log`).catch(() => {});
           return;
@@ -412,11 +416,15 @@ async function telegramCommandLoop() {
       /* sign-in handoff: block the watcher supervisor from respawning the
          watcher while the window is open (it would steal the profile and
          kill the sign-in — the #141–#145 crash loop) */
-      try { writeFileSync(path.join(REPORTS_DIR, "signin-active.lock"), new Date().toISOString()); } catch { /* lock is best-effort */ }
+      try { writeFileSync(path.join(REPORTS_DIR, "signin-active.lock"), JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* lock is best-effort */ }
       const outFd = openSync(logFile, "a");
       const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, "..") });
       child.unref();
       closeSync(outFd);
+      /* re-stamp with the login-only child pid — the child outlives this
+         listener, so the watcher's deferral must track the WINDOW, not this
+         process (the supervisor reads the lock pid-liveness-aware now) */
+      try { writeFileSync(path.join(REPORTS_DIR, "signin-active.lock"), JSON.stringify({ pid: child.pid ?? process.pid, listener: process.pid, ts: Date.now() })); } catch { /* best-effort */ }
       /* immediate death is a REAL failure (profile lock, playwright missing)
          — stdio used to swallow it; now the owner hears about it */
       child.once("exit", (code) => {
@@ -438,6 +446,19 @@ async function telegramCommandLoop() {
     } catch { /* polling is best-effort */ }
   };
   for (;;) {
+    /* kill switch as a KILL switch: when the owner sets Off, this process
+       sweeps the rest of the engine (watcher, run children, engine/relay
+       browsers) and exits — the minute watchdog will not respawn it while
+       Off. The 🔑 sign-in and ⚡ Run-now bridges go dark with it and come
+       back with the switch (run requests expire after 1h, sign-in requests
+       are fulfilled on return). A read failure never kills (fail-open). */
+    if ((await readApplyMode()).mode === "off") {
+      const runPid = runInFlight.child?.pid ?? 0;
+      const r = await sweepEngineProcesses({ killListener: true, selfPid: process.pid });
+      if (runPid) db.reportRunStatus?.("failed", "owner switched apply mode Off — the run was killed with the rest of the engine").catch(() => {});
+      console.log(`🛑 apply mode is OFF — engine killed (${r.killed} process(es)); listener stopped until the switch is back on`);
+      process.exit(0);
+    }
     await pollLoginRequests();
     await pollRunRequests();
     const upd = await api("getUpdates", { offset, timeout: 30, allowed_updates: ["message"] });
@@ -1692,8 +1713,7 @@ async function runAll(args) {
    handle from any previous watcher blocks every new start with "file in
    use"), the watcher appends to the log itself via a node stream, which
    opens with share-read/write and coexists with any other appender. */
-function teeWatchLog() {
-  const p = process.env.FREEBUFF_WATCH_LOG;
+function teeWatchLog(p = process.env.FREEBUFF_WATCH_LOG) {
   if (!p) return;
   try {
     const stream = createWriteStream(p, { flags: "a" });
@@ -1719,8 +1739,14 @@ async function runWatch(args) {
   }
   const cycle = async () => {
     console.log(`\n════ watch cycle ${new Date().toLocaleTimeString()} — discovery (max 4) then apply (--max ${args.max}) ════`);
-    /* kill switch checked per cycle: flipping Off in the UI stops the
-       watcher's next cycle within one poll (no process restart needed) */
+    /* kill switch, process-level: Off EXITS the watcher instead of sleeping
+       6h on a dead switch — the supervisors refuse to respawn it while Off,
+       so a dormant process would just be wasted RAM */
+    if ((await readApplyMode()).mode === "off") {
+      console.log("🛑 apply mode is OFF — watcher exiting (it stays dead until the switch is back on)");
+      process.exit(0);
+    }
+    /* scheduled runs fail closed: cloud-without-endpoint / unknown config */
     const cycleBlocked = await applyModeBlocked(true);
     if (cycleBlocked) { console.log(yellow(`⏸ ${cycleBlocked} — cycle skipped (switch back on in the UI)`)); return; }
     /* discovery first so newly-approved sites join the rotation quickly */
@@ -1751,7 +1777,7 @@ async function main() {
   if (args.watch) { teeWatchLog(); await runWatch(args); return; }
   if (args.all) { await runAll(args); return; }
   if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
-  if (args.listen) { await telegramCommandLoop(); return; }
+  if (args.listen) { teeWatchLog(process.env.FREEBUFF_LISTEN_LOG); await telegramCommandLoop(); return; }
   if (args.digest) {
     /* weekly per-board digest + health watchdog: a silent digest is worse
        than none — the task must SAY so when it couldn't compute one, and

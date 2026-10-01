@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 import { getApplyConfig, setApplyConfig, isValidCdpEndpoint, type ApplyConfig, type ApplyMode } from "../../services/jobSites.ts";
 
 const MODES: { id: ApplyMode; label: string; blurb: string }[] = [
-  { id: "off", label: "⏸ Off", blurb: "Kill switch — the engine re-checks this every cycle and skips even while the watcher is running." },
+  { id: "off", label: "⏸ Off", blurb: "Kill switch — stops the engine dead: the watcher, listener and any engine browser on this PC are killed within ~1 minute, and the schedulers won't respawn them until you switch back on." },
   { id: "local", label: "🖥 My machine", blurb: "Run the local Playwright engine here (watcher + watchdog as set up on this PC)." },
   { id: "cloud", label: "☁️ Cloud session", blurb: "Run against a persistent browser over CDP — your home relay (http://127.0.0.1:9222, docs/apply-relay.md) or a vendor (wss://…)." },
 ];
@@ -43,7 +43,7 @@ export default function ApplyModePanel() {
       await setApplyConfig(mode, mode === "cloud" ? "browserbase" : undefined, mode === "cloud" ? endpoint.trim() : undefined);
       await refresh();
       setSaved(mode === "off"
-        ? "✓ Engine OFF — the next watch cycle (within 6h, or the next scheduled poll) will skip everything."
+        ? "✓ Engine OFF — the engine processes on your machine are killed (≤1 min) and won't respawn until you switch back on."
         : `✓ Mode set to ${mode}.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -67,8 +67,9 @@ export default function ApplyModePanel() {
         <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
-        One switch controls the whole rig. <b>Off</b> is the kill switch — the engine reads it before every cycle, so no
-        application happens while it is off, even if the watcher process is still running on your machine.
+        One switch controls the whole rig. <b>Off</b> kills the engine on this machine now — watcher, listener and engine
+        browsers stop within a minute and stay stopped (the schedulers check this switch before every respawn).
+        <b> My machine</b> runs the local Playwright engine here; <b>Cloud session</b> runs against a persistent browser over CDP.
       </p>
 
       {error && <div className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}

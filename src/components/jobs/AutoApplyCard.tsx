@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cardCls, btnGhost, btnOk, btnPrimary, btnSm, Chip } from "../ui";
 import { APPLY_SITES, engineCommands, exportProfileJson, platinumActive } from "../../services/autoApply";
-import { requestRunNow, fetchRunStatus, type RunLifecycle } from "../../services/jobSites";
+import { requestRunNow, fetchRunStatus, getApplyConfig, type ApplyMode, type RunLifecycle } from "../../services/jobSites";
 import JobSitesPanel from "./JobSitesPanel";
 import CredentialsPanel from "./CredentialsPanel";
 import ApplyModePanel from "./ApplyModePanel";
@@ -46,6 +46,19 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
     }
   }, []);
   useEffect(() => { if (runState?.status === "done" || runState?.status === "failed") { const t = setTimeout(() => setRunState(null), 60_000); return () => clearTimeout(t); } }, [runState?.status]);
+
+  /* apply mode mirrors the engine's kill switch: while Off, every engine
+     process on the owner's machine is killed — a Run-now click would queue
+     into the void (the listener only comes back with the switch), so the
+     button is disabled with an honest hint instead. */
+  const [applyMode, setApplyMode] = useState<ApplyMode | null>(null);
+  useEffect(() => {
+    let dead = false;
+    const load = () => { getApplyConfig().then((c) => { if (!dead) setApplyMode(c?.mode ?? null); }).catch(() => {}); };
+    load();
+    const t = setInterval(load, 60_000);
+    return () => { dead = true; clearInterval(t); };
+  }, []);
   const profileJson = useMemo(() => (active ? exportProfileJson() : ""), [active]);
   const missing = useMemo(() => {
     if (!active) return [];
@@ -100,8 +113,14 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
               them in your career profile / resume first.
             </p>
           )}
+          {applyMode === "off" && (
+            <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-300">
+              🛑 Engine is <b>Off</b> — every engine process on your machine is stopped. Switch Apply mode to
+              <b> 🖥 My machine</b> below to start it (the listener returns within ~1 minute).
+            </p>
+          )}
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button className={btnPrimary + btnSm} disabled={runState?.status === "requested" || runState?.status === "running"} onClick={() => void runNow()}>
+            <button className={btnPrimary + btnSm} disabled={runState?.status === "requested" || runState?.status === "running" || applyMode === "off"} onClick={() => void runNow()}>
               {runState?.status === "requested" ? "⏳ queued…" : runState?.status === "running" ? "⚙️ running — cycling active sites…" : "⚡ Run now"}
             </button>
             <button className={btnOk + btnSm} onClick={download}>⬇️ Download apply-profile.json</button>

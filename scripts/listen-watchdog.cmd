@@ -1,8 +1,8 @@
 @echo off
-rem FreebuffApplyListen watchdog — every minute: start the Telegram command
-rem listener unless one is already running (the ONLOGON trigger needs admin;
-rem this achieves persistence without elevation, like FreebuffApplyWatchdogU)
+rem FreebuffApplyListen watchdog - every minute. All logic lives in
+rem listen-watchdog.js: it honours the apply-mode kill switch (Off kills the
+rem listener + every other engine process and respawns NOTHING until the
+rem switch is back on), then starts the listener DETACHED when it is down -
+rem so no cmd window stays parked open on the desktop anymore.
 cd /d "C:\Users\Admin\OneDrive\Desktop\Coding\AI_Interviewr_tool"
-wmic process where "name='node.exe'" get commandline 2>nul | findstr /C:"auto-apply-jobs.js --listen" >nul
-if %errorlevel%==0 exit /b 0
-node scripts/auto-apply-jobs.js --listen >> freebuff-apply-reports\listen.log 2>&1
+"C:\nvm4w\nodejs\node.exe" "%~dp0listen-watchdog.js" >> freebuff-apply-reports\listen-watchdog.log 2>&1
