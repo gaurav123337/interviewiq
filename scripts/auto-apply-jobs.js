@@ -28,7 +28,7 @@
  * No credentials are stored or typed by this script — logins are manual once.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, createWriteStream, openSync, closeSync, unlinkSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, appendFileSync, createWriteStream, openSync, closeSync, unlinkSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -38,7 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
-import { acquireApplyContext, isRemoteEndpoint, mergeSigninProfileBack, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
+import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 import { sweepEngineProcesses } from "./engine-lifecycle.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -122,7 +122,24 @@ async function syncRunToDb(host, report) {
 /* --- review queue: needs-review outcomes recorded for one-click finish.
      Returns true when the row was NEW — Telegram pings fire once per
      posting, not on every rerun of a still-pending one. */
+/* one posting = one URL: strip tracking params (LinkedIn ?eBP=…&refId=…&trk=…)
+   and trailing slashes so re-encounters never queue a variant twin (#160 —
+   twins made every resolve button look broken: one id resolved, the
+   identical twin stayed pending). Real query ids (hn ?id=) are KEPT. */
+function canonicalJobUrl(u) {
+  try {
+    const p = new URL(u);
+    const keep = new URLSearchParams();
+    for (const [k, v] of p.searchParams) {
+      if (!/^(ebP|refId|trackingId|trk|gclid|fbclid|utm_.*)$/i.test(k)) keep.append(k, v);
+    }
+    const qs = keep.toString();
+    return `${p.origin}${p.pathname.replace(/\/+$/, "")}${qs ? `?${qs}` : ""}`;
+  } catch { return u; }
+}
+
 async function queueReview(entry) {
+  entry.jobUrl = canonicalJobUrl(entry.jobUrl); // #160: no variant twins in the queue
   const db = await sitesDb();
   if (!db?.queueJobReview) return false;
   const wasPending = await db.hasPendingReview?.(entry.jobUrl).catch(() => false);
@@ -214,6 +231,37 @@ async function applyModeBlocked(cycle) {
 function recordResultBoth(report, job, result, detail) {
   recordResult(report, job, result, detail);
   recordResultDb(new URL(report.sourceUrl).hostname.replace(/^www\./, ""), job, result === "needsReview" ? "needs_review" : result, detail).catch(() => {});
+}
+
+/* ---- sign-in flow instrumentation: every step and every close lands in
+   freebuff-apply-reports/signin-flow.log with a wall timestamp, so the next
+   "window closed itself" report names the exact step and actor. ---------- */
+let argURL = ""; // set in main() — the flow log is per-process, stamp it
+function signinStepLog(msg) {
+  const line = `[${new Date().toISOString()}] [pid ${process.pid}] ${argURL || "(no url)"} :: ${msg}`;
+  try { appendFileSync(path.join(REPORTS_DIR, "signin-flow.log"), line + "\n"); } catch { /* best effort */ }
+}
+
+/** Does the CLONE profile carry a named session cookie for this site?
+ *  Reads the clone's cookie sqlite file directly: modern Chrome stores
+ *  cookies at Default/Network/Cookies (the old Default/Cookies path is
+ *  why the clone always logged "fresh — no saved sessions yet"), and this
+ *  works AFTER the browser died — when page.context() is unreachable. */
+async function browserHasSessionCookie(names, url) {
+  if (!names.length) return null; // site has no named cookie — page checks only
+  let host = ""; try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { /* */ }
+  const cloneDir = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile")
+    : path.join(ROOT, "..", "freebuff-apply-signin-profile");
+  for (const rel of ["Default/Network/Cookies", "Default/Cookies"]) {
+    const f = path.join(cloneDir, ...rel.split("/"));
+    try {
+      const buf = readFileSync(f);
+      const hit = names.find((n) => buf.includes(Buffer.from(`\u0001${n}\u0001`)) || buf.includes(Buffer.from(`${n}${host}`)));
+      if (hit) return true;
+    } catch { /* clone file absent — keep looking */ }
+  }
+  return false;
 }
 
 /* --- report every per-job decision to apply_results (UI report) --- */
@@ -418,70 +466,63 @@ async function telegramCommandLoop() {
          watcher while the window is open (it would steal the profile and
          kill the sign-in — the #141–#145 crash loop) */
       try { writeFileSync(path.join(REPORTS_DIR, "signin-active.lock"), JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* lock is best-effort */ }
-      const outFd = openSync(logFile, "a");
-      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, "..") });
-      child.unref();
-      closeSync(outFd);
-      /* re-stamp with the login-only child pid — the child outlives this
-         listener, so the watcher's deferral must track the WINDOW, not this
-         process (the supervisor reads the lock pid-liveness-aware now) */
-      try { writeFileSync(path.join(REPORTS_DIR, "signin-active.lock"), JSON.stringify({ pid: child.pid ?? process.pid, listener: process.pid, ts: Date.now() })); } catch { /* best-effort */ }
-      /* immediate death is a REAL failure (profile lock, playwright missing)
-         — stdio used to swallow it; now the owner hears about it */
-      child.once("exit", (code) => {
-        if (code && code !== 0) {
-          console.error(red(`✗ login window for ${req.host} crashed (exit ${code}) — see ${logFile}`));
-          db.reportLoginStatus?.(req.host, "crashed", `exit code ${code} — the sign-in run died before completing; check freebuff-apply-reports/${path.basename(logFile)}`).catch(() => {});
-          api("sendMessage", { chat_id: cfg.chat_id, text: `✗ The ${req.host} sign-in window crashed immediately (exit ${code}). Tail of ${path.basename(logFile)}:\n${(() => { try { return readFileSync(logFile, "utf8").slice(-400); } catch { return "(unreadable)"; } })()}` }).catch(() => {});
-        }
-      });
-      /* AUTO-RELAUNCH: the sign-in window was observed closing itself ~25s
-         in (no crash, no external taskkill — exit_type Normal in the clone
-         prefs). Whatever the cause, the answer is the same: put the window
-         BACK UP and tell the owner, until the sign-in completes or the
-         bounded attempts run out. */
-      child.once("exit", (code) => {
-        if (code) return; // crash path handled above
+      /* AUTO-RELAUNCH + honest locks: when a sign-in child exits WITHOUT a
+         completed sign-in, put the window BACK UP (bounded ×3) and tell the
+         owner. The early-close verdict reads signin-flow.log (per-step
+         stamps, fresh lines only) with the old run-report heuristic as a
+         fallback — the report JSON never carried the close detail, so this
+         check never fired in #159. signin-active.lock is removed only when
+         the LAST child of the chain exits, never mid-relaunch. */
+      const earlyCloseVerdict = () => {
+        try {
+          const flow = readFileSync(path.join(REPORTS_DIR, "signin-flow.log"), "utf8").split(/\r?\n/);
+          const fresh = flow.filter((l) => {
+            if (!l.includes(loginUrl)) return false;
+            const m = /^\[([^\]]+)\]/.exec(l);
+            return Boolean(m && Date.now() - Date.parse(m[1]) < 10 * 60_000);
+          });
+          const last = fresh[fresh.length - 1] ?? "";
+          if (last) return /giving up|closure during wait/.test(last) && !/wait continues|PRESENT/.test(last);
+        } catch { /* no flow log yet — fall through to the run report */ }
         try {
           const rep = readdirSync(REPORTS_DIR).filter((f) => /^run-\d{4}-\d{2}-\d{2}T.*\.json$/.test(f)).sort().pop();
           const r = rep ? JSON.parse(readFileSync(path.join(REPORTS_DIR, rep), "utf8")) : null;
-          const closedEarly = r?.results?.some?.((x) => String(x.detail ?? "").includes("closed by the user"));
-          if (!closedEarly) return; // a real sign-in outcome — nothing to retry
-        } catch { return; }
-        if ((signinRelaunch.get(req.host) ?? 0) >= 2) { signinRelaunch.delete(req.host); return; }
-        signinRelaunch.set(req.host, (signinRelaunch.get(req.host) ?? 0) + 1);
-        const n = signinRelaunch.get(req.host);
-        console.log(`🔁 ${req.host} sign-in window closed without completing — reopening it (attempt ${n + 1}/3)`);
-        api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 The ${req.host} sign-in window closed before you finished — reopening it NOW (attempt ${n + 1}/3). Please complete the sign-in in the maximized window.` }).catch(() => {});
-        try { const f2 = openSync(logFile, "a"); const c2 = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", f2, f2], cwd: path.join(ROOT, "..") });
-          /* the relaunch carries the SAME death-detection as the original */
-          const rearmOnDeath = (c) => {
-            c.once("exit", (code2) => {
-              runInFlight.child = null;
-              if (code2) return;
-              try {
-                const files2 = readdirSync(REPORTS_DIR).filter((f) => /^run-\d{4}-\d{2}-\d{2}T.*\.json$/.test(f)).sort();
-                const latest2 = files2.length ? JSON.parse(readFileSync(path.join(REPORTS_DIR, files2[files2.length - 1]), "utf8")) : null;
-                if (!latest2?.results?.some?.((x) => String(x.detail ?? "").includes("closed by the user"))) return;
-              } catch { return; }
-              if ((signinRelaunch.get(req.host) ?? 0) >= 2) { signinRelaunch.delete(req.host); return; }
-              signinRelaunch.set(req.host, (signinRelaunch.get(req.host) ?? 0) + 1);
-              const n2 = signinRelaunch.get(req.host);
-              console.log(`🔁 ${req.host} sign-in window closed again — reopening (attempt ${n2 + 1}/3)`);
-              api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 ${req.host} sign-in window closed before you finished — reopening (attempt ${n2 + 1}/3).` }).catch(() => {});
-              try { const f3 = openSync(logFile, "a"); const c3 = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", f3, f3], cwd: path.join(ROOT, "..") }); c3.unref(); closeSync(f3); rearmOnDeath(c3); } catch { /* best effort */ }
-            });
-            c.once("exit", () => { try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* gone */ } releaseSigninFlow(); });
-          };
-          c2.unref(); closeSync(f2); rearmOnDeath(c2);
-        } catch { /* best effort */ }
-      });
-      /* remove the supervisor block when the login process exits (success,
-         failure or crash — the watcher must always come back) */
-      child.once("exit", () => {
-        try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ }
+          return Boolean(r?.results?.some?.((x) => String(x.detail ?? "").includes("closed by the user")));
+        } catch { return false; }
+      };
+      const endSigninChain = () => {
+        try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* gone */ }
         releaseSigninFlow(); // the flow is over only when its window is gone
-      });
+      };
+      const spawnSigninChild = () => {
+        const fd = openSync(logFile, "a");
+        const c = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", fd, fd], cwd: path.join(ROOT, "..") });
+        c.unref(); closeSync(fd);
+        /* re-stamp with the login-only child pid — the child outlives this
+           listener, so the watcher's deferral must track the WINDOW */
+        try { writeFileSync(path.join(REPORTS_DIR, "signin-active.lock"), JSON.stringify({ pid: c.pid ?? process.pid, listener: process.pid, ts: Date.now() })); } catch { /* best-effort */ }
+        c.once("exit", (code) => {
+          runInFlight.child = null;
+          if (code) {
+            /* immediate death is a REAL failure (profile lock, playwright
+               missing) — stdio used to swallow it; the owner hears about it */
+            console.error(red(`✗ login window for ${req.host} crashed (exit ${code}) — see ${logFile}`));
+            db.reportLoginStatus?.(req.host, "crashed", `exit code ${code} — the sign-in run died before completing; check freebuff-apply-reports/${path.basename(logFile)}`).catch(() => {});
+            api("sendMessage", { chat_id: cfg.chat_id, text: `✗ The ${req.host} sign-in window crashed immediately (exit ${code}). Tail of ${path.basename(logFile)}:\n${(() => { try { return readFileSync(logFile, "utf8").slice(-400); } catch { return "(unreadable)"; } })()}` }).catch(() => {});
+            endSigninChain();
+            return;
+          }
+          if (!earlyCloseVerdict()) { endSigninChain(); return; } // a real sign-in outcome — nothing to retry
+          if ((signinRelaunch.get(req.host) ?? 0) >= 2) { signinRelaunch.delete(req.host); endSigninChain(); return; }
+          signinRelaunch.set(req.host, (signinRelaunch.get(req.host) ?? 0) + 1);
+          const n = signinRelaunch.get(req.host);
+          console.log(`🔁 ${req.host} sign-in window closed without completing — reopening it (attempt ${n + 1}/3)`);
+          api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 The ${req.host} sign-in window closed before you finished — reopening it NOW (attempt ${n + 1}/3). Please complete the sign-in in the maximized window.` }).catch(() => {});
+          spawnSigninChild();
+        });
+        return c;
+      };
+      const child = spawnSigninChild();
       /* tell the app the window is UP — the owner should go act in it now */
       db.reportLoginStatus?.(req.host, "opened", "independent sign-in window is open on the desktop — complete Google/OTP there now").catch(() => {});
       signinRelaunch.delete(req.host); // a FRESH request resets the relaunch counter
@@ -716,7 +757,7 @@ async function waitForStableState(page, rules, url, { settleMs = 9_000 } = {}) {
   }
 }
 
-async function ensureLoggedIn(page, url, site, loginOnly) {
+async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null } = {}) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
   /* unattended runs have no human at the wheel: a login page means WAIT
      (the session may be restoring — bounded), not "hold the run for 10 min
@@ -830,9 +871,59 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
        OAuth, 2FA, email verification can take as long as they take) — the
        only exits are success or the owner closing the window themselves. */
     console.log(dim("   (the window stays open until you finish signing in — close it only when done)"));
+    /* SELF-HEALING wait: the window was observed closing itself seconds
+       into this loop with NO crash and NO external kill (exit_type Normal,
+       nothing in the process ring) — the cause remains unnamed, so instead
+       of dying with it the flow now recovers: a closed TAB gets the login
+       URL reopened, a dead BROWSER gets a fresh sign-in window relaunched,
+       and every transition is stamped into signin-flow.log. The owner
+       always has a live window to sign in in; success is still verified by
+       the site's session cookie before anything is declared saved. */
     for (;;) {
-      const gone = (() => { try { return page.isClosed() || !page.browser()?.isConnected?.(); } catch { return true; } })();
-      if (gone) { console.log(yellow("⏸ window closed by the user before the sign-in completed — nothing saved.")); return false; }
+      let gone = "";
+      try {
+        if (page.isClosed()) gone = "login tab closed";
+        else if (!page.browser()?.isConnected?.()) gone = "browser process gone";
+      } catch { gone = "context destroyed"; }
+      if (gone) {
+        const cookies = await browserHasSessionCookie(rules.sessionCookieNames ?? [], url);
+        if (cookies === true) { console.log(green(`✓ ${rules.label}: session cookie already present — window closed after a completed sign-in.`)); signinStepLog(`closure (${gone}) — session cookie PRESENT → treating as verified`); return true; }
+        signinStepLog(`closure during wait: ${gone}; named-cookie check: ${cookies === false ? "ABSENT" : "site has no named cookie"} — recovering`);
+        if (cookies === false) console.log(yellow(`⏸ ${rules.label}: window closed itself before the sign-in completed — reopening it for you…`));
+        try {
+          if (gone === "login tab closed" && page.browser()?.isConnected?.()) {
+            /* tab/window closed but the browser LIVES: open a fresh login tab */
+            const np = await page.context().newPage();
+            await np.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+            page = np;
+            if (loginOnlyPage) loginOnlyPage.page = page;
+            console.log(dim("   ↩️  login tab reopened — continue signing in there."));
+            signinStepLog("tab reopened in the same browser — wait continues");
+            continue;
+          }
+          if (loginOnly) {
+            /* browser DIED mid-sign-in: relaunch the sign-in window in-place
+               (same clone profile — a fresh clone would erase the session
+               the owner may already have half-built) and keep waiting. */
+            await mergeAfterSignin().catch(() => {}); // fold whatever exists back; re-clone below
+            releaseSigninCloneOwnership(); // the clone's owner marker is OUR pid — clear it so re-cloning is allowed
+            const { ctx: ctx2 } = await acquireApplyContext({ headless: false, endpoint: "", signIn: true, extraArgs: [] });
+            __browserCleanup = () => ctx2.close().catch(() => {});
+            const p2 = ctx2.pages()[0] ?? (await ctx2.newPage());
+            await p2.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+            page = p2;
+            if (loginOnlyPage) loginOnlyPage.page = page;
+            console.log(green("   🔁 sign-in window relaunched — a fresh maximized window is open, continue there."));
+            signinStepLog("browser relaunched in-child — wait continues");
+            continue;
+          }
+        } catch (e) {
+          signinStepLog(`recovery FAILED: ${String(e?.message ?? e).slice(0, 160)}`);
+        }
+        console.log(yellow(`⏸ window closed before the sign-in completed (${gone}) — nothing verified.`));
+        signinStepLog(`giving up: ${gone} and recovery unavailable`);
+        return false;
+      }
       await page.waitForTimeout(2000);
       let st;
       try { st = await waitForStableState(page, rules, url, { settleMs: 0 }); } catch { continue; }
@@ -1389,6 +1480,10 @@ async function runSingle(args, { existingCtx = null } = {}) {
 
   const ctx = existingCtx ?? sharedChildCtx ?? await launchBrowser(args.headless, { signIn: args["login-only"] });
   let page = ctx.pages()[0] ?? (await ctx.newPage());
+  /* mutable page handle for the sign-in flow: the self-healing wait loop can
+     RELAUNCH the window, and the outcome block must verify the LIVE page,
+     not a closed one */
+  const loginOnlyPage = args["login-only"] ? { page } : null;
   const report = newReport(args.url, site);
   let warnedAiState = false; // AI-off / AI-down warning: once per run, not per job
   mkdirSync(REPORTS_DIR, { recursive: true });
@@ -1403,11 +1498,22 @@ async function runSingle(args, { existingCtx = null } = {}) {
       const host = new URL(args.url).hostname.replace(/^www\./, "");
       const db2 = await sitesDb();
       const names = rules.sessionCookieNames ?? [];
+      /* the window may have been closed/reopened/relaunched by the healing
+         loop — always verify the LIVE page, never the stale one */
+      const livePage = loginOnlyPage?.page ?? page;
       let ok = true;
       if (names.length) {
-        const cookies = await page.context().cookies(args.url).catch(() => []);
+        const cookies = await livePage.context().cookies(args.url).catch(() => []);
         ok = names.some((n) => cookies.find((c) => c.name === n && c.value));
+        if (!ok) {
+          /* the browser may already be GONE (closed right after a completed
+             sign-in) — fall back to the clone's cookie file on disk */
+          const disk = await browserHasSessionCookie(names, args.url);
+          if (disk === true) { ok = true; console.log(dim("  (live page unreachable — session verified from the clone's cookie file)")); }
+        }
       }
+      signinStepLog(`login-only outcome: ok=${ok} (cookie names: ${names.join(",") || "none"})`);
+      if (loginOnlyPage) loginOnlyPage.page = null;
       try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ }
       await db2?.setSiteSession?.(host, ok).catch(() => {});
       /* lifecycle → app: verified (cookie seen) or failed (closed without a
@@ -1718,7 +1824,19 @@ async function runSingle(args, { existingCtx = null } = {}) {
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
     await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
     await learnRules(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
-    if (args["login-only"]) await mergeAfterSignin().catch(() => {}); // clone cookies → real profile (must run after ctx close)
+    if (args["login-only"]) {
+      await mergeAfterSignin().catch(() => {}); // clone cookies → real profile (must run after ctx close)
+      /* the merged-back files ARE the verification: if the clone handed the
+         real profile a Cookies file that did not exist there before, the
+         owner DID sign in — no matter what the process teardown did */
+      try {
+        const realCookies = path.join(ROOT, "..", "freebuff-apply-profile", "Default", "Network", "Cookies");
+        const cloneCookies = process.env.LOCALAPPDATA
+          ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile", "Default", "Network", "Cookies")
+          : path.join(ROOT, "..", "freebuff-apply-signin-profile", "Default", "Network", "Cookies");
+        if (!existsSync(realCookies) && existsSync(cloneCookies)) console.log(dim("  (merge moved a fresh cookie store into the real profile — sign-in state persisted)"));
+      } catch { /* diagnostics only */ }
+    }
     if (!args["dry-run"]) {
       const n = report.results.filter((r) => r.result === "submitted").length;
       const q = report.results.filter((r) => r.result === "needsReview").length;
@@ -1898,6 +2016,7 @@ async function main() {
      mid-run; per-cycle guards still re-read it) */
   args_isCloudMode = (await readApplyMode()).mode === "cloud";
   args_unattended = args.unattended;
+  argURL = args.url || ""; // stamp every signin-flow.log line with the run's URL
   if (args.discover) {
     const { spawnSync } = await import("node:child_process");
     const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });

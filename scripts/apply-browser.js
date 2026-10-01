@@ -147,6 +147,15 @@ export function signinCloneOwnedByLiveRun() {
   } catch { return false; }
 }
 
+/** Drop THIS process's ownership of the sign-in clone (owner marker out).
+    Called by the self-healing sign-in flow right before it re-clones after
+    the sign-in browser died mid-flow: cloneApplyProfileForSignin refuses to
+    wipe a clone whose owner pid is ALIVE, and on an in-process relaunch that
+    owner is the flow itself — the refusal must not deadlock the recovery. */
+export function releaseSigninCloneOwnership() {
+  try { rmSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), { force: true }); } catch { /* best-effort */ }
+}
+
 /** True when the endpoint is a CDP endpoint (ws/wss websocket or http(s)
     debugging URL — Playwright accepts both; http is how local CDP test
     servers are addressed, vendors serve wss). */
