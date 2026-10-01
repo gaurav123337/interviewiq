@@ -321,6 +321,61 @@ export function engineIsRunning(s: EngineState | null): boolean {
   return Date.now() - new Date(s.beat_at).getTime() < ENGINE_STALE_MS;
 }
 
+/* ── Engine activity timeline: the event history behind the badge, grouped
+   into contiguous run sessions (a gap > 6 min or a stopped report closes
+   one). Rendered as "24h uptime Xh Ym — 🟢 09:02→10:41 · 🟢 12:10→now". ── */
+
+export interface EngineEvent {
+  state: string;
+  detail: string | null;
+  created_at: string;
+}
+
+export async function fetchEngineEvents(hours = 24): Promise<EngineEvent[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_engine_events", { p_hours: hours });
+  if (error) throw error;
+  return (data ?? []) as EngineEvent[];
+}
+
+export interface EngineSession {
+  start: string;
+  /** null = still open (or implicitly closed by staleness at render time). */
+  end: string | null;
+}
+
+export function buildEngineSessions(events: EngineEvent[], gapMs = 6 * 60_000): EngineSession[] {
+  const evs = [...events].sort((a, b) => +new Date(a.created_at) - +new Date(b.created_at));
+  const sessions: EngineSession[] = [];
+  let cur: EngineSession | null = null;
+  let prevT = 0;
+  for (const e of evs) {
+    const t = +new Date(e.created_at);
+    if (e.state === "running") {
+      if (!cur || t - prevT > gapMs) { cur = { start: e.created_at, end: null }; sessions.push(cur); }
+    } else if (e.state === "stopped" && cur) {
+      cur.end = e.created_at;
+      cur = null;
+    }
+    prevT = t;
+  }
+  return sessions;
+}
+
+/** Total running time inside the window, in ms. An open session counts up to
+    its last beat + the staleness window (a crashed engine can't fake uptime). */
+export function engineUptimeMs(events: EngineEvent[], windowMs = 24 * 3600_000, now = Date.now()): number {
+  const windowStart = now - windowMs;
+  return buildEngineSessions(events).reduce((sum, s) => {
+    const start = Math.max(+new Date(s.start), windowStart);
+    // open session: only trust it while the last event is still fresh
+    const last = events.length ? +new Date(events[0].created_at) : 0;
+    const end = s.end ? +new Date(s.end) : Math.min(now, last + ENGINE_STALE_MS);
+    return sum + Math.max(0, Math.min(end, now) - start);
+  }, 0);
+}
+
 /* ── Per-job run report: every decision the engine made, newest first ── */
 
 export interface ApplyResultRow {
