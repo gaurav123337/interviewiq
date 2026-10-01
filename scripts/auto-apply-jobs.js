@@ -871,20 +871,49 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
        OAuth, 2FA, email verification can take as long as they take) — the
        only exits are success or the owner closing the window themselves. */
     console.log(dim("   (the window stays open until you finish signing in — close it only when done)"));
+    /* link-telemetry: the browser was observed SURVIVING while the Playwright
+       connection died seconds in (#160 live fire: chrome processes alive,
+       context destroyed). These events name which side broke first. */
+    try {
+      page.browser()?.on("disconnected", () => signinStepLog("EVENT browser.disconnected — the Playwright link to chrome DIED (chrome may still run)"));
+      page.context().on("close", () => signinStepLog("EVENT context.close fired"));
+    } catch { /* telemetry is best-effort */ }
+    let waitTicks = 0;
     /* SELF-HEALING wait: the window was observed closing itself seconds
        into this loop with NO crash and NO external kill (exit_type Normal,
-       nothing in the process ring) — the cause remains unnamed, so instead
-       of dying with it the flow now recovers: a closed TAB gets the login
-       URL reopened, a dead BROWSER gets a fresh sign-in window relaunched,
-       and every transition is stamped into signin-flow.log. The owner
-       always has a live window to sign in in; success is still verified by
-       the site's session cookie before anything is declared saved. */
+       nothing in the process ring) — so instead of dying with it the flow
+       recovers: a closed TAB gets the login URL reopened, a dead BROWSER
+       gets a fresh sign-in window relaunched, and every transition is
+       stamped into signin-flow.log. #160 wire-log proof: the liveness probe
+       (isConnected) FALSE-POSITIVES seconds after launch — the same
+       browser-context kept streaming events after the "death" verdict, so
+       every death is now CONFIRMED with a real echo round-trip before the
+       flow believes it and touches anything. */
+    const echoAlive = async () => {
+      try {
+        return await Promise.race([
+          page.evaluate(() => document.title).then(() => true),
+          new Promise((r) => setTimeout(() => r(false), 3000)),
+        ]) === true;
+      } catch { return false; }
+    };
     for (;;) {
+      if (++waitTicks % 5 === 0) {
+        try { signinStepLog(`tick ${waitTicks}: link=${page.browser()?.isConnected?.() ? "ok" : "DEAD"} pageClosed=${page.isClosed()}`); } catch { signinStepLog(`tick ${waitTicks}: probe threw`); }
+      }
       let gone = "";
       try {
         if (page.isClosed()) gone = "login tab closed";
         else if (!page.browser()?.isConnected?.()) gone = "browser process gone";
       } catch { gone = "context destroyed"; }
+      if (gone) {
+        /* CONFIRM before acting: a probe false-positive must not close a
+           healthy window (that WAS the owner-visible bug) */
+        if (await echoAlive()) {
+          if (waitTicks % 5 === 0 || waitTicks < 6) signinStepLog(`probe said "${gone}" but an echo round-trip SUCCEEDED — false alarm, continuing to wait`);
+          gone = "";
+        }
+      }
       if (gone) {
         const cookies = await browserHasSessionCookie(rules.sessionCookieNames ?? [], url);
         if (cookies === true) { console.log(green(`✓ ${rules.label}: session cookie already present — window closed after a completed sign-in.`)); signinStepLog(`closure (${gone}) — session cookie PRESENT → treating as verified`); return true; }
@@ -907,6 +936,13 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
                the owner may already have half-built) and keep waiting. */
             await mergeAfterSignin().catch(() => {}); // fold whatever exists back; re-clone below
             releaseSigninCloneOwnership(); // the clone's owner marker is OUR pid — clear it so re-cloning is allowed
+            /* kill the orphan FIRST: chrome often survives its Playwright
+               link; re-cloning over a live clone is what EPERM'd the first
+               recovery attempts (#160) */
+            try {
+              const { listEngineProcesses, killTree } = await import("./engine-lifecycle.js");
+              for (const pid of (await listEngineProcesses()).signinChromePids) await killTree(pid).catch(() => {});
+            } catch { /* best-effort */ }
             const { ctx: ctx2 } = await acquireApplyContext({ headless: false, endpoint: "", signIn: true, extraArgs: [] });
             __browserCleanup = () => ctx2.close().catch(() => {});
             const p2 = ctx2.pages()[0] ?? (await ctx2.newPage());
