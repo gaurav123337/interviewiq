@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, summarizeSite, sessionStateOf, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -154,9 +154,14 @@ export default function JobSitesPanel() {
               </div>
               <div className="flex items-center gap-1.5 truncate text-xs text-zinc-500">
                 {summarizeSite(s)}
-                <span className={`rounded px-1 py-0.5 text-[10px] font-bold ${s.session_ok ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
-                  {s.session_ok ? "session ✓" : "session ✗"}
-                </span>
+                {(() => {
+                  const st = sessionStateOf(s);
+                  return (
+                    <span title={st.title} className={`rounded px-1 py-0.5 text-[10px] font-bold ${st.cls}`}>
+                      {st.key === "verified" ? "✓" : st.key === "expired" ? "✗" : "?"} {st.label}
+                    </span>
+                  );
+                })()}
               </div>
             </div>
             {busy === s.id ? (
