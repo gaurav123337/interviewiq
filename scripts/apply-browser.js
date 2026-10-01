@@ -79,6 +79,7 @@ export function cloneApplyProfileForSignin() {  try { const owner = JSON.parse(r
   }
   mkdirSync(SIGNIN_PROFILE_DIR, { recursive: true });
   cpFilter(PROFILE_DIR, SIGNIN_PROFILE_DIR);
+  sanitizeCloneForLaunch(); // clean-exit prefs in place BEFORE Chrome reads them (#162 restore-bubble)
   try { writeFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* best-effort claim */ }
   return existsSync(path.join(SIGNIN_PROFILE_DIR, "Default", "Cookies"));
 }
@@ -96,6 +97,23 @@ function cpFilter(src, dest) {
       else if (ent.isFile()) cpSync(s, d);
     } catch { /* held exclusively by the running browser — skip */ }
   }
+}
+
+/* #162: kill the "Restore pages? Chrome didn't shut down correctly" bubble.
+   The clone is born from a live profile and the previous sign-in Chrome was
+   often killed outright (orphan cleanup) — Chromium then reads
+   exit_type:Crashed from the copied Preferences and offers to restore, a
+   modal the owner must dismiss before the login form is even reachable.
+   Patch the clone's prefs to a CLEAN exit BEFORE the browser reads them. */
+function sanitizeCloneForLaunch() {
+  const prefs = path.join(SIGNIN_PROFILE_DIR, "Default", "Preferences");
+  try {
+    const json = JSON.parse(readFileSync(prefs, "utf8"));
+    json.profile = json.profile ?? {};
+    json.profile.exit_type = "Normal";
+    json.profile.exited_cleanly = true;
+    writeFileSync(prefs, JSON.stringify(json));
+  } catch { /* absent or unreadable prefs — Chromium just shows the bubble; not fatal */ }
 }
 
 /** Fold the sign-in clone's (newer) session state back into the REAL engine
@@ -210,14 +228,26 @@ export async function acquireApplyContext({ headless = false, endpoint = "", sig
     const launchOpts = {
       headless,
       viewport: null,
-      args: ["--disable-blink-features=AutomationControlled", "--start-maximized"],
+      /* #162 GOOGLE OAUTH STUCK BLANK: Playwright launches EVERY browser with
+         --no-sandbox (the "unsupported command-line flag" banner the owner
+         screenshotted) and --enable-automation. The flagged/automated browser
+         is what Google's OAuth popup refused to render. Strip BOTH on the
+         sign-in launch — this is a headed, human-operated window on the
+         owner's own machine, the sandbox is not load-bearing here. */
+      ignoreDefaultArgs: ["--no-sandbox", "--enable-automation"],
+      args: ["--disable-blink-features=AutomationControlled", "--start-maximized", "--hide-crash-restore-bubble"],
     };
     let ctx;
     try {
       ctx = await chromium.launchPersistentContext(SIGNIN_PROFILE_DIR, { ...launchOpts, channel: "chrome" });
       console.log("  🌐 sign-in window: installed Google Chrome (Google OAuth accepts it) on the isolated clone profile");
     } catch {
-      ctx = await chromium.launchPersistentContext(SIGNIN_PROFILE_DIR, launchOpts);
+      /* bundled-Chromium fallback: keep Playwright's stock args — the
+         automation-stripping that unblocks Google OAuth is only needed (and
+         only trusted) on the branded channel; the fallback window must just
+         OPEN, and email/OTP works on it */
+      const { ignoreDefaultArgs, ...fallbackOpts } = launchOpts;
+      ctx = await chromium.launchPersistentContext(SIGNIN_PROFILE_DIR, fallbackOpts);
       console.log("  🌐 sign-in window: bundled Chromium (installed Chrome not found — Google OAuth may refuse it; use email/OTP)");
     }
     return { ctx, cleanup: () => ctx.close().catch(() => {}), remote: false, reused: false };

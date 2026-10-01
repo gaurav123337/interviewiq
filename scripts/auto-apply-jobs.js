@@ -264,6 +264,81 @@ async function browserHasSessionCookie(names, url) {
   return false;
 }
 
+/* ---- #162 session durability -------------------------------------------------
+   Naukri (and several other job boards) hand the OTP login a SESSION-ONLY
+   cookie (expires <= 0): Chromium keeps it in memory and never writes it to
+   the on-disk cookie store, so the sign-in dies with the browser that earned
+   it — the owner re-logged in via OTP again and again while every NEW window
+   asked for login all over. Fix: after a VERIFIED signed-in state, re-add
+   every session cookie of the site's host chain with a far-future expiry via
+   context.addCookies — Chromium persists cookies that carry an expires field,
+   so the session now survives browser close, merge-back, and future runs.
+   persistSessionCookies() is ALSO called by the failure path (finally) with
+   the last live page, so a window the owner closed right after OTP still
+   lands its cookies in the real profile before teardown. */
+const FAR_FUTURE_SECS = 60 * 60 * 24 * 180; // 180 days — a session this long is bounded by the site, not by us
+/* async + fully guarded: callers may hand it a CLOSED page mid-teardown — a
+   synchronous throw here would kill the wait loop it is called from */
+async function persistSessionCookies(page, url, opts = {}) {
+  try { return await persistSessionCookiesIn(page?.context?.(), url, opts); } catch { return 0; }
+}
+async function persistSessionCookiesIn(ctx, url, { quiet = false } = {}) {
+  if (!ctx?.cookies || !ctx?.addCookies) return 0;
+  let host = "";
+  try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { return 0; }
+  const domainTail = host.split(".").slice(-2).join(".");
+  let all = [];
+  try { all = await ctx.cookies(url); } catch { return 0; }
+  /* session-only only: cookies with an expiry already survive close */
+  const durable = all
+    .filter((c) => c && c.value && !(c.expires > 0))
+    .map((c) => ({
+      name: c.name,
+      value: String(c.value).slice(0, 4096),
+      domain: c.domain || `.${host}`,
+      path: c.path || "/",
+      expires: Math.floor(Date.now() / 1000) + FAR_FUTURE_SECS,
+      httpOnly: !!c.httpOnly,
+      secure: !!c.secure,
+      sameSite: c.sameSite === "Strict" ? "Strict" : c.sameSite === "Lax" ? "Lax" : c.sameSite === "None" ? "None" : (c.secure ? "None" : "Lax"),
+    }))
+    .filter((c) => (c.domain || "").endsWith(domainTail) || (c.domain || "").endsWith(host));
+  if (!durable.length) return 0;
+  try {
+    await ctx.addCookies(durable);
+  } catch (e) {
+    /* one malformed cookie must not kill the batch: re-add one-by-one and
+       keep whichever the browser accepts (validation is all-or-nothing in
+       the bulk call) */
+    signinStepLog(`bulk persist failed (${String(e?.message ?? e).slice(0, 80)}) — retrying per-cookie`);
+    const kept = [];
+    for (const c of durable) {
+      try { await ctx.addCookies([c]); kept.push(c.name); } catch { /* reject this one */ }
+    }
+    if (!kept.length) { signinStepLog("persistSessionCookies FAILED: every cookie rejected"); return 0; }
+    signinStepLog(`persisted ${kept.length}/${durable.length} cookie(s) per-cookie (${kept.join(", ").slice(0, 120)})`);
+    if (!quiet) console.log(dim(`  🔒 ${kept.length} session-only cookie(s) made durable (expire in 180d — survives browser close)`));
+    return kept.length;
+  }
+  signinStepLog(`persisted ${durable.length} session-only cookie(s) with far-future expiry (${durable.map((c) => c.name).join(", ").slice(0, 120)})`);
+  if (!quiet) console.log(dim(`  🔒 ${durable.length} session-only cookie(s) made durable (expire in 180d — survives browser close)`));
+  return durable.length;
+}
+
+/* #162 diagnostic: name the cookies the signed-in site ACTUALLY holds (names
+   + expiry shape only — values are never written to disk) so the next site
+   whose login "does not stick" can be pinned into SITE_RULES from evidence,
+   not guesswork. */
+async function logSiteCookieInventory(page, url) {
+  try {
+    if (!page || page.isClosed?.()) { signinStepLog("cookie inventory skipped — page already closed"); return; }
+    const cookies = await page.context().cookies(url);
+    const site = cookies.filter((c) => c && c.value);
+    const inv = site.map((c) => `${c.name}(${c.expires > 0 ? "durable" : "session-only"})`).join(", ");
+    if (inv) signinStepLog(`cookie inventory @${(new URL(url).hostname || "")}: ${inv}`);
+  } catch { /* unreachable context — skip */ }
+}
+
 /* --- report every per-job decision to apply_results (UI report) --- */
 async function recordResultDb(host, job, result, detail) {
   const db = await sitesDb();
@@ -791,6 +866,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
             state = await waitForStableState(page, rules, url, { settleMs: 0 });
             if (state.kind === "loggedIn") {
               console.log(green(`  ✓ auto-login with the stored credential succeeded`));
+              await persistSessionCookies(page, url); // #162: same durability rule for the stored-credential path
               if (!loginOnly) {
                 const problem = detectAccountProblem(state.bodyText);
                 if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
@@ -807,6 +883,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
   if (!loginOnly && state.kind === "loggedIn") {
     const problem = detectAccountProblem(state.bodyText);
     if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
+    await persistSessionCookies(page, url); // #162: re-durable-ize session-only cookies the site refreshed this visit
     console.log(green(`✓ ${rules.label}: session active`));
     return true;
   }
@@ -960,6 +1037,12 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
         signinStepLog(`giving up: ${gone} and recovery unavailable`);
         return false;
       }
+      if (waitTicks % 5 === 0) {
+        /* opportunistic durability: the owner can close the window seconds
+           after the OTP lands — persist whatever session exists RIGHT NOW
+           so a fast close cannot take the session with it */
+        await persistSessionCookies(page, url, { quiet: true });
+      }
       await page.waitForTimeout(2000);
       let st;
       try { st = await waitForStableState(page, rules, url, { settleMs: 0 }); } catch { continue; }
@@ -969,6 +1052,8 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
         const problem = detectAccountProblem(st.bodyText);
         if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — login cannot succeed until the account is restored.`)); return false; }
         console.log(green(`✓ ${rules.label}: logged in.`));
+        await logSiteCookieInventory(page, url); // #162 evidence: the site's REAL cookie names, for future pinning
+        await persistSessionCookies(page, url); // #162 THE FIX: session-only OTP cookies die at browser close unless made durable
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {}); // back where the run expects
         return true;
       }
@@ -1520,6 +1605,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
      RELAUNCH the window, and the outcome block must verify the LIVE page,
      not a closed one */
   const loginOnlyPage = args["login-only"] ? { page } : null;
+  let ctxClosedEarly = false; // #162: set when a login-only path closed the browser itself — the finally must not double-close
   const report = newReport(args.url, site);
   let warnedAiState = false; // AI-off / AI-down warning: once per run, not per job
   mkdirSync(REPORTS_DIR, { recursive: true });
@@ -1527,6 +1613,13 @@ async function runSingle(args, { existingCtx = null } = {}) {
   try {
     if (!await ensureLoggedIn(page, args.url, site, args["login-only"])) {
       console.error(red("Login required — aborting (nothing was submitted)."));
+      /* #162: close before the finally-merge so a last-gasp cookie flush is
+         folded back too (the merge used to race the still-open browser) */
+      if (args["login-only"]) {
+        try { if (__browserCleanup) await __browserCleanup(); else await ctx.close(); } catch { /* window already gone */ }
+        __browserCleanup = null;
+        ctxClosedEarly = true;
+      }
       return;
     }
     if (args["login-only"]) {
@@ -1549,6 +1642,15 @@ async function runSingle(args, { existingCtx = null } = {}) {
         }
       }
       signinStepLog(`login-only outcome: ok=${ok} (cookie names: ${names.join(",") || "none"})`);
+      /* #162 ORDERING FIX: close the sign-in browser BEFORE the finally-block
+         merge. The merge used to run while the browser was still open — it
+         folded back a mid-session Cookies db, and Chromium's FINAL flush on
+         close landed in a clone that had already been merged and deleted.
+         That is the second half of the OTP loop: even a COMPLETED login
+         never reached the real profile intact. */
+      await logSiteCookieInventory(livePage ?? page, args.url);
+      await persistSessionCookies(livePage ?? page, args.url); // last-chance durability while the page can still be read
+      /* the browser itself is closed by the FINALLY (before the merge-back) — one closer, one owner */
       if (loginOnlyPage) loginOnlyPage.page = null;
       try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* already gone */ }
       await db2?.setSiteSession?.(host, ok).catch(() => {});
@@ -1860,8 +1962,20 @@ async function runSingle(args, { existingCtx = null } = {}) {
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
     await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
     await learnRules(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
+    /* #162 ORDERING FIX: the sign-in browser MUST be closed BEFORE the clone
+       merge-back below. Chromium flushes its cookie DB to disk ON CLOSE; the
+       old order merged a MID-SESSION cookie store into the real profile and
+       let the final flush land in a clone that was already merged+deleted —
+       so even a COMPLETED OTP login could miss the real profile. Close
+       happens exactly once: here, or earlier in a failure path. */
+    let closedInFinally = false;
+    if (args["login-only"] && !existingCtx && !sharedChildCtx && !ctxClosedEarly) {
+      try { if (__browserCleanup) await __browserCleanup(); else await ctx.close(); } catch { /* window already gone */ }
+      __browserCleanup = null;
+      closedInFinally = true;
+    }
     if (args["login-only"]) {
-      await mergeAfterSignin().catch(() => {}); // clone cookies → real profile (must run after ctx close)
+      await mergeAfterSignin().catch(() => {}); // clone cookies → real profile (NOW truly after ctx close)
       /* the merged-back files ARE the verification: if the clone handed the
          real profile a Cookies file that did not exist there before, the
          owner DID sign in — no matter what the process teardown did */
@@ -1884,7 +1998,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
        browser (existingCtx or parent-provided) closes in runAll, never here. */
     if (!existingCtx && !sharedChildCtx) {
       if (__browserCleanup) await __browserCleanup().catch(() => {});
-      else await ctx.close().catch(() => {});
+      else if (!closedInFinally && !ctxClosedEarly) await ctx.close().catch(() => {});
     } else if (sharedChildCtx) {
       /* shared child: close OUR extra tabs (keep the first — a browser with
          zero pages exits and would kill the parent's shared browser), then

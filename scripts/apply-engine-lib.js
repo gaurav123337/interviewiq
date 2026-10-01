@@ -40,6 +40,12 @@ export const SITE_RULES = {
     successText: /applied|application (has been )?submitted/i,
     listSelectorHints: ["a[href*='job-listings-']", "a[href*='job-detail']", "a[href*='joblisting']", "a.job-title-href", ".job-tittle a"],
     minIntervalMs: 2500,
+    /* NO sessionCookieNames — naukri's OTP session lands as SESSION-ONLY
+       cookies (expires<=0), which die at browser close; pinning guessed
+       names would false-negative the outcome check after a REAL login.
+       Instead the engine makes the live session durable via
+       persistSessionCookies() after a verified login (#162), and logs the
+       ACTUAL cookie names to signin-flow.log for future pinning. */
   },
   instahyre: {
     label: "Instahyre",
