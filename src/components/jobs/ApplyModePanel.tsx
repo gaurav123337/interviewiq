@@ -11,10 +11,11 @@
    as stopped, so a crashed engine can never look alive. 🛑 Stop engine does
    the same as Off plus an on-screen confirmation that processes really died. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  getApplyConfig, setApplyConfig, fetchEngineState, engineIsRunning,
-  isValidCdpEndpoint, type ApplyConfig, type ApplyMode, type EngineState,
+  getApplyConfig, setApplyConfig, fetchEngineState, fetchEngineEvents, engineIsRunning,
+  engineUptimeMs, buildEngineSessions, isValidCdpEndpoint,
+  type ApplyConfig, type ApplyMode, type EngineState, type EngineEvent,
 } from "../../services/jobSites.ts";
 
 const MODES: { id: ApplyMode; label: string; blurb: string }[] = [
@@ -44,8 +45,13 @@ export default function ApplyModePanel() {
     }
   };
 
+  const [events, setEvents] = useState<EngineEvent[] | null>(null);
+
   const refreshEngine = async () => {
-    try { setEng(await fetchEngineState()); } catch { /* badge is best-effort */ }
+    try {
+      setEng(await fetchEngineState());
+      setEvents(await fetchEngineEvents(24));
+    } catch { /* badge + timeline are best-effort */ }
   };
 
   useEffect(() => { void refresh(); void refreshEngine(); }, []);
@@ -53,6 +59,10 @@ export default function ApplyModePanel() {
     const t = setInterval(() => void refreshEngine(), 30_000);
     return () => clearInterval(t);
   }, []);
+
+  /* 24h story: total uptime + the most recent run sessions */
+  const uptime = useMemo(() => (events ? engineUptimeMs(events) : 0), [events]);
+  const sessions = useMemo(() => (events ? buildEngineSessions(events) : []), [events]);
 
   const apply = async (mode: ApplyMode) => {
     setBusy(true);
@@ -131,6 +141,20 @@ export default function ApplyModePanel() {
           {running
             ? <>🟢 Engine running on your machine — {eng.detail ?? "listener up"}{beatAge != null ? <> (last beat {beatAge < 60 ? `${beatAge}s` : `${Math.round(beatAge / 60)}m`} ago)</> : null}</>
             : <>🔴 Engine stopped — no engine processes are running on your machine{eng.detail ? ` · ${eng.detail}` : ""}</>}
+        </div>
+      )}
+
+      {events && events.length > 0 && uptime >= 0 && (
+        <div className="mt-1 text-[10.5px] text-zinc-500">
+          24h: engine ran <b className="text-zinc-400">{uptime >= 3600_000
+            ? `${Math.floor(uptime / 3600_000)}h ${Math.round((uptime % 3600_000) / 60_000)}m`
+            : `${Math.round(uptime / 60_000)}m`}</b>
+          {sessions.slice(-3).reverse().map((s, i) => (
+            <span key={i} className="ml-1.5 text-zinc-600">
+              · 🟢 {new Date(s.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              →{s.end ? new Date(s.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now"}
+            </span>
+          ))}
         </div>
       )}
 

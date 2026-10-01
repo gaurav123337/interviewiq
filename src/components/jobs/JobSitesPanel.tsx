@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, summarizeSite, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -41,6 +41,19 @@ export default function JobSitesPanel() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  /* apply mode mirrors the kill switch: while Off, a 🔑 request still queues
+     (it is fulfilled the moment the engine returns) — but the UI must say
+     "waiting", not "opens within ~30s", or the owner thinks it is broken. */
+  const [applyMode, setApplyMode] = useState<ApplyMode | null>(null);
+  useEffect(() => {
+    let dead = false;
+    const load = () => { getApplyConfig().then((c) => { if (!dead) setApplyMode(c?.mode ?? null); }).catch(() => {}); };
+    load();
+    const t = setInterval(load, 60_000);
+    return () => { dead = true; clearInterval(t); };
+  }, []);
+  const engineOff = applyMode === "off";
 
   /* 🔑 app-triggered sign-in: the desktop listener opens the engine's own
      window for this host within ~30s — the owner completes Google/OTP there
@@ -116,6 +129,12 @@ export default function JobSitesPanel() {
         The discovery engine registers promising boards as <b>pending</b>; approve them to add the board to
         <code className="mx-1 rounded bg-zinc-800 px-1">--all</code> runs. Only active sites are auto-applied.
       </div>
+      {engineOff && (
+        <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-[11px] text-red-300">
+          🛑 Engine is Off — sign-in windows can't open right now. A request you make here waits and is picked up
+          automatically when you switch Apply mode to <b>🖥 My machine</b>.
+        </div>
+      )}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <input value={url} onChange={e => setUrl(e.target.value)} placeholder="+ add a job-board URL (https://…/jobs)"
           className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
@@ -160,7 +179,9 @@ export default function JobSitesPanel() {
             )}
             {signinStatus?.host === s.host && (
               <div className={`w-full rounded px-2 py-1 text-[11px] ${SIGNIN_STATUS_TEXT[signinStatus.status].cls}`}>
-                {SIGNIN_STATUS_TEXT[signinStatus.status].text}
+                {signinStatus.status === "requested" && engineOff
+                  ? "🔑 Sign-in requested — WAITING: the engine is Off, so the window opens only after you switch Apply mode to 🖥 My machine."
+                  : SIGNIN_STATUS_TEXT[signinStatus.status].text}
               </div>
             )}
           </div>

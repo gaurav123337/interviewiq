@@ -93,8 +93,9 @@ export function templateCoverLetter(profile, job) {
 /* ---- AI tailoring (mirrors aiTailorResume / aiTailorCoverLetter) ---- */
 
 const TIMEOUT_MS = 45_000;
+const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 
-async function chatOnce(ai, messages, maxTokens) {
+async function chatAttempt(ai, messages, maxTokens) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
@@ -110,6 +111,33 @@ async function chatOnce(ai, messages, maxTokens) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* The OmniRoute provider intermittently answers 502 — a single blip used to
+   degrade the WHOLE kit to templates (and the judge to keyword-only). Retry
+   the transient failures with backoff before giving up: 3 attempts, +2s/+6s
+   worst case 8s extra per call — invisible in a 12-min-per-site run. */
+const RETRY_DELAYS_MS = [2_000, 6_000];
+const isTransientAiError = (e) => {
+  if (e?.name === "AbortError") return false; // 45s provider timeout — a retry just stalls the run
+  const m = String(e?.message ?? e ?? "");
+  return /AI HTTP (429|5\d\d)/.test(m) || /fetch failed|network|ECONN|ENOTFOUND|EAI_AGAIN|socket/i.test(m);
+};
+
+/** chatOnce — one provider call with transient-failure retries. */
+async function chatOnce(ai, messages, maxTokens) {
+  let lastErr = null;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt) await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt - 1]));
+    try {
+      return await chatAttempt(ai, messages, maxTokens);
+    } catch (e) {
+      lastErr = e;
+      if (!isTransientAiError(e)) throw e;
+      console.log(dim(`  ↻ AI provider blip (${String(e.message).slice(0, 80)}) — retry ${attempt}/${RETRY_DELAYS_MS.length}`));
+    }
+  }
+  throw lastErr;
 }
 
 /** Rewrite the template resume for this JD. Fallback: template (never throws). */
