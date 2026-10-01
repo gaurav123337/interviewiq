@@ -48,7 +48,7 @@ const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
 /* ----------------------------- CLI args ----------------------------- */
 
 function parseArgs(argv) {
-  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false, digest: false, listen: false };
+  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false, digest: false, listen: false, sessions: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") args.url = argv[++i] ?? "";
@@ -57,6 +57,7 @@ function parseArgs(argv) {
     else if (a === "--dry-run") args["dry-run"] = true;
     else if (a === "--headless") args.headless = true;
     else if (a === "--login-only") args["login-only"] = true;
+    else if (a === "--sessions") args.sessions = true;
     else if (a === "--yes") args.confirm = true;
     else if (a === "--all") args.all = true;
     else if (a === "--watch") { args.all = true; args.watch = true; }
@@ -2103,6 +2104,63 @@ async function runAll(args) {
   if (sharedCleanup) await sharedCleanup().catch(() => {});
 }
 
+/* ---------------- --sessions: durable-session watchdog ---------------- */
+
+/* #163: cookies can be durable on disk and STILL die server-side (site-side
+   expiry, password change, remote logout). Until now nothing noticed until
+   an apply cycle mysteriously landed on the login page. This probe launches
+   a HEADLESS throwaway clone of the real profile (the sign-in flow's own
+   isolation trick — the live engine browser never sees it), visits every
+   active registered site, and stamps verified/expired into the registry for
+   the app's three-state strip. A NEW expiry (first one ever seen per host)
+   DMs the owner with the 🔑 path. Launched hourly by FreebuffApplySessions. */
+async function runSessions() {
+  const db = await sitesDb();
+  let sites = [];
+  try { sites = (await db?.listJobSites?.()) ?? []; } catch { /* registry unavailable — nothing to probe */ }
+  const targets = sites
+    .filter((s) => s.status === "active" && s.jobs_url)
+    .map((s) => ({ host: String(s.host).replace(/^www\./, ""), url: s.jobs_url, label: s.label ?? s.host, prev: s.session_state ?? "unknown" }));
+  if (!targets.length) { console.log("session watchdog: no active registered sites — nothing to probe."); return; }
+  console.log(`session watchdog → ${targets.length} active site(s): ${targets.map((t) => t.host).join(", ")}`);
+  let ctx;
+  try {
+    ({ ctx } = await acquireApplyContext({ headless: true, endpoint: "", signIn: true, extraArgs: [] }));
+  } catch (e) {
+    console.log(yellow(`session watchdog: clone unavailable (${String(e?.message ?? e).slice(0, 90)}) — a sign-in flow may be live; retrying next hour.`));
+    return;
+  }
+  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  for (const t of targets) {
+    let verdict;
+    try {
+      await page.goto(t.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      const rules = SITE_RULES[siteFromUrl(t.url)] ?? SITE_RULES.generic;
+      const st = await waitForStableState(page, rules, t.url);
+      /* a bot-check page is NOT an expired session — stamp nothing rather
+         than lie in either direction */
+      verdict = st.kind === "loggedIn" ? "verified" : st.kind === "challenge" ? "unknown" : "expired";
+      if (verdict === "verified") await persistSessionCookies(page, t.url, { quiet: true }); // re-durable-ize cookies the site refreshed
+    } catch (e) {
+      console.log(yellow(`  ${t.host}: probe threw (${String(e?.message ?? e).slice(0, 80)}) — stamping nothing this round`));
+      verdict = "unknown";
+    }
+    if (verdict === "verified") console.log(green(`  ✓ ${t.host}: session verified`));
+    else if (verdict === "expired") console.log(yellow(`  ✗ ${t.host}: session EXPIRED`));
+    else console.log(dim(`  ? ${t.host}: inconclusive (challenge/error) — left as ${t.prev}`));
+    if (verdict !== "unknown") await db?.setSiteSessionState?.(t.host, verdict).catch(() => {});
+    if (verdict === "expired" && t.prev !== "expired") {
+      await sendTelegramNotify(`⚠️ Freebuff · ${t.label} session EXPIRED (server-side). Future runs skip it until you sign in again — app → Job sites registry → 🔑 Sign in next to ${t.label}.`).catch(() => {});
+    }
+  }
+  await ctx.close().catch(() => {});
+  /* fold the probe's cookie state back: sites rotate session tokens on
+     every visit — without this the refreshed tokens die in the throwaway
+     clone and the real profile slowly drifts stale */
+  await mergeAfterSignin().catch(() => {});
+  console.log("session watchdog done.");
+}
+
 /* ----------------------- --watch: keep applying ----------------------- */
 
 /* Watch-mode log tee: when started by the supervisor (no shell redirect —
@@ -2173,6 +2231,7 @@ async function main() {
     process.exit(res.status ?? 1);
   }
   if (args.watch) { teeWatchLog(); await runWatch(args); return; }
+  if (args.sessions) { await runSessions(); return; }
   if (args.all) { await runAll(args); return; }
   if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
   if (args.listen) { teeWatchLog(process.env.FREEBUFF_LISTEN_LOG); await telegramCommandLoop(); return; }
@@ -2222,6 +2281,7 @@ async function main() {
   node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only]
   node scripts/auto-apply-jobs.js --all [--max N] [--dry-run]        # run every ACTIVE registered site
   node scripts/auto-apply-jobs.js --watch [--every 6] [--max N]      # discover + apply forever
+  node scripts/auto-apply-jobs.js --sessions                         # probe every active site's session (watchdog)
   node scripts/auto-apply-jobs.js --discover [--limit 8] [--query "…"] # find new candidate sites (→ pending)`);
     process.exit(1);
   }

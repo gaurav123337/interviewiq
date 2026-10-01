@@ -15,6 +15,9 @@ export interface JobSite {
   credential_id: string | null;
   rules: Record<string, unknown>;
   session_ok: boolean;
+  session_state: "unknown" | "verified" | "expired" | null;
+  session_checked_at: string | null;
+  session_expired_at: string | null;
   last_run_at: string | null;
   last_submitted: number | null;
   last_collected: number | null;
@@ -34,6 +37,25 @@ export async function setJobSiteStatus(id: string, status: JobSite["status"]): P
   if (!client) throw new Error("cloud not configured");
   const { error } = await client.rpc("admin_set_job_site_status", { p_id: id, p_status: status });
   if (error) throw error;
+}
+
+/* Three-state session health for the per-site strip. "verified ✓" means a
+   fresh headless probe (hourly watchdog) or a completed sign-in landed on a
+   signed-in state; "expired ✗" means the probe hit the login wall — one OTP
+   re-login fixes it; "never checked" means the watchdog has not reached it
+   yet. Falls back to the legacy binary session_ok for rows not yet probed. */
+export function sessionStateOf(s: JobSite): { key: "verified" | "expired" | "unchecked"; label: string; cls: string; title: string } {
+  const checked = s.session_checked_at ? new Date(s.session_checked_at).toLocaleString() : null;
+  if (s.session_state === "verified") {
+    return { key: "verified", label: `session verified${checked ? ` · ${checked}` : ""}`, cls: "bg-emerald-500/15 text-emerald-400", title: "A fresh probe landed on a signed-in state — sessions are durable now and survive browser restarts." };
+  }
+  if (s.session_state === "expired") {
+    return { key: "expired", label: `session EXPIRED${s.session_expired_at ? ` · ${new Date(s.session_expired_at).toLocaleString()}` : ""}`, cls: "bg-red-500/15 text-red-400", title: "The watchdog probe hit the login wall — the site killed the session server-side. One 🔑 OTP re-login restores it." };
+  }
+  if (s.session_state === "unknown" && s.session_checked_at) {
+    return { key: "unchecked", label: `session unclear · ${checked}`, cls: "bg-zinc-500/15 text-zinc-400", title: "The last probe could not tell (bot-check page or error) — it retries hourly." };
+  }
+  return { key: "unchecked", label: "session never checked", cls: "bg-zinc-500/15 text-zinc-400", title: "The hourly watchdog has not probed this site yet." };
 }
 
 export function summarizeSite(s: JobSite): string {

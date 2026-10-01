@@ -188,6 +188,12 @@ export async function fulfillLoginRequest(host) {
   return rpc(loadLocalCreds(), "engine_fulfill_login_request", { p_host: host });
 }
 
+/** --sessions watchdog verdict (verified / expired / unknown) → the app's
+    three-state strip. The RPC stamps session_checked_at + flips session_ok. */
+export async function setSiteSessionState(host, state) {
+  return rpc(loadLocalCreds(), "admin_set_site_session_state", { p_host: host, p_state: state });
+}
+
 /** Report a sign-in lifecycle transition (opened / crashed / verified /
     failed) so the APP can show the owner what the sign-in is doing live
     instead of going dark after the 🔑 click. */
