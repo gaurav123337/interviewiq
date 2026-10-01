@@ -214,6 +214,16 @@ export async function reportRunStatus(status, detail) {
   });
 }
 
+/* 🫀 Engine heartbeat: the listener beats every ~2 min while it is alive and
+   reports "stopped" when the owner's Off switch kills it — the app turns
+   this into a live 🟢 running / 🔴 stopped badge (staleness counts as
+   stopped, so a crashed listener can never look alive). */
+export async function reportEngineState(state, detail) {
+  return rpc(loadLocalCreds(), "engine_report_engine_state", {
+    p_state: state, p_detail: detail ?? null,
+  });
+}
+
 /** Telegram notify config for pings: resolves the per-user ENTITLED row
     (platinum/addon, admin bypass included) via engine_notify_config();
     falls back to the legacy admin row when the RPC is missing. */

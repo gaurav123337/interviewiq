@@ -296,6 +296,31 @@ export async function setApplyConfig(mode: ApplyMode, cloudProvider?: string, cl
   if (error) throw error;
 }
 
+/* ── Live engine state: the local listener beats every ~2 min; a STALE beat
+   reads as stopped, so a crashed/killed engine can never look alive. ── */
+
+export interface EngineState {
+  state: "running" | "stopped" | string;
+  detail: string | null;
+  beat_at: string | null;
+}
+
+export const ENGINE_STALE_MS = 5 * 60_000; // beats arrive every ~2 min
+
+export async function fetchEngineState(): Promise<EngineState | null> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_engine_state");
+  if (error) throw error;
+  return ((data as EngineState[]) ?? [])[0] ?? null;
+}
+
+/** running = fresh heartbeat that says running; anything else is stopped. */
+export function engineIsRunning(s: EngineState | null): boolean {
+  if (!s?.beat_at || s.state !== "running") return false;
+  return Date.now() - new Date(s.beat_at).getTime() < ENGINE_STALE_MS;
+}
+
 /* ── Per-job run report: every decision the engine made, newest first ── */
 
 export interface ApplyResultRow {
