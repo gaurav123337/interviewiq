@@ -580,15 +580,29 @@ function loadApplyProfile(file) {
    says cloud. runSingle carries the cleanup fn — remote connections must
    DISCONNECT (browser.close on CDP), never kill the hosted session. */
 let __browserCleanup = null;
-async function launchBrowser(headless, { signIn = false } = {}) {
+async function launchBrowser(headless, { signIn = false, extraArgs = [] } = {}) {
   let endpoint = "";
   if (args_isCloudMode) endpoint = (await readApplyMode()).endpoint ?? "";
   /* --login-only never touches the cloud/CDP path: the owner is signing in
      on THIS machine, and the session must land in the local profile */
-  const { ctx, cleanup, remote } = await acquireApplyContext({ headless, endpoint: signIn ? "" : endpoint, signIn });
+  const { ctx, cleanup, remote } = await acquireApplyContext({ headless, endpoint: signIn ? "" : endpoint, signIn, extraArgs });
   __browserCleanup = cleanup;
   if (remote) console.log(dim("  ☁️ connected to remote persistent browser session"));
   return ctx;
+}
+
+/** A CDP endpoint is only real when it ANSWERS — a vacuous launch (singleton
+    forwarding against a browser that is still dying) resolves without a
+    controllable browser, and trusting it poisoned whole cycles silently. */
+async function cdpEndpointAlive(ep, tries = 10) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(`${String(ep).replace(/\/+$/, "")}/json/version`, { signal: AbortSignal.timeout(2500) });
+      if (r.ok) return true;
+    } catch { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
 }
 
 /* --login-only close hook: fold the independent sign-in browser's fresh
@@ -1291,11 +1305,12 @@ async function runSingle(args, { existingCtx = null } = {}) {
      connect to THAT browser (tab, not a new window). The parent owns the
      browser's lifecycle; a child never closes it. */
   const sharedEp = String(process.env.FREEBUFF_SHARED_CDP_EP || "").trim();
-  let sharedChildCtx = null;
+  let sharedChildCtx = null, sharedChildCleanup = null;
   if (sharedEp && !args["login-only"]) {
     try {
       const shared = await acquireApplyContext({ headless: args.headless, endpoint: sharedEp });
-      sharedChildCtx = shared.ctx; // connect-only: remote cleanup is a no-op for us — the parent closes it
+      sharedChildCtx = shared.ctx;
+      sharedChildCleanup = shared.cleanup; // CDP DISCONNECT — the parent owns the browser itself
       console.log(dim("  🪟 running as a tab in the shared --all browser"));
     } catch (e) { console.log(yellow(`  (shared browser unreachable: ${e.message.slice(0, 70)} — launching own)`)); }
   }
@@ -1648,6 +1663,16 @@ async function runSingle(args, { existingCtx = null } = {}) {
     if (!existingCtx && !sharedChildCtx) {
       if (__browserCleanup) await __browserCleanup().catch(() => {});
       else await ctx.close().catch(() => {});
+    } else if (sharedChildCtx) {
+      /* shared child: close OUR extra tabs (keep the first — a browser with
+         zero pages exits and would kill the parent's shared browser), then
+         DISCONNECT. Without the disconnect this process NEVER exits (the
+         CDP socket keeps node alive) and the parent's 12-min kill used to
+         leave the site's tab open in the shared browser forever. */
+      const pages = ctx.pages();
+      for (let i = 1; i < pages.length; i++) await pages[i].close().catch(() => {});
+      await sharedChildCleanup?.().catch(() => {});
+      process.exit(0); // nothing else may keep this child alive mid-cycle
     }
   }
 }
@@ -1679,14 +1704,25 @@ async function runAll(args) {
   /* ONE SHARED BROWSER for the whole cycle: launch it here, hand its CDP
      endpoint to each per-site child via env (they open TABS in it), and
      close it once after the last site — no more per-site window storms. */
-  let sharedEp = "", sharedCleanup = null;
+  let sharedEp = "", sharedCleanup = null, sharedCtx = null;
   try {
-    await launchBrowser(false, args_isCloudMode ? {} : { extraArgs: ["--remote-debugging-port=0"] });
+    sharedCtx = await launchBrowser(false, args_isCloudMode ? {} : { extraArgs: ["--remote-debugging-port=0"] });
     sharedCleanup = __browserCleanup;
-    if (!args_isCloudMode) sharedEp = await readLocalCdpEndpoint();
-    else sharedEp = (await readApplyMode()).endpoint ?? "";
+    if (!args_isCloudMode) {
+      sharedEp = await readLocalCdpEndpoint();
+      if (!(await cdpEndpointAlive(sharedEp))) throw new Error("CDP endpoint never answered /json/version");
+    } else {
+      sharedEp = (await readApplyMode()).endpoint ?? "";
+    }
     console.log(dim("  🪟 one shared browser for the whole cycle — sites open as tabs"));
-  } catch (e) { console.log(yellow(`  (shared browser unavailable: ${e.message.slice(0, 80)} — falling back to per-site browsers)`)); sharedEp = ""; }
+  } catch (e) {
+    console.log(yellow(`  (shared browser unavailable: ${e.message.slice(0, 80)} — falling back to per-site browsers)`));
+    /* free the profile NOW: the per-site children need it, and an open
+       portless parent window is just another blank tab on the desktop */
+    if (sharedCleanup) await sharedCleanup().catch(() => {});
+    sharedCleanup = null;
+    sharedEp = "";
+  }
   const totals = { submitted: 0, skipped: 0, errors: 0 };
   for (const s of sites) {
     console.log(`\n━━━ ${s.label} (${s.host}) ━━━`);
@@ -1699,19 +1735,34 @@ async function runAll(args) {
         path.join(ROOT, "auto-apply-jobs.js"), "--url", s.url, "--max", String(args.max),
         ...(args["dry-run"] ? ["--dry-run"] : []),
         ...(args.unattended ? ["--unattended"] : []),
-      ], { stdio: "inherit", cwd: path.join(ROOT, ".."), env });
+      ], { stdio: ["ignore", "pipe", "pipe"], cwd: path.join(ROOT, ".."), env });
+      /* pipe (not inherit): the watcher runs detached with stdio "ignore", so
+         inherited child output went INTO THE VOID — cycles looked silent
+         while sites failed invisibly. Piping through the watcher's own
+         console lands every line in watch.log via its tee. */
+      child.stdout.on("data", (d) => String(d).split(/\r?\n/).filter(Boolean).forEach((l) => console.log(l)));
+      child.stderr.on("data", (d) => String(d).split(/\r?\n/).filter(Boolean).forEach((l) => console.error(l)));
       const code = await new Promise((resolve) => {
         const t = setTimeout(() => { console.log(yellow(`  ⏱ site timed out after 12 min — killed, moving on`)); child.kill(); resolve(-1); }, SITE_TIMEOUT_MS);
         child.on("exit", (c) => { clearTimeout(t); resolve(c ?? -1); });
         child.on("error", () => { clearTimeout(t); resolve(-1); });
       });
       if (code !== 0) totals.errors++;
+      /* tab sweep between sites: a killed/timed-out child can leave its tab
+         open in the shared browser (the user sees mystery tabs piling up) —
+         keep only the first tab before the next site starts */
+      if (sharedCtx) {
+        try {
+          const pages = sharedCtx.pages();
+          for (let i = 1; i < pages.length; i++) await pages[i].close().catch(() => {});
+        } catch { /* browser gone — the fallback paths handle it */ }
+      }
     } catch (e) {
       console.error(red(`site ${s.host} failed: ${e.message.slice(0, 120)}`));
       totals.errors++;
     }
   }
-  console.log(`\n--all complete (${sites.length} sites).`);
+  console.log(`\n--all complete (${sites.length} sites, ${totals.errors} site error(s)).`);
   /* the shared browser dies HERE, once, after the last site — not per site */
   if (sharedCleanup) await sharedCleanup().catch(() => {});
 }
@@ -1802,9 +1853,29 @@ async function main() {
     }
     const tot = rows.reduce((a, r) => a + r.submitted + r.needs_review + r.skipped + r.errors + r.owner_applied + r.owner_dismissed + r.owner_closed, 0);
     const lines = rows.map((r) => `${r.site_host}: ✓${r.submitted} ⏸${r.needs_review} ⏭${r.skipped} ✗${r.errors} | you: ✓${r.owner_applied} ✕${r.owner_dismissed} 🚫${r.owner_closed}`);
+    /* 🫀 engine uptime from the heartbeat history (#156): the context a
+       zero-activity week needs — gaps are Off switches or the PC asleep */
+    let uptimeLine = "";
+    try {
+      const evs = (await db?.listEngineEvents?.(24 * 7).catch(() => [])) ?? [];
+      const now = Date.now(), windowStart = now - 7 * 24 * 3600_000, GAP = 6 * 60_000, STALE = 5 * 60_000;
+      let total = 0, runStart = null, prevT = 0;
+      for (const e of evs) {
+        const t = Math.max(+new Date(e.created_at), windowStart);
+        if (e.state === "running") {
+          if (runStart === null) runStart = t;
+          else if (t - prevT > GAP) { total += Math.max(0, Math.min(prevT + STALE, now) - runStart); runStart = t; }
+        } else if (e.state === "stopped" && runStart !== null) { total += Math.max(0, t - runStart); runStart = null; }
+        prevT = t;
+      }
+      if (runStart !== null) total += Math.max(0, Math.min(prevT + STALE, now) - runStart);
+      const fmt = (ms) => ms >= 86400_000 ? `${Math.floor(ms / 86400_000)}d ${Math.round((ms % 86400_000) / 3600_000)}h` : ms >= 3600_000 ? `${Math.floor(ms / 3600_000)}h ${Math.round((ms % 3600_000) / 60_000)}m` : `${Math.round(ms / 60_000)}m`;
+      const pct = Math.round((total / (7 * 24 * 3600_000)) * 100);
+      if (evs.length) uptimeLine = `\n🫀 engine uptime (7d): ${fmt(total)} of 7d (${pct}%) — gaps are Off switches or the PC asleep`;
+    } catch { /* the timeline is best-effort */ }
     const msg = tot === 0
-      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?`
-      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}`;
+      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?${uptimeLine}`
+      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}${uptimeLine}`;
     console.log(msg);
     await sendTelegramNotify(msg);
     return;
