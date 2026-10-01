@@ -320,6 +320,7 @@ async function telegramCommandLoop() {
      identical), and report lifecycle back so the button shows progress. */
   let lastRunPoll = 0;
   const runInFlight = { child: null }; // tracked so an Off flip can report the kill honestly
+  const signinRelaunch = new Map(); // host → relaunch count (reset on verified/failed)
   const pollRunRequests = async () => {
     if (Date.now() - lastRunPoll < 30_000) return;
     lastRunPoll = Date.now();
@@ -434,6 +435,47 @@ async function telegramCommandLoop() {
           api("sendMessage", { chat_id: cfg.chat_id, text: `✗ The ${req.host} sign-in window crashed immediately (exit ${code}). Tail of ${path.basename(logFile)}:\n${(() => { try { return readFileSync(logFile, "utf8").slice(-400); } catch { return "(unreadable)"; } })()}` }).catch(() => {});
         }
       });
+      /* AUTO-RELAUNCH: the sign-in window was observed closing itself ~25s
+         in (no crash, no external taskkill — exit_type Normal in the clone
+         prefs). Whatever the cause, the answer is the same: put the window
+         BACK UP and tell the owner, until the sign-in completes or the
+         bounded attempts run out. */
+      child.once("exit", (code) => {
+        if (code) return; // crash path handled above
+        try {
+          const rep = readdirSync(REPORTS_DIR).filter((f) => /^run-\d{4}-\d{2}-\d{2}T.*\.json$/.test(f)).sort().pop();
+          const r = rep ? JSON.parse(readFileSync(path.join(REPORTS_DIR, rep), "utf8")) : null;
+          const closedEarly = r?.results?.some?.((x) => String(x.detail ?? "").includes("closed by the user"));
+          if (!closedEarly) return; // a real sign-in outcome — nothing to retry
+        } catch { return; }
+        if ((signinRelaunch.get(req.host) ?? 0) >= 2) { signinRelaunch.delete(req.host); return; }
+        signinRelaunch.set(req.host, (signinRelaunch.get(req.host) ?? 0) + 1);
+        const n = signinRelaunch.get(req.host);
+        console.log(`🔁 ${req.host} sign-in window closed without completing — reopening it (attempt ${n + 1}/3)`);
+        api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 The ${req.host} sign-in window closed before you finished — reopening it NOW (attempt ${n + 1}/3). Please complete the sign-in in the maximized window.` }).catch(() => {});
+        try { const f2 = openSync(logFile, "a"); const c2 = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", f2, f2], cwd: path.join(ROOT, "..") });
+          /* the relaunch carries the SAME death-detection as the original */
+          const rearmOnDeath = (c) => {
+            c.once("exit", (code2) => {
+              runInFlight.child = null;
+              if (code2) return;
+              try {
+                const files2 = readdirSync(REPORTS_DIR).filter((f) => /^run-\d{4}-\d{2}-\d{2}T.*\.json$/.test(f)).sort();
+                const latest2 = files2.length ? JSON.parse(readFileSync(path.join(REPORTS_DIR, files2[files2.length - 1]), "utf8")) : null;
+                if (!latest2?.results?.some?.((x) => String(x.detail ?? "").includes("closed by the user"))) return;
+              } catch { return; }
+              if ((signinRelaunch.get(req.host) ?? 0) >= 2) { signinRelaunch.delete(req.host); return; }
+              signinRelaunch.set(req.host, (signinRelaunch.get(req.host) ?? 0) + 1);
+              const n2 = signinRelaunch.get(req.host);
+              console.log(`🔁 ${req.host} sign-in window closed again — reopening (attempt ${n2 + 1}/3)`);
+              api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 ${req.host} sign-in window closed before you finished — reopening (attempt ${n2 + 1}/3).` }).catch(() => {});
+              try { const f3 = openSync(logFile, "a"); const c3 = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", f3, f3], cwd: path.join(ROOT, "..") }); c3.unref(); closeSync(f3); rearmOnDeath(c3); } catch { /* best effort */ }
+            });
+            c.once("exit", () => { try { unlinkSync(path.join(REPORTS_DIR, "signin-active.lock")); } catch { /* gone */ } releaseSigninFlow(); });
+          };
+          c2.unref(); closeSync(f2); rearmOnDeath(c2);
+        } catch { /* best effort */ }
+      });
       /* remove the supervisor block when the login process exits (success,
          failure or crash — the watcher must always come back) */
       child.once("exit", () => {
@@ -442,6 +484,7 @@ async function telegramCommandLoop() {
       });
       /* tell the app the window is UP — the owner should go act in it now */
       db.reportLoginStatus?.(req.host, "opened", "independent sign-in window is open on the desktop — complete Google/OTP there now").catch(() => {});
+      signinRelaunch.delete(req.host); // a FRESH request resets the relaunch counter
       await db.fulfillLoginRequest?.(req.host).catch(() => {});
     } catch { /* polling is best-effort */ }
   };
@@ -558,6 +601,27 @@ async function learnRules(host, report) {
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
+
+/* A site's session died mid-run: the owner must re-sign-in but would only
+   notice via the registry's stale ✗ badge. Ping Telegram (60-min dedupe per
+   host — a site is re-probed on every cycle) and mark the registry row so
+   the app shows ✗ until the next 🔑 sign-in fixes it. */
+const __sessionPingAt = new Map();
+async function notifySessionExpired(host, label) {
+  if (!host || host.startsWith("builtin")) return;
+  const last = __sessionPingAt.get(host) ?? 0;
+  if (Date.now() - last < 60 * 60_000) return;
+  __sessionPingAt.set(host, Date.now());
+  const db = await sitesDb();
+  try { await db?.setSiteSession?.(host, false); } catch { /* registry mark is best-effort */ }
+  try {
+    const { reportLoginStatus } = await import("./job-sites-db.js");
+    await reportLoginStatus(host, "failed", "session expired during a run — click 🔑 Sign in next to this site to fix it");
+  } catch { /* lifecycle report is best-effort */ }
+  try {
+    await sendTelegramNotify(`⚠️ Freebuff apply · ${label || host}: your session EXPIRED — future runs skip this site until you sign in again. Open the app → Job sites registry → 🔑 Sign in next to ${label || host}.`);
+  } catch (e) { console.log(dim(`  (telegram ping failed: ${e.message.slice(0, 60)})`)); }
+}
 
 function loadApplyProfile(file) {
   const p = path.resolve(process.cwd(), file);
@@ -707,6 +771,7 @@ async function ensureLoggedIn(page, url, site, loginOnly) {
   }
   if (state.kind === "login" && !loginOnly) {
     console.log(yellow(`⏸  ${rules.label}: session expired (redirected to login) — please sign in again.`));
+    await notifySessionExpired(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, rules.label).catch(() => {});
   }
   if (onLogin() || loginOnly) {
     if (!humanAvailable) {
@@ -1293,8 +1358,11 @@ async function runSingle(args, { existingCtx = null } = {}) {
   const profile = loadApplyProfile(args.profile);
   const token = process.env.SUPABASE_ACCESS_TOKEN;
   const projectRef = process.env.SUPABASE_PROJECT_REF;
-  const ai = await loadAi({ token, projectRef });
-  console.log(`apply-engine → ${rules.label} · ${args.url} · max ${args.max}${ai ? ` · AI: ${ai.model}` : " · AI: OFF (templates)"}`);
+  /* sign-in-only runs skip the AI provider load entirely — no kits are
+     built, and this network fetch used to stall the flow BEFORE the window
+     opened (the app already showed "window OPEN" while nothing was up). */
+  const ai = args["login-only"] ? null : await loadAi({ token, projectRef });
+  console.log(`apply-engine → ${rules.label} · ${args.url} · max ${args.max}${ai ? ` · AI: ${ai.model}` : args["login-only"] ? " · sign-in only" : " · AI: OFF (templates)"}`);
   /* owner kill switch: a manual single run fails open when the config is
      unreadable (the owner is running it on purpose), but honors off/cloud */
   const appTriggered = !args.unattended && process.env.FREEBUFF_APP_TRIGGERED === "1";
