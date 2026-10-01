@@ -16,9 +16,11 @@
  * Usage: node scripts/discover-job-sites.js [--limit 8] [--query "..."]
  */
 
-import { chromium } from "playwright";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadAi } from "./apply-kit-node.js";
 import { upsertJobSite, listJobSites } from "./job-sites-db.js";
+import { listEngineProcesses } from "./engine-lifecycle.js";
 
 /* ---------- candidate generation ---------- */
 
@@ -135,29 +137,49 @@ async function main() {
     .slice(0, Math.max(argLimit * 3, 12));
   console.log(`candidates: ${candidates.length} (${known.size} already registered)`);
 
-  const ctx = await chromium.launchPersistentContext("freebuff-apply-profile", {
-    headless: false, viewport: { width: 1380, height: 900 },
-    args: ["--disable-blink-features=AutomationControlled"],
-  });
-  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  /* ABSOLUTE profile path (a relative one silently forks a SECOND profile
+     whenever the cwd is not the repo root) + try/finally: any probe crash
+     used to orphan a live browser holding the engine profile, and the next
+     stage's launches then "succeeded" vacuously against it — whole cycles
+     silently did nothing. */
+  /* computed specifier so deno check / vite never statically resolve playwright
+     (same trick as the engine's acquireApplyContext) */
+  const { chromium } = await import(["play", "wright"].join(""));
+  const PROFILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "freebuff-apply-profile");
+  let ctx = null;
+  try {
+    ctx = await chromium.launchPersistentContext(PROFILE, {
+      headless: false, viewport: { width: 1380, height: 900 },
+      args: ["--disable-blink-features=AutomationControlled"],
+    });
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
 
-  let added = 0;
-  for (const host of candidates) {
-    if (added >= argLimit) break;
-    const r = await probeSite(page, host);
-    const verdict = r.reachable && !r.botWall && r.hasJobsList && r.hasLogin ? "PROMISING"
-      : r.reachable && !r.botWall ? "weak" : "skip";
-    console.log(`  ${host}: ${verdict} (jobs≈${r.jobCount}${r.sampleTitle ? ` e.g. "${r.sampleTitle.slice(0, 40)}"` : ""}${r.error ? ` err=${r.error}` : ""})`);
-    if (verdict === "PROMISING") {
-      await upsertJobSite({ host, label: host.replace(/^www\./, ""), jobsUrl: r.url, source: "discovered", sessionOk: false });
-      added++;
-      console.log(`    → registered as PENDING (approve it in the UI to activate)`);
+    let added = 0;
+    for (const host of candidates) {
+      if (added >= argLimit) break;
+      const r = await probeSite(page, host);
+      const verdict = r.reachable && !r.botWall && r.hasJobsList && r.hasLogin ? "PROMISING"
+        : r.reachable && !r.botWall ? "weak" : "skip";
+      console.log(`  ${host}: ${verdict} (jobs≈${r.jobCount}${r.sampleTitle ? ` e.g. "${r.sampleTitle.slice(0, 40)}"` : ""}${r.error ? ` err=${r.error}` : ""})`);
+      if (verdict === "PROMISING") {
+        await upsertJobSite({ host, label: host.replace(/^www\./, ""), jobsUrl: r.url, source: "discovered", sessionOk: false });
+        added++;
+        console.log(`    → registered as PENDING (approve it in the UI to activate)`);
+      }
+      await page.waitForTimeout(1500);
     }
-    await page.waitForTimeout(1500);
+    console.log(added ? `done — ${added} site(s) added to the pending queue` : "done — no new promising sites this round");
+  } finally {
+    if (ctx) await ctx.close().catch(() => {});
+    /* the watcher spawns --all SECONDS after this process exits, and the
+       apply cycle's shared-browser launch used to race this browser's async
+       teardown — wait until no engine chrome holds the profile (bounded). */
+    for (let i = 0; i < 30; i++) {
+      const procs = await listEngineProcesses();
+      if (!procs.engineChromePids.length) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
-
-  await ctx.close();
-  console.log(added ? `done — ${added} site(s) added to the pending queue` : "done — no new promising sites this round");
   process.exit(0);
 }
 

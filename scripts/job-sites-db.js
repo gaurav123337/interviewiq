@@ -224,6 +224,19 @@ export async function reportEngineState(state, detail) {
   });
 }
 
+/** Raw heartbeat history (beats + stop reports), ASC — the weekly digest's
+    uptime line reads this directly with the service key (the admin RPC caps
+    at 72h; the engine may read the full retention window). */
+export async function listEngineEvents(hours = 168) {
+  const creds = loadLocalCreds();
+  const since = new Date(Date.now() - hours * 3600_000).toISOString();
+  const res = await fetch(`${creds.base}/rest/v1/engine_events?select=state,created_at&created_at=gte.${encodeURIComponent(since)}&order=created_at.asc`, {
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
+  });
+  if (!res.ok) return [];
+  return res.json();
+}
+
 /** Telegram notify config for pings: resolves the per-user ENTITLED row
     (platinum/addon, admin bypass included) via engine_notify_config();
     falls back to the legacy admin row when the RPC is missing. */
