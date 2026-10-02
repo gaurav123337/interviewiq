@@ -117,7 +117,7 @@ export default function ApplyResultsPanel() {
                 {r.title || "(untitled posting)"}{r.company ? <span className="text-zinc-500"> — {r.company}</span> : null}
               </span>
               {typeof r.fit === "number" && (
-                <span className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${r.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : r.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`}>fit {r.fit}</span>
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${r.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : r.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match. It ignores seniority, core function and core stack; the AI judge's verdict is in the detail line below.">fit {r.fit}</span>
               )}
               <span className="shrink-0 text-[10.5px] text-zinc-600">{ago(r.created_at)}</span>
             </div>

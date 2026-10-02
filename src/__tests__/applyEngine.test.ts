@@ -296,12 +296,27 @@ describe("fitScore — re-rank the review queue by skill fit", () => {
     expect(fitScore(undefined, undefined)).toBeNull();
   });
 
+  it("penalizes the judge's core-missing skills (#164 honesty): Java-core JD cannot show fit 60 on a frontend resume", () => {
+    expect(fitScore(["cloud", "testing", "performance"], ["java", "aws"], ["java"])).toBe(48); // 60 - 12
+    expect(fitScore(["cloud"], ["java", "spring", "kafka", "aws"], ["java", "spring boot"])).toBe(0); // 20 - 24 floors at 0
+    expect(fitScore(["react"], ["node", "python", "sql"], [])).toBe(25); // no core-missing → raw overlap
+  });
+
   it("recordResult carries the job's fit into the report row", () => {
     const r = newReport("https://x/jobs", "naukri");
     recordResult(r, { title: "T", company: "C", url: "u", __fit: 75 }, "submitted", "ok");
     expect(r.results[0].fit).toBe(75);
     recordResult(r, { title: "T2", company: "C", url: "u2" }, "skipped", "no gate");
     expect(r.results[1].fit).toBeNull();
+  });
+
+  it("recordResult appends the judge note (__fitNote) to the app's detail line (#164)", () => {
+    const r = newReport("https://x/jobs", "instahyre");
+    recordResult(r, { title: "T", company: "C", url: "u", __fitNote: "judge (apply): owner-confirmed relevant (exemplar)" }, "submitted", "submitted (auto)");
+    expect(r.results[0].detail).toMatch(/judge \(apply\)/);
+    const r2 = newReport("https://x/jobs", "instahyre");
+    recordResult(r2, { title: "T2", company: "C", url: "u2" }, "submitted", "submitted (auto)");
+    expect(r2.results[0].detail).toBe("submitted (auto)"); // no note → detail unchanged
   });
 });
 
@@ -389,6 +404,22 @@ describe("AI judge — reading comprehension over regex gates", () => {
     expect(ownerExemplarFor({ url: "https://www.linkedin.com/jobs/view/999/", title: "Senior Frontend Developer" }, ex)).toMatch(/4471345244/);
     expect(ownerExemplarFor({ url: "https://www.linkedin.com/jobs/view/999/", title: "Python Backend Engineer" }, ex)).toBe("");
     expect(ownerExemplarFor({ title: "x" }, null)).toBe("");
+  });
+
+  it("ownerExemplarFor ignores GENERIC title words (#164): 'software'/'engineer' cannot inherit a React exemplar's verdict", () => {
+    // this exact shape caused the low-match Instahyre applies: SDET/Amazon/BigAssets titles
+    // shared only generic words with frontend exemplars → "owner-confirmed" bypassed the judge
+    const ex = { positive: ["Senior Frontend Developer at BigCo — React, TypeScript, design systems"], negative: [] };
+    expect(ownerExemplarFor({ title: "Software Development Engineer in Test" }, ex)).toBe("");
+    expect(ownerExemplarFor({ title: "Product Software Engineer - 1047 - 1059" }, ex)).toBe("");
+    expect(ownerExemplarFor({ title: "Fullstack Developer" }, ex)).toBe("");
+    expect(ownerExemplarFor({ title: "React Engineer - payments" }, ex)).not.toBe("");
+  });
+
+  it("ownerExemplarFor keeps the ≥3 raw-token fallback for all-generic titles (no single-word strong match)", () => {
+    const ex = { positive: ["Senior Frontend Developer at BigCo — React, TypeScript, design systems"], negative: [] };
+    expect(ownerExemplarFor({ title: "Senior Frontend Developer" }, ex)).not.toBe(""); // senior+frontend+developer = 3 raw tokens
+    expect(ownerExemplarFor({ title: "Frontend Developer" }, ex)).toBe(""); // only 2 raw tokens
   });
 
   it("parses a well-formed verdict and clamps/preserves fields", () => {

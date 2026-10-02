@@ -234,7 +234,7 @@ function UserActivityDrawer({ userId, email, onClose }: { userId: string; email:
                   <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
                     <Chip tone={r.result === "submitted" ? "ok" : r.result === "error" ? "bad" : r.result === "needs_review" ? "warn" : "default"}>{r.result}</Chip>
                     <span className="min-w-0 flex-1 truncate">{r.title || r.job_url}{r.company ? ` — ${r.company}` : ""}</span>
-                    {r.fit != null && <Chip tone="lvl">fit {r.fit}</Chip>}
+                    {r.fit != null && <Chip tone="lvl" title="Keyword overlap between the JD and the resume's skills — not an overall match">fit {r.fit}</Chip>}
                     <span className="ml-auto shrink-0 text-[10.5px] text-fnt">{r.site_host} · {new Date(r.created_at).toLocaleString()}</span>
                   </div>
                 ))}
