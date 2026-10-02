@@ -22,7 +22,7 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self' https:",
+  "connect-src 'self' https: http://localhost:*",
   "worker-src 'self' blob: https:",
   "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com",
   "object-src 'none'",
