@@ -1528,8 +1528,16 @@ async function trySubmit(page, site, rulesOverride) {
       ).catch(() => "");
       return { auto: false, note: `Easy Apply mid-flow${blocker ? ` — ${blocker.slice(0, 80)}` : " — submit never appeared"} — queued for one-click finish` };
     }
-    if (rules.autoSubmit) return { auto: true, note: "submit button not found (may already be applied)" };
-    return { auto: false, note: "review gate — human submits" };
+    /* HONEST VERDICT (#164): auto-submit sites used to return {auto:true,
+       "may already be applied"} here — which silently recorded "submitted"
+       rows for applications that never left the building (three Instahyre
+       rows were really "apply clicked, the modal/submit never appeared").
+       Only POSITIVE evidence — the site's successText — earns auto:true;
+       a missing submit step is an UNKNOWN outcome, so fail closed to the
+       review queue where the owner finishes or dismisses it. */
+    return { auto: false, note: "apply flow opened but the submit step never appeared — NOT applied, needs review" };
+  }
+  if (rules.autoSubmit) {
   }
   if (rules.autoSubmit) {
     /* SAFETY PRE-CHECK before the one-way click: every required field in
@@ -1803,7 +1811,18 @@ async function runSingle(args, { existingCtx = null } = {}) {
         if (looksLikeRefusal(kit.resume) || looksLikeRefusal(kit.coverLetter)) {
           throw new Error("AI refused to tailor this kit (role mismatch?) — not submitting");
         }
-        if (gate.matched?.length) { job.__fit = fitScore(gate.matched, gate.missing); console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""} · fit ${job.__fit}`)); }
+        /* HONEST FIT (#164): the keyword-overlap score is penalized by the
+           judge's missingCore (skills the posting fundamentally requires that
+           the resume lacks) — a Java-core JD with a frontend resume must not
+           parade around as fit 60. Fallbacks keep the raw overlap score. */
+        const coreMissing = job.__judge?.missingCore ?? [];
+        if (gate.matched?.length) {
+          job.__fit = fitScore(gate.matched, gate.missing, coreMissing);
+          const judgeNote = job.__judge?.verdict === "apply" ? " · judge: apply" : job.__judge?.verdict === "skip" ? "" : job.__judge?.reason ? ` · judge unsure: ${job.__judge.reason.slice(0, 60)}` : "";
+          console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""}${coreMissing.length ? ` (core missing: ${coreMissing.slice(0, 3).join(", ")})` : ""} · fit ${job.__fit}${judgeNote}`));
+        } else if (job.__judge?.reason) {
+          job.__fitNote = `judge (${job.__judge.verdict}): ${job.__judge.reason.slice(0, 80)}`;
+        }
         job.__coverLetter = kit.coverLetter;
         console.log(dim(`  kit: resume+cover ${kit.ai ? "(AI-tailored)" : "(template)"} ${kit.notes.join("; ")}`));
 

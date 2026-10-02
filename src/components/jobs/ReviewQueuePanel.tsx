@@ -228,7 +228,7 @@ export default function ReviewQueuePanel() {
                 <div className="truncate text-sm text-zinc-200">
                   {it.title || "(untitled posting)"} {it.company && <span className="text-zinc-500">— {it.company}</span>}
                   {typeof it.fit === "number" && (
-                    <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-extrabold ${it.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : it.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`}>fit {it.fit}</span>
+                    <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-extrabold ${it.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : it.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match (seniority and core stack not included).">fit {it.fit}</span>
                   )}
                 </div>
                 <div className="truncate text-xs text-zinc-500">

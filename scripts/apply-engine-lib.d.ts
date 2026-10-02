@@ -59,7 +59,7 @@ export interface ApplyProfileLike {
 
 export interface ApplyJobLike {
   title?: string; company?: string; location?: string; url?: string;
-  skills?: string[]; __coverLetter?: string; __fit?: number | null;
+  skills?: string[]; __coverLetter?: string; __fit?: number | null; __fitNote?: string; __judge?: { verdict?: string; reason?: string; missingCore?: string[] };
 }
 
 export function draftAnswer(
@@ -122,14 +122,15 @@ export function jdSkillMatch(
 
 export function postingRelevant(
   posting: { title: string | null | undefined; description?: string | null },
-  profile: ApplyProfileLike | null | undefined
+  profile: ApplyProfileLike | null | undefined,
+  opts?: { learnedCritical?: string[]; ownerConfirmed?: boolean }
 ): JdSkillMatchResult;
 
 export function extraAnswerFor(profile: ApplyProfileLike | null | undefined, kind: string): string;
 
 export function isExternalApplyButton(text: string | null | undefined): boolean;
 
-export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined): number | null;
+export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined, coreMissing?: string[]): number | null;
 
 /* ── per-ATS selector packs ─────────────────────────────────────────── */
 

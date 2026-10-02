@@ -488,20 +488,55 @@ export function exemplarBlock(positive = [], negative = []) {
 /** Does this job carry an OWNER-POSITIVE exemplar? Owner 👍 on a posting is
     the ground truth that overrides even a reasoned judge skip — that is the
     whole learn-from-the-owner loop. Match by posting id when known, else by
-    title-token overlap (≥3 shared tokens ≥4 chars, or one ≥8-char token). */
+    DISTINCTIVE title-token overlap: stopwords (software, engineer, developer,
+    senior, fullstack …) are stripped BEFORE counting — the old matcher let a
+    single generic word like "software" (≥8 chars) count as a "strong" match,
+    which owner-confirmed EVERY engineering posting and silently bypassed the
+    AI judge (the low-match Instahyre applies bug #164). Now: after removing
+    stopwords, require ≥3 shared distinctive tokens, or a single ≥8-char
+    distinctive token. A Python Backend job can never inherit a React
+    exemplar's verdict via the word "engineer" alone. */
+const EXEMPLAR_STOPWORDS = new Set([
+  "software", "engineer", "engineering", "developer", "development",
+  "fullstack", "full-stack", "backend", "frontend", "senior", "junior",
+  "staff", "lead", "principal", "product", "technology", "technologies",
+  "sde", "sdet", "test", "testing", "associate", "intern", "company",
+  "ltd", "pvt", "limited", "bangalore", "remote", "india", "hyderabad",
+  "gurugram", "mumbai", "pune", "noida", "delhi", "chennai", "tata", "consulting", "services", "solutions", "labs", "systems",
+]);
 export function ownerExemplarFor(job, exemplars) {
   const positives = (exemplars?.positive ?? []).map((s) => String(s));
   if (!positives.length) return "";
   const m = String(job?.url || "").match(/(?:jobs\/view\/|currentJobId=)(\d+)/);
   if (m) { const hit = positives.find((s) => s.includes(m[1])); if (hit) return hit; }
-  const tokens = (s) => new Set(String(s || "").toLowerCase().match(/[a-z][a-z.+#]{3,}/g) ?? []);
+  /* tokens: distinctive words only — stopwords and pure numbers stripped */
+  const rawTokens = (s) => new Set(String(s || "").toLowerCase().match(/[a-z][a-z.+#]{3,}/g)?.filter((w) => !/^\d+$/.test(w)) ?? []);
+  const tokens = (s) => { const t = rawTokens(s); for (const w of [...t]) if (EXEMPLAR_STOPWORDS.has(w)) t.delete(w); return t; };
   const jt = tokens(job?.title);
+  if (!jt.size) {
+    /* all-generic title ("Senior Frontend Developer"): nothing distinctive
+       survived — fall back to RAW token overlap with a plain ≥3 threshold
+       (no strong-single-word shortcut, which is exactly the bug this fix
+       removes: "Fullstack Developer" must not inherit via "developer"). */
+    const jtRaw = rawTokens(job?.title);
+    if (jtRaw.size < 3) return "";
+    for (const s of positives) {
+      const st = rawTokens(s);
+      let n = 0;
+      for (const t of jtRaw) if (st.has(t)) n++;
+      if (n >= 3) return s;
+    }
+    return "";
+  }
   let best = "", bestN = 0;
   for (const s of positives) {
     const st = tokens(s);
     let n = 0;
     for (const t of jt) if (st.has(t)) n++;
-    const strong = [...jt].some((t) => t.length >= 8 && st.has(t));
+    /* strong = one DISTINCTIVE tech token ≥5 chars (react, typescript,
+       playwright…) — generic words are already stripped above, so this can
+       no longer fire on "software"/"engineer"-shaped overlap (#164). */
+    const strong = [...jt].some((t) => t.length >= 5 && st.has(t));
     if (strong || n > bestN) { best = s; bestN = Math.max(n, strong ? 3 : n); }
   }
   return bestN >= 3 ? best : "";
@@ -514,9 +549,10 @@ export function judgeMessages(job, profile, exemplars = null) {
     "Decide whether this candidate is a REALISTIC match for this specific posting — not whether they could learn it.",
     "Reject (verdict skip) when ANY of these hold:",
     "- a skill named in the job TITLE (e.g. Python, Java, React) is absent from the candidate's skills — the headline requirement is not negotiable",
+    "- the posting's CORE programming language or framework (the one its requirements are written around, e.g. a JD built on Java/Spring Boot/Kafka) is absent from the candidate's skills — tool-level overlap elsewhere (cloud, testing, react) does NOT make it transferable",
     "- the role's core function differs from the candidate's demonstrated work (a frontend/product-engineer resume is NOT a QA-automation/SDET, data-engineering, or DevOps role even when some tools overlap)",
     "- hard requirements (domain, stack) clearly outstrip the resume. Being MORE senior than the posting is NOT a rejection reason — experienced candidates apply to senior-adjacent roles all the time",
-    "Apply (verdict apply) when the core function matches and most key requirements are genuinely on the resume; adjacent transferable experience counts.",
+    "Apply (verdict apply) when the core function matches and the core stack is genuinely on the resume; adjacent transferable experience counts ONLY for peripheral requirements, never for the core language/framework.",
     "Be conservative about wasting the candidate's applications — a wrong application is worse than a missed one.",
     "Reply with ONLY this JSON, nothing else:",
     '{"verdict":"apply|skip","confidence":0.0-1.0,"reason":"one short sentence","missingCore":["skills the posting fundamentally requires that the resume lacks"]}',
@@ -607,16 +643,27 @@ export function newReport(sourceUrl, site) {
 }
 
 /** 0–100 fit score from the skill gate's matched/missing arrays. Null when
-    the gate had no opinion (JD named no specific skills). */
-export function fitScore(matched, missing) {
+    the gate had no opinion (JD named no specific skills).
+    HONESTY (#164): this is KEYWORD OVERLAP, not an overall match — the UI
+    labels it as such. `coreMissing` (the AI judge's missingCore — skills the
+    posting fundamentally requires that the resume lacks) applies a 12-point
+    penalty each, capped at 48, so a Java-core JD never shows a flattering
+    60 just because the resume also says "testing" and "performance". */
+export function fitScore(matched, missing, coreMissing = []) {
   const m = matched?.length ?? 0;
   const x = missing?.length ?? 0;
   if (!m && !x) return null;
-  return Math.round((m / (m + x)) * 100);
+  const base = Math.round((m / (m + x)) * 100);
+  const penalty = Math.min(48, (coreMissing?.length ?? 0) * 12);
+  return Math.max(0, base - penalty);
 }
 
 export function recordResult(report, job, result, detail = "") {
-  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail, fit: job?.__fit ?? null, at: Date.now() });
+  /* the judge's verdict travels with every row (#164): when the keyword gate
+     had no opinion, __fitNote carries "judge (apply|skip|unknown): reason" so
+     the app's detail line explains WHY, not just what happened */
+  const note = job?.__fitNote ? `${detail ? detail + " — " : ""}${job.__fitNote}` : detail;
+  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail: note, fit: job?.__fit ?? null, at: Date.now() });
   const key = { submitted: "submitted", needsReview: "needsReview", skipped: "skipped", error: "error" }[result];
   if (key) report.counts[key] += 1;
 }
