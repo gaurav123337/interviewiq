@@ -1,0 +1,18 @@
+{
+  "name": "InterviewIQ — AI Interview Coach",
+  "short_name": "InterviewIQ",
+  "description": "AI interviewer PWA: prepare for technical interviews from junior developer to CTO and CEO. Pick a field and company, get tailored questions with solutions.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0e1a",
+  "theme_color": "#0a0e1a",
+  "lang": "en",
+  "categories": ["education", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

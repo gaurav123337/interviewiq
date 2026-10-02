@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://gaurav123337.github.io/interviewiq/sitemap.xml
