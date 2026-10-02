@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { amOwner, adminSecurityStatus, adminAuditLog, adminSetMfaEnforced, type AdminSecurityStatus, type AdminAuditRow } from "../../services/admin";
+import { requestSystemCleanup, getSystemProcessStatus, type CleanupResult } from "../../services/systemCleanup";
 import { toast } from "../../toast";
 import { btnGhost, btnSm, cardCls, Chip, Switch } from "../ui";
 
@@ -15,6 +16,9 @@ export function SecuritySection() {
   const [busy, setBusy] = useState(false);
   const [toggleBusy, setToggleBusy] = useState(false);
   const [showMeta, setShowMeta] = useState<number | null>(null);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
+  const [processStatus, setProcessStatus] = useState<{ nodeProcesses: number; playwrightProcesses: number; totalProcesses: number } | null>(null);
   const owner = amOwner();
 
   const load = async () => {
@@ -32,6 +36,37 @@ export function SecuritySection() {
 
   useEffect(() => { void load(); }, []);
 
+  const loadProcessStatus = async () => {
+    const status = await getSystemProcessStatus();
+    setProcessStatus(status);
+  };
+
+  useEffect(() => {
+    void loadProcessStatus();
+    const interval = setInterval(() => void loadProcessStatus(), 5000); // Refresh every 5s
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleCleanup = async () => {
+    setCleanupBusy(true);
+    try {
+      const result = await requestSystemCleanup();
+      setCleanupResult(result);
+      if (result.success) {
+        toast(`✅ Cleanup complete: killed ${result.killed.node} node + ${result.killed.playwright} playwright processes`);
+      } else {
+        toast(`⚠️ ${result.message}`);
+      }
+      // Refresh status after cleanup
+      setTimeout(() => void loadProcessStatus(), 1000);
+    } catch (e) {
+      toast("✗ " + ((e as Error).message || "Cleanup failed"));
+    } finally {
+      setCleanupBusy(false);
+    }
+  };
+
+
   const toggle = async (v: boolean) => {
     if (!owner) { toast("Only the owner can change MFA enforcement"); return; }
     setToggleBusy(true);
@@ -48,6 +83,72 @@ export function SecuritySection() {
 
   return (
     <div className="space-y-4">
+      {/* System Cleanup */}
+      <div className={`${cardCls} p-5`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-[16px] font-extrabold">🧹 System cleanup</h2>
+            <p className="mt-1 max-w-[640px] text-[12.5px] text-mut">
+              Kill stray <span className="font-mono">node.exe</span> and <span className="font-mono">playwright</span> processes that consume system resources.
+              {processStatus && processStatus.totalProcesses > 0 && (
+                <span className="ml-1 font-bold text-warn">
+                  Found {processStatus.nodeProcesses} node + {processStatus.playwrightProcesses} playwright processes.
+                </span>
+              )}
+            </p>
+          </div>
+          <button
+            className={btnGhost + " " + btnSm}
+            onClick={() => void handleCleanup()}
+            disabled={cleanupBusy || !processStatus || processStatus.totalProcesses === 0}
+          >
+            {cleanupBusy ? (
+              <>
+                <span className="spinner inline-block mr-1" />
+                Cleaning…
+              </>
+            ) : (
+              <>🧹 Clean up</>  
+            )}
+          </button>
+        </div>
+        {cleanupResult && (
+          <div className={`mt-3 rounded-lg p-3 text-[12.5px] ${
+            cleanupResult.success
+              ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-600"
+              : "bg-red-500/10 border border-red-500/30 text-red-600"
+          }`}>
+            {cleanupResult.success ? "✅" : "❌"} {cleanupResult.message}
+            {cleanupResult.killed.total > 0 && (
+              <div className="mt-1 text-[11.5px] opacity-80">
+                Killed: {cleanupResult.killed.node} node.exe + {cleanupResult.killed.playwright} playwright
+              </div>
+            )}
+            {cleanupResult.errors && cleanupResult.errors.length > 0 && (
+              <details className="mt-2 cursor-pointer">
+                <summary className="font-mono text-[11px]">Errors ({cleanupResult.errors.length})</summary>
+                <pre className="mt-1 bg-black/20 rounded p-2 font-mono text-[10px] overflow-auto max-h-[120px]">
+                  {cleanupResult.errors.join("\n")}
+                </pre>
+              </details>
+            )}
+          </div>
+        )}
+        {processStatus && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Chip>
+              📊 node.exe: {processStatus.nodeProcesses}
+            </Chip>
+            <Chip>
+              🎭 playwright: {processStatus.playwrightProcesses}
+            </Chip>
+            <Chip tone={processStatus.totalProcesses > 0 ? "warn" : "ok"}>
+              Total: {processStatus.totalProcesses}
+            </Chip>
+          </div>
+        )}
+      </div>
+
       {/* MFA enforcement */}
       <div className={`${cardCls} p-5`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
