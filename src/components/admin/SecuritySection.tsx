@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { amOwner, adminSecurityStatus, adminAuditLog, adminSetMfaEnforced, type AdminSecurityStatus, type AdminAuditRow } from "../../services/admin";
-import { requestSystemCleanup, getSystemProcessStatus, type CleanupResult } from "../../services/systemCleanup";
+import { requestSystemCleanup, getSystemProcessStatus, testCleanupServerConnection, getCleanupServerPort, setCleanupServerPort, type CleanupResult } from "../../services/systemCleanup";
 import { toast } from "../../toast";
 import { btnGhost, btnSm, cardCls, Chip, Switch } from "../ui";
 
@@ -19,6 +19,10 @@ export function SecuritySection() {
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null);
   const [processStatus, setProcessStatus] = useState<{ nodeProcesses: number; playwrightProcesses: number; totalProcesses: number } | null>(null);
+  const [serverConnected, setServerConnected] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(false);
+  const [portInput, setPortInput] = useState(getCleanupServerPort().toString());
+  const [showPortConfig, setShowPortConfig] = useState(false);
   const owner = amOwner();
 
   const load = async () => {
@@ -36,18 +40,52 @@ export function SecuritySection() {
 
   useEffect(() => { void load(); }, []);
 
-  const loadProcessStatus = async () => {
-    const status = await getSystemProcessStatus();
-    setProcessStatus(status);
+  // Check server connection and load process status
+  const checkConnection = async () => {
+    setCheckingConnection(true);
+    try {
+      const connected = await testCleanupServerConnection();
+      setServerConnected(connected);
+      
+      if (connected) {
+        const status = await getSystemProcessStatus();
+        setProcessStatus(status);
+      }
+    } catch (e) {
+      setServerConnected(false);
+    } finally {
+      setCheckingConnection(false);
+    }
   };
 
   useEffect(() => {
-    void loadProcessStatus();
-    const interval = setInterval(() => void loadProcessStatus(), 5000); // Refresh every 5s
+    void checkConnection();
+    const interval = setInterval(() => void checkConnection(), 5000); // Refresh every 5s
     return () => clearInterval(interval);
   }, []);
 
+  const handlePortChange = () => {
+    try {
+      const port = parseInt(portInput, 10);
+      if (port < 1 || port > 65535) {
+        toast("Port must be between 1 and 65535");
+        return;
+      }
+      setCleanupServerPort(port);
+      setShowPortConfig(false);
+      toast(`✅ Port updated to ${port}. Reconnecting...`);
+      setTimeout(() => void checkConnection(), 500);
+    } catch (e) {
+      toast("✗ Invalid port number");
+    }
+  };
+
   const handleCleanup = async () => {
+    if (!serverConnected) {
+      toast("✗ Cleanup server not connected. Configure the port and try again.");
+      return;
+    }
+    
     setCleanupBusy(true);
     try {
       const result = await requestSystemCleanup();
@@ -58,14 +96,13 @@ export function SecuritySection() {
         toast(`⚠️ ${result.message}`);
       }
       // Refresh status after cleanup
-      setTimeout(() => void loadProcessStatus(), 1000);
+      setTimeout(() => void checkConnection(), 1000);
     } catch (e) {
       toast("✗ " + ((e as Error).message || "Cleanup failed"));
     } finally {
       setCleanupBusy(false);
     }
   };
-
 
   const toggle = async (v: boolean) => {
     if (!owner) { toast("Only the owner can change MFA enforcement"); return; }
@@ -97,21 +134,73 @@ export function SecuritySection() {
               )}
             </p>
           </div>
-          <button
-            className={btnGhost + " " + btnSm}
-            onClick={() => void handleCleanup()}
-            disabled={cleanupBusy || !processStatus || processStatus.totalProcesses === 0}
-          >
-            {cleanupBusy ? (
-              <>
-                <span className="spinner inline-block mr-1" />
-                Cleaning…
-              </>
-            ) : (
-              <>🧹 Clean up</>  
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              className={btnGhost + " " + btnSm}
+              onClick={() => void checkConnection()}
+              disabled={checkingConnection}
+              title="Check connection to cleanup server"
+            >
+              {checkingConnection ? "🔄" : "🔌"}
+            </button>
+            <button
+              className={btnGhost + " " + btnSm}
+              onClick={() => void handleCleanup()}
+              disabled={cleanupBusy || !serverConnected || !processStatus || processStatus.totalProcesses === 0}
+            >
+              {cleanupBusy ? (
+                <>
+                  <span className="spinner inline-block mr-1" />
+                  Cleaning…
+                </>
+              ) : (
+                <>🧹 Clean up</>  
+              )}
+            </button>
+          </div>
         </div>
+
+        {/* Connection Status */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Chip tone={serverConnected ? "ok" : "warn"}>
+            {serverConnected ? "✅ Connected" : "⚠️ Not connected"} (port {getCleanupServerPort()})
+          </Chip>
+          {!serverConnected && (
+            <button 
+              className="text-[12px] font-bold text-acctxt underline"
+              onClick={() => setShowPortConfig(!showPortConfig)}
+            >
+              {showPortConfig ? "Hide" : "Configure port"}
+            </button>
+          )}
+        </div>
+
+        {/* Port Configuration */}
+        {showPortConfig && (
+          <div className="mt-3 flex items-center gap-2 p-3 rounded-lg bg-panel3">
+            <label className="text-[12.5px] font-medium">Port:</label>
+            <input
+              type="number"
+              min="1"
+              max="65535"
+              value={portInput}
+              onChange={(e) => setPortInput(e.target.value)}
+              className="w-20 rounded border border-line/30 bg-panel px-2 py-1 text-[12px] text-ink"
+              placeholder="3000"
+            />
+            <button
+              className={btnGhost + " " + btnSm}
+              onClick={handlePortChange}
+            >
+              Save & reconnect
+            </button>
+            <span className="text-[11px] text-mut ml-2">
+              Run: <span className="font-mono">node scripts/cleanup-server.mjs</span> on this port
+            </span>
+          </div>
+        )}
+
+        {/* Cleanup Result */}
         {cleanupResult && (
           <div className={`mt-3 rounded-lg p-3 text-[12.5px] ${
             cleanupResult.success
@@ -134,6 +223,8 @@ export function SecuritySection() {
             )}
           </div>
         )}
+
+        {/* Process Status */}
         {processStatus && (
           <div className="mt-3 flex flex-wrap gap-2">
             <Chip>
