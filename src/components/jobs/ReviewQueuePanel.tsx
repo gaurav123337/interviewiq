@@ -43,6 +43,7 @@ export default function ReviewQueuePanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [notifyOpen, setNotifyOpen] = useState(false);
   const notifyRef = useRef<HTMLDivElement | null>(null);
+  const [feedbackShown, setFeedbackShown] = useState<{id: string; type: 'applied'|'dismissed'|'closed'; show: boolean} | null>(null);
   const [chatId, setChatId] = useState("");
   const [botToken, setBotToken] = useState("");
   const [notifyState, setNotifyState] = useState<string | null>(null);
@@ -113,6 +114,10 @@ export default function ReviewQueuePanel() {
   const resolve = async (it: ReviewItem, status: "done" | "dismissed" | "closed") => {
     setBusy(it.id);
     setError(null);
+    /* Show feedback indication to user */
+    const feedbackType = status === "done" ? "applied" : status === "dismissed" ? "dismissed" : "closed";
+    setFeedbackShown({ id: it.id, type: feedbackType, show: true });
+    
     try {
       /* Applied/Not-interested TEACH the judge (what the owner wants);
          Closed teaches NOTHING — a shut posting is the company's state,
@@ -130,9 +135,12 @@ export default function ReviewQueuePanel() {
          any twin) leaves the list INSTANTLY; refresh() stays the truth */
       const key = canonicJobUrl(it.job_url);
       setItems((prev) => (prev ?? []).filter((r) => canonicJobUrl(r.job_url) !== key));
+      /* Hide feedback after 1.5 seconds */
+      setTimeout(() => setFeedbackShown(null), 1500);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setFeedbackShown(null);
     } finally {
       setBusy(null);
     }
@@ -222,31 +230,46 @@ export default function ReviewQueuePanel() {
       {!items.length && <div className="text-xs text-zinc-500">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
       <div className="space-y-2">
         {items.map((it) => (
-          <div key={it.id} className="rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-2">
-            <div className="flex flex-wrap items-center gap-2">
+          <div key={it.id} className={`rounded-md border transition-all duration-300 ${feedbackShown?.id === it.id && feedbackShown.show ? "border-emerald-500/50 bg-emerald-500/5" : "border-zinc-800 bg-zinc-900"} px-2.5 py-2`}>
+            <div className="flex flex-col gap-2.5">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-zinc-200">
-                  {it.title || "(untitled posting)"} {it.company && <span className="text-zinc-500">— {it.company}</span>}
+                <div className="text-sm text-zinc-200">
+                  <div className="font-medium truncate">{it.title || "(untitled posting)"}</div>
+                  {it.company && <div className="text-xs text-zinc-400 mt-0.5 font-medium">{it.company}</div>}
                   {typeof it.fit === "number" && (
-                    <span className={`ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-extrabold ${it.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : it.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match (seniority and core stack not included).">fit {it.fit}</span>
+                    <span className={`ml-0 mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-extrabold ${it.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : it.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match (seniority and core stack not included).">fit {it.fit}</span>
                   )}
                 </div>
-                <div className="truncate text-xs text-zinc-500">
+                <div className="text-xs text-zinc-500 mt-1.5">
                   {it.site_host} · {ago(it.created_at)}{it.reason ? ` · ${it.reason}` : ""}
                 </div>
               </div>
               {Array.isArray(it.form_fields) && it.form_fields.length > 0 && <FieldPreviewList fields={it.form_fields} />}
-              {busy === it.id ? (
-                <span className="text-xs text-zinc-500">…</span>
-              ) : (
-                <>
-                  <button onClick={() => openForm(it)} className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500">Open form ↗</button>
-                  <button onClick={() => void copy(it.form_url || it.job_url)} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">📋</button>
-                  <button onClick={() => void resolve(it, "done")} title="I already applied — also teaches the judge this kind of job is relevant" className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">✓ Applied</button>
-                  <button onClick={() => void resolve(it, "dismissed")} title="Not interested — also teaches the judge to skip similar postings" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:border-red-600 hover:text-red-400">✕ Not interested</button>
-                  <button onClick={() => void resolve(it, "closed")} title="Posting closed / no longer accepting — stops retries, teaches nothing" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">🚫 Closed</button>
-                </>
-              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {feedbackShown?.id === it.id && feedbackShown.show ? (
+                  <div className="flex items-center gap-1.5 text-xs font-medium">
+                    {feedbackShown.type === "applied" && (
+                      <span className="text-emerald-400 flex items-center gap-1">✓ Recorded as applied</span>
+                    )}
+                    {feedbackShown.type === "dismissed" && (
+                      <span className="text-red-400 flex items-center gap-1">✕ Recorded as not interested</span>
+                    )}
+                    {feedbackShown.type === "closed" && (
+                      <span className="text-zinc-400 flex items-center gap-1">🚫 Recorded as closed</span>
+                    )}
+                  </div>
+                ) : busy === it.id ? (
+                  <span className="text-xs text-zinc-500">…</span>
+                ) : (
+                  <>
+                    <button onClick={() => openForm(it)} className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500">Open form ↗</button>
+                    <button onClick={() => void copy(it.form_url || it.job_url)} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">📋</button>
+                    <button onClick={() => void resolve(it, "done")} title="I already applied — also teaches the judge this kind of job is relevant" className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">✓ Applied</button>
+                    <button onClick={() => void resolve(it, "dismissed")} title="Not interested — also teaches the judge to skip similar postings" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:border-red-600 hover:text-red-400">✕ Not interested</button>
+                    <button onClick={() => void resolve(it, "closed")} title="Posting closed / no longer accepting — stops retries, teaches nothing" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">🚫 Closed</button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         ))}
