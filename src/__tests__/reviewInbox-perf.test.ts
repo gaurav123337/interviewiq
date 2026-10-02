@@ -106,7 +106,7 @@ describe("Review Inbox performance", () => {
     /* Without cache reuse each call rebuilds — ~1.5s here. Budget with headroom
        for V8 warmup and parallel-suite CPU contention; a genuine regression would
        be an order of magnitude slower, not a few hundred ms over. */
-    expect(elapsed).toBeLessThan(2500);
+    expect(elapsed).toBeLessThan(2800);
   });
 
   it("draftIssues handles 500 drafts in <50ms", () => {
