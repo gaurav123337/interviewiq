@@ -26,7 +26,7 @@ import { listEngineProcesses } from "./engine-lifecycle.js";
 
 const FALLBACK_SEEDS = [
   "cutshort.io", "hirist.tech", "iimjobs.com", "foundit.in", "timesjobs.com",
-  "angel.co", "wellfound.com", "ycombinator.com/jobs", "workatastartup.com",
+  "angel.co", "wellfound.com", "workatastartup.com",
   "niceone.work", "instahyre.com", "hirist.com", "limelight.work",
 ];
 

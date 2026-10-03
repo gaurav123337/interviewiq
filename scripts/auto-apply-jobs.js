@@ -36,6 +36,7 @@ import {
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, isExternalApplyButton,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
+  classifyJobLink,
 } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
 import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
@@ -715,6 +716,60 @@ async function learnRules(host, report) {
     console.log(dim(`  learned rules stored: ${JSON.stringify(useful).slice(0, 100)}`));
   } catch (e) { console.log(dim(`  (rules not learned: ${e.message.slice(0, 80)})`)); }
 }
+/* Collection-drift signal (Phase 1 → Phase 4): when the discriminator drops
+   every link the collector found, the board's list markup has likely moved.
+   Persist the fact on the site row so the NEXT run can prefer learned rules
+   and the owner can see which boards need attention. Best-effort, never
+   blocks a run (the registry may be unreachable). */
+async function recordCollectionDrift(host, info) {
+  if (!host || host.startsWith("builtin")) return;
+  const db = await sitesDb();
+  if (!db?.listJobSites || !db?.setSiteRules) return;
+  try {
+    const row = (await db.listJobSites()).find((s) => s.host === host);
+    const rules = (row?.rules && typeof row.rules === "object") ? row.rules : {};
+    const prior = Number(rules.collectionDrift?.count ?? 0);
+    await db.setSiteRules(host, { ...rules, collectionDrift: { count: prior + 1, scanned: info.scanned, kept: info.kept, at: new Date().toISOString() } });
+  } catch { /* best-effort — a registry blip must never fail a collection */ }
+}
+
+/* Phase 2 — transient network failures. After a reboot (or a DNS blip)
+   page.goto throws ERR_NAME_NOT_RESOLVED / ERR_CONNECTION_* and the whole
+   site leg dies with one empty run. Bounded retry with backoff rides out the
+   blip; a persistent failure still surfaces honestly. */
+const TRANSIENT_NAV_RE = /ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_(RESET|CLOSED|REFUSED|ABORTED)|ERR_NETWORK_CHANGED|ERR_INTERNET_DISCONNECTED|ERR_TIMED_OUT|net::ERR_/i;
+async function gotoWithRetry(page, url, { attempts = 3, waitUntil = "domcontentloaded", timeout = 60_000 } = {}) {
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await page.goto(url, { waitUntil, timeout });
+      return true;
+    } catch (e) {
+      lastErr = e;
+      if (!TRANSIENT_NAV_RE.test(String(e?.message ?? e)) || i === attempts - 1) break;
+      console.log(dim(`  ↻ transient network error (${String(e.message).match(/ERR_[A-Z_]+/)?.[0] ?? "nav"}) — retry ${i + 1}/${attempts - 1} in ${3 * (i + 1)}s`));
+      await page.waitForTimeout(3000 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
+
+/* Phase 2 — the session assertion said "not signed in" even though the page
+   state looked fine. Dump exactly what the page is (URL/title/first links) so
+   the empty run is diagnosable later instead of just "0 postings". */
+async function dbgLoginWall(page, url) {
+  try {
+    const info = [
+      `login-wall: page state looked signed-in but the session cookie was absent`,
+      `finalUrl: ${page.url()}`,
+      `title: ${await page.title()}`,
+      "--- first 12 link texts ---",
+      await page.evaluate(() => [...document.querySelectorAll("a")].map((a) => (a.innerText || "").trim().split("\n")[0]).filter(Boolean).slice(0, 12).join(" | ")),
+    ].join("\n");
+    writeFileSync(path.join(REPORTS_DIR, `login-wall-${Date.now()}.txt`), info);
+  } catch { /* diagnostics are best-effort */ }
+}
+
 const green = (s) => `\x1b[32m${s}\x1b[0m`;
 const yellow = (s) => `\x1b[33m${s}\x1b[0m`;
 const red = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -882,6 +937,24 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
     } catch { /* credential path is best-effort — the human flow continues */ }
   }
   if (!loginOnly && state.kind === "loggedIn") {
+    /* PHASE 2 GROUND TRUTH: page state alone false-positives on LinkedIn —
+       the signed-out guest homepage passes every URL/title probe (it IS
+       linkedin.com/jobs/, no authwall in the title), so runs "succeeded"
+       while holding no li_at cookie and collected only category tiles. When
+       the site names its session cookie, require it HERE before we trust the
+       state. Absent → treat exactly like an expired session (ping + steer to
+       --login-only) instead of running a dead, empty cycle. */
+    const names = rules.sessionCookieNames ?? [];
+    if (names.length) {
+      const cookies = await page.context().cookies(url).catch(() => []);
+      const ok = names.some((n) => cookies.find((c) => c.name === n && c.value));
+      if (!ok) {
+        console.log(yellow(`⏸  ${rules.label}: not signed in (no ${names.join("/")} cookie) — session needs a login.`));
+        await notifySessionExpired(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, rules.label).catch(() => {});
+        await dbgLoginWall(page, url);
+        return false;
+      }
+    }
     const problem = detectAccountProblem(state.bodyText);
     if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
     await persistSessionCookies(page, url); // #162: re-durable-ize session-only cookies the site refreshed this visit
@@ -1067,7 +1140,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
 
 async function collectJobs(page, url, site, max) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await gotoWithRetry(page, url);
   /* LinkedIn authwall: /jobs/view/<id>/ intermittently bounces to the
      signup wall (stale/guest sessions). Guest access DOES pass sometimes —
      retry fresh navigations (bounded) until document.title stops being a
@@ -1174,18 +1247,42 @@ async function collectJobs(page, url, site, max) {
         const text = (a.innerText || a.textContent || "").trim();
         if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
-        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "" });
+        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true });
       }
     }
     return out;
   }, rules.listSelectorHints);
+  /* POSTING-VS-NAV discriminator (Phase 1): the generic hint loop matches
+     broad hrefs, so on YC/Built In it collected site chrome ("Startup Jobs",
+     "Design & UI/UX") as postings — every row then skipped and the run was
+     all noise. Keep the two EXPLICIT, id-bearing collectors (Naukri cards,
+     LinkedIn currentJobId) unconditionally; for the generic loop, keep only
+     links classifyJobLink calls a real posting detail. */
+  const host = (() => { try { return normHost(url); } catch { return ""; } })();
+  const adjudicated = jobs.filter((j) => {
+    if (!j.__navCandidate) return true; // explicit id-bearing collectors
+    const cls = classifyJobLink({ href: j.url, text: j.title, host });
+    if (cls.kind === "posting") { if (cls.id) j.__jobId = cls.id; return true; }
+    if (cls.kind === "nav") return false;
+    return true; // "unknown" → keep (fail-open; a board we don't know yet)
+  });
+  let dropped = jobs.length - adjudicated.length;
   const deduped = [];
   const seen = new Set();
-  for (const j of jobs) {
+  for (const j of adjudicated) {
     const key = j.url.split("?")[0];
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(j);
+  }
+  /* If we saw links but they were ALL chrome, the collector is scraping nav
+     — surface it as selector drift (Phase 4 learns from this) instead of a
+     silent empty run. */
+  if (dropped > 0 && deduped.length === 0 && jobs.length > 0) {
+    console.log(yellow(`  ⚠ collection drift: ${dropped} link(s) scanned, 0 real postings — the board's list markup may have changed.`));
+    try { recordCollectionDrift(host, { scanned: jobs.length, kept: 0 }); } catch { /* best-effort */ }
+  } else if (dropped > 0) {
+    console.log(dim(`  (discriminator dropped ${dropped} nav/category link(s))`));
   }
   return deduped.slice(0, max);
 }
@@ -1218,7 +1315,7 @@ const largestFragment = (t) => String(t || "")
 const CLOSED_POSTING_RE = /no longer accepting applications|not accepting applications|no longer accepting job applications/i;
 
 async function openJob(page, job) {
-  await page.goto(job.url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await gotoWithRetry(page, job.url);
   await page.waitForTimeout(2500);
   /* same wall retry as collection: openJob's OWN navigation hits the wall
      again even when collection just got through (guest access is flaky) */
@@ -1477,7 +1574,7 @@ async function clickButton(page, locator, textRe) {
   }
 }
 
-async function trySubmit(page, site, rulesOverride) {
+async function trySubmit(page, site, rulesOverride, ctx = {}) {
   const rules = rulesOverride ?? SITE_RULES[site] ?? SITE_RULES.generic;
   /* the FINAL button is usually NOT the opener — Instahyre: "Apply now" opens
      a modal, then a plain "Submit" button inside it sends the application */
@@ -1485,12 +1582,26 @@ async function trySubmit(page, site, rulesOverride) {
   if ((await btn.count()) === 0 && site === "linkedin") {
     /* LinkedIn Easy Apply is a MULTI-STEP flow (Contact → Resume → Questions
        → Review) that renders INLINE in the sidebar in current LinkedIn (no
-       dialog container — the old modal selectors find nothing). Drive the
-       Next/Review buttons via JS clicks (pointer clicks get swallowed by
-       the re-rendering flow), bounded — and stop the instant the real
+       dialog container — the old modal selectors find nothing). Per step:
+       FILL the visible required fields FIRST, then drive Next/Review via JS
+       clicks (pointer clicks get swallowed by the re-rendering flow). The
+       old loop only clicked — LinkedIn's own validation silently rejected
+       every advance, so all 8 rounds expired with "submit never appeared"
+       (15 runs in a row). Bounded, and stops the instant the real
        "Submit application" button appears. */
-    for (let step = 0; step < 8; step++) {
+    for (let step = 0; step < 10; step++) {
       if ((await btn.count()) > 0) break;
+      /* fill THIS step's required fields before advancing (empty required
+         fields are why Next "did nothing" — LinkedIn blocks the step change) */
+      if (ctx.profile && !ctx.dryRun) {
+        try {
+          const mem = ctx.storedAnswers ?? (ctx.storedAnswers = {});
+          const stepRes = await fillApplicationForm(page, { profile: ctx.profile, job: ctx.job ?? {}, resumePath: ctx.resumePath, dryRun: false, siteHost: "linkedin", storedAnswers: mem });
+          if (stepRes.unfilledRequired.length) {
+            return { auto: false, note: `Easy Apply step ${step + 1}: cannot answer: ${stepRes.unfilledRequired.slice(0, 3).join("; ")} — form left open for review` };
+          }
+        } catch { /* step fill is best-effort — the click below still runs */ }
+      }
       const advanced = await page.evaluate(() => {
         const find = (re) => [...document.querySelectorAll("button, a[role=button]")]
           .find((b) => b.offsetParent && !b.disabled && re.test((b.innerText || b.getAttribute("aria-label") || "").trim()));
@@ -1500,7 +1611,7 @@ async function trySubmit(page, site, rulesOverride) {
         return true;
       }).catch(() => false);
       if (!advanced) break;
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(2500);
       btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
     }
   }
@@ -1520,7 +1631,7 @@ async function trySubmit(page, site, rulesOverride) {
       if (clicked) {
         await page.waitForTimeout(4000);
         const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
-        return { auto: true, note: success ? "submitted (auto, js)" : "clicked submit; success text not detected" };
+        return { auto: success, note: success ? "submitted (auto, js)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
       }
       /* still stuck: surface WHY (LinkedIn's validation error if present) */
       const blocker = await page.evaluate(() =>
@@ -1538,8 +1649,6 @@ async function trySubmit(page, site, rulesOverride) {
     return { auto: false, note: "apply flow opened but the submit step never appeared — NOT applied, needs review" };
   }
   if (rules.autoSubmit) {
-  }
-  if (rules.autoSubmit) {
     /* SAFETY PRE-CHECK before the one-way click: every required field in
        the form must hold a value — one empty required field = the ATS
        would bounce it anyway; fail CLOSED to the review queue instead. */
@@ -1555,7 +1664,7 @@ async function trySubmit(page, site, rulesOverride) {
     await clickButton(page, btn, rules.submitButtonText ?? rules.applyButtonText);
     await page.waitForTimeout(4000);
     const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
-    return { auto: true, note: success ? "submitted (auto)" : "clicked submit; success text not detected" };
+    return { auto: success, note: success ? "submitted (auto)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
   }
   return { auto: false, note: "review gate — human submits" };
 }
@@ -1945,7 +2054,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
         }
         if (args["dry-run"]) { recordResultBoth(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
 
-        const sub = await trySubmit(page, site, rules); // merged registry rules — the owner's autoSubmit decision
+        const sub = await trySubmit(page, site, rules, { profile, job, resumePath, dryRun: args["dry-run"], storedAnswers: mem }); // merged registry rules — the owner's autoSubmit decision
         if (sub.auto) {
           recordResultBoth(report, job, "submitted", sub.note);
           markApplied(job.url);
@@ -2268,6 +2377,17 @@ async function main() {
     }
     const tot = rows.reduce((a, r) => a + r.submitted + r.needs_review + r.skipped + r.errors + r.owner_applied + r.owner_dismissed + r.owner_closed, 0);
     const lines = rows.map((r) => `${r.site_host}: ✓${r.submitted} ⏸${r.needs_review} ⏭${r.skipped} ✗${r.errors} | you: ✓${r.owner_applied} ✕${r.owner_dismissed} 🚫${r.owner_closed}`);
+    /* PHASE 4 — boards that stopped yielding postings: the discriminator's
+       collectionDrift counter tells the owner WHICH sites silently rotted
+       (markup moved) instead of "0 collected" showing up as a healthy row. */
+    let driftLines = "";
+    try {
+      const sites = (await db?.listJobSites?.().catch(() => [])) ?? [];
+      const drifted = sites.filter((s) => Number(s?.rules?.collectionDrift?.count ?? 0) >= 3 && s.status !== "pending");
+      if (drifted.length) {
+        driftLines = `\n⚠️ collection drift (board markup likely moved — re-run --login-only / check selectors):\n${drifted.map((s) => `• ${s.host} ×${s.rules.collectionDrift.count} (last: ${s.rules.collectionDrift.scanned} scanned, ${s.rules.collectionDrift.kept} kept)`).join("\n")}`;
+      }
+    } catch { /* drift report is best-effort */ }
     /* 🫀 engine uptime from the heartbeat history (#156): the context a
        zero-activity week needs — gaps are Off switches or the PC asleep */
     let uptimeLine = "";
@@ -2289,8 +2409,8 @@ async function main() {
       if (evs.length) uptimeLine = `\n🫀 engine uptime (7d): ${fmt(total)} of 7d (${pct}%) — gaps are Off switches or the PC asleep`;
     } catch { /* the timeline is best-effort */ }
     const msg = tot === 0
-      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?${uptimeLine}`
-      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}${uptimeLine}`;
+      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?${uptimeLine}${driftLines}`
+      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}${uptimeLine}${driftLines}`;
     console.log(msg);
     await sendTelegramNotify(msg);
     return;

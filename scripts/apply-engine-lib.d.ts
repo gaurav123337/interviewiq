@@ -18,6 +18,17 @@ export const SITE_RULES: Record<string, ApplySiteRule>;
 
 export function siteFromUrl(url: string): string;
 
+export interface JobLinkClass {
+  kind: "posting" | "nav" | "unknown";
+  id: string | null;
+  routeKey: string | null;
+}
+
+/** Discriminate a posting detail link from site chrome (nav/category tiles). */
+export function classifyJobLink(opts: { href?: string; text?: string; host?: string }): JobLinkClass;
+
+export function titleFieldMismatch(jobTitle: string | null | undefined, profileHeadline: string | null | undefined): boolean;
+
 export function titleRelevant(title: string | null | undefined, profile: { headline?: string; skills?: string[] } | null | undefined): boolean;
 
 export function looksLikeRefusal(text: string | null | undefined): boolean;
@@ -59,7 +70,9 @@ export interface ApplyProfileLike {
 
 export interface ApplyJobLike {
   title?: string; company?: string; location?: string; url?: string;
-  skills?: string[]; __coverLetter?: string; __fit?: number | null; __fitNote?: string; __judge?: { verdict?: string; reason?: string; missingCore?: string[] };
+  skills?: string[]; seniority?: string; instaMatch?: string | null;
+  __coverLetter?: string; __fit?: number | null; __fitNote?: string; __judge?: { verdict?: string; reason?: string; missingCore?: string[] };
+  __submitted?: boolean; __successText?: string;
 }
 
 export function draftAnswer(
@@ -104,6 +117,8 @@ export function buildApplyReportSql(
 
 export function canonicalSkill(raw: string | null | undefined): string | null;
 
+export function extractJdSkills(description: string | null | undefined): string[];
+
 export function profileSkillSet(profile: ApplyProfileLike | null | undefined): Set<string>;
 
 export interface JdSkillMatchResult {
@@ -129,6 +144,8 @@ export function postingRelevant(
 export function extraAnswerFor(profile: ApplyProfileLike | null | undefined, kind: string): string;
 
 export function isExternalApplyButton(text: string | null | undefined): boolean;
+
+export function detectSubmissionSuccess(pageText: string | null | undefined, siteKey: string): boolean;
 
 export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined, coreMissing?: string[]): number | null;
 

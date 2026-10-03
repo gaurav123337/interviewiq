@@ -76,6 +76,50 @@ export const SITE_RULES = {
     /* no durable named session cookie (indeed rotates analytics ids) —
        login verification stays page-based for this site */
   },
+  workatastartup: {
+    label: "Work at a Startup (YC)",
+    jobsUrlHosts: ["workatastartup.com", "ycombinator.com"],
+    loginPathHints: ["/login", "/signin", "/sessions"],
+    loggedInHint: "",
+    applyButtonText: /^apply( now)?$/i,
+    steps: ["apply"],
+    autoSubmit: false, // per-startup ATS is unknown — review gate
+    submitButtonText: /^submit( application)?$/i,
+    successText: /application (was|has been) (sent|submitted)|thanks for applying|applied/i,
+    /* real postings live under /jobs/<id-or-slug>; the bare /jobs index is
+       the LIST — classifyJobLink keeps only the detail links */
+    listSelectorHints: ["a[href*='/jobs/']"],
+    minIntervalMs: 2000,
+  },
+  wellfound: {
+    label: "Wellfound",
+    jobsUrlHosts: ["wellfound.com", "angel.co"],
+    loginPathHints: ["/login", "/users/sign_in"],
+    loggedInHint: "",
+    applyButtonText: /^apply( now)?$/i,
+    steps: ["apply"],
+    autoSubmit: false,
+    submitButtonText: /^submit( application)?$/i,
+    successText: /application (was|has been) (sent|submitted)|thanks for applying|applied/i,
+    listSelectorHints: ["a[href*='/jobs/']"],
+    minIntervalMs: 2000,
+  },
+  builtin: {
+    label: "Built In",
+    jobsUrlHosts: ["builtin.com"],
+    loginPathHints: ["/login", "/users/sign_in"],
+    loggedInHint: "",
+    applyButtonText: /^apply( now)?$/i,
+    steps: ["apply"],
+    autoSubmit: false, // external ATS per employer — review gate
+    submitButtonText: /^submit( application)?$/i,
+    successText: /application (was|has been) (sent|submitted)|thanks for applying|applied/i,
+    /* Built In postings are /job/<slug>/<id>; scoping to /job/ drops the
+       category tiles ("/jobs/engineering", "/jobs/design") that were being
+       scraped as postings */
+    listSelectorHints: ["a[href*='/job/']"],
+    minIntervalMs: 2000,
+  },
   generic: {
     label: "Generic",
     jobsUrlHosts: [],
@@ -99,6 +143,106 @@ export function siteFromUrl(url) {
     if (rules.jobsUrlHosts.some(h => host === h || host.endsWith("." + h))) return key;
   }
   return "generic";
+}
+
+/* ─────────────────── posting-vs-nav discrimination ───────────────────
+
+   The generic collector used to treat ANY anchor matching broad hints
+   (a[href*='job']) as a posting — on Y Combinator and Built In that meant
+   site chrome: "Startup Jobs", "Design & UI/UX", "Recruiting & HR",
+   category tiles. Every row then skipped as "not relevant" and the run
+   screamed SUSPICIOUS RUN while applying to nothing. A REAL posting link
+   carries an ID-BEARING detail path; a category/nav link does not. This is
+   the discriminator: pure, testable, and shared by the collector and the
+   drift learner (so what we reject is exactly what we learn from). */
+
+/* Hosts whose posting detail paths carry no numeric id (slug-only). */
+const SLUG_POSTING_HOSTS = /(^|\.)(workatastartup|wellfound|angel)\.co$|(^|\.)ycombinator\.com$/;
+
+/* Nav/category labels that LOOK like postings to a naive text filter. */
+const NAV_LABEL_RE = /^(all jobs?|jobs?|job search|search jobs?|startup jobs?|remote jobs?|find jobs?|browse jobs?|jobs? by (category|role|location)|engineering|design|design & ui\/ux|ui\/ux|recruiting( & hr)?|human resources|marketing|sales|finance|legal|operations|product|product management|data|data & analytics|customer service|administrative|healthcare services|accounting|arts and design|community and social services|consulting|education|entrepreneurship|information technology|business development|program and project management|retail|more jobs?|view all|see all|see more|show more|view more)$/i;
+
+/**
+ * Classify an anchor as a real posting link or site chrome.
+ * @returns {{"kind":"posting"|"nav"|"unknown", "id": string|null, "routeKey": string|null}}
+ *   - posting: href has an id-bearing detail path for this board family
+ *   - nav: href is a category/listing route, or the label is chrome
+ *   - unknown: not enough signal (caller decides)
+ */
+export function classifyJobLink({ href, text, host = "" } = {}) {
+  let u = null;
+  try { u = new URL(String(href || ""), "https://x.invalid"); } catch { /* unparseable → unknown */ }
+  const raw = String(href || "");
+  const label = String(text || "").trim().split("\n")[0].trim();
+  const h = String(host || (u && u.hostname !== "x.invalid" ? u.hostname : "")).replace(/^www\./, "");
+
+  if (NAV_LABEL_RE.test(label)) return { kind: "nav", id: null, routeKey: null };
+  if (!raw) return { kind: "unknown", id: null, routeKey: null };
+
+  const path = (u?.pathname || raw.split(/[?#]/)[0]);
+  const q = u?.search || "";
+  const qs = new URLSearchParams(q.startsWith("?") ? q : "");
+
+  /* id in a query param = a posting (LinkedIn currentJobId, ATS gh_jid…) */
+  const qid = qs.get("currentJobId") || qs.get("jobId") || qs.get("gh_jid") || qs.get("lever_job_id") || qs.get("ashby_jid") || qs.get("id");
+  if (qid && /\d/.test(qid)) return { kind: "posting", id: qid, routeKey: null };
+
+  /* ATS detail paths (greenhouse /jobs/<id>, lever /<slug>/<uuid>) */
+  const gh = path.match(/\/jobs\/(\d{4,})/);
+  if (gh) return { kind: "posting", id: gh[1], routeKey: null };
+  const lever = path.match(/\/[^/]+\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (lever) return { kind: "posting", id: lever[0].split("/").pop(), routeKey: null };
+
+  /* LinkedIn /jobs/view/<id> */
+  const li = path.match(/\/jobs\/view\/(\d{5,})/);
+  if (li) return { kind: "posting", id: li[1], routeKey: null };
+
+  /* Naukri /job-listings-<slug>-<id> (id trails the slug) and /job-detail */
+  const nk = path.match(/\/job-listings?-([^/?#]+)/i);
+  if (nk) {
+    const idm = nk[1].match(/(\d{4,})$/);
+    return { kind: "posting", id: idm ? idm[1] : null, routeKey: null };
+  }
+  if (/\/job-detail/i.test(path)) return { kind: "posting", id: null, routeKey: "job-detail" };
+
+  /* Instahyre /candidate/opportunities/<id> */
+  const ih = path.match(/\/candidate\/opportunities\/(\d{3,})/);
+  if (ih) return { kind: "posting", id: ih[1], routeKey: null };
+
+  /* Built In /job/<slug>/<id> */
+  const bi = path.match(/\/job\/[a-z0-9-]+\/(\d{4,})/i);
+  if (bi) return { kind: "posting", id: bi[1], routeKey: null };
+
+  /* Indeed /viewjob?jk=<hex> (id may be in the query) */
+  const jk = qs.get("jk");
+  if (jk && jk.length >= 8) return { kind: "posting", id: jk, routeKey: null };
+  if (/\/viewjob|\/rc\/clk/i.test(path)) return { kind: "posting", id: null, routeKey: "viewjob" };
+
+  /* Slug-only boards (YC/Work at a Startup/Wellfound): /jobs/<id>-slug,
+     /jobs/<numeric-id>, or a company/job slug — no numeric requirement, but
+     LISTING routes (bare /jobs, /jobs/all, category slugs) are still nav. */
+  if (SLUG_POSTING_HOSTS.test(h)) {
+    const seg = path.match(/\/jobs\/([^/?#]+)/);
+    if (seg && !/^(all|search|category|role|location|remote|startup)$/i.test(seg[1]) && seg[1].length >= 3) {
+      const num = seg[1].match(/^(\d{3,})/);
+      return { kind: "posting", id: num ? num[1] : null, routeKey: "slug-job" };
+    }
+    /* /companies/<slug> is a company page, never a posting */
+    return { kind: "nav", id: null, routeKey: null };
+  }
+
+  /* Generic fallback: a detail segment that carries digits (an id) is a
+     posting; a bare word segment (/jobs, /engineering, /careers) is nav. */
+  const detail = path.match(/\/(jobs?|positions?|openings?|vacanc(?:y|ies)|careers?)\/([^/?#]+)/i);
+  if (detail) {
+    const seg = detail[2];
+    if (/^\d{2,}/.test(seg) || /\d{3,}/.test(seg)) return { kind: "posting", id: (seg.match(/\d{2,}/) || [])[0], routeKey: null };
+    const num = seg.match(/(\d{4,})/);
+    if (num) return { kind: "posting", id: num[1], routeKey: null };
+    return { kind: "nav", id: null, routeKey: null }; // word-only → listing/category
+  }
+
+  return { kind: "unknown", id: null, routeKey: null };
 }
 
 /* ─────────────────── page-state guards (login / challenge / bans) ─────────────────── */
@@ -133,6 +277,33 @@ export function looksLoggedIn({ url, title, bodyText, loggedInHint, loginPathHin
   if (onLogin) return false;
   if (loggedInHint && !u.includes(loggedInHint)) return false;
   return !isChallengePage(title, bodyText);
+}
+
+/** Does the job title's field fundamentally conflict with the profile's core
+    focus? "DevOps Engineer" for a "Frontend Engineer" is a mismatch — reject it
+    before exploring skills. This is asymmetric: a senior frontend profile can
+    plausibly apply to "Full Stack" (frontend + backend together), but not to
+    "Data Science" or "QA Automation" (different core function). */
+export function titleFieldMismatch(jobTitle, profileHeadline) {
+  const jt = String(jobTitle || "").toLowerCase();
+  const ph = String(profileHeadline || "").toLowerCase();
+  if (!jt || !ph) return false;
+  
+  /* fullstack engineers can apply to anything — they're software engineers */
+  if (/\b(fullstack|full.?stack)\b/.test(ph)) return false;
+  
+  /* hard-reject domains: fundamentally different work, not just stack specialization */
+  const isNonSoftwareRole = /\b(devops|sre|infrastructure|sys(tem|ops)|dba|database|security engineer|qa automation|sdet|qa engineer|data (engineer|scientist|analyst)|machine learning|mlops|ai engineer|product manager|pm|product owner|ux designer|graphic designer|ui\/ux|design)\b/.test(jt);
+  
+  if (!isNonSoftwareRole) return false; // backend/frontend/sde/engineer all pass through
+  
+  /* profile is a software engineer: they should not apply for non-software roles */
+  const profileIsSoftwareEng = /\b(frontend|front-end|backend|back-end|software engineer|sde|developer|engineer)\b/.test(ph) &&
+    !/\b(product manager|pm|designer|product owner)\b/.test(ph); // not a pm/designer wearing engineer title
+  
+  if (profileIsSoftwareEng) return true; // software engineer applying for devops/qa/data/etc = mismatch
+  
+  return false;
 }
 
 /** Is this posting title plausibly relevant to the profile? Generic role
@@ -197,6 +368,15 @@ export function canonicalSkill(raw) {
   const s = String(raw || "").toLowerCase().replace(/\s+/g, " ").trim().replace(/[.,;]$/, "");
   if (!s || s.length > 24) return null;
   return SKILL_ALIASES[s] ?? null;
+}
+
+/** Was the submission genuinely successful? The SITE_RULES carry a successText
+    regex; this checks if the page text matches it. Returns true only if success
+    text is detected — missing success text is NOT success (fail-closed). */
+export function detectSubmissionSuccess(pageText, siteKey) {
+  const rules = SITE_RULES[siteKey] || SITE_RULES.generic;
+  const text = String(pageText || "").slice(0, 5000);
+  return rules.successText.test(text);
 }
 
 /** The profile's canonical skill set (deduped, non-empty). */
@@ -307,6 +487,10 @@ function profHasPull(prof, text, minProfile) {
     title mangling ("Banking — Senior Frontend Engineer (L5)") and template
     quirks must not overrule the owner's explicit verdict on THIS posting. */
 export function postingRelevant({ title, description }, profile, opts = {}) {
+  /* title field mismatch is a hard reject unless owner explicitly confirmed this posting */
+  if (titleFieldMismatch(title, profile?.headline) && !opts.ownerConfirmed) {
+    return { ok: false, reason: "job field incompatible with profile (e.g., DevOps vs Frontend)" };
+  }
   if (!titleRelevant(title, profile) && !opts.ownerConfirmed) return { ok: false, reason: "title not relevant to profile" };
   const m = jdSkillMatch(String(description || ""), profile, {
     critical: titleSkills(title),
@@ -640,6 +824,26 @@ export function valueMatchesList(answer, optionText) {
 
 export function newReport(sourceUrl, site) {
   return { sourceUrl, site, startedAt: Date.now(), results: [], counts: { submitted: 0, needsReview: 0, skipped: 0, error: 0 } };
+}
+
+/** 0–100 fit score from the skill gate's matched/missing arrays. Null when
+    the gate had no opinion (JD named no specific skills).
+    HONESTY (#164): this is KEYWORD OVERLAP, not an overall match — the UI
+    labels it as such. `coreMissing` (the AI judge's missingCore — skills the
+    posting fundamentally requires that the resume lacks) applies a 12-point
+    penalty each, capped at 48, so a Java-core JD never shows a flattering
+    60 just because the resume also says "testing" and "performance". */
+/** Extract skills from JD description using keyword scanning. This captures
+    skills that appear in "Key Technologies", "Required skills", and related
+    sections that the AI judge also reads. Returns canonical skills only. */
+export function extractJdSkills(description) {
+  const text = " " + String(description || "").toLowerCase().replace(/[^a-z0-9+#./ -]/g, " ").replace(/\s+/g, " ") + " ";
+  const jdSkills = new Set();
+  for (const [alias, canon] of Object.entries(SKILL_ALIASES)) {
+    const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\//g, "\\/");
+    if (new RegExp("(?:^| )" + esc + "(?: |$)").test(text)) jdSkills.add(canon);
+  }
+  return [...jdSkills];
 }
 
 /** 0–100 fit score from the skill gate's matched/missing arrays. Null when

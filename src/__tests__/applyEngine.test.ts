@@ -7,11 +7,59 @@ import { describe, expect, it } from "vitest";
 import {
   SITE_RULES, siteFromUrl, classifyQuestion, draftAnswer,
   valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, titleFieldMismatch, looksLikeRefusal,
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
-  titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor,
+  titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor, classifyJobLink,
 } from "../../scripts/apply-engine-lib.js";
+
+describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
+  it("keeps real posting detail links (id-bearing routes)", () => {
+    expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).id).toBe("4471345244");
+    expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/search/?currentJobId=4471345244", host: "linkedin.com" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://www.naukri.com/job-listings-senior-frontend-engineer-1234567", host: "naukri.com" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://www.instahyre.com/candidate/opportunities/12345/", host: "instahyre.com" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://www.builtin.com/job/staff-frontend-engineer/9876543", host: "builtin.com" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://boards.greenhouse.io/acme/jobs/4567890", host: "boards.greenhouse.io" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://indeed.com/viewjob?jk=abcdef123456", host: "indeed.com" }).kind).toBe("posting");
+  });
+
+  it("drops the exact nav/category tiles that polluted YC + Built In runs", () => {
+    const yc = "https://www.ycombinator.com/jobs";
+    expect(classifyJobLink({ href: yc, text: "Startup Jobs", host: "ycombinator.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://www.builtin.com/jobs/design", text: "Design & UI/UX", host: "builtin.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://www.builtin.com/jobs/engineering", text: "Engineering", host: "builtin.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://www.naukri.com/jobs", text: "All Jobs", host: "naukri.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/engineering-jobs-bengaluru", text: "Engineering", host: "linkedin.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://www.ycombinator.com/companies", text: "Recruiting & HR", host: "ycombinator.com" }).kind).toBe("nav");
+  });
+
+  it("treats a bare /jobs listing route as nav, a /jobs/<id-or-slug> as a posting", () => {
+    expect(classifyJobLink({ href: "https://www.workatastartup.com/jobs", text: "Jobs", host: "workatastartup.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://www.workatastartup.com/jobs/12345-senior-frontend", text: "Senior Frontend Engineer", host: "workatastartup.com" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://acme.com/careers/12345", text: "Senior Frontend Engineer", host: "acme.com" }).kind).toBe("posting");
+    expect(classifyJobLink({ href: "https://acme.com/careers/engineering", text: "Engineering", host: "acme.com" }).kind).toBe("nav");
+  });
+
+  it("is null-safe and does not throw on junk hrefs", () => {
+    expect(classifyJobLink({}).kind).toBe("unknown");
+    expect(classifyJobLink({ href: "", text: "" }).kind).toBe("unknown");
+    expect(classifyJobLink({ href: "#main-content", text: "Skip to main content" }).kind).toBe("unknown");
+  });
+
+  it("routes the newly-supported boards to their rules", () => {
+    expect(siteFromUrl("https://www.workatastartup.com/jobs")).toBe("workatastartup");
+    expect(siteFromUrl("https://www.builtin.com/jobs")).toBe("builtin");
+    expect(siteFromUrl("https://wellfound.com/jobs")).toBe("wellfound");
+  });
+
+  it("never auto-submits the newly-added unknown-ATS boards (review gate)", () => {
+    expect(SITE_RULES.workatastartup.autoSubmit).toBe(false);
+    expect(SITE_RULES.builtin.autoSubmit).toBe(false);
+    expect(SITE_RULES.wellfound.autoSubmit).toBe(false);
+  });
+});
 
 describe("external apply buttons (company-website ATS)", () => {
   it("detects the company-website mode (the button text is the mode selector)", () => {
@@ -189,6 +237,42 @@ describe("page-state guards", () => {
 
 describe("relevance + refusal guards", () => {
   const fe = { headline: "Staff Frontend Engineer", skills: ["React", "TypeScript", "Next.js"] };
+  const be = { headline: "Backend Engineer — Python & Java", skills: ["Python", "Java", "Spring Boot", "PostgreSQL", "Kubernetes"] };
+  const devops = { headline: "DevOps Engineer", skills: ["Terraform", "AWS", "Kubernetes", "Docker"] };
+
+  it("titleFieldMismatch catches core-incompatible fields (DevOps vs Frontend)", () => {
+    expect(titleFieldMismatch("DevOps Engineer", "Staff Frontend Engineer")).toBe(true);
+    expect(titleFieldMismatch("SRE — Infrastructure", "Staff Frontend Engineer")).toBe(true);
+    expect(titleFieldMismatch("QA Automation — SDET", "Staff Frontend Engineer")).toBe(true);
+    expect(titleFieldMismatch("Data Engineer", "Staff Frontend Engineer")).toBe(true);
+    expect(titleFieldMismatch("Machine Learning Engineer", "Staff Frontend Engineer")).toBe(true);
+  });
+
+  it("titleFieldMismatch allows Frontend-to-Backend field incompatibility (different stack, same domain)", () => {
+    expect(titleFieldMismatch("Backend Engineer", "Staff Frontend Engineer")).toBe(false);
+    expect(titleFieldMismatch("Senior Python Developer", "Staff Frontend Engineer")).toBe(false);
+    expect(titleFieldMismatch("UI/UX Designer", "Backend Engineer — Python & Java")).toBe(true);
+    expect(titleFieldMismatch("Product Manager", "Backend Engineer — Python & Java")).toBe(true);
+  });
+
+  it("titleFieldMismatch allows Full Stack to apply to any engineering role", () => {
+    expect(titleFieldMismatch("DevOps Engineer", "Full Stack Engineer")).toBe(false);
+    expect(titleFieldMismatch("Backend Engineer", "Full Stack Engineer")).toBe(false);
+    expect(titleFieldMismatch("Frontend Engineer", "Full Stack Engineer")).toBe(false);
+  });
+
+  it("titleFieldMismatch passes generic engineering titles (no field conflict)", () => {
+    expect(titleFieldMismatch("Senior Software Engineer", "Staff Frontend Engineer")).toBe(false);
+    expect(titleFieldMismatch("Engineer — Platform", "Staff Frontend Engineer")).toBe(false);
+    expect(titleFieldMismatch("SDE III", "Staff Frontend Engineer")).toBe(false);
+  });
+
+  it("titleFieldMismatch is null-safe", () => {
+    expect(titleFieldMismatch("", "Staff Frontend Engineer")).toBe(false);
+    expect(titleFieldMismatch("DevOps Engineer", "")).toBe(false);
+    expect(titleFieldMismatch(null, "Staff Frontend Engineer")).toBe(false);
+    expect(titleFieldMismatch("DevOps Engineer", null)).toBe(false);
+  });
 
   it("titleRelevant passes engineering roles and skill-matched titles", () => {
     expect(titleRelevant("Senior Frontend Engineer", fe)).toBe(true);
@@ -362,8 +446,8 @@ describe("critical-skill gate — title-named skills are not ratio-forgiven", ()
     expect(m.ok).toBe(true);
   });
 
-  it("a python-only JD still fails for a frontend profile — via ratio, not critical", () => {
-    const m = postingRelevant({ title: "Platform Engineer", description: "python python python — everything here is python" }, profile);
+  it("a python-only JD still fails for a frontend profile — not title-mismatch, just skill ratio", () => {
+    const m = postingRelevant({ title: "Senior Software Engineer", description: "python python python — everything here is python" }, profile);
     expect(m.ok).toBe(false);
     expect(m.reason).toMatch(/python/);
   });
