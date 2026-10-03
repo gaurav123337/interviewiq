@@ -58,27 +58,7 @@ export function SecuritySection() {
     }
   };
 
-  useEffect(() => {
-    void checkConnection();
-    const interval = setInterval(() => void checkConnection(), 5000); // Refresh every 5s
-    return () => clearInterval(interval);
-  }, []);
-
-  const handlePortChange = () => {
-    try {
-      const port = parseInt(portInput, 10);
-      if (port < 1 || port > 65535) {
-        toast("Port must be between 1 and 65535");
-        return;
-      }
-      setCleanupServerPort(port);
-      setShowPortConfig(false);
-      toast(`✅ Port updated to ${port}. Reconnecting...`);
-      setTimeout(() => void checkConnection(), 500);
-    } catch (e) {
-      toast("✗ Invalid port number");
-    }
-  };
+  // No auto-polling - user controls refresh manually
 
   const handleCleanup = async () => {
     if (!serverConnected) {
@@ -121,6 +101,9 @@ export function SecuritySection() {
   return (
     <div className="space-y-4">
       {/* System Cleanup */}
+      <div className="p-3 text-[11px] text-mut hint">
+        Manage cleanup manually — configure automatic polling in the caller if needed.
+      </div>
       <div className={`${cardCls} p-5`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -137,14 +120,6 @@ export function SecuritySection() {
           <div className="flex items-center gap-2">
             <button
               className={btnGhost + " " + btnSm}
-              onClick={() => void checkConnection()}
-              disabled={checkingConnection}
-              title="Check connection to cleanup server"
-            >
-              {checkingConnection ? "🔄" : "🔌"}
-            </button>
-            <button
-              className={btnGhost + " " + btnSm}
               onClick={() => void handleCleanup()}
               disabled={cleanupBusy || !serverConnected || !processStatus || processStatus.totalProcesses === 0}
             >
@@ -154,8 +129,16 @@ export function SecuritySection() {
                   Cleaning…
                 </>
               ) : (
-                <>🧹 Clean up</>  
+                <>🧹 Clean up</>
               )}
+            </button>
+            <button
+              className={btnGhost + " " + btnSm}
+              onClick={() => void checkConnection()}
+              disabled={checkingConnection}
+              title="Refresh connection and process status"
+            >
+              {checkingConnection ? "🔄" : "↻"}
             </button>
           </div>
         </div>
@@ -190,7 +173,21 @@ export function SecuritySection() {
             />
             <button
               className={btnGhost + " " + btnSm}
-              onClick={handlePortChange}
+              onClick={() => {
+                try {
+                  const port = parseInt(portInput, 10);
+                  if (port < 1 || port > 65535) {
+                    toast("Port must be between 1 and 65535");
+                    return;
+                  }
+                  setCleanupServerPort(port);
+                  setShowPortConfig(false);
+                  toast(`✅ Port updated to ${port}. Reconnecting...`);
+                  setTimeout(() => void checkConnection(), 500);
+                } catch (e) {
+                  toast("✗ Invalid port number");
+                }
+              }}
             >
               Save & reconnect
             </button>
@@ -217,7 +214,7 @@ export function SecuritySection() {
               <details className="mt-2 cursor-pointer">
                 <summary className="font-mono text-[11px]">Errors ({cleanupResult.errors.length})</summary>
                 <pre className="mt-1 bg-black/20 rounded p-2 font-mono text-[10px] overflow-auto max-h-[120px]">
-                  {cleanupResult.errors.join("\n")}
+                  {cleanupResult.errors.join("\\n")}
                 </pre>
               </details>
             )}
@@ -226,17 +223,20 @@ export function SecuritySection() {
 
         {/* Process Status */}
         {processStatus && (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Chip>
-              📊 node.exe: {processStatus.nodeProcesses}
-            </Chip>
-            <Chip>
-              🎭 playwright: {processStatus.playwrightProcesses}
-            </Chip>
-            <Chip tone={processStatus.totalProcesses > 0 ? "warn" : "ok"}>
-              Total: {processStatus.totalProcesses}
-            </Chip>
-          </div>
+          <>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Chip>
+                📊 node.exe: {processStatus.nodeProcesses}
+              </Chip>
+              <Chip>
+                🎭 playwright: {processStatus.playwrightProcesses}
+              </Chip>
+              <Chip tone={processStatus.totalProcesses > 0 ? "warn" : "ok"}>
+                Total: {processStatus.totalProcesses}
+              </Chip>
+            </div>
+            <button className={btnGhost + btnSm} onClick={() => void checkConnection()}>Refresh status</button>
+          </>
         )}
       </div>
 
@@ -262,7 +262,8 @@ export function SecuritySection() {
           <Chip tone={status?.mfaVerified ? "ok" : "default"}>
             {status?.mfaVerified
               ? "✅ This session is MFA-verified"
-              : "⚠️ This session has no TOTP — flip enforcement before signing out"}
+              : "⚠️ This session has no TOTP — flip enforcement before signing out"
+            }
           </Chip>
           {(status?.factors?.length ?? 0) > 0 && (
             <Chip>{status!.factors.length} authenticator factor{(status!.factors.length === 1 ? "" : "s")} enrolled</Chip>
