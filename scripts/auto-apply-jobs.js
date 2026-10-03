@@ -259,7 +259,13 @@ async function browserHasSessionCookie(names, url) {
     const f = path.join(cloneDir, ...rel.split("/"));
     try {
       const buf = readFileSync(f);
-      const hit = names.find((n) => buf.includes(Buffer.from(`\u0001${n}\u0001`)) || buf.includes(Buffer.from(`${n}${host}`)));
+      /* Chrome's Cookies sqlite stores name and host_key as separate
+         varint-prefixed columns — the old \u0001-delimited / name+host
+         adjacency patterns can never match, so this disk fallback always
+         said ABSENT. Match the raw name bytes AND the domain tail instead:
+         this site's Cookies db always contains both. */
+      const tail = host.split(".").slice(-2).join(".");
+      const hit = names.find((n) => buf.includes(Buffer.from(n)) && (buf.includes(Buffer.from(tail)) || buf.includes(Buffer.from(host))));
       if (hit) return true;
     } catch { /* clone file absent — keep looking */ }
   }
@@ -339,6 +345,49 @@ async function logSiteCookieInventory(page, url) {
     const inv = site.map((c) => `${c.name}(${c.expires > 0 ? "durable" : "session-only"})`).join(", ");
     if (inv) signinStepLog(`cookie inventory @${(new URL(url).hostname || "")}: ${inv}`);
   } catch { /* unreachable context — skip */ }
+}
+
+/* ---- #165 session sidecar ---------------------------------------------------
+   A VERIFIED login used to die with its browser: the session cookie lives in
+   Chromium memory until flush, and a hard kill ("context destroyed") never
+   reaches the profile's Cookies sqlite — so merge-back folded back nothing
+   and the owner had to re-sign-in forever (LinkedIn 2026-10-03: verifySession
+   PASSED with li_at expiring 2027, the outcome check 2s later read the dead
+   handle, said ok=false, and the session was gone). Fix, two halves:
+   1. storeSessionSidecar — on VERIFIED login, snapshot the site's session
+      cookies (values included — same trust boundary as the profile's own
+      Cookies db; values are NEVER logged) into the real profile dir.
+   2. injectStoredSession — every ensureLoggedIn start (and recovery relaunch)
+      re-injects the sidecar via context.addCookies, so the next browser
+      starts signed-in and Chromium re-persists the cookies durably. */
+function sessionSidecarPath(url) {
+  let host = "";
+  try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+  return host ? path.join(PROFILE_DIR, `signin-session-${host}.json`) : "";
+}
+async function storeSessionSidecar(page, url, names) {
+  try {
+    const f = sessionSidecarPath(url);
+    if (!f || !names?.length) return false;
+    const all = await page.context().cookies(url).catch(() => []);
+    const keep = all.filter((c) => c && c.value && names.includes(c.name));
+    if (!keep.length) return false;
+    writeFileSync(f, JSON.stringify({ url, host: new URL(url).hostname, at: Date.now(), cookies: keep }));
+    signinStepLog(`session sidecar written: ${path.basename(f)} (${keep.map((c) => c.name).join(",")})`);
+    return true;
+  } catch { return false; }
+}
+async function injectStoredSession(page, url) {
+  try {
+    const f = sessionSidecarPath(url);
+    if (!f || !existsSync(f)) return 0;
+    const sidecar = JSON.parse(readFileSync(f, "utf8"));
+    const cookies = Array.isArray(sidecar?.cookies) ? sidecar.cookies.filter((c) => c?.name && c?.value) : [];
+    if (!cookies.length) return 0;
+    await page.context().addCookies(cookies);
+    signinStepLog(`session sidecar re-injected: ${cookies.map((c) => c.name).join(",")}`);
+    return cookies.length;
+  } catch { return 0; }
 }
 
 /* --- report every per-job decision to apply_results (UI report) --- */
@@ -895,6 +944,10 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
      for a sign-in that will never come". This was the real scheduled-cloud
      wedge: remote relay runs hit a challenge/login and sat out the clock. */
   const humanAvailable = !args_unattended;
+  /* #165: a previous attempt may have verified a login whose browser died
+     before Chromium flushed the cookie DB — re-inject the sidecar so THIS
+     browser starts signed-in (Chromium then re-persists the cookies). */
+  await injectStoredSession(page, url);
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
   let state = await waitForStableState(page, rules, url);
   const onLogin = () => rules.loginPathHints.some(h => page.url().toLowerCase().includes(h.toLowerCase()));
@@ -923,6 +976,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
             if (state.kind === "loggedIn") {
               console.log(green(`  ✓ auto-login with the stored credential succeeded`));
               await persistSessionCookies(page, url); // #162: same durability rule for the stored-credential path
+              await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165
               if (!loginOnly) {
                 const problem = detectAccountProblem(state.bodyText);
                 if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
@@ -958,6 +1012,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
     const problem = detectAccountProblem(state.bodyText);
     if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
     await persistSessionCookies(page, url); // #162: re-durable-ize session-only cookies the site refreshed this visit
+    await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165: snapshot the verified session — survive a hard browser death
     console.log(green(`✓ ${rules.label}: session active`));
     return true;
   }
@@ -1077,6 +1132,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
             await np.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
             page = np;
             if (loginOnlyPage) loginOnlyPage.page = page;
+            await injectStoredSession(page, url); // #165: recovery windows start signed-in if a sidecar exists
             console.log(dim("   ↩️  login tab reopened — continue signing in there."));
             signinStepLog("tab reopened in the same browser — wait continues");
             continue;
@@ -1100,6 +1156,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
             await p2.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
             page = p2;
             if (loginOnlyPage) loginOnlyPage.page = page;
+            await injectStoredSession(page, url); // #165: recovery windows start signed-in if a sidecar exists
             console.log(green("   🔁 sign-in window relaunched — a fresh maximized window is open, continue there."));
             signinStepLog("browser relaunched in-child — wait continues");
             continue;
@@ -1128,6 +1185,8 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
         console.log(green(`✓ ${rules.label}: logged in.`));
         await logSiteCookieInventory(page, url); // #162 evidence: the site's REAL cookie names, for future pinning
         await persistSessionCookies(page, url); // #162 THE FIX: session-only OTP cookies die at browser close unless made durable
+        await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165: the verified session must survive even a hard browser kill
+        if (loginOnlyPage) loginOnlyPage.verified = true; // #165: the outcome check must not reverse a verdict this loop just made
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {}); // back where the run expects
         return true;
       }
@@ -1750,13 +1809,23 @@ async function runSingle(args, { existingCtx = null } = {}) {
       const livePage = loginOnlyPage?.page ?? page;
       let ok = true;
       if (names.length) {
-        const cookies = await livePage.context().cookies(args.url).catch(() => []);
-        ok = names.some((n) => cookies.find((c) => c.name === n && c.value));
-        if (!ok) {
-          /* the browser may already be GONE (closed right after a completed
-             sign-in) — fall back to the clone's cookie file on disk */
-          const disk = await browserHasSessionCookie(names, args.url);
-          if (disk === true) { ok = true; console.log(dim("  (live page unreachable — session verified from the clone's cookie file)")); }
+        if (loginOnlyPage?.verified) {
+          /* #165: the wait loop verified THIS session live (named cookie seen,
+             expiry printed, sidecar written) — the browser dying in the
+             seconds between verify and outcome must not reverse the verdict.
+             That reversal is exactly how a completed LinkedIn login was lost
+             (outcome read the just-closed handle, said ok=false). */
+          ok = true;
+          signinStepLog("outcome: ok — verified live by the wait loop (sidecar written)");
+        } else {
+          const cookies = await livePage.context().cookies(args.url).catch(() => []);
+          ok = names.some((n) => cookies.find((c) => c.name === n && c.value));
+          if (!ok) {
+            /* the browser may already be GONE (closed right after a completed
+               sign-in) — fall back to the clone's cookie file on disk */
+            const disk = await browserHasSessionCookie(names, args.url);
+            if (disk === true) { ok = true; console.log(dim("  (live page unreachable — session verified from the clone's cookie file)")); }
+          }
         }
       }
       signinStepLog(`login-only outcome: ok=${ok} (cookie names: ${names.join(",") || "none"})`);

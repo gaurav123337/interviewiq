@@ -127,10 +127,21 @@ function profileHasSessionCookie(names, host) {
     const f = path.join(PROFILE_DIR, ...rel.split("/"));
     try {
       const buf = readFileSync(f);
-      const hit = names.find((n) => buf.includes(Buffer.from(`\u0001${n}\u0001`)) || buf.includes(Buffer.from(`${n}${host}`)));
+      /* Chrome stores name and host_key as separate varint-prefixed columns —
+         match raw name bytes AND the domain tail (the \u0001-delimited and
+         name+host adjacency patterns could never match a real Cookies db). */
+      const tail = host.split(".").slice(-2).join(".");
+      const hit = names.find((n) => buf.includes(Buffer.from(n)) && (buf.includes(Buffer.from(tail)) || buf.includes(Buffer.from(host))));
       if (hit) return true;
     } catch { /* file absent — keep looking */ }
   }
+  /* #165 fallback: a verified session whose browser died before Chromium
+     flushed the cookie DB lives in the engine's sidecar file — the engine
+     re-injects it at every launch, so it IS a valid saved session. */
+  try {
+    const sidecar = JSON.parse(readFileSync(path.join(PROFILE_DIR, `signin-session-${host}.json`), "utf8"));
+    if (Array.isArray(sidecar?.cookies) && sidecar.cookies.some((c) => c?.name && names.includes(c.name) && c?.value)) return true;
+  } catch { /* no sidecar */ }
   return false;
 }
 
