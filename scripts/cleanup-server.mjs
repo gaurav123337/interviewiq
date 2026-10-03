@@ -64,6 +64,18 @@ function countProcesses() {
 }
 
 /**
+ * Snapshot the PIDs of all processes whose image name matches `filter`.
+ * Used before AND after a kill so the reported kill count is the real
+ * number of processes that disappeared, not a guess.
+ */
+function snapshotPids(filter) {
+  return new Set(getRunningProcesses().filter(p => filter(p.name)).map(p => p.pid));
+}
+
+const isNodeImage = (name) => name.toLowerCase().includes('node');
+const isBrowserImage = (name) => /chrome|firefox|msedge|playwright/i.test(name);
+
+/**
  * Kill stray processes
  */
 function killStrayProcesses() {
@@ -76,34 +88,50 @@ function killStrayProcesses() {
 
   try {
     if (IS_WINDOWS) {
-      // Windows: use taskkill
-      try {
-        execSync('taskkill /F /IM node.exe', { stdio: 'pipe' });
-        // Count how many were killed by checking exit code or looking at output
-        result.killed.node = Math.random() > 0.5 ? 1 : 0; // Placeholder
-      } catch (e) {
-        // taskkill exits with code 1 if no process found, which is OK
-        if (!e.message.includes('No processes found')) {
-          result.errors.push(`node.exe: ${e.message}`);
+      // Windows: taskkill /F /IM wipes every instance of an image at once,
+      // so it never reports HOW MANY died. Count honestly: snapshot PIDs
+      // before and after, and the kill count is the difference.
+      const beforeBrowser = snapshotPids(isBrowserImage);
+
+      // node.exe: kill per-PID instead of /IM. /IM would also kill THIS
+      // server (it runs under node.exe), so the HTTP response died before
+      // the UI ever saw a result. Excluding our own PID keeps the server
+      // alive, and each successful kill is counted honestly.
+      const nodeTargets = [...snapshotPids(isNodeImage)].filter(pid => pid !== process.pid);
+      for (const pid of nodeTargets) {
+        try {
+          execSync(`taskkill /F /PID ${pid}`, { stdio: 'pipe' });
+          result.killed.node++;
+        } catch (e) {
+          if (!/not found|no processes/i.test(e.message)) {
+            result.errors.push(`PID ${pid}: ${e.message}`);
+          }
         }
       }
 
-      // Try to kill playwright/browser processes
+      // Kill stray browser processes (playwright drivers, zombie chrome…)
       const browserNames = ['chrome.exe', 'firefox.exe', 'msedge.exe'];
       for (const browser of browserNames) {
         try {
           execSync(`taskkill /F /IM ${browser}`, { stdio: 'pipe' });
-          result.killed.playwright++;
         } catch (e) {
-          // Ignore if not found
+          if (!/not found|no processes/i.test(e.message)) {
+            result.errors.push(`${browser}: ${e.message}`);
+          }
         }
       }
+
+      // browsers: /IM is safe here (the server is not a browser), and the
+      // before/after PID diff reports exactly how many disappeared.
+      const afterBrowser = snapshotPids(isBrowserImage);
+      result.killed.playwright = [...beforeBrowser].filter(pid => !afterBrowser.has(pid)).length;
     } else {
       // Unix/Linux/Mac: use kill
       const processes = getRunningProcesses();
       
       for (const proc of processes) {
         try {
+          if (proc.pid === process.pid) continue; // never kill ourselves (the cleanup server runs on node)
           if (proc.name.includes('node')) {
             execSync(`kill -9 ${proc.pid}`, { stdio: 'pipe' });
             result.killed.node++;
