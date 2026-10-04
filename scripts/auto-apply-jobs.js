@@ -2114,11 +2114,10 @@ async function runSingle(args, { existingCtx = null } = {}) {
           /* ALWAYS queue (deduped per job URL) — the report's "needs you" row
              must have a review-queue counterpart with one-click Open/Done */
           await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview });
-          /* NEVER page.pause() from an APP-TRIGGERED Run-now: it freezes the
-             cycle on the Playwright Inspector (the "record window / stuck in
-             debugger" the owner hit). Queued rows carry one-click Open/Done. */
-          if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ queued for one-click review")); continue; }
-          if (!rules.autoSubmit && !appTriggered) await page.pause(); // attended MANUAL runs: let the human finish here
+          /* ASYNC REVIEW: take a screenshot for the UI, close the tab, move on.
+             Attended manual runs still get the pause for immediate human finish. */
+          if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
+          if (!rules.autoSubmit && !appTriggered) { try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.pause(); } // attended MANUAL runs: let the human finish here
           continue;
         }
         if (args["dry-run"]) { recordResultBoth(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
@@ -2138,9 +2137,11 @@ async function runSingle(args, { existingCtx = null } = {}) {
           /* ALWAYS queue: the Applications report's "needs you" rows must have
              a review-queue counterpart with one-click Open/Done (the RPC
              dedupes per job URL — repeated runs never pile up). Attended
-             runs ALSO pause here so the human can finish immediately. */
+             runs ALSO pause here so the human can finish immediately.
+             App-triggered / unattended runs: async review — screenshot,
+             close the tab, move on. */
           await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null, formFields: ffPreview });
-          if (args.unattended || appTriggered) { console.log(dim("  ⏭ queued for one-click review")); continue; }
+          if (args.unattended || appTriggered) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);

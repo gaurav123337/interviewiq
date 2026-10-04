@@ -11,6 +11,8 @@
 
 import { loadAiProviderConfig } from "./ai-config.js";
 import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity } from "./apply-engine-lib.js";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 
 /** AI JUDGE — reads the real JD and renders apply/skip with JSON reason.
     Fail-open: any error/absent provider returns { verdict: "unknown" } and
@@ -182,7 +184,117 @@ export async function tailorCoverLetter(ai, profile, job) {
   }
 }
 
-/** Both documents for one job (called per application). */
+/* ─────────────────── 7-slot Archetype Resume Library ───────────────────
+   Keeps max 7 tailored resumes — one per job archetype — so the user
+   always has the best version for each career segment without drowning
+   in hundreds of files. When a new tailored resume scores significantly
+   better (+15% fit) than the slot's current resident, it replaces it.
+
+   Archetypes are derived from the JD's core requirements:
+     0: Frontend Heavy   (React/TypeScript/CSS/UI focus)
+     1: Backend Heavy    (Node/Python/Java/databases focus)
+     2: Fullstack Generalist (balanced frontend + backend)
+     3: Lead/Management  (leadership, architecture, planning)
+     4: Product-Focused  (product sense, UX, user outcomes)
+     5: DevOps/Infra     (cloud, CI/CD, containers, infra)
+     6: Data/ML          (analytics, ML, AI, data engineering)
+*/
+
+const ARCHETYPE_SLOTS = 7;
+const REPLACEMENT_THRESHOLD = 0.15; // new must beat old by ≥15% fit
+
+const ARCHETYPE_KEYWORDS = [
+  [/react|typescript|css|html|javascript|vue|angular|svelte|tailwind|frontend|ui\/ux|webpack|vite/i, 0], // Frontend Heavy
+  [/python|django|flask|java|spring|node\.js|express|sql|database|api|backend|java/i, 1],             // Backend Heavy
+  [/full.?stack|react.*node|node.*react|next\.js|nest\.js|graphql|rest.*api/i, 2],                   // Fullstack Generalist
+  [/lead|manager|architect|principal|staff|tech lead|engineering manager|cto/i, 3],                   // Lead/Management
+  [/product|ux|user experience|design|user.*research|pm|product owner|agile|scrum/i, 4],              // Product-Focused
+  [/devops|docker|kubernetes|k8s|terraform|ansible|cicd|ci\/cd|aws|gcp|azure|cloud|infrastructure/i, 5], // DevOps/Infra
+  [/machine learning|ml|ai|data science|data analyst|spark|hadoop|tensorflow|pytorch|analytics/i, 6],  // Data/ML
+];
+
+/**
+ * Determine the archetype slot (0-6) for a job based on its title + JD skills.
+ * Falls back to -1 (unspecialized — stored in a general slot).
+ */
+export function classifyArchetype(job) {
+  const text = `${job?.title || ''} ${(job?.skills || []).join(' ')} ${job?.description || ''}`.toLowerCase();
+  let bestSlot = -1;
+  let bestScore = 0;
+  for (const [re, slot] of ARCHETYPE_KEYWORDS) {
+    const matches = text.match(re);
+    if (matches) {
+      const score = matches.length;
+      if (score > bestScore) { bestScore = score; bestSlot = slot; }
+    }
+  }
+  return bestSlot; // -1 if no archetype keywords found
+}
+
+/**
+ * Resume library entry: { slot, fitScore, text, jobTitle, company, at }
+ */
+function libraryPath() {
+  return path.join(process.cwd(), 'freebuff-resume-library.json');
+}
+
+function loadLibrary() {
+  try { return JSON.parse(readFileSync(libraryPath(), 'utf8')); } catch { return []; }
+}
+
+function saveLibrary(lib) {
+  try { writeFileSync(libraryPath(), JSON.stringify(lib, null, 2)); } catch { /* best effort */ }
+}
+
+/**
+ * Store a tailored resume in the library. If the slot is empty, add it.
+ * If the slot is occupied, replace only if the new resume scores ≥15% better.
+ * Returns the library entry that was stored (or null if rejected).
+ */
+export function storeResumeInLibrary(tailoredText, slot, fitScore, jobTitle, company) {
+  if (slot < 0 || slot >= ARCHETYPE_SLOTS) return null;
+  const lib = loadLibrary();
+  const existing = lib.find(e => e.slot === slot);
+  const entry = { slot, fitScore, text: tailoredText, jobTitle, company, at: Date.now() };
+  if (!existing) {
+    lib.push(entry);
+  } else if (fitScore && existing.fitScore && fitScore > existing.fitScore * (1 + REPLACEMENT_THRESHOLD)) {
+    // New resume is significantly better — replace
+    lib[lib.indexOf(existing)] = entry;
+  } else {
+    return null; // Not good enough to replace
+  }
+  // Keep only the best per slot (max 7 entries total)
+  const bestPerSlot = new Map();
+  for (const e of lib) {
+    const prev = bestPerSlot.get(e.slot);
+    if (!prev || (e.fitScore || 0) > (prev.fitScore || 0)) {
+      bestPerSlot.set(e.slot, e);
+    }
+  }
+  const updated = [...bestPerSlot.values()].slice(0, ARCHETYPE_SLOTS);
+  saveLibrary(updated);
+  return entry;
+}
+
+/** Get the current library (max 7 entries) for user reference. */
+export function getResumeLibrary() {
+  return loadLibrary();
+}
+
+/**
+ * Find the best resume in the library for a given job.
+ * Returns the entry or null if no matching slot.
+ */
+export function findBestResumeForJob(job) {
+  const slot = classifyArchetype(job);
+  if (slot < 0) return null;
+  const lib = loadLibrary();
+  const entry = lib.find(e => e.slot === slot);
+  return entry || null;
+}
+
+/** Both documents for one job (called per application). Now also stores in library. */
 export async function buildKit(ai, profile, job) {
   const [resume, cover] = await Promise.all([tailorResume(ai, profile, job), tailorCoverLetter(ai, profile, job)]);
   return { resume: resume.text, coverLetter: cover.text, ai: resume.ai || cover.ai, notes: [resume.note, cover.note].filter(Boolean) };

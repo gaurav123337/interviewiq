@@ -948,3 +948,83 @@ export async function auditAuthenticity(ai, tailoredResume, profile, jd) {
     return { ok: true, hallucinations: [] }; // Fail-open on error
   }
 }
+
+/* ─────────────────── Generic Form Mapper ───────────────────
+   Maps ANY HTML form field to a profile attribute using the AI.
+   This enables autonomous submission across ALL sites, not just
+   LinkedIn. The mapper reads the field label, type, placeholder,
+   and surrounding context to determine what answer the site expects.
+
+   Returns { kind, answer, confidence } where confidence is
+   "answer" (certain), "review" (uncertain — needs human check),
+   or "skip" (don't fill this field).
+*/
+
+const PROFILE_FIELDS = [
+  { key: "name", labels: ["full name", "first name", "last name", "given name", "surname"] },
+  { key: "email", labels: ["email", "e-mail", "email address", "work email", "personal email"] },
+  { key: "phone", labels: ["phone", "mobile", "contact number", "telephone", "cell phone"] },
+  { key: "years", labels: ["years of experience", "experience", "total experience", "years in field"] },
+  { key: "location", labels: ["location", "city", "country", "based", "work location", "address"] },
+  { key: "notice", labels: ["notice period", "notice", "availability", "start date", "earliest start"] },
+  { key: "salary", labels: ["salary", "compensation", "ctc", "expected salary", "current salary"] },
+  { key: "relocation", labels: ["relocate", "relocation", "willing to relocate", "relocation willingness"] },
+  { key: "remote", labels: ["remote", "work from home", "hybrid", "remote work", "work arrangement"] },
+  { key: "link", labels: ["linkedin", "portfolio", "website", "github", "url", "link to resume"] },
+  { key: "workAuth", labels: ["sponsorship", "work authorization", "visa", "work permit", "authorized to work"] },
+  { key: "certificate", labels: ["certification", "license", "licensure", "certifications"] },
+];
+
+/**
+ * Generic Form Mapper: uses the AI to map any form field to a profile attribute.
+ * Falls back to classifyQuestion for known field types.
+ * 
+ * @param {object} ai - AI provider config { key, base, model }
+ * @param {string} label - The form field label
+ * @param {string} tag - HTML tag type (input, textarea, select)
+ * @param {boolean} required - Whether the field is required
+ * @param {object} profile - The candidate's master profile
+ * @returns { object } { kind, answer, confidence, mappedFrom }
+ */
+export async function mapFormField(ai, label, tag, required, profile) {
+  // First try the existing classifier for known patterns
+  const cls = classifyQuestion(label, { tag, required });
+  if (cls.kind !== "unknown") {
+    const answer = draftAnswer(cls.kind, profile, {});
+    return { kind: cls.kind, answer, confidence: cls.confidence, mappedFrom: "classifier" };
+  }
+
+  // For unknown fields, use the AI mapper if available
+  if (!ai?.key) {
+    return { kind: "unknown", answer: "", confidence: "review", mappedFrom: "none" };
+  }
+
+  const sys = "You are a form field mapper. Given a form field label, determine what kind of information it asks for and provide the correct answer from the candidate's profile. Reply with ONLY this JSON: {\"kind\":\"field type\",\"answer\":\"the answer\",\"confidence\":\"answer|review|skip\"}. If you cannot determine the field type or answer, use kind=\"unknown\" and confidence=\"review\". Never invent facts not in the profile.";
+  const usr = `Field label: "${label}" (tag: ${tag}, required: ${required})\nProfile: ${JSON.stringify(profile, null, 2)}\nMap this field to a profile attribute and provide the answer.`;
+
+  try {
+    const raw = await chatOnce(ai, [{ role: "system", content: sys }, { role: "user", content: usr }], 200);
+    const m = String(raw || "").match(/\{[\s\S]*\}/);
+    if (!m) return { kind: "unknown", answer: "", confidence: "review", mappedFrom: "ai" };
+    const j = JSON.parse(m[0]);
+    const kind = String(j.kind || "unknown").toLowerCase();
+    const confidence = String(j.confidence || "review");
+    const answer = String(j.answer || "").trim();
+    return { kind, answer: confidence === "skip" ? "" : answer, confidence, mappedFrom: "ai" };
+  } catch (e) {
+    return { kind: "unknown", answer: "", confidence: "review", mappedFrom: "ai-error" };
+  }
+}
+
+/**
+ * Batch map form fields using the Generic Form Mapper.
+ * Returns an array of { label, kind, answer, confidence, mappedFrom }.
+ */
+export async function mapFormFields(ai, fields, profile) {
+  const results = [];
+  for (const field of fields) {
+    const result = await mapFormField(ai, field.label, field.tag, field.required, profile);
+    results.push({ label: field.label, ...result });
+  }
+  return results;
+}
