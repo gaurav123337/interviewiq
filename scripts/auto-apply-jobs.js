@@ -1004,7 +1004,9 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
       const ok = names.some((n) => cookies.find((c) => c.name === n && c.value));
       if (!ok) {
         console.log(yellow(`⏸  ${rules.label}: not signed in (no ${names.join("/")} cookie) — session needs a login.`));
-        await notifySessionExpired(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, rules.label).catch(() => {});
+        /* host from the `url` PARAM — `args` is not in scope here and a bare
+           reference crashed the whole site child mid-cycle (run-now 2026-10-04). */
+        await notifySessionExpired(new URL(url).hostname.replace(/^www\./, ""), rules.label).catch(() => {});
         await dbgLoginWall(page, url);
         return false;
       }
@@ -1018,7 +1020,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
   }
   if (state.kind === "login" && !loginOnly) {
     console.log(yellow(`⏸  ${rules.label}: session expired (redirected to login) — please sign in again.`));
-    await notifySessionExpired(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, rules.label).catch(() => {});
+    await notifySessionExpired(new URL(url).hostname.replace(/^www\./, ""), rules.label).catch(() => {});
   }
   if (onLogin() || loginOnly) {
     if (!humanAvailable) {
