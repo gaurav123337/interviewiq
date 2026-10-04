@@ -1585,7 +1585,28 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
         if (resumePath && existsSync(resumePath)) { if (!dryRun) await c.setInputFiles(resumePath); filled++; }
         else unfilledRequired.push("resume file");
       } else if (meta.type === "checkbox" || meta.type === "radio") {
-        continue; // consent/ees — leave for the human review step unless simple yes/no below
+        /* REQUIRED consent checkboxes / option radios were blanket-skipped —
+           LinkedIn's own validation then silently blocked every Next click and
+           all rounds expired with "submit never appeared" (run-now 2026-10-04).
+           Required checkbox → CHECK it (form-completion consent the owner's own
+           submission requires — never an optional marketing/EEO opt-in).
+           Radio → select only when the drafted answer matches THIS radio's own
+           option label; a required radio with no honest match stays fail-closed. */
+        if (meta.type === "checkbox") {
+          const checked = await c.evaluate((el) => el.checked).catch(() => true);
+          if (meta.required && !checked) {
+            if (!dryRun) { try { await c.check({ timeout: 3000 }); } catch { await c.evaluate((el) => el.click()).catch(() => {}); } }
+            filled++;
+          }
+          continue; // optional checkboxes stay untouched — no marketing opt-ins
+        }
+        if (!answer) { if (meta.required) unfilledRequired.push(meta.label || cls.kind); continue; }
+        if (valueMatchesList(answer, meta.label)) {
+          if (!dryRun) { try { await c.check({ timeout: 3000 }); } catch { await c.evaluate((el) => el.click()).catch(() => {}); } }
+          filled++;
+        } else if (meta.required) {
+          unfilledRequired.push(meta.label || cls.kind);
+        }
       } else {
         if (!answer) { if (meta.required) unfilledRequired.push(meta.label || cls.kind); continue; }
         if (!dryRun) { await c.click({ clickCount: 3 }); await c.fill(answer); }
@@ -1664,6 +1685,12 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
         } catch { /* step fill is best-effort — the click below still runs */ }
       }
       const advanced = await page.evaluate(() => {
+        /* belt-and-braces: LinkedIn re-renders between steps — any REQUIRED
+           checkbox left unchecked (consent/acknowledgement) silently blocks
+           the step change, so check them before trying to advance */
+        for (const el of document.querySelectorAll("input[type=checkbox]")) {
+          if (el.offsetParent && !el.checked && (el.required || el.closest("[aria-required=true], form[aria-required=true]"))) el.click();
+        }
         const find = (re) => [...document.querySelectorAll("button, a[role=button]")]
           .find((b) => b.offsetParent && !b.disabled && re.test((b.innerText || b.getAttribute("aria-label") || "").trim()));
         const b = find(/^review$/i) || find(/^next$/i);
@@ -1694,11 +1721,16 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
         const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
         return { auto: success, note: success ? "submitted (auto, js)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
       }
-      /* still stuck: surface WHY (LinkedIn's validation error if present) */
+      /* still stuck: surface WHY (LinkedIn's validation error if present, else
+         the flow step the belt died on — "submit never appeared" alone told
+         the owner nothing about WHERE to look) */
       const blocker = await page.evaluate(() =>
         document.querySelector("[role=alert], .artdeco-inline-feedback__message")?.innerText?.trim() ?? ""
       ).catch(() => "");
-      return { auto: false, note: `Easy Apply mid-flow${blocker ? ` — ${blocker.slice(0, 80)}` : " — submit never appeared"} — queued for one-click finish` };
+      const stepTitle = await page.evaluate(() =>
+        (document.querySelector(".artdeco-modal__header h2, h2[data-live-test-job-question-header], .jobs-easy-apply-content h2")?.innerText ?? "").trim().slice(0, 60)
+      ).catch(() => "");
+      return { auto: false, note: `Easy Apply mid-flow${blocker ? ` — ${blocker.slice(0, 80)}` : stepTitle ? ` — stuck on step "${stepTitle}"` : " — submit never appeared"} — queued for one-click finish` };
     }
     /* HONEST VERDICT (#164): auto-submit sites used to return {auto:true,
        "may already be applied"} here — which silently recorded "submitted"
