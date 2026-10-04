@@ -10,7 +10,7 @@
  */
 
 import { loadAiProviderConfig } from "./ai-config.js";
-import { judgeMessages, parseJudgeReply, ownerExemplarFor } from "./apply-engine-lib.js";
+import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity } from "./apply-engine-lib.js";
 
 /** AI JUDGE — reads the real JD and renders apply/skip with JSON reason.
     Fail-open: any error/absent provider returns { verdict: "unknown" } and
@@ -149,6 +149,12 @@ export async function tailorResume(ai, profile, job) {
   try {
     const out = await chatOnce(ai, [{ role: "system", content: sys }, { role: "user", content: usr }], 800);
     if (!out || out.trim().length < 50 || /```/.test(out)) return { text: template, ai: false, note: "AI output rejected — template used" };
+    /* Authenticity Guard: audit the tailored resume for hallucinations */
+    const audit = await auditAuthenticity(ai, out.trim(), profile, job);
+    if (!audit.ok) {
+      const note = `AI output rejected — authenticity audit failed: ${audit.hallucinations.slice(0, 3).join(", ")}`;
+      return { text: template, ai: false, note };
+    }
     return { text: out.trim() + "\n", ai: true };
   } catch (e) {
     return { text: template, ai: false, note: e.message.slice(0, 120) };
@@ -164,6 +170,12 @@ export async function tailorCoverLetter(ai, profile, job) {
   try {
     const out = await chatOnce(ai, [{ role: "system", content: sys }, { role: "user", content: usr }], 500);
     if (!out || out.trim().length < 50 || /```/.test(out)) return { text: template, ai: false, note: "AI output rejected — template used" };
+    /* Authenticity Guard: audit the cover letter for hallucinations */
+    const audit = await auditAuthenticity(ai, out.trim(), profile, job);
+    if (!audit.ok) {
+      const note = `AI output rejected — authenticity audit failed: ${audit.hallucinations.slice(0, 3).join(", ")}`;
+      return { text: template, ai: false, note };
+    }
     return { text: out.trim(), ai: true };
   } catch (e) {
     return { text: template, ai: false, note: e.message.slice(0, 120) };

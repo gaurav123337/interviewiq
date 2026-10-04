@@ -739,7 +739,7 @@ export function judgeMessages(job, profile, exemplars = null) {
     "Apply (verdict apply) when the core function matches and the core stack is genuinely on the resume; adjacent transferable experience counts ONLY for peripheral requirements, never for the core language/framework.",
     "Be conservative about wasting the candidate's applications — a wrong application is worse than a missed one.",
     "Reply with ONLY this JSON, nothing else:",
-    '{"verdict":"apply|skip","confidence":0.0-1.0,"reason":"one short sentence","missingCore":["skills the posting fundamentally requires that the resume lacks"]}',
+    '{"verdict":"apply|skip","confidence":0.00-1.00,"reasoning":"detailed reasoning for this decision","reason":"one short sentence","missingCore":["skills the posting fundamentally requires that the resume lacks"]}',
   ].join(" ");
   const user = [
     `CANDIDATE: ${p.headline || "engineer"}${p.years != null ? `, ${p.years} yrs` : ""}. Skills: ${(p.skills ?? []).join(", ") || "(none listed)"}.`,
@@ -759,7 +759,7 @@ export function parseJudgeReply(text) {
   try {
     const j = JSON.parse(m[0]);
     if (j.verdict !== "apply" && j.verdict !== "skip") return { verdict: "unknown", reason: "judge verdict not apply/skip" };
-    return { verdict: j.verdict, confidence: Number(j.confidence) || 0, reason: String(j.reason ?? "").slice(0, 160), missingCore: Array.isArray(j.missingCore) ? j.missingCore.slice(0, 5).map(String) : [] };
+    return { verdict: j.verdict, confidence: Number(j.confidence) || 0, reasoning: String(j.reasoning ?? "").slice(0, 500), reason: String(j.reason ?? "").slice(0, 160), missingCore: Array.isArray(j.missingCore) ? j.missingCore.slice(0, 5).map(String) : [] };
   } catch { return { verdict: "unknown", reason: "judge JSON unparseable" }; }
 }
 
@@ -913,4 +913,38 @@ export function buildApplyReportSql(report, { totalSeen }) {
     `'${esc("apply-engine")}', '${esc(report.sourceUrl)}', ${report.startedAt}, ${Date.now()}, ${ok}, ${totalSeen}, ${c.submitted}, ${c.needsReview}, ${c.skipped}, ${c.error},`,
     `'${esc(message)}', '${esc(JSON.stringify({ site: report.site, results: report.results.slice(0, 50) }))}');`,
   ].join(" ");
+}
+
+/**
+ * Authenticity Guard: Verifies that a tailored resume has not "hallucinated" 
+ * new facts. It compares the tailored text against the master profile.
+ * 
+ * returns { ok: boolean, hallucinations: string[] }
+ */
+export async function auditAuthenticity(ai, tailoredResume, profile, jd) {
+  if (!ai?.key) return { ok: true, hallucinations: [] }; // Fail-open if no AI
+  
+  const sys = "You are a strict auditor. Compare the TAILORED RESUME against the MASTER PROFILE. Your only goal is to detect HALLUCINATIONS (fake facts). A hallucination is ANY company, job title, degree, or specific technical achievement mentioned in the tailored resume that is NOT present in the master profile. Highlight only the fake additions. If it is honest, reply with 'OK'. Otherwise, list the hallucinations as a JSON array of strings. Output ONLY the JSON array or 'OK'.";
+  const usr = `MASTER PROFILE:\n${JSON.stringify(profile, null, 2)}\n\nTAILORED RESUME:\n${tailoredResume}\n\nJD for context:\n${jd}`;
+  
+  try {
+    // We use a high-precision call here
+    const res = await fetch(`${ai.base.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ai.key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: ai.model, messages: [{ role: "system", content: sys }, { role: "user", content: usr }], temperature: 0 }),
+    });
+    const body = await res.json();
+    const text = (body.choices?.[0]?.message?.content ?? "").trim();
+    
+    if (text.toUpperCase() === "OK") return { ok: true, hallucinations: [] };
+    
+    const m = text.match(/\[[\s\S]*\]/);
+    if (!m) return { ok: true, hallucinations: [] }; // If it's not a list, assume OK
+    
+    const hallucinations = JSON.parse(m[0]);
+    return { ok: hallucinations.length === 0, hallucinations };
+  } catch (e) {
+    return { ok: true, hallucinations: [] }; // Fail-open on error
+  }
 }
