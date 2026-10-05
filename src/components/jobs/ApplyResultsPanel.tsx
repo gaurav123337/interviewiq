@@ -17,7 +17,7 @@ function sourceOf(r: ApplyResultRow): string {
 const RESULT_META: Record<ApplyResultRow["result"], { icon: string; label: string; cls: string }> = {
   submitted: { icon: "✅", label: "applied", cls: "bg-emerald-500/15 text-emerald-400" },
   needs_review: { icon: "⏸", label: "needs you", cls: "bg-amber-500/15 text-amber-400" },
-  skipped: { icon: "⏭", label: "skipped", cls: "bg-zinc-500/15 text-zinc-400" },
+  skipped: { icon: "⏭", label: "skipped", cls: "bg-zinc-500/15 text-zinc-300" },
   error: { icon: "✗", label: "error", cls: "bg-red-500/15 text-red-400" },
 };
 
@@ -71,7 +71,7 @@ export default function ApplyResultsPanel() {
     }
   };
 
-  if (rows === null) return <div className="mt-3 text-xs text-zinc-500">Loading applications report…</div>;
+  if (rows === null) return <div className="mt-3 text-xs text-zinc-300">Loading applications report…</div>;
 
   const counts = applyResultCounts(rows);
   const shown = filter === "all" ? rows : rows.filter((r) => r.result === filter);
@@ -81,10 +81,10 @@ export default function ApplyResultsPanel() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
           📊 Applications report
-          {rows.length > 0 && <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400">{rows.length}</span>}
-          <span className="text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+          {rows.length > 0 && <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-300">{rows.length}</span>}
+          <span className="text-xs text-zinc-300">{open ? "▴" : "▾"}</span>
         </button>
-        <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
+        <button onClick={() => void refresh()} className="text-xs text-zinc-300 hover:text-zinc-100">↻ refresh</button>
       </div>
       {open && (<>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -94,11 +94,11 @@ export default function ApplyResultsPanel() {
             {RESULT_META[k].icon} {counts[k]} {RESULT_META[k].label}
           </button>
         ))}
-        {filter !== "all" && <button onClick={() => setFilter("all")} className="rounded px-2 py-0.5 text-[11px] text-zinc-400 hover:text-zinc-200">✕ clear filter</button>}
+        {filter !== "all" && <button onClick={() => setFilter("all")} className="rounded px-2 py-0.5 text-[11px] text-zinc-300 hover:text-zinc-100">✕ clear filter</button>}
       </div>
 
       {error && <div className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
-      {!rows.length && <div className="mt-2 text-xs text-zinc-500">No decisions recorded yet — they land here as soon as the engine runs a site.</div>}
+      {!rows.length && <div className="mt-2 text-xs text-zinc-300">No decisions recorded yet — they land here as soon as the engine runs a site.</div>}
 
       {strikes.length > 0 && (
         <div className="mt-2 rounded bg-fuchsia-500/10 px-2 py-1.5 text-[11px] text-fuchsia-300">
@@ -114,15 +114,15 @@ export default function ApplyResultsPanel() {
                 {RESULT_META[r.result].icon} {RESULT_META[r.result].label}
               </span>
               <span className="min-w-0 flex-1 truncate text-xs text-zinc-200">
-                {r.title || "(untitled posting)"}{r.company ? <span className="text-zinc-500"> — {r.company}</span> : null}
+                {r.title || "(untitled posting)"}{r.company ? <span className="text-zinc-400"> — {r.company}</span> : null}
               </span>
               {typeof r.fit === "number" && (
                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${r.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : r.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match. It ignores seniority, core function and core stack; the AI judge's verdict is in the detail line below.">fit {r.fit}</span>
               )}
-              <span className="shrink-0 text-[10.5px] text-zinc-600">{ago(r.created_at)}</span>
+              <span className="shrink-0 text-[11px] text-zinc-400">{ago(r.created_at)}</span>
             </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[10.5px] text-zinc-500">
-              <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-bold text-zinc-400">via {sourceOf(r)}</span>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px] text-zinc-300">
+              <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 font-bold text-zinc-300">via {sourceOf(r)}</span>
               <span className="min-w-0 flex-1 truncate">{r.detail || ""}</span>
               {r.result === "needs_review" ? (
                 <button onClick={() => document.getElementById("review-queue")?.scrollIntoView({ behavior: "smooth", block: "start" })}
@@ -144,7 +144,7 @@ export default function ApplyResultsPanel() {
             </div>
           </div>
         ))}
-        {!shown.length && rows.length > 0 && <div className="text-xs text-zinc-500">No rows for this filter.</div>}
+        {!shown.length && rows.length > 0 && <div className="text-xs text-zinc-300">No rows for this filter.</div>}
       </div>
       </>)}
     </div>

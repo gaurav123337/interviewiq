@@ -18,9 +18,9 @@ function FieldPreviewList({ fields }: { fields: ReviewFormField[] }) {
       {fields.map((f, i) => (
         <div key={i} className="flex items-center gap-1.5 text-[11px] leading-4">
           {f.answered ? <span className="text-emerald-400">✓</span> : <span className="text-amber-500">○</span>}
-          <span className="min-w-0 flex-1 truncate text-zinc-300">{f.label || <span className="italic text-zinc-600">(unlabeled)</span>}</span>
-          <span className="shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-500">{f.kind}</span>
-          {f.required && <span className="shrink-0 text-[10px] text-zinc-600">required</span>}
+          <span className="min-w-0 flex-1 truncate text-zinc-300">{f.label || <span className="italic text-zinc-400">(unlabeled)</span>}</span>
+          <span className="shrink-0 rounded bg-zinc-800 px-1 text-[10px] text-zinc-300">{f.kind}</span>
+          {f.required && <span className="shrink-0 text-[10px] text-zinc-400">required</span>}
         </div>
       ))}
     </div>
@@ -177,7 +177,7 @@ export default function ReviewQueuePanel() {
     try { await navigator.clipboard.writeText(text); } catch { /* clipboard denied */ }
   };
 
-  if (items === null) return <div className="mt-3 text-xs text-zinc-500">Loading review queue…</div>;
+  if (items === null) return <div className="mt-3 text-xs text-zinc-300">Loading review queue…</div>;
 
   return (
     <div id="review-queue" className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
@@ -185,26 +185,26 @@ export default function ReviewQueuePanel() {
         <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
           📥 Review queue
           {items.length > 0 && <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-400">{items.length} waiting</span>}
-          <span className="text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+          <span className="text-xs text-zinc-300">{open ? "▴" : "▾"}</span>
         </button>
         <div className="flex items-center gap-3">
           <button onClick={() => (notifyOpen ? setNotifyOpen(false) : openNotify())}
             title="Bind Telegram: get a DM the moment a job needs you (💎 Platinum or the auto-apply add-on)"
-            className={`rounded px-2 py-1 text-xs font-medium ${notifySaved ? "bg-emerald-500/15 text-emerald-400" : entitled ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25" : "bg-zinc-700/40 text-zinc-500 hover:bg-zinc-700/60"}`}>
+            className={`rounded px-2 py-1 text-xs font-medium ${notifySaved ? "bg-emerald-500/15 text-emerald-400" : entitled ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25" : "bg-zinc-700/40 text-zinc-300 hover:bg-zinc-700/60"}`}>
             🔔 Telegram {notifySaved ? "· on" : entitled ? "· not set up" : "· 💎"}
           </button>
-          <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
+          <button onClick={() => void refresh()} className="text-xs text-zinc-300 hover:text-zinc-100">↻ refresh</button>
         </div>
       </div>
       {open && (<>
-      <div className="mb-2 text-xs text-zinc-500">
+      <div className="mb-2 text-xs text-zinc-300">
         Review-gate forms the engine skipped in <code className="rounded bg-zinc-800 px-1">--unattended</code> mode wait here with their
-        link — open, submit by hand, then record the outcome: <b className="text-zinc-400">✓ Applied</b> and <b className="text-zinc-400">✕ Not interested</b> teach the
-        AI judge your preference for similar postings; <b className="text-zinc-400">🚫 Closed</b> (no longer accepting) just stops the engine from retrying.
+        link — open, submit by hand, then record the outcome: <b className="text-zinc-200">✓ Applied</b> and <b className="text-zinc-200">✕ Not interested</b> teach the
+        AI judge your preference for similar postings; <b className="text-zinc-200">🚫 Closed</b> (no longer accepting) just stops the engine from retrying.
         {!notifySaved && <> Want a phone ping when something lands here? <button onClick={openNotify} className="text-amber-400 underline underline-offset-2 hover:text-amber-300">Bind Telegram →</button></>}
       </div>
       {notifyOpen && !entitled && (
-        <div ref={notifyRef} className="mb-3 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2.5 text-xs text-zinc-400">
+        <div ref={notifyRef} className="mb-3 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2.5 text-xs text-zinc-300">
           💎 Per-user Telegram pings are part of the <b className="text-zinc-200">auto-apply engine</b> (Platinum or the auto-apply add-on).
           Upgrade to bind your own bot + chat id and get needs-you pings with direct form links on your phone.
         </div>
@@ -212,7 +212,7 @@ export default function ReviewQueuePanel() {
       {notifyOpen && entitled && (
         <div ref={notifyRef} className="mb-3 space-y-2 rounded-md border border-amber-500/30 bg-zinc-900 px-2.5 py-2.5">
           <div className="text-xs font-semibold text-zinc-300">Telegram notifications — bound to YOUR account {notifySaved && <span className="ml-1 text-emerald-400">· enabled</span>}</div>
-          <p className="text-[11px] text-zinc-500">
+          <p className="text-[11px] text-zinc-300">
             Create a bot with @BotFather (paste its token), send <code className="rounded bg-zinc-800 px-1">/start</code> to it once, then paste the chat id.
             Saving sends a test DM carrying the weekly digest so you can verify delivery instantly.
           </p>
@@ -223,11 +223,11 @@ export default function ReviewQueuePanel() {
               className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
             <button onClick={() => void saveNotify()} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Save</button>
           </div>
-          {notifyState && <div className="text-[11px] text-zinc-400">{notifyState}</div>}
+          {notifyState && <div className="text-[11px] text-zinc-300">{notifyState}</div>}
         </div>
       )}
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
-      {!items.length && <div className="text-xs text-zinc-500">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
+      {!items.length && <div className="text-xs text-zinc-300">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
       <div className="space-y-2">
         {items.map((it) => (
           <div key={it.id} className={`rounded-md border transition-all duration-300 ${feedbackShown?.id === it.id && feedbackShown.show ? "border-emerald-500/50 bg-emerald-500/5" : "border-zinc-800 bg-zinc-900"} px-2.5 py-2`}>
@@ -240,7 +240,7 @@ export default function ReviewQueuePanel() {
                     <span className={`ml-0 mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-extrabold ${it.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : it.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match (seniority and core stack not included).">fit {it.fit}</span>
                   )}
                 </div>
-                <div className="text-xs text-zinc-500 mt-1.5">
+                <div className="text-xs text-zinc-300 mt-1.5">
                   {it.site_host} · {ago(it.created_at)}{it.reason ? ` · ${it.reason}` : ""}
                 </div>
               </div>
@@ -255,18 +255,18 @@ export default function ReviewQueuePanel() {
                       <span className="text-red-400 flex items-center gap-1">✕ Recorded as not interested</span>
                     )}
                     {feedbackShown.type === "closed" && (
-                      <span className="text-zinc-400 flex items-center gap-1">🚫 Recorded as closed</span>
+                      <span className="text-zinc-300 flex items-center gap-1">🚫 Recorded as closed</span>
                     )}
                   </div>
                 ) : busy === it.id ? (
-                  <span className="text-xs text-zinc-500">…</span>
+                  <span className="text-xs text-zinc-300">…</span>
                 ) : (
                   <>
                     <button onClick={() => openForm(it)} className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500">Open form ↗</button>
-                    <button onClick={() => void copy(it.form_url || it.job_url)} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">📋</button>
+                    <button onClick={() => void copy(it.form_url || it.job_url)} className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:text-zinc-100">📋</button>
                     <button onClick={() => void resolve(it, "done")} title="I already applied — also teaches the judge this kind of job is relevant" className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">✓ Applied</button>
-                    <button onClick={() => void resolve(it, "dismissed")} title="Not interested — also teaches the judge to skip similar postings" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:border-red-600 hover:text-red-400">✕ Not interested</button>
-                    <button onClick={() => void resolve(it, "closed")} title="Posting closed / no longer accepting — stops retries, teaches nothing" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200">🚫 Closed</button>
+                    <button onClick={() => void resolve(it, "dismissed")} title="Not interested — also teaches the judge to skip similar postings" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-red-600 hover:text-red-400">✕ Not interested</button>
+                    <button onClick={() => void resolve(it, "closed")} title="Posting closed / no longer accepting — stops retries, teaches nothing" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:text-zinc-100">🚫 Closed</button>
                   </>
                 )}
               </div>

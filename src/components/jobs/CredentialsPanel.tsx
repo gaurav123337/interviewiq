@@ -83,13 +83,13 @@ export default function CredentialsPanel() {
       <div className="mb-1 flex items-center justify-between">
         <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-zinc-200">
           🔑 Logins & credentials
-          {creds && creds.length > 0 && <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400">{creds.length}</span>}
-          <span className="text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+          {creds && creds.length > 0 && <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-300">{creds.length}</span>}
+          <span className="text-xs text-zinc-300">{open ? "▴" : "▾"}</span>
         </button>
-        <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
+        <button onClick={() => void refresh()} className="text-xs text-zinc-300 hover:text-zinc-100">↻ refresh</button>
       </div>
       {open && (<>
-      <div className="mb-2 text-xs text-zinc-500">
+      <div className="mb-2 text-xs text-zinc-300">
         Store a login once and bind it to every board that shares it — the engine re-logins automatically when a saved
         session dies. Secrets stay server-side; this list shows prefixes only. Add new job URLs below too — manual adds
         join the rotation <b>active</b> immediately.
@@ -125,34 +125,34 @@ export default function CredentialsPanel() {
             className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
           <button onClick={() => void addUrl()} disabled={busy === "url"} className="rounded bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50">Add site</button>
         </div>
-        {urlNote && <div className="text-[11px] text-zinc-400">{urlNote}</div>}
+        {urlNote && <div className="text-[11px] text-zinc-300">{urlNote}</div>}
       </div>
 
       {/* credential list with bindings */}
-      {creds?.length === 0 && <div className="text-xs text-zinc-500">No credentials stored yet.</div>}
+      {creds?.length === 0 && <div className="text-xs text-zinc-300">No credentials stored yet.</div>}
       <div className="space-y-1.5">
         {creds?.map(c => (
           <div key={c.id} className="rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-2">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-400">{c.kind}</span>
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-300">{c.kind}</span>
               <span className="text-sm text-zinc-200">{c.label}</span>
-              {c.username && <span className="text-xs text-zinc-500">· {c.username}</span>}
-              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">{c.secret_prefix}••</span>
-              {busy === c.id ? <span className="text-xs text-zinc-500">…</span> : (
-                <button onClick={() => void del(c.id)} className="ml-auto rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-400 hover:border-red-600 hover:text-red-400">🗑</button>
+              {c.username && <span className="text-xs text-zinc-300">· {c.username}</span>}
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">{c.secret_prefix}••</span>
+              {busy === c.id ? <span className="text-xs text-zinc-300">…</span> : (
+                <button onClick={() => void del(c.id)} className="ml-auto rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-300 hover:border-red-600 hover:text-red-400">🗑</button>
               )}
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] text-zinc-500">bound to:</span>
+              <span className="text-[11px] text-zinc-300">bound to:</span>
               {activeSites.map(s => (
                 <button key={s.id}
                   onClick={() => void bind(s.host, s.credential_id === c.id ? null : c.id)}
                   title={s.credential_id === c.id ? "Click to unbind" : "Click to bind this credential"}
-                  className={`rounded px-1.5 py-0.5 text-[10.5px] font-medium border ${s.credential_id === c.id ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400" : "border-zinc-700 text-zinc-400 hover:border-zinc-500"}`}>
+                  className={`rounded px-1.5 py-0.5 text-[10.5px] font-medium border ${s.credential_id === c.id ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-400": "border-zinc-700 text-zinc-300 hover:border-zinc-500"}`}>
                   {s.credential_id === c.id ? "✓ " : ""}{s.host}
                 </button>
               ))}
-              {busy === "bind" && <span className="text-[11px] text-zinc-500">…</span>}
+              {busy === "bind" && <span className="text-[11px] text-zinc-300">…</span>}
             </div>
           </div>
         ))}

@@ -132,7 +132,7 @@ export default function ApplyModePanel() {
               {stopping ? "stopping…" : "🛑 Stop engine"}
             </button>
           )}
-          <button onClick={() => { void refresh(); void refreshEngine(); }} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>
+          <button onClick={() => { void refresh(); void refreshEngine(); }} className="text-xs text-zinc-300 hover:text-zinc-100">↻ refresh</button>
         </div>
       </div>
 
@@ -145,12 +145,12 @@ export default function ApplyModePanel() {
       )}
 
       {events && events.length > 0 && uptime >= 0 && (
-        <div className="mt-1 text-[10.5px] text-zinc-500">
-          24h: engine ran <b className="text-zinc-400">{uptime >= 3600_000
+        <div className="mt-1 text-[11px] text-zinc-300">
+          24h: engine ran <b className="text-zinc-200">{uptime >= 3600_000
             ? `${Math.floor(uptime / 3600_000)}h ${Math.round((uptime % 3600_000) / 60_000)}m`
             : `${Math.round(uptime / 60_000)}m`}</b>
           {sessions.slice(-3).reverse().map((s, i) => (
-            <span key={i} className="ml-1.5 text-zinc-600">
+            <span key={i} className="ml-1.5 text-zinc-400">
               · 🟢 {new Date(s.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               →{s.end ? new Date(s.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "now"}
             </span>
@@ -158,7 +158,7 @@ export default function ApplyModePanel() {
         </div>
       )}
 
-      <p className="mt-1 text-xs text-zinc-500">
+      <p className="mt-1 text-xs text-zinc-300">
         One switch controls the whole rig. <b>Off</b> kills the engine on this machine now — watcher, listener and engine
         browsers stop within a minute and stay stopped (the schedulers check this switch before every respawn).
         <b> My machine</b> runs the local Playwright engine here; <b>Cloud session</b> runs against a persistent browser over CDP.
@@ -182,7 +182,7 @@ export default function ApplyModePanel() {
             } ${busy || stopping ? "opacity-50" : ""}`}
           >
             <span className="font-bold">{m.label}</span>
-            <span className="mt-0.5 block text-[10.5px] leading-4 text-zinc-500">{m.blurb}</span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-zinc-300">{m.blurb}</span>
           </button>
         ))}
       </div>
@@ -201,7 +201,7 @@ export default function ApplyModePanel() {
         </div>
       )}
 
-      {cfg?.updated_at && <div className="mt-2 text-[10.5px] text-zinc-600">last changed {new Date(cfg.updated_at).toLocaleString()}</div>}
+      {cfg?.updated_at && <div className="mt-2 text-[11px] text-zinc-400">last changed {new Date(cfg.updated_at).toLocaleString()}</div>}
     </div>
   );
 }

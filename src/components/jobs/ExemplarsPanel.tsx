@@ -55,19 +55,19 @@ export default function ExemplarsPanel() {
           🧠 What the judge learned
           {rows && <span className="ml-1.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400">{positives} apply</span>}
           {rows && <span className="ml-1 rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400">{negatives} skip</span>}
-          <span className="ml-2 text-xs text-zinc-500">{open ? "▴" : "▾"}</span>
+          <span className="ml-2 text-xs text-zinc-300">{open ? "▴" : "▾"}</span>
         </button>
-        {open && <button onClick={() => void refresh()} className="text-xs text-zinc-400 hover:text-zinc-200">↻ refresh</button>}
+        {open && <button onClick={() => void refresh()} className="text-xs text-zinc-300 hover:text-zinc-100">↻ refresh</button>}
       </div>
-      <div className="mt-1 text-xs text-zinc-500">
+      <div className="mt-1 text-xs text-zinc-300">
         Every verdict you record (✓ Applied, ✕ Not interested, 👍/👎) becomes one of these lines in the AI judge's prompt —
         it imitates <i>your</i> taste on future postings. Deleting a line removes that lesson.
       </div>
       {open && (
         <div className="mt-2">
           {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
-          {rows === null && <div className="text-xs text-zinc-500">Loading…</div>}
-          {rows?.length === 0 && <div className="text-xs text-zinc-500">Nothing learned yet — resolve review-queue rows or use 👍/👎 to teach it.</div>}
+          {rows === null && <div className="text-xs text-zinc-300">Loading…</div>}
+          {rows?.length === 0 && <div className="text-xs text-zinc-300">Nothing learned yet — resolve review-queue rows or use 👍/👎 to teach it.</div>}
           <div className="space-y-1.5">
             {rows?.map(r => (
               <div key={r.id} className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900 px-2.5 py-1.5">
@@ -76,17 +76,17 @@ export default function ExemplarsPanel() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs text-zinc-200" title={r.summary}>{r.summary}</div>
-                  {r.reason && <div className="truncate text-[11px] text-zinc-500" title={r.reason}>{r.reason}</div>}
+                  {r.reason && <div className="truncate text-[11px] text-zinc-300" title={r.reason}>{r.reason}</div>}
                 </div>
-                <span className="shrink-0 text-[10px] text-zinc-600">{ago(r.created_at)}</span>
+                <span className="shrink-0 text-[11px] text-zinc-400">{ago(r.created_at)}</span>
                 {r.source_url && (
                   <a href={r.source_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[11px] text-sky-400 hover:text-sky-300">↗</a>
                 )}
                 {busy === r.id ? (
-                  <span className="shrink-0 text-xs text-zinc-500">…</span>
+                  <span className="shrink-0 text-xs text-zinc-300">…</span>
                 ) : (
                   <button onClick={() => void del(r.id)} title="Delete this lesson — the judge stops imitating it"
-                    className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-400 hover:border-red-600 hover:text-red-400">🗑</button>
+                    className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-300 hover:border-red-600 hover:text-red-400">🗑</button>
                 )}
               </div>
             ))}

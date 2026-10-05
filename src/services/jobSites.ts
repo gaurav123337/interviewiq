@@ -53,9 +53,9 @@ export function sessionStateOf(s: JobSite): { key: "verified" | "expired" | "unc
     return { key: "expired", label: `session EXPIRED${s.session_expired_at ? ` · ${new Date(s.session_expired_at).toLocaleString()}` : ""}`, cls: "bg-red-500/15 text-red-400", title: "The watchdog probe hit the login wall — the site killed the session server-side. One 🔑 OTP re-login restores it." };
   }
   if (s.session_state === "unknown" && s.session_checked_at) {
-    return { key: "unchecked", label: `session unclear · ${checked}`, cls: "bg-zinc-500/15 text-zinc-400", title: "The last probe could not tell (bot-check page or error) — it retries hourly." };
+    return { key: "unchecked", label: `session unclear · ${checked}`, cls: "bg-zinc-500/15 text-zinc-300", title: "The last probe could not tell (bot-check page or error) — it retries hourly." };
   }
-  return { key: "unchecked", label: "session never checked", cls: "bg-zinc-500/15 text-zinc-400", title: "The hourly watchdog has not probed this site yet." };
+  return { key: "unchecked", label: "session never checked", cls: "bg-zinc-500/15 text-zinc-300", title: "The hourly watchdog has not probed this site yet." };
 }
 
 export function summarizeSite(s: JobSite): string {
