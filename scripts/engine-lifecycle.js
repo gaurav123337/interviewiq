@@ -119,9 +119,21 @@ function parsePsLines(lines) {
 }
 
 async function processRecords(name) {
-  const raw = isWindows ? await wmicBlocks(`name='${name}'`) : "";
-  if (raw === null) return parsePsLines(await psList(name)); // wmic missing
-  return parseWmicBlocks(raw);
+  if (isWindows) {
+    const raw = await wmicBlocks(`name='${name}'`);
+    if (raw !== null) {
+      const parsed = parseWmicBlocks(raw);
+      if (parsed.length) return parsed;
+      /* wmic answered with ZERO records — but the deprecated WMI service
+         intermittently no-ops (empty stdout, exit 0) while processes ARE
+         running; that false "nothing is up" made the listen watchdog spawn
+         a DUPLICATE listener at 2026-10-06 04:44 while pid 21340 was alive
+         (listen-watchdog.log: "listener was down — started (pid 21340, 9012)").
+         Re-check via CIM before believing an empty list. */
+    }
+    return parsePsLines(await psList(name)); // wmic missing OR empty — CIM double-check
+  }
+  return parsePsLines(await psList(name));
 }
 
 /** Every engine-relevant process, classified by its command-line marker.

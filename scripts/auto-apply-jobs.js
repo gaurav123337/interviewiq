@@ -507,6 +507,7 @@ async function telegramCommandLoop() {
       const { spawn } = await import("node:child_process");
       const logFile = path.join(REPORTS_DIR, "run-now.log");
       const outFd = openSync(logFile, "a");
+      const runStart = Date.now(); // every per-site report from THIS cycle aggregates below
       const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--all"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, ".."), env: { ...process.env, FREEBUFF_APP_TRIGGERED: "1" } });
       child.unref();
       closeSync(outFd);
@@ -517,12 +518,20 @@ async function telegramCommandLoop() {
           db.reportRunStatus?.("failed", `run exited with code ${code} — see freebuff-apply-reports/run-now.log`).catch(() => {});
           return;
         }
-        /* summarize the freshest report so the button shows real numbers */
+        /* summarize THIS CYCLE honestly: aggregate every per-site report the
+           run wrote. The old code read only the NEWEST run-*.json — a 6-site
+           cycle whose last site collected nothing reported "0 skipped" and
+           hid the other five sites' real numbers. */
         try {
           const files = readdirSync(REPORTS_DIR).filter((f) => /^run-\d{4}-\d{2}-\d{2}T.*\.json$/.test(f)).sort();
-          const latest = JSON.parse(readFileSync(path.join(REPORTS_DIR, files[files.length - 1]), "utf8"));
-          const rs = latest.results ?? [];
-          db.reportRunStatus?.("done", `✅ ${rs.filter((r) => r.result === "submitted").length} submitted · ⏸ ${rs.filter((r) => r.result === "needs_review").length} review · ⏭ ${rs.filter((r) => r.result === "skipped").length} skipped (judge) · ✗ ${rs.filter((r) => r.result === "error").length} errors`).catch(() => {});
+          const cycleReports = files.map((f) => { try { return JSON.parse(readFileSync(path.join(REPORTS_DIR, f), "utf8")); } catch { return null; } })
+            .filter((r) => r && Array.isArray(r.results) && Number(r.startedAt) >= runStart - 2000);
+          if (!cycleReports.length) {
+            db.reportRunStatus?.("done", "cycle skipped — another engine run already held the apply profile (no site touched; the watcher retries in 15 min)").catch(() => {});
+            return;
+          }
+          const rs = cycleReports.flatMap((r) => r.results ?? []);
+          db.reportRunStatus?.("done", `✅ ${rs.filter((r) => r.result === "submitted").length} submitted · ⏸ ${rs.filter((r) => r.result === "needs_review").length} review · ⏭ ${rs.filter((r) => r.result === "skipped").length} skipped · ✗ ${rs.filter((r) => r.result === "error").length} errors · ${cycleReports.length} site report(s)`).catch(() => {});
         } catch { db.reportRunStatus?.("done", "run finished — see the Applications report").catch(() => {}); }
       });
     } catch { /* polling is best-effort */ }
@@ -1567,6 +1576,21 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
   const plan = planFormAnswers(fields, profile, job, storedAnswers ?? {});
   const unfilledRequired = [];
   let filled = 0;
+  /* LinkedIn's inline Easy Apply flow RE-RENDERS constantly — every Playwright
+     actionability wait on its elements burns its full default 30s timeout
+     before the catch swallows it (5 fields ≈ 150s per step; the multi-step
+     submit belt re-fills each step → guaranteed 4-min watchdog stall, two
+     retries in a row on 2026-10-04). Bound EVERY per-field wait short and
+     fall back to a direct DOM write (native value setter → React/Ember-safe)
+     when Playwright's actionability checks give up. */
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(undefined), ms))]);
+  const jsFill = (el, v) => {
+    const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, v); else el.value = v;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  };
 
   for (let i = 0; i < controls.length; i++) {
     const c = controls[i];
@@ -1579,10 +1603,10 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
         if (!answer) { if (meta.required) unfilledRequired.push(meta.label || cls.kind); continue; }
         const pick = (meta.options ?? []).find(o => valueMatchesList(answer, o));
         if (!pick) { if (meta.required) unfilledRequired.push(meta.label || cls.kind); continue; }
-        if (!dryRun) await c.selectOption({ label: pick });
+        if (!dryRun) { try { await c.selectOption({ label: pick, timeout: 5000 }); } catch { await c.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); }, pick).catch(() => {}); } }
         filled++;
       } else if (meta.type === "file") {
-        if (resumePath && existsSync(resumePath)) { if (!dryRun) await c.setInputFiles(resumePath); filled++; }
+        if (resumePath && existsSync(resumePath)) { if (!dryRun) await c.setInputFiles(resumePath, { timeout: 8000 }).catch(() => {}); filled++; }
         else unfilledRequired.push("resume file");
       } else if (meta.type === "checkbox" || meta.type === "radio") {
         /* REQUIRED consent checkboxes / option radios were blanket-skipped —
@@ -1593,7 +1617,7 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
            Radio → select only when the drafted answer matches THIS radio's own
            option label; a required radio with no honest match stays fail-closed. */
         if (meta.type === "checkbox") {
-          const checked = await c.evaluate((el) => el.checked).catch(() => true);
+          const checked = await withTimeout(c.evaluate((el) => el.checked).catch(() => true), 3000);
           if (meta.required && !checked) {
             if (!dryRun) { try { await c.check({ timeout: 3000 }); } catch { await c.evaluate((el) => el.click()).catch(() => {}); } }
             filled++;
@@ -1609,8 +1633,17 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
         }
       } else {
         if (!answer) { if (meta.required) unfilledRequired.push(meta.label || cls.kind); continue; }
-        if (!dryRun) { await c.click({ clickCount: 3 }); await c.fill(answer); }
-        filled++;
+        if (!dryRun) {
+          /* fill() focuses and clears by itself — the old click({clickCount:3})
+             was redundant AND burned 30s of actionability wait per field on
+             the re-rendering Easy Apply flow */
+          try { await c.fill(answer, { timeout: 5000 }); filled++; }
+          catch {
+            const ok = await c.evaluate(jsFill, answer).then(() => true).catch(() => false);
+            if (ok) filled++;
+            else if (meta.required) unfilledRequired.push(meta.label || cls.kind);
+          }
+        } else filled++;
       }
     } catch { /* field-specific failure — count as unfilled if required */ if (meta.required) unfilledRequired.push(meta.label || cls.kind); }
   }
@@ -1727,9 +1760,19 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
       const blocker = await page.evaluate(() =>
         document.querySelector("[role=alert], .artdeco-inline-feedback__message")?.innerText?.trim() ?? ""
       ).catch(() => "");
-      const stepTitle = await page.evaluate(() =>
-        (document.querySelector(".artdeco-modal__header h2, h2[data-live-test-job-question-header], .jobs-easy-apply-content h2")?.innerText ?? "").trim().slice(0, 60)
-      ).catch(() => "");
+      const stepTitle = await page.evaluate(() => {
+        /* the flow renders INLINE now (no artdeco modal) — search the flow
+           containers FIRST (the document-wide fallback grabs nav junk like
+           the notifications bell: "stuck on step 0 notifications total") */
+        for (const sel of [".jobs-easy-apply-content", "[role=dialog]", ".jobs-search__job-details--container", ".scaffold-layout__main"]) {
+          const scope = document.querySelector(sel);
+          if (!scope) continue;
+          const els = [...scope.querySelectorAll("h2, h3, [data-live-test-job-step-indicator], .artdeco-completion-meter__label")];
+          const vis = els.find((x) => x.offsetParent && (x.innerText || "").trim());
+          if (vis) return (vis.innerText || "").replace(/\s+/g, " ").trim().slice(0, 60);
+        }
+        return "";
+      }).catch(() => "");
       return { auto: false, note: `Easy Apply mid-flow${blocker ? ` — ${blocker.slice(0, 80)}` : stepTitle ? ` — stuck on step "${stepTitle}"` : " — submit never appeared"} — queued for one-click finish` };
     }
     /* HONEST VERDICT (#164): auto-submit sites used to return {auto:true,
@@ -1812,6 +1855,14 @@ async function runSingle(args, { existingCtx = null } = {}) {
 
   const ctx = existingCtx ?? sharedChildCtx ?? await launchBrowser(args.headless, { signIn: args["login-only"] });
   let page = ctx.pages()[0] ?? (await ctx.newPage());
+  /* KEEP-ALIVE: a headed Chromium EXITS when its last tab closes — the async-
+     review page.close() and the watchdog page.close() were closing the ONLY
+     tab, the browser process died mid-run, and the next ctx.newPage() failed
+     ("Target.createTarget: Failed to open a new tab") — every remaining job
+     in the leg was lost (3 retries in a row, 2026-10-04). One sacrificial
+     blank tab keeps the browser alive for the whole run (the --all shared
+     child already knew this: "a browser with zero pages exits"). */
+  const keepAlivePage = args["login-only"] ? null : await ctx.newPage().catch(() => null);
   /* mutable page handle for the sign-in flow: the self-healing wait loop can
      RELAUNCH the window, and the outcome block must verify the LIVE page,
      not a closed one */
@@ -1968,8 +2019,9 @@ async function runSingle(args, { existingCtx = null } = {}) {
          Easy Apply modals wait for HANDS (a human needs >4 min); unattended
          stays tight: nobody is coming to click. */
       const JOB_BUDGET_MS = args.unattended ? 4 * 60_000 : 15 * 60_000;
-      const jw = setTimeout(() => { console.log(yellow(`  ⏱ job timed out after ${JOB_BUDGET_MS / 60_000} min — skipping`)); try { page.close().catch(() => {}); } catch { /* already closed */ } }, JOB_BUDGET_MS);
-      if (page.isClosed?.()) page = await ctx.newPage(); // watchdog closed it last job — fresh page
+      let jwFired = false; // watchdog already killed the page — post-timeout throws are the ABORT, not a real job error
+      const jw = setTimeout(() => { jwFired = true; console.log(yellow(`  ⏱ job timed out after ${JOB_BUDGET_MS / 60_000} min — skipping`)); try { page.close().catch(() => {}); } catch { /* already closed */ } }, JOB_BUDGET_MS);
+      if (page.isClosed?.()) { try { page = await ctx.newPage(); } catch (e) { console.error(red(`  ✗ browser gone (${e.message.slice(0, 80)}) — ending site leg early`)); break; } } // watchdog closed it last job — fresh page; a DEAD context (window closed) must end the leg gracefully, not crash the run
       try {
         await openJob(page, job);
         /* closed posting: LinkedIn banners "No longer accepting applications"
@@ -2096,7 +2148,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           if (external) {
             let atsPage = null;
             for (const p of ctx.pages()) {
-              if (p !== page && !/linkedin\.com/i.test(p.url())) { atsPage = p; break; }
+              if (p !== page && p !== keepAlivePage && !/linkedin\.com/i.test(p.url()) && !/^about:blank/.test(p.url())) { atsPage = p; break; }
             }
             const sameTab = !atsPage && !/linkedin\.com/i.test(page.url()); // redirected in-place
             const target = atsPage ?? (sameTab ? page : null);
@@ -2180,8 +2232,15 @@ async function runSingle(args, { existingCtx = null } = {}) {
         }
         await page.waitForTimeout(rules.minIntervalMs);
       } catch (e) {
-        recordResultBoth(report, job, "error", e.message.slice(0, 160));
-        console.error(red(`  ✗ ${e.message.slice(0, 160)}`));
+        if (jwFired && /has been closed/i.test(e.message)) {
+          /* the watchdog closed the page; the in-flight flow then threw on a
+             locator — that is the timeout ABORT, not a real job failure */
+          recordResultBoth(report, job, "skipped", "job timed out (watchdog) — page closed mid-flow");
+          console.log(dim("  ⏭ skipped — job timed out (watchdog)"));
+        } else {
+          recordResultBoth(report, job, "error", e.message.slice(0, 160));
+          console.error(red(`  ✗ ${e.message.slice(0, 160)}`));
+        }
       } finally {
         clearTimeout(jw);
       }
@@ -2248,6 +2307,27 @@ async function runSingle(args, { existingCtx = null } = {}) {
 
 /* ------------------- --all: iterate ACTIVE registered sites ------------------- */
 
+/* ── ONE CYCLE AT A TIME (cross-process) ───────────────────────────────
+   The watcher's scheduled cycle and the listener's ⚡ Run-now cycle BOTH
+   launch the same shared Chromium profile; whoever comes second fails every
+   site with "Opening in existing browser session" (ProcessSingleton lock)
+   and — before this lock — still burned its full 6h sleep on that dead run
+   (2026-10-06: watcher 6 sites / 6 site errors, zero applies all morning).
+   The lock makes the loser SKIP honestly; the watcher then retries in 15
+   minutes instead of sleeping 6h. PID-stamped: a dead holder is reclaimed. */
+const CYCLE_LOCK = path.join(REPORTS_DIR, "engine-cycle.lock");
+function acquireCycleLock() {
+  try {
+    const { pid } = JSON.parse(readFileSync(CYCLE_LOCK, "utf8"));
+    if (pid && pid !== process.pid) { try { process.kill(pid, 0); return false; } catch { /* holder died — reclaim */ } }
+  } catch { /* no/corrupt lock file — reclaim */ }
+  try { writeFileSync(CYCLE_LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: "wx" }); return true; }
+  catch { return false; } // lost a creation race
+}
+function releaseCycleLock() {
+  try { const { pid } = JSON.parse(readFileSync(CYCLE_LOCK, "utf8")); if (pid === process.pid) unlinkSync(CYCLE_LOCK); } catch { /* gone */ }
+}
+
 async function runAll(args) {
   const db = await sitesDb();
   let sites = [];
@@ -2269,7 +2349,12 @@ async function runAll(args) {
   /* owner kill switch: the SCHEDULED path fails closed — off/cloud/unknown
      all stop the cycle (unknown = config unreadable → stop too) */
   const blocked = await applyModeBlocked(true);
-  if (blocked) { console.log(yellow(`⏸ apply engine disabled: ${blocked} — skipping this cycle.`)); return; }
+  if (blocked) { console.log(yellow(`⏸ apply engine disabled: ${blocked} — skipping this cycle.`)); return "skipped"; }
+  if (!acquireCycleLock()) {
+    console.log(yellow("⏸ another engine cycle already holds the apply profile — this cycle SKIPPED honestly (no site was touched)"));
+    return "busy";
+  }
+  try {
   /* ONE SHARED BROWSER for the whole cycle: launch it here, hand its CDP
      endpoint to each per-site child via env (they open TABS in it), and
      close it once after the last site — no more per-site window storms. */
@@ -2316,7 +2401,13 @@ async function runAll(args) {
         child.on("exit", (c) => { clearTimeout(t); resolve(c ?? -1); });
         child.on("error", () => { clearTimeout(t); resolve(-1); });
       });
-      if (code !== 0) totals.errors++;
+      if (code !== 0) {
+        totals.errors++;
+        /* honest registry: a crashed/timed-out child never reaches its own
+           recordRun, so the UI kept showing days-old "✓ 1 submitted" while
+           every launch actually failed (2026-10-06). Stamp the failure. */
+        await db?.recordRun?.({ host: s.host, ok: false, notes: `site run FAILED (exit ${code} — launch crash/timeout; see watch.log)` }).catch(() => {});
+      }
       /* tab sweep between sites: a killed/timed-out child can leave its tab
          open in the shared browser (the user sees mystery tabs piling up) —
          keep only the first tab before the next site starts */
@@ -2334,6 +2425,10 @@ async function runAll(args) {
   console.log(`\n--all complete (${sites.length} sites, ${totals.errors} site error(s)).`);
   /* the shared browser dies HERE, once, after the last site — not per site */
   if (sharedCleanup) await sharedCleanup().catch(() => {});
+  return "ran";
+  } finally {
+    releaseCycleLock();
+  }
 }
 
 /* ---------------- --sessions: durable-session watchdog ---------------- */
@@ -2441,10 +2536,17 @@ async function runWatch(args) {
       const { spawnSync } = await import("node:child_process");
       spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), "--limit", "4"], { stdio: "inherit", cwd: path.join(ROOT, "..") });
     } catch { /* discovery failing must never stop applying */ }
-    await runAll(args);
+    return await runAll(args); // "ran" | "busy" (another cycle held the profile)
   };
   for (;;) {
-    await cycle();
+    const outcome = await cycle();
+    if (outcome === "busy") {
+      /* a ⚡ Run-now (or another cycle) held the profile — retry SOON instead
+         of sleeping the full 6h on a cycle that did nothing (2026-10-06) */
+      console.log(dim("\nanother engine cycle was active — retrying in 15 min…"));
+      await new Promise((r) => setTimeout(r, 15 * 60_000));
+      continue;
+    }
     console.log(dim(`\nsleeping ${everyH}h until the next cycle (Ctrl+C to stop)…`));
     await new Promise((r) => setTimeout(r, everyH * 3600_000));
   }
