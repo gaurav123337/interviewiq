@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 
 import { exec } from "node:child_process";
 import { isApplyOff, sweepEngineProcesses, lockHolderAlive } from "./engine-lifecycle.js";
+import { watcherHeartbeatFresh } from "./job-sites-db.js";
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT = path.resolve(ROOT, "..");
 const ENGINE = path.join(ROOT, "auto-apply-jobs.js");
@@ -123,6 +124,17 @@ if (pids == null) pids = await listWatcherPidsPs();
 
 if (pids.length > 0) {
   console.log(`apply watcher already running (pid ${pids.join(", ")}) — nothing to do`);
+  process.exit(0);
+}
+
+/* Same flaky-WMI protection the listen watchdog has: wmic AND Get-CimInstance
+   ride the same WMI stack, which transiently returns EMPTY under load. A
+   fresh "watcher …" beat (engine_events, ~2 min cadence, ≤15 min window)
+   proves the watcher is alive even when the listing lies. Stale-or-missing
+   beat + empty listing → the rescue-spawn below proceeds (pre-existing
+   direction for a genuinely dead watcher). */
+if (await watcherHeartbeatFresh()) {
+  console.log("watcher heartbeat is fresh — not respawning despite an empty process listing");
   process.exit(0);
 }
 

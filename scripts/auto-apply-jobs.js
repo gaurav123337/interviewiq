@@ -2327,6 +2327,19 @@ function acquireCycleLock() {
 function releaseCycleLock() {
   try { const { pid } = JSON.parse(readFileSync(CYCLE_LOCK, "utf8")); if (pid === process.pid) unlinkSync(CYCLE_LOCK); } catch { /* gone */ }
 }
+/* 🫀 watcher heartbeat: the watcher "beats" engine_events with a
+   "watcher …" detail (cycle start + every site leg), so ensure-apply-watcher
+   can tell a LIVE watcher from flaky-WMI emptiness the same way the listen
+   watchdog trusts the listener's beat — and a WATCHER BEAT can never mask a
+   dead LISTENER (the prefixes differ; each supervisor reads its own).
+   Best-effort + throttled (~2 min): the writes must stay trivial. */
+let lastWatcherBeat = 0;
+function watcherBeat(detail) {
+  const now = Date.now();
+  if (now - lastWatcherBeat < 120_000) return;
+  lastWatcherBeat = now;
+  void sitesDb().then((db) => db?.reportEngineState?.("running", `watcher ${detail}`).catch(() => {})).catch(() => {});
+}
 
 async function runAll(args) {
   const db = await sitesDb();
@@ -2380,6 +2393,7 @@ async function runAll(args) {
   const totals = { submitted: 0, skipped: 0, errors: 0 };
   for (const s of sites) {
     console.log(`\n━━━ ${s.label} (${s.host}) ━━━`);
+    watcherBeat(`site ${s.host}`); // per-site beat: a 12-min site child can't out-age the freshness window
     try {
       const { spawn } = await import("node:child_process");
       const SITE_TIMEOUT_MS = 12 * 60_000;
@@ -2536,6 +2550,7 @@ async function runWatch(args) {
       const { spawnSync } = await import("node:child_process");
       spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), "--limit", "4"], { stdio: "inherit", cwd: path.join(ROOT, "..") });
     } catch { /* discovery failing must never stop applying */ }
+    watcherBeat(`cycle start — discovery + apply (--max ${args.max})`);
     return await runAll(args); // "ran" | "busy" (another cycle held the profile)
   };
   for (;;) {
@@ -2559,6 +2574,7 @@ async function main() {
   args_isCloudMode = (await readApplyMode()).mode === "cloud";
   args_unattended = args.unattended;
   argURL = args.url || ""; // stamp every signin-flow.log line with the run's URL
+  if (args.watch) watcherBeat(`started (pid ${process.pid})`); // boot beat for ensure-apply-watcher's liveness check
   if (args.discover) {
     const { spawnSync } = await import("node:child_process");
     const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });

@@ -235,12 +235,26 @@ export async function reportEngineState(state, detail) {
     both run on the same WMI stack — which transiently returns EMPTY under
     process-spawn load (that false "listener was down" spawned duplicate
     listeners twice on 2026-10-06). A fresh beat proves the listener is up
-    no matter what process listing claims. Unreadable → false (supervisors
-    fall through to the rescue-spawn path, the pre-existing direction). */
+    no matter what process listing claims. Detail-prefixed "listener" so the
+    WATCHER's beats ("watcher …") can never mask a dead listener. Unreadable
+    → false (supervisors fall through to the rescue-spawn path, the
+    pre-existing direction). */
 export async function listenerHeartbeatFresh(maxAgeMs = 210_000) {
   try {
     const evs = await listEngineEvents(1);
-    const last = evs.filter((e) => e.state === "running").at(-1);
+    const last = evs.filter((e) => e.state === "running" && String(e.detail ?? "").startsWith("listener")).at(-1);
+    if (!last) return false;
+    return Date.now() - new Date(last.created_at).getTime() <= maxAgeMs;
+  } catch { return false; }
+}
+
+/** Same idea for the WATCHER supervisor (ensure-apply-watcher): the watcher
+    beats with a "watcher …" detail at cycle boundaries AND per site (a site
+    child may legitimately run 12 min, hence the 15-min freshness window). */
+export async function watcherHeartbeatFresh(maxAgeMs = 15 * 60_000) {
+  try {
+    const evs = await listEngineEvents(1);
+    const last = evs.filter((e) => e.state === "running" && String(e.detail ?? "").startsWith("watcher")).at(-1);
     if (!last) return false;
     return Date.now() - new Date(last.created_at).getTime() <= maxAgeMs;
   } catch { return false; }
@@ -252,7 +266,7 @@ export async function listenerHeartbeatFresh(maxAgeMs = 210_000) {
 export async function listEngineEvents(hours = 168) {
   const creds = loadLocalCreds();
   const since = new Date(Date.now() - hours * 3600_000).toISOString();
-  const res = await fetch(`${creds.base}/rest/v1/engine_events?select=state,created_at&created_at=gte.${encodeURIComponent(since)}&order=created_at.asc`, {
+  const res = await fetch(`${creds.base}/rest/v1/engine_events?select=state,detail,created_at&created_at=gte.${encodeURIComponent(since)}&order=created_at.asc`, {
     headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
   });
   if (!res.ok) return [];
