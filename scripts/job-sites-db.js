@@ -230,6 +230,22 @@ export async function reportEngineState(state, detail) {
   });
 }
 
+/** Independent listener-liveness signal for SUPERVISORS: the listener beats
+    engine_events every ~2 min over the NETWORK, while wmic AND Get-CimInstance
+    both run on the same WMI stack — which transiently returns EMPTY under
+    process-spawn load (that false "listener was down" spawned duplicate
+    listeners twice on 2026-10-06). A fresh beat proves the listener is up
+    no matter what process listing claims. Unreadable → false (supervisors
+    fall through to the rescue-spawn path, the pre-existing direction). */
+export async function listenerHeartbeatFresh(maxAgeMs = 210_000) {
+  try {
+    const evs = await listEngineEvents(1);
+    const last = evs.filter((e) => e.state === "running").at(-1);
+    if (!last) return false;
+    return Date.now() - new Date(last.created_at).getTime() <= maxAgeMs;
+  } catch { return false; }
+}
+
 /** Raw heartbeat history (beats + stop reports), ASC — the weekly digest's
     uptime line reads this directly with the service key (the admin RPC caps
     at 72h; the engine may read the full retention window). */

@@ -25,6 +25,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isWindows, isApplyOff, listEngineProcesses, sweepEngineProcesses } from "./engine-lifecycle.js";
+import { listenerHeartbeatFresh } from "./job-sites-db.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT = path.resolve(ROOT, "..");
@@ -54,6 +55,12 @@ if (await isApplyOff()) {
 
 const procs = await listEngineProcesses();
 if (procs.listenPids.length) process.exit(0); // already up — nothing to do
+/* SECOND, independent liveness signal: wmic AND Get-CimInstance both ride the
+   same WMI stack, which transiently returns EMPTY while processes ARE alive
+   (duplicated listeners at 2026-10-06 04:44 AND 05:32 — the second one WITH a
+   CIM fallback, because CIM is the same provider). A fresh heartbeat (<3.5 min)
+   proves the listener is up; only a stale beat AND an empty listing may respawn. */
+if (await listenerHeartbeatFresh()) process.exit(0); // beating = alive — nothing to do
 
 /* detached + hidden: the listener owns no console, so the task instance
    completes in seconds instead of parking a cmd window open. The listener
