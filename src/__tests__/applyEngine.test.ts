@@ -11,6 +11,7 @@ import {
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
   titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor, classifyJobLink,
+  extractFeedbackSkills, strikesWithDecay, skillIsBuzzOnly,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -581,5 +582,80 @@ describe("form-answer memory — store and reuse what was filled", () => {
     expect(preview).toHaveLength(24);
     expect(preview[0].kind).toBe("unknown");
     expect(preview[0].answered).toBe(false);
+  });
+});
+
+describe("feedback learning loop — extract skills from detail lines", () => {
+  it("parses the coverage-gate format (the most common skip)", () => {
+    expect(extractFeedbackSkills("JD requires java, sql, aws — not on the resume")).toEqual(["java", "sql", "aws"]);
+    expect(extractFeedbackSkills("JD requires node — not on the resume")).toEqual(["node"]);
+  });
+
+  it("parses the critical-gate format", () => {
+    expect(extractFeedbackSkills("core skill missing: python — required by title/JD")).toEqual(["python"]);
+    expect(extractFeedbackSkills("core skill missing: java, kotlin — required by title/JD")).toEqual(["java", "kotlin"]);
+  });
+
+  it("returns [] honestly for skill-less formats (title gate, judge skips)", () => {
+    expect(extractFeedbackSkills("not relevant to profile (Staff Frontend Engineer)")).toEqual([]);
+    expect(extractFeedbackSkills("AI judge: backend-core JD for a frontend resume")).toEqual([]);
+    expect(extractFeedbackSkills("")).toEqual([]);
+    expect(extractFeedbackSkills(null)).toEqual([]);
+  });
+
+  it("tolerates punctuation noise and caps the list", () => {
+    expect(extractFeedbackSkills("JD requires C++, Node.js, Go, Rust, Kotlin, Swift, Ruby — not on the resume").length).toBeLessThanOrEqual(6);
+  });
+});
+
+describe("strike decay — stale hard-rejects stop rejecting", () => {
+  const DAY = 24 * 3600_000;
+  const now = 1_800_000_000_000;
+
+  it("keeps fresh strikes untouched", () => {
+    const rows = [{ skill: "python", strikes: 2, updated_at: new Date(now - 5 * DAY).toISOString() }];
+    expect(strikesWithDecay(rows, now)).toEqual(rows);
+  });
+
+  it("decays strikes older than 30 days to zero and drops them", () => {
+    const rows = [
+      { skill: "python", strikes: 3, updated_at: new Date(now - 45 * DAY).toISOString() },
+      { skill: "java", strikes: 2, updated_at: new Date(now - 29 * DAY).toISOString() },
+    ];
+    const out = strikesWithDecay(rows, now);
+    expect(out.map((r) => r.skill)).toEqual(["java"]);
+  });
+
+  it("treats rows without updated_at as fresh (legacy rows never silently vanish)", () => {
+    expect(strikesWithDecay([{ skill: "go", strikes: 2 }], now)).toEqual([{ skill: "go", strikes: 2 }]);
+  });
+
+  it("filters zero-strike rows", () => {
+    expect(strikesWithDecay([{ skill: "rust", strikes: 0, updated_at: new Date(now).toISOString() }], now)).toEqual([]);
+  });
+});
+
+describe("buzz-only gating — 'we work with AI' is not 'experience with AI'", () => {
+  it("flags a skill that only ever appears in buzz context", () => {
+    const jd = "join our ai-first mission. we build with ai to transform hiring. our ai product team is growing fast";
+    expect(skillIsBuzzOnly(jd, "ai")).toBe(true);
+  });
+
+  it("keeps a skill that appears in a requirement context", () => {
+    const jd = "we are an ai-first company. requirements: 3+ years experience with ai integrations and react";
+    expect(skillIsBuzzOnly(jd, "ai")).toBe(false);
+  });
+
+  it("conservative defaults: empty skill or empty JD never gate", () => {
+    expect(skillIsBuzzOnly("some jd text", "")).toBe(false);
+    expect(skillIsBuzzOnly("", "python")).toBe(false);
+  });
+
+  it("a learned strike on a buzz-only mention no longer rejects (FurtherAI case)", () => {
+    const profile = { headline: "Staff Frontend Engineer", skills: ["React", "TypeScript", "Testing"] };
+    const jd = "FurtherAI is an ai company building the future of hiring. we work with ai daily. react, typescript, testing, graphql required";
+    // with the strike active, the old gate rejected this React-fit posting when 'ai' counted as required-and-missing
+    const withStrike = postingRelevant({ title: "Staff Software Engineer, Frontend", description: jd }, profile, { learnedCritical: ["ai"] });
+    expect(withStrike.ok).toBe(true); // buzz-only 'ai' must not hard-reject
   });
 });

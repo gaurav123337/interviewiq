@@ -138,6 +138,17 @@ export async function getSkillStrikes(min = 2) {
   return rpc(loadLocalCreds(), "engine_get_skill_strikes", { p_min: min });
 }
 
+/** RAW strike rows incl. updated_at — the engine applies 30-day decay locally
+    (strikesWithDecay) without a SQL migration. Service key bypasses RLS. */
+export async function getSkillStrikesRaw() {
+  const creds = loadLocalCreds();
+  const res = await fetch(`${creds.base}/rest/v1/apply_skill_strikes?site_host=eq.global&strikes=gte.1&order=strikes.desc`, {
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
+  });
+  if (!res.ok) throw new Error(`strikes read ${res.status}`);
+  return res.json();
+}
+
 /* ── per-job run report (the UI's applications report) ───────────────── */
 
 /** Push one per-job decision. Fire-and-forget from the engine: report
@@ -148,6 +159,26 @@ export async function recordApplyResult({ siteHost, jobUrl, title, company, resu
     p_company: company ?? null, p_result: result, p_detail: detail ?? null,
     p_fit: fit ?? null,
   });
+}
+
+/** Engine-side exemplar write (skip/applied rows the owner then 👍/👎-s).
+    The RPC is admin/owner-seeded tooling; the LOCAL engine runs with the
+    service key, so service_role passes its guard (same as recordApplyResult). */
+export async function putJudgeExemplar(kind, summary, reason, sourceUrl) {
+  return rpc(loadLocalCreds(), "admin_put_judge_exemplar", {
+    p_kind: kind, p_summary: summary, p_reason: reason ?? null, p_source_url: sourceUrl ?? null,
+  });
+}
+
+/** Clear the strike rows for these skills (owner 👍 on a skip row: the
+    skill was never really unwanted — e.g. a false "python" strike). */
+export async function clearSkillStrikes(skills) {
+  const creds = loadLocalCreds();
+  const res = await fetch(`${creds.base}/rest/v1/apply_skill_strikes?site_host=eq.global&skill=in.(${encodeURIComponent(skills.map((s) => s.toLowerCase().trim()).join(","))})`, {
+    method: "DELETE",
+    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}`, Prefer: "return=minimal" },
+  });
+  if (!res.ok) throw new Error(`strike clear ${res.status}`);
 }
 
 /** Pending review rows (the Telegram listener resolves them by ordinal). */

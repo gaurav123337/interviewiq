@@ -251,6 +251,34 @@ describe("feedback learning loop (👍/👎 → learned strikes)", () => {
     rpc.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
     await expect(sendApplyFeedback("row-x", "bad", [])).rejects.toThrow("forbidden");
   });
+
+  it("skip-row 👍 writes the un-skip exemplar through admin_put_judge_exemplar", async () => {
+    rpc.mockResolvedValueOnce({ data: [], error: null }); // engine_apply_feedback
+    rpc.mockResolvedValueOnce({ data: null, error: null }); // admin_put_judge_exemplar
+    await putJudgeExemplar("positive", "ML Engineer — Acme: owner UN-skipped — this was wrongly rejected by the gates", "JD requires python — not on the resume", "https://x/j/1");
+    expect(rpc).toHaveBeenLastCalledWith("admin_put_judge_exemplar", {
+      p_kind: "positive",
+      p_summary: "ML Engineer — Acme: owner UN-skipped — this was wrongly rejected by the gates",
+      p_reason: "JD requires python — not on the resume",
+      p_source_url: "https://x/j/1",
+    });
+  });
+
+  it("skip-row 👎 teaches a NEGATIVE exemplar (confirmed skip)", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
+    await putJudgeExemplar("negative", "ML Engineer — Acme: owner confirmed the skip");
+    expect(rpc).toHaveBeenLastCalledWith("admin_put_judge_exemplar", {
+      p_kind: "negative",
+      p_summary: "ML Engineer — Acme: owner confirmed the skip",
+      p_reason: null,
+      p_source_url: null,
+    });
+  });
+
+  it("exemplar write failures propagate (UI catches and shows the error)", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "row-level security" } });
+    await expect(putJudgeExemplar("positive", "s")).rejects.toThrow("row-level security");
+  });
 });
 
 describe("notify config (per-user, RLS-scoped)", () => {

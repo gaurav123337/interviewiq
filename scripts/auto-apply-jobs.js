@@ -38,6 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink,
 } from "./apply-engine-lib.js";
+import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
 import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 import { sweepEngineProcesses } from "./engine-lifecycle.js";
@@ -202,8 +203,13 @@ async function judgeExemplars() {
 
 async function learnedCriticalSkills() {
   const db = await sitesDb();
-  if (!db?.getSkillStrikes) return [];
-  try { return ((await db.getSkillStrikes(2)) ?? []).map((r) => r.skill); }
+  if (!db?.getSkillStrikesRaw) return [];
+  try {
+    /* 30-day decay: strikes older than a month stop rejecting — the owner's
+       taste changed since (or a hard-reject skill snowballed and zeroed a
+       whole job class silently). strikesWithDecay is the single definition. */
+    return strikesWithDecay(await db.getSkillStrikesRaw()).filter((r) => r.strikes >= 2).map((r) => r.skill);
+  }
   catch { return []; }
 }
 
@@ -2251,6 +2257,8 @@ async function runSingle(args, { existingCtx = null } = {}) {
     writeFileSync(path.join(REPORTS_DIR, `run-${stamp}.json`), JSON.stringify(report, null, 2));
     writeFileSync(path.join(REPORTS_DIR, `run-${stamp}.md`), buildReportMarkdown(report));
     console.log(`\n${reportLine(report)}`);
+    if (ai?.__unhealthy) console.log(yellow(`🧠 AI DEGRADED this run (${String(ai.__unhealthy).slice(0, 90)}) — kits fell back to templates and the judge was down; fix the provider, then re-run.`));
+    else if (!ai) console.log(yellow("🧠 AI not configured — kits are templates and only keyword gates judged; set the provider in Admin → AI provider."));
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
     await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
     await learnRules(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});

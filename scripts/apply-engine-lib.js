@@ -449,7 +449,7 @@ export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2, cri
      in the coverage ratio above and the AI judge owns the borderline. */
   const critSet = new Set();
   for (const s of critical) if (!prof.has(s)) critSet.add(s);
-  for (const s of learnedCritical) if (missing.includes(s)) critSet.add(s);
+  for (const s of learnedCritical) if (missing.includes(s) && !skillIsBuzzOnly(jdText, s)) critSet.add(s);
   const criticalMissing = [...critSet];
   if (criticalMissing.length) {
     return {
@@ -860,6 +860,69 @@ export function fitScore(matched, missing, coreMissing = []) {
   const base = Math.round((m / (m + x)) * 100);
   const penalty = Math.min(48, (coreMissing?.length ?? 0) * 12);
   return Math.max(0, base - penalty);
+}
+
+/* Skill strikes: decay after 30 days — the owner's taste changes and a
+   stale "hard reject forever" silently zeroed whole job classes (a skill
+   skipped twice in August must not keep rejecting in November). Rows older
+   than the window are simply not counted anymore; the count catches up on
+   the next feedback write. Pure: the caller feeds {skill, strikes,
+   updated_at} rows (missing updated_at = treated as fresh). */
+export const STRIKE_DECAY_MS = 30 * 24 * 3600_000;
+export function strikesWithDecay(rows, now = Date.now()) {
+  return (rows ?? [])
+    .filter((r) => (r.strikes ?? 0) > 0)
+    .map((r) => {
+      const age = r.updated_at ? now - new Date(r.updated_at).getTime() : 0;
+      return age >= STRIKE_DECAY_MS
+        ? { ...r, strikes: 0 }
+        : r;
+    })
+    .filter((r) => r.strikes > 0);
+}
+
+/* Skills named in a row's skip/applied detail — the UI feedback loop reads
+   these from apply_results.detail when the row's own skills array isn't
+   available. Covers every detail format the engine writes:
+     "JD requires java, sql, aws — not on the resume"          (coverage gate)
+     "core skill missing: java — required by title/JD"         (critical gate)
+     "not relevant to profile (Staff Frontend Engineer)"       (title gate)
+     "AI judge: backend-core JD for a frontend resume"         (judge skip)
+     "not relevant to profile" / anything else                 (honest [])
+   Returns canonical lowercase skills, capped at 6. */
+export function extractFeedbackSkills(detail) {
+  const d = String(detail || "");
+  let out = [];
+  const requires = /JD requires ([a-z0-9+#./ ,]+?)(?:\s*[—-]|$)/i.exec(d);
+  if (requires) out = requires[1].split(/,\s*/);
+  else {
+    const core = /core skill missing:\s*([a-z0-9+#./ ,]+?)(?:\s*[—-]|$)/i.exec(d);
+    if (core) out = core[1].split(/,\s*/);
+  }
+  return [...new Set(out.map((s) => s.trim().toLowerCase()).filter((s) => s && s.length <= 24))].slice(0, 6);
+}
+
+/* Is this skill named only as a BUZZWORD in the JD text ("we work with AI",
+   "AI-first company") rather than as something the role builds/requires?
+   Regex heuristics over the lowercase, punctuation-stripped JD: if every
+   occurrence sits next to buzz markers (build with/for, powered by, team,
+   company, product, role, future…) and never in a requirement context
+   (experience with/required/must/strong/proficient/X+ years), treat it as
+   non-required. Conservative: only exact skill-token matches are gated. */
+export function skillIsBuzzOnly(jdText, skill) {
+  const text = " " + String(jdText || "").toLowerCase().replace(/[^a-z0-9+#./ -]/g, " ").replace(/\s+/g, " ") + " ";
+  const sk = String(skill || "").toLowerCase().trim();
+  if (!sk || !text.trim()) return false;
+  const esc = sk.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp("(?:^| )" + esc + "(?: |$)", "g");
+  const requirementCtx = /(?:experience|expertise|proficien|strong|required|must|requirements?|skills?|years|hands-?on|familiarity|working knowledge|background)\b/;
+  let m, sawAny = false, allBuzz = true;
+  while ((m = re.exec(text)) !== null) {
+    sawAny = true;
+    const window = text.slice(Math.max(0, m.index - 70), m.index + m[0].length + 70);
+    if (requirementCtx.test(window)) { allBuzz = false; break; }
+  }
+  return sawAny && allBuzz;
 }
 
 export function recordResult(report, job, result, detail = "") {

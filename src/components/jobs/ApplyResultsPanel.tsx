@@ -5,9 +5,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes,
+  listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar,
   type ApplyResultRow,
 } from "../../services/jobSites.ts";
+import { extractFeedbackSkills } from "../../../scripts/apply-engine-lib.js";
 
 /** host part of a job/form URL → source chip; falls back to the row's site_host */
 function sourceOf(r: ApplyResultRow): string {
@@ -51,18 +52,36 @@ export default function ApplyResultsPanel() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  /* 👎 → the row's missing-core skills gain a strike (2 = learned hard
-     reject); 👍 → clears strikes for those skills. Skills are parsed from
-     the judge detail when present, else sent empty (verdict still stored). */
+  /* 👎 → the row's skills gain a strike (2 = learned hard reject, decays
+     after 30 days); 👍 → clears those strikes AND teaches the judge a
+     positive exemplar — this finally closes the SKIP loop: skipped rows
+     (the 131-skips class) can be corrected too. Skills are parsed from the
+     row's detail line ("JD requires java, sql — not on the resume", "core
+     skill missing: …", etc.) via the engine's shared parser. */
   const learn = async (r: ApplyResultRow, verdict: "good" | "bad") => {
     setBusyId(r.id);
     try {
-      const skills = r.detail?.match(/missing:\s*([a-z0-9,. ]+)/i)?.[1]
-        ?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
+      const skills = extractFeedbackSkills(r.detail ?? "");
       /* optimistic lock: the choice is final the moment it lands — no double-click
          window before the refetched rows come back with feedback set */
       setRows((prev) => (prev ?? []).map((x) => (x.id === r.id ? { ...x, feedback: verdict } : x)));
       await sendApplyFeedback(r.id, verdict, skills);
+      if (r.result === "skipped") {
+        /* skipped rows teach the JUDGE (the strike RPC already ran server-side
+           inside engine_apply_feedback): 👍 = "this skip was wrong" (positive
+           exemplar + strike clear), 👎 = "correct skip" (negative exemplar so
+           similar postings keep getting skipped). Best-effort — verdict is
+           already stored. */
+        const label = `${r.title || "(untitled)"}${r.company ? ` — ${r.company}` : ""}`;
+        await putJudgeExemplar(
+          verdict === "good" ? "positive" : "negative",
+          verdict === "good"
+            ? `${label}: owner UN-skipped — this was wrongly rejected by the gates`
+            : `${label}: owner confirmed the skip`,
+          r.detail || undefined,
+          r.job_url || undefined,
+        ).catch(() => {});
+      }
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -131,7 +150,7 @@ export default function ApplyResultsPanel() {
               ) : r.job_url ? (
                 <a href={r.job_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-sky-500 hover:text-sky-400">open ↗</a>
               ) : null}
-              {(r.result === "submitted" || r.result === "needs_review") && (
+              {(r.result === "submitted" || r.result === "needs_review" || r.result === "skipped") && (
                 <span className="ml-auto flex shrink-0 items-center gap-1">
                   <button disabled={busyId === r.id || r.feedback === "good"} title="Good match — also clears any learned strikes on this row's missing skills (one choice per row — locked after clicking)"
                     onClick={() => void learn(r, "good")}

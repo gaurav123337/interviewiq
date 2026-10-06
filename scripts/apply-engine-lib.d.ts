@@ -132,7 +132,7 @@ export interface JdSkillMatchResult {
 export function jdSkillMatch(
   jdText: string | null | undefined,
   profile: ApplyProfileLike | null | undefined,
-  opts?: { minJd?: number; minProfile?: number }
+  opts?: { minJd?: number; minProfile?: number; critical?: string[]; learnedCritical?: string[] }
 ): JdSkillMatchResult;
 
 export function postingRelevant(
@@ -148,6 +148,31 @@ export function isExternalApplyButton(text: string | null | undefined): boolean;
 export function detectSubmissionSuccess(pageText: string | null | undefined, siteKey: string): boolean;
 
 export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined, coreMissing?: string[]): number | null;
+
+/* ── feedback learning loop (skip rows + strike decay + buzz gating) ── */
+
+/** Strikes older than this stop rejecting (owner taste changes; a stale
+    hard-reject list must not zero a whole job class forever). */
+export const STRIKE_DECAY_MS: number;
+
+/** Strike rows ({skill, strikes, updated_at}) with 30-day decay applied:
+    rows older than STRIKE_DECAY_MS collapse to 0 and are filtered out. */
+export function strikesWithDecay(
+  rows: { skill: string; strikes: number; updated_at?: string | null }[] | null | undefined,
+  now?: number
+): { skill: string; strikes: number; updated_at?: string | null }[];
+
+/** Skills named in a row's skip/applied detail line — covers "JD requires
+    a, b — not on the resume", "core skill missing: a — required by title/JD",
+    and returns [] for formats without skill names (title gate, judge skips).
+    Lowercase, deduped, capped at 6. */
+export function extractFeedbackSkills(detail: string | null | undefined): string[];
+
+/** True when the skill appears in the JD only next to buzz markers ("we work
+    with AI", "AI-first company") and never in a requirement context
+    ("experience with", "required", "X+ years"). Conservative: exact token
+    matches only; empty skill or empty JD → false. */
+export function skillIsBuzzOnly(jdText: string | null | undefined, skill: string): boolean;
 
 /* ── per-ATS selector packs ─────────────────────────────────────────── */
 
