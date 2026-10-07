@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig, probationAutoActivateAt } from "../services/jobSites";
 
 const rpc = vi.fn();
 const invoke = vi.fn();
@@ -335,5 +335,22 @@ describe("admin notify bindings", () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await clearUserNotifyBinding("u1");
     expect(rpc).toHaveBeenCalledWith("admin_clear_user_notify", { p_user: "u1" });
+  });
+});
+
+describe("probation auto-activation (pending discoveries)", () => {
+  const D = "2026-10-01T00:00:00Z";
+
+  it("pending rows auto-activate 7 days after discovery", () => {
+    expect(probationAutoActivateAt({ status: "pending", discovered_at: D, rules: {} } as never)).toBe(
+      new Date(new Date(D).getTime() + 7 * 86_400_000).toISOString(),
+    );
+  });
+
+  it("never for active rows, unknown discovery dates, or probation-skip opt-outs", () => {
+    expect(probationAutoActivateAt({ status: "active", discovered_at: D, rules: {} } as never)).toBeNull();
+    expect(probationAutoActivateAt({ status: "pending", discovered_at: null, rules: {} } as never)).toBeNull();
+    expect(probationAutoActivateAt({ status: "pending", discovered_at: "not-a-date", rules: {} } as never)).toBeNull();
+    expect(probationAutoActivateAt({ status: "pending", discovered_at: D, rules: { probation: { skip: true } } } as never)).toBeNull();
   });
 });

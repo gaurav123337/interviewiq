@@ -11,7 +11,7 @@ export interface JobSite {
   label: string;
   jobs_url: string | null;
   status: "pending" | "active" | "disabled" | "dead";
-  source: "builtin" | "discovered" | "manual";
+  source: "builtin" | "discovered" | "manual" | "ats";
   credential_id: string | null;
   rules: Record<string, unknown>;
   session_ok: boolean;
@@ -22,6 +22,8 @@ export interface JobSite {
   last_submitted: number | null;
   last_collected: number | null;
   last_ok: boolean | null;
+  discovered_at?: string | null;
+  approved_at?: string | null;
 }
 
 export async function listJobSites(): Promise<JobSite[]> {
@@ -37,6 +39,20 @@ export async function setJobSiteStatus(id: string, status: JobSite["status"]): P
   if (!client) throw new Error("cloud not configured");
   const { error } = await client.rpc("admin_set_job_site_status", { p_id: id, p_status: status });
   if (error) throw error;
+}
+
+/* Probation (job-sites-probation.sql): pending sites auto-activate once they
+   have waited this long, oldest first, capped per sweep — the engine's --all
+   cycle runs the sweep and DMs every activation. A site can opt out via
+   rules.probation.skip. Pending rows show the countdown in the registry. */
+export const PROBATION_DAYS = 7;
+
+export function probationAutoActivateAt(s: JobSite): string | null {
+  if (s.status !== "pending" || !s.discovered_at) return null;
+  if ((s.rules as { probation?: { skip?: boolean } } | null)?.probation?.skip) return null;
+  const d = new Date(s.discovered_at);
+  if (isNaN(d.getTime())) return null;
+  return new Date(d.getTime() + PROBATION_DAYS * 24 * 3600_000).toISOString();
 }
 
 /* Three-state session health for the per-site strip. "verified ✓" means a

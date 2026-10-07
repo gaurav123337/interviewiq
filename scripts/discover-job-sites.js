@@ -9,8 +9,10 @@
  *        - has a jobs list with real postings?
  *        - has a login path?
  *   4. Survivors are written to job_sites with status 'pending'.
- * NOTHING is auto-activated: the owner approves sites in the UI
- * (Job Match → Auto-apply → Job sites → Approve), and only 'active'
+ * Pending sites auto-activate after their PROBATION window (7d, capped 3
+ * per sweep — engine_activate_probation_sites, run at every --all cycle);
+ * the owner can approve early or reject in the UI
+ * (Job Match → Auto-apply → Job sites), and only 'active'
  * sites are driven by `auto-apply-jobs.js --all`.
  *
  * Usage: node scripts/discover-job-sites.js [--limit 8] [--query "..."]
@@ -164,7 +166,7 @@ async function main() {
       if (verdict === "PROMISING") {
         await upsertJobSite({ host, label: host.replace(/^www\./, ""), jobsUrl: r.url, source: "discovered", sessionOk: false });
         added++;
-        console.log(`    → registered as PENDING (approve it in the UI to activate)`);
+        console.log(`    → registered as PENDING (probation: auto-activates in 7d unless you approve/reject it first)`);
       }
       await page.waitForTimeout(1500);
     }

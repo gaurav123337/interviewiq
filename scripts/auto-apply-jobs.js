@@ -36,7 +36,9 @@ import {
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, isExternalApplyButton,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
-  classifyJobLink,
+  classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS,
+  classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
+  matchSiteRow, POSTED_AGE_TEXT_RE,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
@@ -50,7 +52,7 @@ const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
 /* ----------------------------- CLI args ----------------------------- */
 
 function parseArgs(argv) {
-  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false, digest: false, listen: false, sessions: false };
+  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false, digest: false, listen: false, sessions: false, outcomes: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") args.url = argv[++i] ?? "";
@@ -60,6 +62,7 @@ function parseArgs(argv) {
     else if (a === "--headless") args.headless = true;
     else if (a === "--login-only") args["login-only"] = true;
     else if (a === "--sessions") args.sessions = true;
+    else if (a === "--outcomes") args.outcomes = true; // weekly outcome scrape: views/replies per board → fit-band learning
     else if (a === "--yes") args.confirm = true;
     else if (a === "--all") args.all = true;
     else if (a === "--watch") { args.all = true; args.watch = true; }
@@ -236,9 +239,20 @@ async function applyModeBlocked(cycle) {
 }
 
 /* local report row + cloud report row, always together */
+/* Per-run registry host: boards registered by the jobs-fetch pipeline are
+   PATH-QUALIFIED (boards.greenhouse.io/lyft — two boards share one ATS
+   hostname), so every per-run write (apply_results, learned rules, run
+   bookkeeping) must carry the BOARD, not the shared hostname. runSingle
+   resolves the registry row for this URL once; everything writes through
+   runHostKey(). Empty override → legacy bare-hostname derivation. */
+let RUN_HOST = "";
+function runHostKey(sourceUrl) {
+  if (RUN_HOST) return RUN_HOST;
+  try { return new URL(sourceUrl).hostname.replace(/^www\./, ""); } catch { return sourceUrl; }
+}
 function recordResultBoth(report, job, result, detail) {
   recordResult(report, job, result, detail);
-  recordResultDb(new URL(report.sourceUrl).hostname.replace(/^www\./, ""), job, result === "needsReview" ? "needs_review" : result, detail).catch(() => {});
+  recordResultDb(runHostKey(report.sourceUrl), job, result === "needsReview" ? "needs_review" : result, detail).catch(() => {});
 }
 
 /* ---- sign-in flow instrumentation: every step and every close lands in
@@ -1280,11 +1294,22 @@ async function collectJobs(page, url, site, max) {
     await page.mouse.wheel(0, 2400);
     await page.waitForTimeout(900);
   }
-  const jobs = await page.evaluate((hints) => {
+  const jobs = await page.evaluate(({ hints, ageRe }) => {
     const seen = new Set();
     const out = [];
     /* nav junk that looks like a link but is chrome, not a posting */
     const junk = /^(opportunities|jobs?|search jobs?|home|activity|inbox|profile|settings|logout|feed|my network|messaging|notifications|all jobs?|jobs? at .*|view all|see more|more)$/i;
+    /* posted-age stamp on a card ("3 hours ago", "30+ Days Ago", "Just posted"):
+       parsed AFTER evaluate into hours and used to order the collection —
+       <24h postings are applied first because freshness beats fit at the
+       margin (recruiters read a fresh applicant first). The regex is the
+       lib's POSTED_AGE_TEXT_RE (pinned by tests) passed in as a source. */
+    const AGE_RE = new RegExp(ageRe, "i");
+    const ageOf = (el) => {
+      const box = (el.closest && (el.closest("li, article, [data-job-id], [class*='job'], [class*='card']") || el.parentElement)) || el;
+      const t = String(box?.innerText || el.innerText || "");
+      return (t.match(AGE_RE) || [""])[0];
+    };
     /* Naukri-style cards: job id in an attribute, no anchor at all */
     for (const art of document.querySelectorAll("[data-job-id]")) {
       const id = art.getAttribute("data-job-id");
@@ -1295,7 +1320,7 @@ async function collectJobs(page, url, site, max) {
       if (!title || title.length < 8 || junk.test(title)) continue;
       seen.add(id);
       const company = (c?.textContent || "").trim().split("\n")[0].replace(/\s*[\d.]+\s*(Reviews?|stars?)\s*$/i, "").replace(/\s+\d+(\.\d+)?$/, "").slice(0, 80);
-      out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company });
+      out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company, __ageText: ageOf(art) });
     }
     /* LinkedIn landing/search cards: currentJobId=<id> inside search-results hrefs */
     for (const a of document.querySelectorAll("a[href*='currentJobId=']")) {
@@ -1312,7 +1337,7 @@ async function collectJobs(page, url, site, max) {
       const noise = /^(promoted|view job|save|apply|show more|verified job|see more|\d+\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|[mhd])\s* ago)|people clicked apply|clicks|applicants?\s*$|reviews?\s*$|stars?\s*$/i;
       const company = (lines.find(l => l !== title && l.replace(/\s*\(Verified job\)\s*$/i, "") !== title && l.length > 1 && l.length < 60 && !noise.test(l)) || "")
         .replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 80);
-      out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company });
+      out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company, __ageText: ageOf(a) });
     }
     for (const sel of hints) {
       for (const a of document.querySelectorAll(sel)) {
@@ -1323,11 +1348,11 @@ async function collectJobs(page, url, site, max) {
         const text = (a.innerText || a.textContent || "").trim();
         if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
-        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true });
+        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a) });
       }
     }
     return out;
-  }, rules.listSelectorHints);
+  }, { hints: rules.listSelectorHints, ageRe: POSTED_AGE_TEXT_RE.source });
   /* POSTING-VS-NAV discriminator (Phase 1): the generic hint loop matches
      broad hrefs, so on YC/Built In it collected site chrome ("Startup Jobs",
      "Design & UI/UX") as postings — every row then skipped and the run was
@@ -1360,7 +1385,15 @@ async function collectJobs(page, url, site, max) {
   } else if (dropped > 0) {
     console.log(dim(`  (discriminator dropped ${dropped} nav/category link(s))`));
   }
-  return deduped.slice(0, max);
+  /* FRESHNESS-FIRST COLLECTION ORDER: postings stamped <24h old go to the
+     head of the queue (freshest first) and the --max budget slices AFTER the
+     sort, so a full budget spends its slots on postings recruiters are
+     still reading instead of aging ones that merely appeared first on the
+     page. Older/unknown rows keep the board's own order. */
+  const ordered = sortByFreshness(deduped);
+  const freshCount = ordered.filter((j) => j.__fresh).length;
+  if (freshCount > 0) console.log(dim(`  ⚡ ${freshCount} posting(s) <${FRESH_MAX_HOURS}h old collected first (freshness beats fit at the margin)`));
+  return ordered.slice(0, max);
 }
 
 /* ------------------------ job page + JD text ------------------------ */
@@ -1561,14 +1594,46 @@ async function openJob(page, job) {
 
 /* --------------------------- form filling --------------------------- */
 
+/* Greenhouse boards embed the application form in an IFRAME
+   (boards.greenhouse.io/embed/job_form inside the posting page) — the
+   main-frame evaluate/locator sees NOTHING there, so a first-class board
+   would extract zero fields and fail closed on every posting. formFrame()
+   returns the frame that actually holds the form (main page when the form
+   is inline — LinkedIn/Instahyre/Naukri/Ashby) so extraction, filling,
+   submitting and success checks all run against the RIGHT document. */
+async function formFrame(page) {
+  try {
+    /* the main frame comes FIRST: when it already holds the form's inputs
+       (LinkedIn/Instahyre/Naukri/Ashby — inline flows and modals) we never
+       probe further, so an ad iframe can never hijack extraction */
+    const mainHasFields = await page.mainFrame().evaluate(() =>
+      [...document.querySelectorAll("input:not([type=hidden]), textarea, select")]
+        .some((el) => el.offsetParent)
+    ).catch(() => true); // unreadable main frame → keep the legacy main-frame path
+    if (!mainHasFields) {
+      for (const f of page.frames?.() ?? []) {
+        if (f === page.mainFrame()) continue;
+        const hasForm = await f.evaluate(() =>
+          !!document.querySelector("#application_form, form input[name='first_name'], form input[id^='first_name'], form[action*='job_app']")
+        ).catch(() => false);
+        if (hasForm) return f;
+      }
+    }
+  } catch { /* frame probing is best-effort — the main frame stands */ }
+  return page;
+}
+
 async function fillApplicationForm(page, { profile, job, resumePath, dryRun, siteHost, storedAnswers }) {
+  /* resolve the document that actually holds the form (iframe or main page) */
+  const target = await formFrame(page);
+  if (target !== page) console.log(dim("  🪟 application form lives in an embedded frame — extracting there"));
   /* per-ATS selector pack: known boards (Greenhouse/Lever/Workable) scope the
      field query to their form so nav/search inputs never become "fields" */
-  const pack = detectAts(page.url());
+  const pack = detectAts(target.url());
   const scopedSelector = pack === ATS_PACKS.generic
     ? "input:not([type=hidden]):not([disabled]), textarea, select"
     : pack.fieldSelectorHints.join(", ");
-  const fields = await page.evaluate((sel) => {
+  const fields = await target.evaluate((sel) => {
     const controls = [...document.querySelectorAll(sel)];
     return controls.map(el => {
       const labelEl = el.closest("label") || (el.id ? document.querySelector(`label[for="${CSS.escape(el.id)}"]`) : null);
@@ -1576,7 +1641,7 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
       return { tag: el.tagName.toLowerCase(), type: el.getAttribute("type") ?? "", label, required: el.required || !!el.closest("[aria-required=true]"), options: el.tagName === "SELECT" ? [...el.options].map(o => o.textContent.trim()) : undefined };
     });
   }, scopedSelector);
-  const controls = await page.$$(scopedSelector);
+  const controls = await target.$$(scopedSelector);
   /* one plan per form: draft from the profile, then fall back to the
      remembered answer for the same field label (form-answer memory) */
   const plan = planFormAnswers(fields, profile, job, storedAnswers ?? {});
@@ -1697,9 +1762,11 @@ async function clickButton(page, locator, textRe) {
 
 async function trySubmit(page, site, rulesOverride, ctx = {}) {
   const rules = rulesOverride ?? SITE_RULES[site] ?? SITE_RULES.generic;
+  /* the document that holds the form (embedded-iframe ATS boards vs inline) */
+  const target = await formFrame(page);
   /* the FINAL button is usually NOT the opener — Instahyre: "Apply now" opens
      a modal, then a plain "Submit" button inside it sends the application */
-  let btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
+  let btn = textButtonLocator(target, rules.submitButtonText ?? rules.applyButtonText);
   if ((await btn.count()) === 0 && site === "linkedin") {
     /* LinkedIn Easy Apply is a MULTI-STEP flow (Contact → Resume → Questions
        → Review) that renders INLINE in the sidebar in current LinkedIn (no
@@ -1794,7 +1861,7 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
     /* SAFETY PRE-CHECK before the one-way click: every required field in
        the form must hold a value — one empty required field = the ATS
        would bounce it anyway; fail CLOSED to the review queue instead. */
-    const emptyRequired = await page.evaluate(() =>
+    const emptyRequired = await target.evaluate(() =>
       [...document.querySelectorAll("input:not([type=hidden]), textarea, select")]
         .filter((el) => el.required || el.closest("[aria-required=true]"))
         .filter((el) => el.offsetParent) // visible only — hidden steps don't count
@@ -1803,9 +1870,13 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
         .slice(0, 5)
     ).catch(() => ["(check failed)"]);
     if (emptyRequired.length) return { auto: false, note: `cannot auto-submit — required fields empty: ${emptyRequired.join(", ")}` };
-    await clickButton(page, btn, rules.submitButtonText ?? rules.applyButtonText);
+    await clickButton(target, btn, rules.submitButtonText ?? rules.applyButtonText);
     await page.waitForTimeout(4000);
-    const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
+    /* success may render in the form frame (embedded Greenhouse) or replace
+       the whole page — read BOTH, positive evidence only */
+    const pageBody = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+    const frameBody = target !== page ? await target.evaluate(() => document.body?.innerText ?? "").catch(() => "") : "";
+    const success = rules.successText.test(pageBody + "\n" + frameBody);
     return { auto: success, note: success ? "submitted (auto)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
   }
   return { auto: false, note: "review gate — human submits" };
@@ -1821,11 +1892,16 @@ async function runSingle(args, { existingCtx = null } = {}) {
   const site = siteFromUrl(args.url);
   let rules = { ...SITE_RULES[site] };
   /* registry rules win over builtin hints: learned selectors AND the owner's
-     autoSubmit decision (e.g. LinkedIn flipped on in the sites registry) */
+     autoSubmit decision (e.g. LinkedIn flipped on in the sites registry).
+     The row is matched by FULL jobs_url first (path-qualified ATS boards:
+     boards.greenhouse.io/lyft ≠ boards.greenhouse.io/airbnb), then bare
+     host — and a hit also pins RUN_HOST so per-run rows name the board. */
   try {
     const db = await sitesDb();
-    const row = (await db?.listJobSites?.())?.find((s) => s.host === args.url.replace(/^https?:\/\/(www\.)?/, "").split("/")[0] || s.host === (new URL(args.url).hostname.replace(/^www\./, "")));
+    const rows = (await db?.listJobSites?.()) ?? [];
+    const row = matchSiteRow(rows, args.url);
     if (row?.rules && typeof row.rules === "object") rules = { ...rules, ...row.rules };
+    if (row) RUN_HOST = row.host;
   } catch { /* registry unavailable — builtin rules stand */ }
   const profile = loadApplyProfile(args.profile);
   const token = process.env.SUPABASE_ACCESS_TOKEN;
@@ -1984,8 +2060,16 @@ async function runSingle(args, { existingCtx = null } = {}) {
 
     const reviewed = await reviewedUrls(); // owner verdicts from the review queue
     const exemplars = await judgeExemplars();
+    /* employer-behavior prior (weekly --outcomes scrape): 90d response rates
+       per fit band, folded into the judge prompt — the engine learns from
+       EMPLOYER behavior too, not only from the owner's verdicts */
+    let outcomePriorText = "";
+    try { outcomePriorText = outcomePrior(await (await sitesDb())?.outcomeStats?.()); } catch { /* the prior is best-effort */ }
+    if (outcomePriorText) console.log(dim("  📈 employer prior loaded — the judge now weighs which fit bands actually get responses"));
     for (const job of jobs) {
-      console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}`);        if (wasApplied(job.url)) {
+      /* fresh (<24h) postings are marked so the report shows WHY they went first */
+      const ageMark = job.__fresh ? " ⚡<24h" : job.__ageH != null ? ` (${job.__ageH >= 24 ? Math.round(job.__ageH / 24) + "d" : Math.round(job.__ageH) + "h"} old)` : "";
+      console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}${ageMark}`);        if (wasApplied(job.url)) {
           recordResultBoth(report, job, "skipped", "already applied (dedupe)");
         console.log(dim("  ⏭ skipped — already applied earlier"));
         continue;
@@ -2065,7 +2149,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           else if (ai.__unhealthy) console.log(yellow(`  ⚠️ AI judge is DOWN (${ai.__unhealthy}) — keyword gates are deciding this run and kits fall back to TEMPLATES. Fix the provider and re-run.`));
         }
         if (ai) {
-          job.__judge = await judgeFit(ai, job, profile, await judgeExemplars());
+          job.__judge = await judgeFit(ai, job, profile, await judgeExemplars(), outcomePriorText);
           if (job.__judge.verdict === "unknown" && /HTTP|fetch|timeout|ENOTFOUND|ECONNREFUSED/i.test(job.__judge.reason || "")) ai.__unhealthy = job.__judge.reason;
           if (job.__judge.verdict === "skip") {
             const why = `AI judge: ${job.__judge.reason || "not a realistic match"}`;
@@ -2260,8 +2344,8 @@ async function runSingle(args, { existingCtx = null } = {}) {
     if (ai?.__unhealthy) console.log(yellow(`🧠 AI DEGRADED this run (${String(ai.__unhealthy).slice(0, 90)}) — kits fell back to templates and the judge was down; fix the provider, then re-run.`));
     else if (!ai) console.log(yellow("🧠 AI not configured — kits are templates and only keyword gates judged; set the provider in Admin → AI provider."));
     console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
-    await syncRunToDb(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
-    await learnRules(args.url ? new URL(args.url).hostname.replace(/^www\./, "") : site, report).catch(() => {});
+    await syncRunToDb(runHostKey(args.url), report).catch(() => {});
+    await learnRules(runHostKey(args.url), report).catch(() => {});
     /* #162 ORDERING FIX: the sign-in browser MUST be closed BEFORE the clone
        merge-back below. Chromium flushes its cookie DB to disk ON CLOSE; the
        old order merged a MID-SESSION cookie store into the real profile and
@@ -2349,6 +2433,21 @@ function watcherBeat(detail) {
   void sitesDb().then((db) => db?.reportEngineState?.("running", `watcher ${detail}`).catch(() => {})).catch(() => {});
 }
 
+/* Probation auto-activation (job-sites-probation.sql): pending discoveries
+   with a jobs_url that have waited >= 7 days are activated oldest-first,
+   capped at 3 per sweep, so the registry self-heals instead of queueing
+   forever. The owner is DM'd every activation — the sweep must never be
+   silent — and a failing RPC degrades to a log line, never blocks the run. */
+async function runProbationSweep(db) {
+  try {
+    const activated = await db?.activateProbationSites?.();
+    if (activated?.length) {
+      console.log(green(`🌱 probation auto-activated ${activated.length} site(s): ${activated.map((s) => s.host).join(", ")}`));
+      await sendTelegramNotify(`🌱 Freebuff probation: ${activated.length} pending site(s) auto-activated after 7d — now in --all:\n${activated.map((s) => `• ${s.host}${s.label ? ` (${s.label})` : ""}`).join("\n")}\nReject any you don't want: Job Match → Auto-apply → Job sites.`).catch(() => {});
+    }
+  } catch (e) { console.log(dim(`  (probation sweep unavailable: ${e.message.slice(0, 80)})`)); }
+}
+
 async function runAll(args) {
   const db = await sitesDb();
   let sites = [];
@@ -2376,6 +2475,22 @@ async function runAll(args) {
     return "busy";
   }
   try {
+  /* pending discoveries past their probation window join the cycle NOW —
+     after the kill switch + lock (a skipped cycle must not mutate the
+     registry), before the per-site loop, so a just-activated board runs
+     this very cycle */
+  await runProbationSweep(db);
+  if (db) {
+    try {
+      const postSweep = (await db.listJobSites())
+        .filter((s) => s.status === "active" && s.jobs_url)
+        .map((s) => ({ host: s.host, url: s.jobs_url, label: s.label }));
+      if (postSweep.length !== sites.length || postSweep.some((s, i) => s.host !== sites[i]?.host)) {
+        sites = postSweep;
+        console.log(`apply-engine --all → ${sites.length} active site(s) after probation sweep: ${sites.map((s) => s.host).join(", ")}`);
+      }
+    } catch { /* the pre-sweep list stands */ }
+  }
   /* ONE SHARED BROWSER for the whole cycle: launch it here, hand its CDP
      endpoint to each per-site child via env (they open TABS in it), and
      close it once after the last site — no more per-site window storms. */
@@ -2510,6 +2625,99 @@ async function runSessions() {
   console.log("session watchdog done.");
 }
 
+/* ---------------- --outcomes: weekly employer-behavior scraper ---------------- */
+
+/* The engine learns from the OWNER (review verdicts → exemplars). The other
+   half is the EMPLOYER: this scrape reads each board's own application
+   tracker (LinkedIn "My Jobs → Applied", Naukri "My applications"…) with
+   the signed-in profile, records per application whether it was VIEWED and
+  /or RESPONDED to (reply / interview / rejected / offer), and the weekly
+   digest reports the rates per BOARD and per FIT BAND — so the owner sees
+   which boards and fit bands actually convert, and judgeMessages folds the
+   same rates into the AI judge as an employer-behavior prior. Read-only:
+   it never clicks, never applies, and a site without a known tracker (or a
+   dead session) is skipped HONESTLY, never guessed. */
+
+async function runOutcomes() {
+  const db = await sitesDb();
+  let sites = [];
+  try { sites = (await db?.listJobSites?.()) ?? []; } catch { /* registry unavailable — nothing to scrape */ }
+  const targets = [];
+  for (const s of sites.filter((x) => x.status === "active" && x.jobs_url)) {
+    const site = siteFromUrl(s.jobs_url);
+    const rules = { ...SITE_RULES[site], ...(s.rules && typeof s.rules === "object" ? s.rules : {}) };
+    const trackerUrl = rules.outcomes?.url;
+    if (!trackerUrl) continue; // no candidate tracker for this board — honest skip
+    targets.push({ host: s.host, site, trackerUrl, label: rules.label ?? s.host });
+  }
+  if (!targets.length) { console.log("outcome scraper: no tracker-configured active sites — nothing to scrape (trackers live in SITE_RULES[site].outcomes)."); return; }
+  console.log(`outcome scraper → ${targets.length} tracker(s): ${targets.map((t) => t.host).join(", ")}`);
+  let ctx;
+  try {
+    ({ ctx } = await acquireApplyContext({ headless: true, endpoint: "", signIn: true, extraArgs: [] }));
+  } catch (e) {
+    console.log(yellow(`outcome scraper: browser unavailable (${String(e?.message ?? e).slice(0, 90)}) — a sign-in flow may be live; re-run later.`));
+    return;
+  }
+  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  const totals = { rows: 0, viewed: 0, responded: 0 };
+  try {
+  for (const t of targets) {
+    try {
+      await page.goto(t.trackerUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await page.waitForTimeout(5000);
+      const rules = SITE_RULES[t.site] ?? SITE_RULES.generic;
+      const st = await waitForStableState(page, rules, t.trackerUrl, { settleMs: 4000 });
+      if (st.kind === "login") { console.log(yellow(`  ✗ ${t.host}: tracker session expired — one 🔑 re-login restores outcome tracking.`)); continue; }
+      if (st.kind === "challenge") { console.log(dim(`  ? ${t.host}: bot-check held the tracker — skipping this week.`)); continue; }
+      const linkRe = trackerRowLinkRe(t.site);
+      const rows = await page.evaluate((src) => {
+        const re = new RegExp(src, "i");
+        const out = [];
+        const seen = new Set();
+        for (const a of document.querySelectorAll("a[href]")) {
+          const href = a.href || "";
+          if (!re.test(href)) continue;
+          const key = href.split("?")[0];
+          if (seen.has(key)) continue;
+          const box = a.closest("li, article, [data-view-name], [class*='card'], [class*='entity'], [class*='job']") || a.parentElement;
+          out.push({ url: key, text: String(box?.innerText || a.innerText || "").slice(0, 400) });
+          seen.add(key);
+        }
+        return out;
+      }, linkRe.source);
+      let viewed = 0, responded = 0, recorded = 0;
+      for (const row of rows) {
+        /* the tracker only lists the candidate's own applications; an "applied"
+           stamp OR membership in the engine's dedupe set both count — employer
+           behavior is worth recording even for manual applications (gate is
+           pure + pinned: outcomeRowShouldRecord) */
+        const o = outcomeRowShouldRecord(row.text, row.url, wasApplied);
+        if (!o) continue;
+        await db?.recordApplyOutcome?.({
+          siteHost: t.host, jobUrl: row.url, fit: null,
+          viewed: o.viewed, responseKind: o.responseKind,
+          detail: row.text.replace(/\s+/g, " ").slice(0, 200),
+        }).catch(() => {});
+        recorded++;
+        if (o.viewed) viewed++;
+        if (o.responseKind) responded++;
+      }
+      totals.rows += rows.length; totals.viewed += viewed; totals.responded += responded;
+      console.log(`  ${t.host}: ${rows.length} tracked row(s) · ${viewed} viewed · ${responded} responded (${recorded} recorded)`);
+    } catch (e) {
+      console.log(yellow(`  ✗ ${t.host}: scrape failed (${String(e?.message ?? e).slice(0, 80)})`));
+    }
+  }
+  } finally {
+    await ctx.close().catch(() => {});
+    await mergeAfterSignin().catch(() => {});
+  }
+  const msg = `📈 Freebuff outcome scrape · ${targets.length} board(s): ${totals.rows} tracked · ${totals.viewed} viewed · ${totals.responded} responded — rates land in Monday's digest (per board × fit band).`;
+  console.log(msg);
+  await sendTelegramNotify(msg).catch(() => {});
+}
+
 /* ----------------------- --watch: keep applying ----------------------- */
 
 /* Watch-mode log tee: when started by the supervisor (no shell redirect —
@@ -2590,6 +2798,7 @@ async function main() {
   }
   if (args.watch) { teeWatchLog(); await runWatch(args); return; }
   if (args.sessions) { await runSessions(); return; }
+  if (args.outcomes) { await runOutcomes(); return; }
   if (args.all) { await runAll(args); return; }
   if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
   if (args.listen) { teeWatchLog(process.env.FREEBUFF_LISTEN_LOG); await telegramCommandLoop(); return; }
@@ -2607,6 +2816,14 @@ async function main() {
     }
     const tot = rows.reduce((a, r) => a + r.submitted + r.needs_review + r.skipped + r.errors + r.owner_applied + r.owner_dismissed + r.owner_closed, 0);
     const lines = rows.map((r) => `${r.site_host}: ✓${r.submitted} ⏸${r.needs_review} ⏭${r.skipped} ✗${r.errors} | you: ✓${r.owner_applied} ✕${r.owner_dismissed} 🚫${r.owner_closed}`);
+    /* employer behavior (weekly --outcomes scrape): views/responses per
+       board × fit band — which boards and which fit bands actually convert */
+    let outcomeLines = "";
+    try {
+      const outcomeRows = (await db?.outcomeDigest?.()) ?? [];
+      const stats = (await db?.outcomeStats?.()) ?? [];
+      outcomeLines = outcomeDigestLines(outcomeRows, stats);
+    } catch { /* outcome section is best-effort — the digest must still send */ }
     /* PHASE 4 — boards that stopped yielding postings: the discriminator's
        collectionDrift counter tells the owner WHICH sites silently rotted
        (markup moved) instead of "0 collected" showing up as a healthy row. */
@@ -2639,8 +2856,8 @@ async function main() {
       if (evs.length) uptimeLine = `\n🫀 engine uptime (7d): ${fmt(total)} of 7d (${pct}%) — gaps are Off switches or the PC asleep`;
     } catch { /* the timeline is best-effort */ }
     const msg = tot === 0
-      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?${uptimeLine}${driftLines}`
-      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}${uptimeLine}${driftLines}`;
+      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?${uptimeLine}${driftLines}${outcomeLines}`
+      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}${uptimeLine}${driftLines}${outcomeLines}`;
     console.log(msg);
     await sendTelegramNotify(msg);
     return;
@@ -2651,6 +2868,7 @@ async function main() {
   node scripts/auto-apply-jobs.js --all [--max N] [--dry-run]        # run every ACTIVE registered site
   node scripts/auto-apply-jobs.js --watch [--every 6] [--max N]      # discover + apply forever
   node scripts/auto-apply-jobs.js --sessions                         # probe every active site's session (watchdog)
+  node scripts/auto-apply-jobs.js --outcomes                         # scrape trackers: views/responses per board → digest + judge prior
   node scripts/auto-apply-jobs.js --discover [--limit 8] [--query "…"] # find new candidate sites (→ pending)`);
     process.exit(1);
   }

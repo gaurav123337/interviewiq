@@ -12,11 +12,21 @@ export interface ApplySiteRule {
   successText: RegExp;
   listSelectorHints: string[];
   minIntervalMs: number;
+  /** the site's own application tracker — --outcomes reads views/replies */
+  outcomes?: { url: string };
 }
 
 export const SITE_RULES: Record<string, ApplySiteRule>;
 
 export function siteFromUrl(url: string): string;
+
+/* posted-age parsing + freshness ordering (freshness beats fit at the margin) */
+export const FRESH_MAX_HOURS: number;
+export const POSTED_AGE_TEXT_RE: RegExp;
+export function cardAgeText(text: string | null | undefined): string;
+export function parsePostedAge(text: string | null | undefined, now?: number): number | null;
+export function isFreshPosted(ageHours: number | null | undefined): boolean;
+export function sortByFreshness<T extends { __ageText?: string }>(jobs: T[] | null | undefined, now?: number): (T & { __ageH: number | null; __fresh: boolean })[];
 
 export interface JobLinkClass {
   kind: "posting" | "nav" | "unknown";
@@ -234,8 +244,17 @@ export interface JudgeVerdict {
 export function judgeMessages(
   job: (ApplyJobLike & { description?: string | null }) | null | undefined,
   profile: ApplyProfileLike | null | undefined,
-  exemplars?: { positive?: string[]; negative?: string[] } | null
+  exemplars?: { positive?: string[]; negative?: string[] } | null,
+  outcomePriorText?: string
 ): { system: string; user: string };
+
+/* employer-behavior learning (outcome scraper feedback loop) */
+export function classifyOutcome(text: string | null | undefined): { viewed: boolean; responseKind: "reply" | "interview" | "rejected" | "offer" | null };
+export function outcomePrior(stats: { fit_band: string; applications: number; responded: number; response_rate?: number | null }[] | null | undefined): string;
+export function outcomeRowShouldRecord(text: string | null | undefined, url: string | null | undefined, applied: boolean | ((url: string | null | undefined) => boolean)): { viewed: boolean; responseKind: "reply" | "interview" | "rejected" | "offer" | null } | null;
+export function trackerRowLinkRe(site: string | null | undefined): RegExp;
+export function outcomeDigestLines(outcomeRows: { site_host: string; fit_band: string; applications: number; viewed: number; responded: number; interviews?: number; rejected?: number }[] | null | undefined, stats: { fit_band: string; applications: number; responded: number; response_rate?: number | null }[] | null | undefined): string;
+export function matchSiteRow(rows: { host: string; jobs_url?: string | null }[] | null | undefined, url: string): { host: string; jobs_url?: string | null } | undefined;
 
 export function exemplarBlock(positive?: string[], negative?: string[]): string;
 

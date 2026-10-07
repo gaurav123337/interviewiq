@@ -16,6 +16,7 @@
    the feed. */
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { applyBoardIdentity, type ApplyBoardIdentity } from "../_shared/applyBoards.ts";
 import { toEpochMs } from "../_shared/dates.ts";
 import { getSecret } from "../_shared/secrets.ts";
 import { enrichSalary, extractCompanySize, extractSalary, type SalaryBand } from "../_shared/salary.ts";
@@ -387,6 +388,33 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, attempts = 2, b
   throw lastErr;
 }
 
+/* First-class auto-apply boards: every live greenhouse/ashby board is also a
+   job_sites registry row, so the local auto-apply engine runs it via --all
+   exactly like a discovered board. Boards enter as status 'pending' (source
+   'ats') — the probation rule (engine_activate_probation_sites, applied with
+   job-sites-probation.sql) auto-activates them after the probation window;
+   the owner can approve early or reject in the UI. Best-effort: a registry
+   write failure must never fail the feed refresh. The identity (host/URL/
+   label) is pure and deno-tested in _shared/applyBoards.ts. */
+async function registerApplyBoard(admin: ReturnType<typeof createClient>, board: ApplyBoardIdentity): Promise<void> {
+  try {
+    /* the admin client's generics are untyped here (same as the jobs upsert
+       below) — the rpc call is cast to a plain shape to keep deno check honest */
+    const rpcAny = admin.rpc as unknown as (fn: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+    const { error } = await rpcAny("engine_upsert_job_site", {
+      p_host: board.host,
+      p_label: board.label,
+      p_jobs_url: board.jobsUrl,
+      p_source: "ats",
+      p_rules: { ats: { provider: board.provider, board: board.host.split("/").pop() } },
+      p_session_ok: true, // public ATS boards — no session needed to apply
+    });
+    if (error) throw error;
+  } catch (e) {
+    console.warn(`[jobs-fetch] apply-board registration ${board.host} failed:`, (e as Error).message);
+  }
+}
+
 async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { provider: string; board: string }[], enrich: EnrichConfig): Promise<{ added: number; updated: number; total: number; perSource: Record<string, number>; errors: Record<string, string> }> {
   let added = 0;
   let updated = 0;
@@ -397,7 +425,7 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
     const label = `${src.provider}:${src.board}`;
     try {
       const { rows, addedHere } = await withRetry(label, async () => {
-        const { jobs } = src.provider === "lever"
+        const fetched = src.provider === "lever"
           ? await fetchLever(src.board)
           : src.provider === "ashby"
             ? await fetchAshby(src.board)
@@ -406,6 +434,7 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
               : src.provider === "remoteok"
                 ? await fetchRemoteOk()
                 : await fetchGreenhouse(src.board);
+        const { jobs } = fetched;
         const rows = jobs.map((j): JobRow => {
           const x = j as Record<string, unknown>;
           return {
@@ -451,6 +480,11 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
         const addedHere = rows.filter(r => !have.has(r.external_id)).length;
         const { error } = await supabase.from("jobs").upsert(rows, { onConflict: "source,external_id", ignoreDuplicates: false });
         if (error) throw error;
+        /* the same fetch doubles as the auto-apply registry feed: greenhouse/            ashby boards become first-class job_sites rows (pending → probation
+            auto-activation), keyed by fetch success so a board that 404s never
+            enters the registry */
+        const board = applyBoardIdentity(src.provider, src.board, (fetched as { company?: string | null }).company ?? null);
+        if (board) await registerApplyBoard(supabase, board);
         return { rows, addedHere };
       });
       added += addedHere;

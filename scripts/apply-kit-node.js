@@ -19,13 +19,13 @@ import path from "node:path";
     the engine proceeds to the deterministic backstops. Cheap call (short
     prompt, small max_tokens) made ONCE per candidate posting, BEFORE kit
     generation — a skip here saves two AI calls plus form-filling. */
-export async function judgeFit(ai, job, profile, exemplars = null) {
+export async function judgeFit(ai, job, profile, exemplars = null, outcomePriorText = "") {
   if (!ai?.key) return { verdict: "unknown", reason: "no AI provider" };
   /* the owner already 👍-ed this posting: their verdict outranks any judge
      reasoning (that override IS the learn-from-the-owner loop) */
   const ownerHit = ownerExemplarFor(job, exemplars);
   if (ownerHit) return { verdict: "apply", confidence: 1, reason: "owner-confirmed relevant (exemplar)", missingCore: [] };
-  const { system, user } = judgeMessages(job, profile, exemplars);
+  const { system, user } = judgeMessages(job, profile, exemplars, outcomePriorText);
   try {
     const raw = await chatOnce(ai, [{ role: "system", content: system }, { role: "user", content: user }], 220);
     return parseJudgeReply(raw);

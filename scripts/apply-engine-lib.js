@@ -27,6 +27,8 @@ export const SITE_RULES = {
     listSelectorHints: ["a[href*='/jobs/view/']", ".jobs-search-results__list-item", ".job-card-container"],
     minIntervalMs: 4000, // LinkedIn rate-limits hard; keep it slow
     sessionCookieNames: ["li_at"], // ground truth: guests never have li_at
+    /* the site's own application tracker — --outcomes reads views/replies */
+    outcomes: { url: "https://www.linkedin.com/my-items/saved-jobs/?cardType=APPLIED" },
   },
   naukri: {
     label: "Naukri",
@@ -46,6 +48,8 @@ export const SITE_RULES = {
        Instead the engine makes the live session durable via
        persistSessionCookies() after a verified login (#162), and logs the
        ACTUAL cookie names to signin-flow.log for future pinning. */
+    /* the candidate's own applied-jobs tracker — --outcomes reads statuses */
+    outcomes: { url: "https://www.naukri.com/mnjuser/myapply" },
   },
   instahyre: {
     label: "Instahyre",
@@ -90,6 +94,43 @@ export const SITE_RULES = {
        the LIST — classifyJobLink keeps only the detail links */
     listSelectorHints: ["a[href*='/jobs/']"],
     minIntervalMs: 2000,
+    /* the site's own application tracker — --outcomes reads views/replies */
+    outcomes: { url: "https://www.workatastartup.com/applications" },
+  },
+  greenhouse: {
+    label: "Greenhouse",
+    jobsUrlHosts: ["boards.greenhouse.io", "job-boards.greenhouse.io", "greenhouse.io"],
+    loginPathHints: [], // public ATS boards — no session needed to apply
+    loggedInHint: "",
+    applyButtonText: /^apply( for this job)?( now)?$/i,
+    steps: ["apply"],
+    /* first-class board (jobs-fetch wires it in): the form IS the employer's
+       own Greenhouse form with the pack's pinned submit/success text, and
+       trySubmit's fail-closed required-field pre-check guards the one-way
+       click — so auto-submit is trusted here like on Instahyre/Naukri. */
+    autoSubmit: true,
+    submitButtonText: /submit\s*application/i,
+    successText: /application (was|has been) (received|submitted)|thanks for applying/i,
+    listSelectorHints: ["a[href*='/jobs/']"],
+    minIntervalMs: 2500,
+    /* Greenhouse has no candidate-facing tracker (outcomes scrape can't see
+       views) — --outcomes skips it honestly instead of guessing. */
+  },
+  ashby: {
+    label: "Ashby",
+    jobsUrlHosts: ["jobs.ashbyhq.com", "ashbyhq.com"],
+    loginPathHints: [],
+    loggedInHint: "",
+    applyButtonText: /^apply( for this (job|role))?( now)?$/i,
+    steps: ["apply"],
+    autoSubmit: true, // same first-class-board reasoning as greenhouse
+    submitButtonText: /submit\s*application/i,
+    successText: /application (was|has been) (received|submitted)|thanks for applying/i,
+    /* Ashby posting cards link to /<board>/<uuid> — classifyJobLink's
+       uuid rule already reads them as postings; the discriminator drops
+       the category/nav anchors around them. */
+    listSelectorHints: ["a[href*='ashbyhq.com']"],
+    minIntervalMs: 2500,
   },
   wellfound: {
     label: "Wellfound",
@@ -143,6 +184,77 @@ export function siteFromUrl(url) {
     if (rules.jobsUrlHosts.some(h => host === h || host.endsWith("." + h))) return key;
   }
   return "generic";
+}
+
+/* ─────────────────── posted-age parsing + freshness ordering ───────────────────
+
+   Job cards carry a recency stamp ("3 hours ago", "Posted 2 days ago",
+   "Just posted", "30+ Days Ago"). A <24h posting gets 3–10× the applicant
+   volume after it ages out of the board's fresh feed — and most boards
+   shortlist within the first day — so FRESHNESS BEATS FIT AT THE MARGIN:
+   the collector orders <24h postings ahead of everything else, and the
+   per-run `--max` budget therefore spends its slots on postings that are
+   still being read by recruiters. Pure + unit-tested (applyEngine.test.ts). */
+
+/** Postings younger than this are "fresh" and jump the collection queue. */
+export const FRESH_MAX_HOURS = 24;
+
+/** The DOM-side capture regex for a card's age stamp — shared by the
+    collector (runs it in-page over the card's container text) and pinned
+    here so tests cover exactly what the browser extracts. "ago"-relative
+    stamps must carry "ago" so an "Apply today!" CTA never reads as age. */
+export const POSTED_AGE_TEXT_RE = /\b(\d+\s*\+?\s*(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\s*ago|just posted|posted today|few days ago|few hours ago)\b/i;
+
+/** Extract the age-stamp text from a card's text ("" when none). Pure twin
+    of the in-page capture so tests pin exactly what the collector extracts. */
+export function cardAgeText(text) {
+  return (String(text || "").match(POSTED_AGE_TEXT_RE) || [""])[0];
+}
+
+/** Parse a card's recency stamp into age-in-hours. Returns null when the
+    text carries no recognizable age. Handles the boards' real formats:
+    LinkedIn "3 hours ago", Naukri "30+ Days Ago" / "Few Days Ago",
+    Instahyre/YC "Just posted"/"Today", generic "Posted 5 days ago",
+    compact "2h ago" / "1d". Pure so tests pin every board's dialect. */
+export function parsePostedAge(text, now = Date.now()) {
+  const s = String(text || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  /* "today" counts ONLY as a full stamp — an "Apply today!" CTA is not an age */
+  if (/^(just posted|posted (?:just )?now|posted today|today|new)[.!]?$/.test(s) || /\bfew hours\b/.test(s)) return 0;
+  if (/\byesterday|few days|a day ago|some days/.test(s)) return 24; // ≥24h — no longer fresh
+  const m = s.match(/(\d+)\s*\+?\s*(minutes?|mins?|m)\b/);
+  if (m) return Number(m[1]) / 60;
+  const h = s.match(/(\d+)\s*\+?\s*(hours?|hrs?|hr|h)\b/);
+  if (h) return Number(h[1]);
+  const d = s.match(/(\d+)\s*\+?\s*(days?|d)\b/);
+  if (d) return Number(d[1]) * 24;
+  const w = s.match(/(\d+)\s*\+?\s*(weeks?|w)\b/);
+  if (w) return Number(w[1]) * 24 * 7;
+  const mo = s.match(/(\d+)\s*\+?\s*months?\b/);
+  if (mo) return Number(mo[1]) * 24 * 30;
+  return null; // no age on the card — unknown, never promoted
+}
+
+/** Fresh = parseable age strictly under FRESH_MAX_HOURS. Unknown ages are
+    NOT fresh (never promoted ahead of a known-fresh posting). */
+export function isFreshPosted(ageHours) {
+  return ageHours != null && isFinite(ageHours) && ageHours >= 0 && ageHours < FRESH_MAX_HOURS;
+}
+
+/** Collection-order rule: fresh (<24h) postings first — freshest of the
+    fresh first — then everything else in the BOARD'S OWN ORDER (the board
+    already lists newest-first, and re-sorting older rows by a noisy parsed
+    age would jumble it for zero gain). Stable: equal keys keep input order.
+    Each job gains `__ageH` (hours|null) + `__fresh` (boolean) so the run
+    log, the report and the digest can show WHY a row went first. */
+export function sortByFreshness(jobs, now = Date.now()) {
+  const withAge = (jobs ?? []).map((j) => {
+    const ageH = parsePostedAge(j.__ageText ?? j.postedAge ?? "", now);
+    return { ...j, __ageH: ageH, __fresh: isFreshPosted(ageH) };
+  });
+  const fresh = withAge.filter((j) => j.__fresh).sort((a, b) => a.__ageH - b.__ageH);
+  const rest = withAge.filter((j) => !j.__fresh);
+  return [...fresh, ...rest];
 }
 
 /* ─────────────────── posting-vs-nav discrimination ───────────────────
@@ -726,7 +838,105 @@ export function ownerExemplarFor(job, exemplars) {
   return bestN >= 3 ? best : "";
 }
 
-export function judgeMessages(job, profile, exemplars = null) {
+/* ─── employer-behavior learning (the outcome scraper's feedback loop) ───
+
+   The engine already learns from the OWNER (review verdicts → exemplars).
+   The other half of the loop is the EMPLOYER: the weekly --outcomes scrape
+   records views/replies per board and fit band, and those rates come back
+   into the judge prompt as a prior — "applications at fit 70-84 got
+   responses 3/20 times" — so fit bands that never convert stop spending
+   the owner's applications on borderline postings. */
+
+/** Map a tracker row's status text to outcome milestones. Returns
+    { viewed: boolean, responseKind: "reply"|"interview"|"rejected"|"offer"|null }.
+    Rejection CHECKS outrank view words ("Viewed · Not selected" is a
+    rejection); interview/offer outrank generic replies. Unknown text →
+    no milestone (honest nulls, never guessed). */
+export function classifyOutcome(text) {
+  const s = String(text || "").toLowerCase();
+  if (!s.trim()) return { viewed: false, responseKind: null };
+  if (/offer (made|extended|received)|offer letter/.test(s)) return { viewed: true, responseKind: "offer" };
+  if (/interview|shortlist|hiring team (is )?interested|would like to (talk|chat|move)/.test(s)) return { viewed: true, responseKind: "interview" };
+  if (/not selected|rejected|no longer under consideration|no longer being considered|position (has been )?filled|application (was )?declined|your application (was|has) not/.test(s)) return { viewed: true, responseKind: "rejected" };
+  if (/replied|responded|message from|hiring team viewed|employer (has )?viewed|viewed by/.test(s)) return { viewed: true, responseKind: "reply" };
+  if (/viewed|seen|opened|under review|in review|application being reviewed/.test(s)) return { viewed: true, responseKind: null };
+  return { viewed: false, responseKind: null };
+}
+
+/** Build the judge-prompt prior from engine_outcome_stats() rows
+    ({fit_band, applications, responded, response_rate}). Only bands with
+    real evidence (>=5 applications) speak; empty when the data doesn't. */
+export function outcomePrior(stats) {
+  const rows = (stats ?? [])
+    .filter((r) => Number(r?.applications ?? 0) >= 5)
+    .sort((a, b) => String(a.fit_band).localeCompare(String(b.fit_band)));
+  if (!rows.length) return "";
+  const lines = rows.map((r) =>
+    `- fit ${r.fit_band}: ${r.responded}/${r.applications} applications got an employer response${Number(r.response_rate) >= 0 ? ` (${Math.round(Number(r.response_rate) * 100)}%)` : ""}`);
+  return `Employer-response history for this candidate's past applications (90d — favor fit bands that actually convert):\n${lines.join("\n")}`;
+}
+
+/** Should the outcome scraper RECORD this tracker row? Two gates: the row
+    must carry a classifiable milestone, AND it must be one of the
+    candidate's applications (in the engine's dedupe set, or the row itself
+    says "applied/submitted" — employer behavior is worth recording even for
+    manual applications). Returns the classification, or null = skip. Pure:
+    the caller passes its `wasApplied(url)` as a predicate. */
+export function outcomeRowShouldRecord(text, url, applied) {
+  const o = classifyOutcome(text);
+  if (!o.viewed && !o.responseKind) return null;
+  const isApplied = typeof applied === "function" ? !!applied(url) : !!applied;
+  if (!isApplied && !/applied|submitted/i.test(String(text || ""))) return null;
+  return o;
+}
+
+/** The tracker-page link pattern per site (which anchors are application
+    rows on this board's "my applications" page). Falls back to a generic
+    posting-link shape for boards added later. Pure + pinned. */
+export function trackerRowLinkRe(site) {
+  const RES = {
+    linkedin: /linkedin\.com\/jobs\/view\/(\d+)/i,
+    naukri: /naukri\.com\/job-listings-([^/?#]+)/i,
+    instahyre: /instahyre\.com\/candidate\/opportunities\/(\d+)/i,
+    workatastartup: /workatastartup\.com\/jobs\/([^/?#]+)/i,
+  };
+  return RES[site] ?? /\/jobs?(?:\/|\/view\/|\/listings?-|=)([^/?#]+\d[^/?#]*|\d+)/i;
+}
+
+/** The weekly digest's employer-behavior section (Telegram text). Reads the
+    admin_apply_outcome_digest rows + engine_outcome_stats rows; honest when
+    empty (no data ≠ silence). Pure so the digest format is pinned. */
+export function outcomeDigestLines(outcomeRows, stats) {
+  const rows = outcomeRows ?? [];
+  if (!rows.length) {
+    return "\n📈 employer behavior (7d): no tracked applications — run --outcomes (the digest task does this weekly) once trackers are signed in.";
+  }
+  const fmtRow = (o) =>
+    `• ${o.site_host} · fit ${o.fit_band}: ${o.applications} applied · ${o.viewed} viewed · ${o.responded} responded${o.interviews ? ` (${o.interviews} interview)` : ""}${o.rejected ? ` (${o.rejected} rejected)` : ""}`;
+  const best = (stats ?? [])
+    .filter((s) => Number(s?.applications ?? 0) >= 5)
+    .sort((a, b) => Number(b.response_rate ?? 0) - Number(a.response_rate ?? 0))[0];
+  return `\n📈 employer behavior (7d):\n${rows.map(fmtRow).join("\n")}`
+    + (best
+      ? `\n🧠 learning: fit ${best.fit_band} converts best (${best.responded}/${best.applications} responded) — the judge gets this prior on the next run.`
+      : "\n🧠 learning: not enough tracked applications yet (needs 5+ per band) — keep the outcome scrape running weekly.");
+}
+
+/** Registry-row resolution for a run URL: the FULL jobs_url match wins
+    (path-qualified ATS boards: boards.greenhouse.io/lyft ≠ …/airbnb), then
+    the bare-host / host-prefix match. Returns the row or undefined. Pure so
+    per-board identity in apply_results/digest rows is pinned. */
+export function matchSiteRow(rows, url) {
+  const strip = (u) => String(u || "").replace(/\/+$/, "");
+  let bare = "";
+  try { bare = new URL(url).hostname.replace(/^www\./, ""); } catch { /* below */ }
+  const hostish = String(url || "").replace(/^https?:\/\/(www\.)?/, "").split("/")[0];
+  const list = rows ?? [];
+  return list.find((s) => s.jobs_url && strip(s.jobs_url) === strip(url))
+    ?? list.find((s) => s.host === hostish || (bare && s.host === bare));
+}
+
+export function judgeMessages(job, profile, exemplars = null, outcomePriorText = "") {
   const p = profile || {};
   const system = [
     "You are a strict hiring manager screening applications for a real candidate.",
@@ -745,6 +955,7 @@ export function judgeMessages(job, profile, exemplars = null) {
     `CANDIDATE: ${p.headline || "engineer"}${p.years != null ? `, ${p.years} yrs` : ""}. Skills: ${(p.skills ?? []).join(", ") || "(none listed)"}.`,
     `POSTING: ${job?.title || "(untitled)"}${job?.company ? ` at ${job.company}` : ""}.`,
     exemplars ? exemplarBlock(exemplars.positive, exemplars.negative) : "",
+    outcomePriorText || "",
     `JD (may be truncated): ${(job?.description || "").slice(0, 3500)}`,
   ].filter(Boolean).join("\n");
   return { system, user };

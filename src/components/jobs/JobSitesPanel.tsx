@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, sessionStateOf, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, summarizeSite, sessionStateOf, probationAutoActivateAt, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -151,6 +151,7 @@ export default function JobSitesPanel() {
               <div className="truncate text-sm text-zinc-200">
                 {s.label} <span className="text-zinc-400">· {s.host}</span>
                 {s.source === "discovered" && <span className="ml-1 text-[10px] uppercase tracking-wide text-sky-400">discovered</span>}
+                {s.source === "ats" && <span className="ml-1 text-[10px] uppercase tracking-wide text-violet-400">ats board</span>}
               </div>
               <div className="flex items-center gap-1.5 truncate text-xs text-zinc-300">
                 {summarizeSite(s)}
@@ -159,6 +160,17 @@ export default function JobSitesPanel() {
                   return (
                     <span title={st.title} className={`rounded px-1 py-0.5 text-[10px] font-bold ${st.cls}`}>
                       {st.key === "verified" ? "✓" : st.key === "expired" ? "✗" : "?"} {st.label}
+                    </span>
+                  );
+                })()}
+                {(() => {
+                  const at = probationAutoActivateAt(s);
+                  if (!at) return null;
+                  const days = Math.max(0, Math.ceil((new Date(at).getTime() - Date.now()) / 86_400_000));
+                  return (
+                    <span title={`Pending sites auto-activate after a 7-day probation window (oldest first, max 3 per sweep). Approve early to skip the wait, or Reject to keep it out.`}
+                      className="rounded bg-sky-500/10 px-1 py-0.5 text-[10px] font-semibold text-sky-300">
+                      🌱 probation · auto-activates {days === 0 ? "today" : `in ${days}d`}
                     </span>
                   );
                 })()}

@@ -12,6 +12,9 @@ import {
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
   titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor, classifyJobLink,
   extractFeedbackSkills, strikesWithDecay, skillIsBuzzOnly,
+  parsePostedAge, isFreshPosted, sortByFreshness, FRESH_MAX_HOURS,
+  classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
+  matchSiteRow, cardAgeText, POSTED_AGE_TEXT_RE,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -657,5 +660,231 @@ describe("buzz-only gating — 'we work with AI' is not 'experience with AI'", (
     // with the strike active, the old gate rejected this React-fit posting when 'ai' counted as required-and-missing
     const withStrike = postingRelevant({ title: "Staff Software Engineer, Frontend", description: jd }, profile, { learnedCritical: ["ai"] });
     expect(withStrike.ok).toBe(true); // buzz-only 'ai' must not hard-reject
+  });
+});
+
+describe("posted-age parsing + freshness-first collection order", () => {
+  it("parses every board's real stamp dialect into hours", () => {
+    expect(parsePostedAge("3 hours ago")).toBe(3);
+    expect(parsePostedAge("45 minutes ago")).toBe(0.75);
+    expect(parsePostedAge("2 days ago")).toBe(48);
+    expect(parsePostedAge("30+ Days Ago")).toBe(720);
+    expect(parsePostedAge("Posted 5 days ago")).toBe(120);
+    expect(parsePostedAge("1 week ago")).toBe(168);
+    expect(parsePostedAge("2 months ago")).toBe(1440);
+    expect(parsePostedAge("2h ago")).toBe(2);
+    expect(parsePostedAge("Just posted")).toBe(0);
+    expect(parsePostedAge("today")).toBe(0);
+    expect(parsePostedAge("yesterday")).toBe(24);
+    expect(parsePostedAge("few days ago")).toBe(24);
+    expect(parsePostedAge("Apply today!")).toBe(null); // a CTA is never an age
+    expect(parsePostedAge("")).toBe(null);
+    expect(parsePostedAge("senior react developer")).toBe(null);
+  });
+
+  it("pins the fresh-boundary and compact-dialect edges", () => {
+    expect(parsePostedAge("0 minutes ago")).toBe(0); // brand new
+    expect(parsePostedAge("23 hours ago")).toBe(23); // fresh edge
+    expect(parsePostedAge("1 day ago")).toBe(24); // exactly 24h = NO LONGER fresh
+    expect(parsePostedAge("12 months ago")).toBe(8640);
+    expect(parsePostedAge("posted today")).toBe(0);
+    expect(parsePostedAge("a few hours")).toBe(0); // insta-style stamp
+    expect(parsePostedAge("   3   HOURS   ago  ")).toBe(3); // whitespace/case noise
+    expect(parsePostedAge("2 weeks ago")).toBe(336);
+    expect(parsePostedAge("10+ days ago")).toBe(240); // naukri's plus-form
+  });
+
+  it("fresh = parseable and under 24h; unknown ages are never fresh", () => {
+    expect(isFreshPosted(0)).toBe(true);
+    expect(isFreshPosted(23.9)).toBe(true);
+    expect(isFreshPosted(FRESH_MAX_HOURS)).toBe(false);
+    expect(isFreshPosted(null)).toBe(false);
+    expect(isFreshPosted(-1)).toBe(false);
+  });
+
+  it("puts <24h postings first (freshest first) and keeps board order behind them", () => {
+    const jobs = [
+      { url: "a", __ageText: "5 days ago" },
+      { url: "b", __ageText: "3 hours ago" },
+      { url: "c", __ageText: "1 day ago" },
+      { url: "d", __ageText: "Just posted" },
+      { url: "e" }, // unknown age
+    ];
+    const ordered = sortByFreshness(jobs);
+    expect(ordered.map((j) => j.url)).toEqual(["d", "b", "a", "c", "e"]);
+    expect(ordered[0].__fresh).toBe(true);
+    expect(ordered[0].__ageH).toBe(0);
+    expect(ordered[2].__fresh).toBe(false);
+    expect(ordered[4].__ageH).toBe(null);
+  });
+
+  it("is stable when ages tie (board order preserved within a group)", () => {
+    const jobs = [
+      { url: "x", __ageText: "2 hours ago" },
+      { url: "y", __ageText: "2 hours ago" },
+    ];
+    expect(sortByFreshness(jobs).map((j) => j.url)).toEqual(["x", "y"]);
+  });
+
+  it("degenerates safely: empty, all-unknown, all-fresh, and never mutates the input", () => {
+    expect(sortByFreshness([])).toEqual([]);
+    expect(sortByFreshness(null)).toEqual([]);
+    expect(sortByFreshness(undefined)).toEqual([]);
+    const allUnknown = [{ url: "a", __ageText: "" }, { url: "b", __ageText: "" }];
+    expect(sortByFreshness(allUnknown).map((j) => j.url)).toEqual(["a", "b"]); // board order stands
+    const allFresh = [{ url: "late", __ageText: "5 hours ago" }, { url: "early", __ageText: "1 hour ago" }];
+    expect(sortByFreshness(allFresh).map((j) => j.url)).toEqual(["early", "late"]); // freshest of the fresh first
+    const input = [{ url: "a", __ageText: "2 days ago" }];
+    const out = sortByFreshness(input);
+    expect(Object.prototype.hasOwnProperty.call(input[0], "__fresh")).toBe(false); // the input array is untouched
+    expect(out[0].__fresh).toBe(false); // the copy carries the flags
+  });
+
+  it("routes the first-class ATS boards and keeps them honest", () => {
+    expect(siteFromUrl("https://boards.greenhouse.io/lyft")).toBe("greenhouse");
+    expect(siteFromUrl("https://job-boards.greenhouse.io/acme/jobs/4567890")).toBe("greenhouse");
+    expect(siteFromUrl("https://jobs.ashbyhq.com/linear")).toBe("ashby");
+    // first-class = trusted with auto-submit (known ATS, pinned success text,
+    // and trySubmit's fail-closed required-field pre-check still guards it)
+    expect(SITE_RULES.greenhouse.autoSubmit).toBe(true);
+    expect(SITE_RULES.ashby.autoSubmit).toBe(true);
+    // public boards: no session needed, no login-wall false positives
+    expect(SITE_RULES.greenhouse.loginPathHints).toEqual([]);
+    // ATS boards have no candidate tracker — the outcome scraper must skip them
+    expect(SITE_RULES.greenhouse.outcomes).toBeUndefined();
+    expect(SITE_RULES.linkedin.outcomes?.url).toContain("cardType=APPLIED");
+    expect(SITE_RULES.naukri.outcomes?.url).toContain("myapply");
+  });
+});
+
+describe("employer-behavior learning — outcome classification + judge prior", () => {
+  it("maps tracker status text to milestones (rejection outranks view words)", () => {
+    expect(classifyOutcome("Application viewed")).toEqual({ viewed: true, responseKind: null });
+    expect(classifyOutcome("Viewed · Not selected")).toEqual({ viewed: true, responseKind: "rejected" });
+    expect(classifyOutcome("Your application was not selected for this role")).toEqual({ viewed: true, responseKind: "rejected" });
+    expect(classifyOutcome("Shortlisted by the hiring team")).toEqual({ viewed: true, responseKind: "interview" });
+    expect(classifyOutcome("Message from the recruiter")).toEqual({ viewed: true, responseKind: "reply" });
+    expect(classifyOutcome("Offer received")).toEqual({ viewed: true, responseKind: "offer" });
+    expect(classifyOutcome("Applied 3 days ago")).toEqual({ viewed: false, responseKind: null });
+    expect(classifyOutcome("")).toEqual({ viewed: false, responseKind: null });
+  });
+
+  it("pins the milestone priority chain: offer > interview > rejected > reply > viewed", () => {
+    // a row carrying several signals must classify as the STRONGEST milestone
+    expect(classifyOutcome("Viewed · Shortlisted").responseKind).toBe("interview");
+    expect(classifyOutcome("Interview scheduled — offer made").responseKind).toBe("offer");
+    expect(classifyOutcome("Viewed · replied to by the recruiter · not selected").responseKind).toBe("rejected");
+    expect(classifyOutcome("Viewed · message from recruiter").responseKind).toBe("reply");
+    // intermediate states count as a view, never as a response
+    expect(classifyOutcome("Your application is under review")).toEqual({ viewed: true, responseKind: null });
+    // case-insensitive (tracker rows vary)
+    expect(classifyOutcome("APPLICATION VIEWED").viewed).toBe(true);
+    expect(classifyOutcome("Not Selected").responseKind).toBe("rejected");
+    // null-safety
+    expect(classifyOutcome(null)).toEqual({ viewed: false, responseKind: null });
+    expect(classifyOutcome(undefined)).toEqual({ viewed: false, responseKind: null });
+  });
+
+  it("only speaks when a band has real evidence (5+ applications)", () => {
+    const stats = [
+      { fit_band: "85+", applications: 6, responded: 2, response_rate: 0.333 },
+      { fit_band: "50-69", applications: 12, responded: 0, response_rate: 0 },
+      { fit_band: "70-84", applications: 3, responded: 1, response_rate: 0.333 },
+    ];
+    const prior = outcomePrior(stats);
+    expect(prior).toContain("fit 85+: 2/6");
+    expect(prior).toContain("fit 50-69: 0/12");
+    expect(prior).not.toContain("70-84"); // 3 applications = not enough evidence
+    expect(outcomePrior([])).toBe("");
+    expect(outcomePrior(null)).toBe("");
+  });
+
+  it("folds the prior into the judge prompt when present, leaves it out otherwise", () => {
+    const job = { title: "Frontend Engineer", description: "react" };
+    const profile = { headline: "Frontend Engineer", skills: ["React"] };
+    const without = judgeMessages(job, profile, null, "");
+    expect(without.user).not.toContain("Employer-response history");
+    const withPrior = judgeMessages(job, profile, null, "Employer-response history for this candidate's past applications (90d — favor fit bands that actually convert):\n- fit 85+: 2/6 applications got an employer response (33%)");
+    expect(withPrior.user).toContain("fit 85+: 2/6");
+  });
+
+  it("only records tracker rows that carry a milestone AND belong to the candidate", () => {
+    const viewed = "Application viewed";
+    // engine-applied URL → recorded even though the row text says nothing new
+    expect(outcomeRowShouldRecord(viewed, "https://x", () => true)).toEqual({ viewed: true, responseKind: null });
+    // row itself says submitted (manual application) → recorded
+    expect(outcomeRowShouldRecord("Submitted · Application viewed", "https://x", () => false)).toEqual({ viewed: true, responseKind: null });
+    // milestone but neither engine-applied nor an applied stamp → skip honestly
+    expect(outcomeRowShouldRecord("Just saved", "https://x", () => false)).toBeNull();
+    // no classifiable milestone → skip even for an applied URL
+    expect(outcomeRowShouldRecord("Applied 3 days ago", "https://x", () => true)).toBeNull();
+    // predicate form vs boolean form agree
+    expect(outcomeRowShouldRecord(viewed, "https://x", true)).toEqual({ viewed: true, responseKind: null });
+    expect(outcomeRowShouldRecord(viewed, "https://x", false)).toBeNull();
+  });
+
+  it("matches each tracker's own link shape and falls back generically", () => {
+    expect(trackerRowLinkRe("linkedin").test("https://www.linkedin.com/jobs/view/4471345244/")).toBe(true);
+    expect(trackerRowLinkRe("naukri").test("https://www.naukri.com/job-listings-senior-react-1234567")).toBe(true);
+    expect(trackerRowLinkRe("instahyre").test("https://www.instahyre.com/candidate/opportunities/12345/")).toBe(true);
+    expect(trackerRowLinkRe("workatastartup").test("https://www.workatastartup.com/jobs/12345-senior-frontend")).toBe(true);
+    // unknown site → generic posting-link shape
+    expect(trackerRowLinkRe("cutshort").test("https://x.com/jobs/1234-abc")).toBe(true);
+    // a site's pattern must not swallow another site's rows
+    expect(trackerRowLinkRe("linkedin").test("https://www.naukri.com/job-listings-x-123")).toBe(false);
+  });
+
+  it("renders the digest's employer-behavior section, honest when empty", () => {
+    // no data ≠ silence
+    expect(outcomeDigestLines([], [])).toContain("no tracked applications");
+    expect(outcomeDigestLines(null, undefined)).toContain("no tracked applications");
+    const rows = [
+      { site_host: "linkedin.com", fit_band: "70-84", applications: 8, viewed: 3, responded: 1, interviews: 0, rejected: 2 },
+      { site_host: "naukri.com", fit_band: "50-69", applications: 5, viewed: 0, responded: 0, interviews: 0, rejected: 0 },
+    ];
+    const text = outcomeDigestLines(rows, []);
+    expect(text).toContain("• linkedin.com · fit 70-84: 8 applied · 3 viewed · 1 responded (2 rejected)");
+    expect(text).toContain("• naukri.com · fit 50-69: 5 applied · 0 viewed · 0 responded");
+    expect(text).toContain("needs 5+ per band"); // no qualifying stats → honest learning line
+    // best-converting band with real evidence
+    const withStats = outcomeDigestLines(rows, [
+      { fit_band: "85+", applications: 6, responded: 2, response_rate: 0.333 },
+      { fit_band: "50-69", applications: 12, responded: 0, response_rate: 0 },
+    ]);
+    expect(withStats).toContain("fit 85+ converts best (2/6 responded)");
+    // a band under the evidence threshold never wins the learning line
+    const underThreshold = outcomeDigestLines(rows, [{ fit_band: "70-84", applications: 3, responded: 3, response_rate: 1 }]);
+    expect(underThreshold).toContain("needs 5+ per band");
+  });
+
+  it("resolves the registry row for a run URL: full jobs_url first, bare host second", () => {
+    const rows = [
+      { host: "boards.greenhouse.io/lyft", jobs_url: "https://boards.greenhouse.io/lyft" },
+      { host: "boards.greenhouse.io/airbnb", jobs_url: "https://boards.greenhouse.io/airbnb" },
+      { host: "linkedin.com", jobs_url: "https://www.linkedin.com/jobs/" },
+    ];
+    // path-qualified boards never bleed into each other
+    expect(matchSiteRow(rows, "https://boards.greenhouse.io/lyft")?.host).toBe("boards.greenhouse.io/lyft");
+    expect(matchSiteRow(rows, "https://boards.greenhouse.io/airbnb/")?.host).toBe("boards.greenhouse.io/airbnb");
+    // trailing-slash tolerant on both sides
+    expect(matchSiteRow(rows, "https://www.linkedin.com/jobs")?.host).toBe("linkedin.com");
+    // bare-host fallback (legacy registry rows)
+    expect(matchSiteRow([{ host: "instahyre.com", jobs_url: null }], "https://www.instahyre.com/candidate/opportunities/")?.host).toBe("instahyre.com");
+    // no match → undefined (RUN_HOST falls back to the bare hostname)
+    expect(matchSiteRow(rows, "https://cutshort.io/jobs")).toBeUndefined();
+    expect(matchSiteRow([], "https://boards.greenhouse.io/lyft")).toBeUndefined();
+    expect(matchSiteRow(undefined, "https://x.com")).toBeUndefined();
+  });
+
+  it("extracts exactly the age stamp the DOM collector captures", () => {
+    expect(cardAgeText("Senior React Dev\n3 hours ago\nBengaluru")).toBe("3 hours ago");
+    expect(cardAgeText("Staff Engineer · 30+ Days Ago · Naukri")).toBe("30+ Days Ago");
+    expect(cardAgeText("Just posted\nAcme")).toBe("Just posted");
+    expect(cardAgeText("Apply today! Great team")).toBe(""); // CTA is not an age
+    expect(cardAgeText("")).toBe("");
+    // the regex is exported for the in-page collector — same source object
+    expect(POSTED_AGE_TEXT_RE.test("Apply today! Great team")).toBe(false); // CTA never captured
+    expect(POSTED_AGE_TEXT_RE.test("posted 5 days ago")).toBe(true); // embedded stamp captured
+    expect(cardAgeText("posted 5 days ago")).toBe("5 days ago");
   });
 });

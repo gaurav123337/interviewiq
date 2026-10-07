@@ -34,7 +34,7 @@ async function rpc(creds, fn, args) {
   return text ? JSON.parse(text) : null;
 }
 
-/** All registry rows (builtin + discovered, any status). */
+/** All registry rows (builtin + discovered + ats, any status). */
 export async function listJobSites() {
   const creds = loadLocalCreds();
   const res = await fetch(`${creds.base}/rest/v1/job_sites?select=*&order=host.asc`, {
@@ -42,6 +42,13 @@ export async function listJobSites() {
   });
   if (!res.ok) throw new Error(`job_sites read ${res.status}`);
   return res.json();
+}
+
+/** Probation sweep: pending discoveries older than the probation window
+    (default 7d) auto-activate, oldest first, capped per sweep (default 3).
+    Returns the activated rows so the caller can report them honestly. */
+export async function activateProbationSites(days = 7, max = 3) {
+  return rpc(loadLocalCreds(), "engine_activate_probation_sites", { p_days: days, p_max: max }) ?? [];
 }
 
 /** Insert/update a site (discovery + rule learning). Returns the row id. */
@@ -129,6 +136,27 @@ export async function resolveReviewByUrl(jobUrl, status) {
 /** Weekly digest per board: engine decisions + owner resolutions, 7d. */
 export async function applyWeeklyDigest() {
   return rpc(loadLocalCreds(), "admin_apply_weekly_digest", {});
+}
+
+/* ── outcome scraper: employer behavior per board + fit band ──────────── */
+
+/** One scraped milestone for a submitted application (first view / first
+    response win; freshest fit wins). Fire-and-forget — never breaks a run. */
+export async function recordApplyOutcome({ siteHost, jobUrl, fit, viewed, responseKind, detail }) {
+  return rpc(loadLocalCreds(), "engine_record_apply_outcome", {
+    p_site_host: siteHost, p_job_url: jobUrl, p_fit: fit ?? null,
+    p_viewed: !!viewed, p_response_kind: responseKind ?? null, p_detail: detail ?? null,
+  });
+}
+
+/** Weekly digest rows: applications × views × responses per board + fit band. */
+export async function outcomeDigest() {
+  return rpc(loadLocalCreds(), "admin_apply_outcome_digest", {});
+}
+
+/** 90-day response rates per fit band — the judge's employer-behavior prior. */
+export async function outcomeStats() {
+  return rpc(loadLocalCreds(), "engine_outcome_stats", {});
 }
 
 /* ── learned skill strikes (owner feedback loop) ───────────────────── */
