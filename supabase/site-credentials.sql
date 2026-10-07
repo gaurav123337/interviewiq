@@ -29,13 +29,20 @@ alter table public.job_sites add column if not exists credential_id uuid referen
 /* ── admin RPCs ── */
 create or replace function public.admin_list_credentials()
 returns table (id uuid, label text, kind text, username text, secret_prefix text, bound_sites text, updated_at timestamptz)
-language sql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public as $$
+begin
+  /* every writer in this family already guards with is_admin(); this reader
+     did not, and it is granted to authenticated — so any signed-in user
+     (free tier included) could list the owner's sites' logins, usernames
+     and secret prefixes. */
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  return query
   select c.id, c.label, c.kind, c.username, left(coalesce(c.secret, ''), 2) as secret_prefix,
     coalesce((select string_agg(s.host, ', ' order by s.host) from public.job_sites s where s.credential_id = c.id), '') as bound_sites,
     c.updated_at
   from public.site_credentials c
   order by c.updated_at desc;
-$$;
+end $$;
 
 create or replace function public.admin_put_credential(
   p_id uuid, p_label text, p_kind text, p_username text, p_secret text
