@@ -43,7 +43,15 @@ returns table (
   rules jsonb, session_ok boolean, last_run_at timestamptz,
   last_submitted int, last_collected int, last_ok boolean,
   session_state text, session_checked_at timestamptz, session_expired_at timestamptz
-) language sql security definer set search_path = public as $$
+) language plpgsql security definer set search_path = public as $$
+begin
+  /* definer = RLS does not apply here; the guard is the gate (see
+     job-sites.sql — the unguarded version was callable with the
+     publishable key and returned the whole registry). */
+  if not (public.is_admin() or auth.jwt() ->> 'role' = 'service_role') then
+    raise exception 'forbidden';
+  end if;
+  return query
   select s.id, s.host, s.label, s.jobs_url, s.status, s.source,
          s.rules, s.session_ok, s.last_run_at,
          coalesce((s.last_result ->> 'submitted')::int, 0),
@@ -52,4 +60,7 @@ returns table (
          s.session_state, s.session_checked_at, s.session_expired_at
   from public.job_sites s
   order by (s.status = 'active') desc, s.host;
-$$;
+end $$;
+
+revoke execute on function public.admin_list_job_sites() from anon, public;
+grant execute on function public.admin_list_job_sites() to authenticated, service_role;

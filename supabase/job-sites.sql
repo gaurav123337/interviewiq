@@ -37,6 +37,29 @@ create table if not exists public.job_site_runs (
 
 create index if not exists job_site_runs_site_idx on public.job_site_runs (site_id, ran_at desc);
 
+/* ── owner-only, enforced ──────────────────────────────────────────────
+   The header above always claimed "RLS restricted to the single admin
+   user", but RLS was never enabled here — so the public (publishable) key
+   could read the whole registry, hosts, rules and session verdicts through
+   PostgREST. Same for the run log. Policies below are the gate; the
+   `security definer` RPCs are owned by the table owner and keep working.
+   (Verified leak: anon GET /rest/v1/job_sites returned rows.) */
+alter table public.job_sites enable row level security;
+
+drop policy if exists "job sites admin" on public.job_sites;
+create policy "job sites admin" on public.job_sites
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+alter table public.job_site_runs enable row level security;
+
+drop policy if exists "job site runs admin" on public.job_site_runs;
+create policy "job site runs admin" on public.job_site_runs
+  for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
 /* ── admin RPCs (same guard pattern as billing) ───────────────────────── */
 
 create or replace function public.is_job_sites_admin()
@@ -44,13 +67,21 @@ returns boolean language sql security definer set search_path = public as $$
   select public.is_admin();
 $$;
 
-/* list sites + last run summary for the admin UI */
+/* list sites + last run summary for the admin UI. `security definer` means
+   the RLS policies above do NOT apply to this function, so it carries the
+   same explicit admin guard as the engine RPCs — without it, anyone holding
+   the publishable key could call it and read the registry. */
 create or replace function public.admin_list_job_sites()
 returns table (
   id uuid, host text, label text, jobs_url text, status text, source text,
   rules jsonb, session_ok boolean, last_run_at timestamptz,
   last_submitted int, last_collected int, last_ok boolean
-) language sql security definer set search_path = public as $$
+) language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.is_admin() or auth.jwt() ->> 'role' = 'service_role') then
+    raise exception 'forbidden';
+  end if;
+  return query
   select s.id, s.host, s.label, s.jobs_url, s.status, s.source,
          s.rules, s.session_ok, s.last_run_at,
          coalesce((s.last_result ->> 'submitted')::int, 0),
@@ -58,7 +89,7 @@ returns table (
          coalesce((s.last_result ->> 'ok')::boolean, false)
   from public.job_sites s
   order by (s.status = 'active') desc, s.host;
-$$;
+end $$;
 
 /* approve a discovered site (pending → active) */
 create or replace function public.admin_set_job_site_status(p_id uuid, p_status text)
@@ -136,3 +167,24 @@ begin
     set rules = coalesce(rules, '{}'::jsonb) || p_rules, updated_at = now()
     where host = p_host;
 end $$;
+
+/* ── execute grants ────────────────────────────────────────────────────
+   Postgres grants EXECUTE on new functions to PUBLIC by default, so the
+   in-function guards are the only thing standing between the publishable
+   key and these RPCs. Revoke that default: the client calls the two admin
+   listing/approval RPCs as a signed-in admin; the engine_* writers are
+   service-role only (the local engine + the jobs-fetch edge function). */
+revoke execute on function public.admin_list_job_sites() from anon, public;
+grant execute on function public.admin_list_job_sites() to authenticated, service_role;
+
+revoke execute on function public.admin_set_job_site_status(uuid, text) from anon, public;
+grant execute on function public.admin_set_job_site_status(uuid, text) to authenticated, service_role;
+
+revoke execute on function public.engine_upsert_job_site(text, text, text, text, jsonb, boolean) from anon, public;
+grant execute on function public.engine_upsert_job_site(text, text, text, text, jsonb, boolean) to service_role;
+
+revoke execute on function public.engine_record_job_site_run(text, boolean, int, int, int, int, text) from anon, public;
+grant execute on function public.engine_record_job_site_run(text, boolean, int, int, int, int, text) to service_role;
+
+revoke execute on function public.engine_set_job_site_rules(text, jsonb) from anon, public;
+grant execute on function public.engine_set_job_site_rules(text, jsonb) to service_role;
