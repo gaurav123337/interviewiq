@@ -39,6 +39,7 @@ import {
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, POSTED_AGE_TEXT_RE,
+  spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
@@ -236,6 +237,38 @@ async function applyModeBlocked(cycle) {
   }
   if (cycle && cfg.mode === "unknown") return `config unavailable (${cfg.reason}) — scheduled runs fail closed`;
   return null;
+}
+
+/* Phase 0 — cross-run governance. One RPC read gives the engine mode, policy
+   caps/filters AND the current spend (today + this week) from the owner's
+   own apply_results — no N+1 queries. Unavailable RPC (SQL not applied yet)
+   degrades to an honest logged skip: policy = "no data" and the gates stop
+   SUBMITTING only when a cap is actually known to be reached — a missing
+   policy must not silently change today's behavior. */
+let GOVERNANCE = null; // resolved once per process
+async function readGovernance() {
+  if (GOVERNANCE) return GOVERNANCE;
+  const db = await sitesDb();
+  if (!db?.engineGetApplyPolicy) {
+    GOVERNANCE = { available: false, reason: "no db" };
+  } else {
+    try {
+      const rows = await db.engineGetApplyPolicy();
+      const row = (rows ?? [])[0];
+      if (!row) GOVERNANCE = { available: false, reason: "no policy row" };
+      else GOVERNANCE = {
+        available: true,
+        dailyCap: row.policy_daily_cap ?? null,
+        weeklyCap: row.policy_weekly_cap ?? null,
+        quietFrom: row.policy_quiet_from ?? null,
+        quietTo: row.policy_quiet_to ?? null,
+        filters: (row.policy_filters && typeof row.policy_filters === "object") ? row.policy_filters : {},
+        spend: { day: Number(row.spend_today ?? 0), week: Number(row.spend_week ?? 0) },
+      };
+    } catch (e) { GOVERNANCE = { available: false, reason: e.message.slice(0, 60) }; }
+  }
+  if (!GOVERNANCE.available) console.log(dim(`  governance: unavailable (${GOVERNANCE.reason}) — running without policy caps (honest skip, NOT a silent no-op)`));
+  return GOVERNANCE;
 }
 
 /* local report row + cloud report row, always together */
@@ -2066,6 +2099,22 @@ async function runSingle(args, { existingCtx = null } = {}) {
     let outcomePriorText = "";
     try { outcomePriorText = outcomePrior(await (await sitesDb())?.outcomeStats?.()); } catch { /* the prior is best-effort */ }
     if (outcomePriorText) console.log(dim("  📈 employer prior loaded — the judge now weighs which fit bands actually get responses"));
+    /* Phase 0 governance: load policy + spend ONCE per run. The budget gate
+       for THIS RUN is computed up front: if the day/week ceiling is already
+       exhausted, the run becomes collect-only BEFORE any job is opened —
+       opening pages to then skip them wastes the board's goodwill. Money-rule
+       filters are per-job (they need each posting's data). */
+    const gov = await readGovernance();
+    let budgetSpendThisRun = 0; // Phase 0: this run's own submissions count at the next one-way-door re-check
+    let runBudget = { ok: true, verdict: "ok", reason: "" };
+    if (gov.available) {
+      runBudget = budgetGate(gov.spend, { dailyCap: gov.dailyCap, weeklyCap: gov.weeklyCap });
+      if (!runBudget.ok) console.log(yellow(`  🛑 budget: ${runBudget.reason} — this run will collect + review only, no submissions`));
+      if (gov.available && isQuietHours(new Date(), gov.quietFrom, gov.quietTo)) {
+        runBudget = { ok: false, verdict: "budget_capped", reason: `quiet hours (${gov.quietFrom}–${gov.quietTo}) — submissions pause, collection continues` };
+        console.log(yellow(`  🌙 quiet hours ${gov.quietFrom}–${gov.quietTo} — collecting + reviewing only`));
+      }
+    }
     for (const job of jobs) {
       /* fresh (<24h) postings are marked so the report shows WHY they went first */
       const ageMark = job.__fresh ? " ⚡<24h" : job.__ageH != null ? ` (${job.__ageH >= 24 ? Math.round(job.__ageH / 24) + "d" : Math.round(job.__ageH) + "h"} old)` : "";
@@ -2082,6 +2131,18 @@ async function runSingle(args, { existingCtx = null } = {}) {
         recordResultBoth(report, job, "skipped", why);
         console.log(dim(`  ⏭ skipped — ${why}`));
         continue;
+      }
+      /* Phase 0 money-rules are checked BEFORE the AI judge so a rejected
+         job costs zero tokens (the owner set these preferences deliberately:
+         excluded companies, salary floor, locations, remote, seniority).
+         Costs nothing when policy_filters is empty (the common case). */
+      if (gov.available) {
+        const filt = jobPassesFilters(job, gov.filters ?? {});
+        if (filt.pass === "filtered") {
+          recordResultBoth(report, job, "filtered", filt.reason);
+          console.log(dim(`  ⏭ filtered — ${filt.reason}`));
+          continue;
+        }
       }
       /* an OWNER-CONFIRMED posting (positive exemplar, by id or strong title
          match) bypasses the cheap title gate: template-B titles mangle the
@@ -2298,9 +2359,25 @@ async function runSingle(args, { existingCtx = null } = {}) {
         }
         if (args["dry-run"]) { recordResultBoth(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
 
+        /* Phase 0 re-check at the one-way door: spend may have accreted from
+           EARLIER submissions in THIS run (recordResultBoth pushed rows).
+           Consistent with the run-start gate: only when policy is known.
+           Fail-closed — we NEVER let a budget gate block a submission that
+           is already filled and queued for review; only the auto-submit
+           path is governed. */
+        const probe = await readGovernance();
+        const nowBudget = probe.available ? budgetGate({ ...probe.spend, day: probe.spend.day + budgetSpendThisRun, week: probe.spend.week + budgetSpendThisRun }, { dailyCap: probe.dailyCap, weeklyCap: probe.weeklyCap }) : { ok: true, verdict: "ok", reason: "" };
+        if (!nowBudget.ok) {
+          recordResultBoth(report, job, "budget_capped", `${nowBudget.reason} — form is filled; queued so nothing is lost`);
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `budget: ${nowBudget.reason} — form filled, submit from the queue`, fit: job.__fit ?? null, formFields: ffPreview });
+          console.log(yellow(`  🛑 ${nowBudget.reason} — form filled + queued; nothing lost`));
+          await page.close().catch(() => {});
+          continue;
+        }
         const sub = await trySubmit(page, site, rules, { profile, job, resumePath, dryRun: args["dry-run"], storedAnswers: mem }); // merged registry rules — the owner's autoSubmit decision
         if (sub.auto) {
           recordResultBoth(report, job, "submitted", sub.note);
+          budgetSpendThisRun++; // Phase 0: this run's own submissions count against the cap the NEXT re-check sees
           markApplied(job.url);
           /* the queue must reflect reality: a pending row for a now-submitted
              posting resolves itself (done) — no stale asks piling up */
@@ -2799,6 +2876,23 @@ async function main() {
   if (args.watch) { teeWatchLog(); await runWatch(args); return; }
   if (args.sessions) { await runSessions(); return; }
   if (args.outcomes) { await runOutcomes(); return; }
+  if (args.suspend) {
+    /* Phase 3 one-off — flip boards that never earned a view back to
+       probation ('pending') based on 90-day outcome stats. Normally the
+       digest task runs this through --outcomes automatically; --suspend
+       is for manual runs right after a fresh --outcomes scrape. */
+    const db = await sitesDb();
+    let flipped = [];
+    try { flipped = (await db?.suspendDeadBoards?.(10, 3)) ?? []; }
+    catch (e) { console.log(yellow(`suspend: unavailable (${String(e?.message ?? e).slice(0, 80)}) — apply-governance.sql not applied yet? Honest skip.`)); }
+    const lines2 = suspensionDigestLines(flipped.map((f) => ({ ...f, reason: `${f.applications} applications, zero responses — put back on probation` })));
+    const msg2 = flipped.length
+      ? `🪦 outcome-suspension sweep: ${flipped.length} board(s) back to pending${lines2}`
+      : "outcome-suspension sweep: no boards met the dead-board criteria (≥10 applications, zero views) — nothing changed.";
+    console.log(msg2);
+    await sendTelegramNotify(msg2).catch(() => {});
+    return;
+  }
   if (args.all) { await runAll(args); return; }
   if (args.status) { const msg = await summarizeDayFromReports(); console.log(msg); await sendTelegramNotify(msg); return; }
   if (args.listen) { teeWatchLog(process.env.FREEBUFF_LISTEN_LOG); await telegramCommandLoop(); return; }
@@ -2819,10 +2913,22 @@ async function main() {
     /* employer behavior (weekly --outcomes scrape): views/responses per
        board × fit band — which boards and which fit bands actually convert */
     let outcomeLines = "";
+    let suspensionLines = "";
+    let suspensions = []; // Phase 3: boards the rule says to review
     try {
       const outcomeRows = (await db?.outcomeDigest?.()) ?? [];
       const stats = (await db?.outcomeStats?.()) ?? [];
       outcomeLines = outcomeDigestLines(outcomeRows, stats);
+      /* Phase 3 — outcome-driven board review: a board that earned ZERO
+         views/responses on ≥10 applications is put back on probation
+         (status 'pending') so its weekly slice of applications stops being
+         spent where nobody reads them. Max 3 per sweep, every decision
+         DM'd in the digest. Digest runs BEFORE --outcomes in the scheduled
+         task, so the data may lag a week — that's fine, the rule is
+         deliberately conservative. */
+      const decisions = boardSuspensionRule(stats, { minApplications: 10, minViewRate: 0.05 });
+      suspensions = decisions.filter((d) => d.verdict === "suspend");
+      suspensionLines = suspensionDigestLines(suspensions);
     } catch { /* outcome section is best-effort — the digest must still send */ }
     /* PHASE 4 — boards that stopped yielding postings: the discriminator's
        collectionDrift counter tells the owner WHICH sites silently rotted
@@ -2856,8 +2962,8 @@ async function main() {
       if (evs.length) uptimeLine = `\n🫀 engine uptime (7d): ${fmt(total)} of 7d (${pct}%) — gaps are Off switches or the PC asleep`;
     } catch { /* the timeline is best-effort */ }
     const msg = tot === 0
-      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?${uptimeLine}${driftLines}${outcomeLines}`
-      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}${uptimeLine}${driftLines}${outcomeLines}`;
+      ? `⚠️ Freebuff weekly digest — ZERO activity across all boards this week.\n${lines.join("\n")}\n→ Is the watcher running? Is apply mode set to Off in the UI?${uptimeLine}${driftLines}${outcomeLines}${suspensionLines}`
+      : `📊 Freebuff weekly digest (7d)\n${lines.join("\n")}${uptimeLine}${driftLines}${outcomeLines}${suspensionLines}`;
     console.log(msg);
     await sendTelegramNotify(msg);
     return;
@@ -2869,6 +2975,7 @@ async function main() {
   node scripts/auto-apply-jobs.js --watch [--every 6] [--max N]      # discover + apply forever
   node scripts/auto-apply-jobs.js --sessions                         # probe every active site's session (watchdog)
   node scripts/auto-apply-jobs.js --outcomes                         # scrape trackers: views/responses per board → digest + judge prior
+  node scripts/auto-apply-jobs.js --suspend                          # flip dead boards (≥10 apps, 0 views in 90d) back to probation
   node scripts/auto-apply-jobs.js --discover [--limit 8] [--query "…"] # find new candidate sites (→ pending)`);
     process.exit(1);
   }

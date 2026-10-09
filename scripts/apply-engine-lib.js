@@ -1302,3 +1302,242 @@ export async function mapFormFields(ai, fields, profile) {
   }
   return results;
 }
+
+/* ─────────────────── Phase 0 — cross-run governance (budget + filters) ───────────────────
+
+   The engine never spent across runs: every run read the cycle's --max and
+   forgot everything. Nothing in the stack stopped 60 submissions in one day
+   from three back-to-back cycles — exactly the volume pattern that burns
+   accounts on rate-limited boards (LinkedIn minIntervalMs exists per CLICK,
+   not per day) and that recruiter-abuse reports call "spray and pray". This
+   layer is the CROSS-RUN policy: money-rules (budget caps, quiet hours,
+   company exclusions, salary floor, location/seniority prefs) are checked
+   BEFORE the AI judge, so a job that a rule rejects never costs a judge
+   token, and a day's total spend respects the owner's ceiling even when the
+   watcher runs cycle after cycle. Pure + pinned (applyEngine.test.ts).
+
+   Config comes from apply_config (owner-set, engine reads at cycle start —
+   same table the kill switch lives on). NULLs = no cap (honest default:
+   the engine's behavior must not change for owners who never set policy).
+
+   The apply_results contract gains two honest states: 'budget_capped'
+   (the job WAS a fit but the day/week ceiling is exhausted — the queue
+   keeps it, the next cycle owns it) and 'filtered' (a money-rule rejected
+   it — no AI tokens spent, detail says which rule). The DB check
+   constraint on apply_results.result is extended idempotently in
+   supabase/apply-governance.sql. */
+
+/** Policy shape the engine reads from apply_config (engine_get_apply_config
+    returns policy_* columns; all optional/null = no cap). Dates/times are
+    strings because the RPC serializes — pure functions accept both. */
+export const DEFAULT_DAILY_CAP = 20;
+export const DEFAULT_WEEKLY_CAP = 80;
+
+/** Current spend is summed from the owner's own apply_results rows; jobs
+    that only reached needs_review did NOT spend an application (the owner
+    still holds the click), so they don't count against the cap. */
+export const SPENDING_RESULTS = ["submitted"];
+
+/** How many applications today/this-week already spent (from apply_results
+    rows [{created_at, result}]). Pure: rows are plain data, now injectable. */
+export function spendCount(rows, resultKinds = SPENDING_RESULTS, now = new Date()) {
+  const startOfDay = new Date(now); startOfDay.setHours(0, 0, 0, 0);
+  const startOfWeek = new Date(now); startOfWeek.setDate(startOfWeek.getDate() - ((startOfWeek.getDay() + 6) % 7)); startOfWeek.setHours(0, 0, 0, 0);
+  let day = 0, week = 0;
+  for (const r of rows ?? []) {
+    if (!resultKinds.includes(String(r?.result ?? ""))) continue;
+    const t = new Date(r.created_at).getTime();
+    if (Number.isNaN(t)) continue;
+    if (t >= startOfDay.getTime()) day++;
+    if (t >= startOfWeek.getTime()) week++;
+  }
+  return { day, week };
+}
+
+/** Is `now` inside quiet hours? A 22-06 window crosses midnight (from > to);
+    null from/to = never quiet. Quiet hours skip SUBMITTING entirely —
+    collection and review-queue work continue, only the one-way click
+    (auto-submit) and new applications pause. Returns false on any doubt. */
+export function isQuietHours(now, quietFrom, quietTo) {
+  const from = String(quietFrom ?? "").trim();
+  const to = String(quietTo ?? "").trim();
+  if (!/^\d{1,2}:\d{2}$/.test(from) || !/^\d{1,2}:\d{2}$/.test(to)) return false;
+  const d = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(d.getTime())) return false;
+  const mins = h => { const [H, M] = h.split(":").map(Number); return H * 60 + M; };
+  const t = d.getHours() * 60 + d.getMinutes();
+  const f = mins(from), o = mins(to);
+  if (f === o) return false; // zero-length window = never quiet
+  return f > o ? (t >= f || t < o) : (t >= f && t < o);
+}
+
+/**
+ * The budget gate: given today's spend + policy caps, may the engine submit
+ * another application right now? Verdict:'ok' | 'budget_capped'. Reason is
+ * owner-readable and lands in apply_results.detail.
+ */
+export function budgetGate(spend, { dailyCap = null, weeklyCap = null } = {}) {
+  const d = spend?.day ?? 0, w = spend?.week ?? 0;
+  const dc = dailyCap == null ? null : Number(dailyCap);
+  const wc = weeklyCap == null ? null : Number(weeklyCap);
+  if (dc != null && dc >= 0 && d >= dc) return { ok: false, verdict: "budget_capped", reason: `daily cap ${dc} reached (${d}/${dc}) — resumes tomorrow` };
+  if (wc != null && wc >= 0 && w >= wc) return { ok: false, verdict: "budget_capped", reason: `weekly cap ${wc} reached (${w}/${wc}) — resumes next week` };
+  return { ok: true, verdict: "ok", reason: "" };
+}
+
+/**
+ * Money-rule job filters — checked BEFORE the AI judge so a rejected job
+ * costs zero tokens. All thresholds optional; null/absent = no rule.
+ * prefs: { excludeCompanies?: string[], salaryMin?: number, locations?:
+ *   string[], remoteOnly?: boolean, seniorityMin?: string, seniorityMax?:
+ *   string } (seniority ladder intern < junior < mid < senior < staff < lead <
+ *   principal). Salary comparison uses the posting's own numbers when
+ *   parseable (jobs.salary jsonb or posted text like "12-18 LPA").
+ */
+export const SENIORITY_LADDER = ["intern", "junior", "mid", "senior", "staff", "lead", "principal"];
+
+/** Parse a salary like "12-18 LPA", "₹12,00,000", "$120k - $150k", "80k–90k GBP"
+    → annual number in the JOB'S OWN currency-unit (we never convert across
+    currencies — comparing a rupee posting to a dollar floor would be
+    dishonest). Returns null when unparseable → the salary rule skips (an
+    unparseable salary must not auto-reject the job). */
+export function parseSalary(text) {
+  const s = String(text ?? "").toLowerCase().replace(/,/g, "");
+  if (!s) return null;
+  /* per-match unit: "120k - 150k" keeps k on BOTH endpoints, not just the
+     first — the old shared-unit read took the range as 120000 vs 150 (the
+     second number lost its k) and returned the wrong ceiling. */
+  const range = s.match(/(\d+(?:\.\d+)?)\s*([kK]|lpa|lac|lakh|cr)?\s*(?:-|–|—|to)\s*(?:₹|rs\.?|\$|£|€)?\s*(\d+(?:\.\d+)?)\s*([kK]|lpa|lac|lakh|cr)?/);
+  const single = s.match(/(?:₹|rs\.?|\$|£|€)?\s*(\d+(?:\.\d+)?)\s*([kK]|lpa|lac|lakh|cr)?\s*(?:\bper\s*(?:annum|year)|\blpa\b|\ba year\b|\bpa\b|p\.a\.?)?/);
+  /* a bare range whose unit rides the TAIL ("12-18 LPA", "80k-90k") still
+     parsed null when the tail-unit submatch raced the range match — prefer
+     the range VERDICT first: if a range pattern exists in the string, the
+     single-number read must never decide. */
+  const rangeShaped = /\d\s*(?:[kK]|lpa|lac|lakh|cr)?\s*(?:-|–|—|to)\s*\d/.test(s);
+  const val = (n, unit) => {
+    const num = Number(n);
+    if (!Number.isFinite(num)) return null;
+    if (!unit) return num >= 100000 ? num : null; // bare salary figures are annual — below this is noise ("3 years")
+    if (/^k$/i.test(unit)) return num * 1000;
+    if (/^(lpa|lac|lakh)$/i.test(unit)) return num * 100000;
+    if (/^cr$/i.test(unit)) return num * 10000000;
+    return num >= 100000 ? num : null;
+  };
+  if (range) {
+    // "120k-150k": each end carries its own unit; "12-18 LPA": the unit rides
+    // the TAIL only — bare leading number "12" inherits the tail's unit,
+    // otherwise a val() call with no unit rejects it as sub-annual noise.
+    const a = val(range[1], range[2] || range[4]);
+    const b = val(range[3], range[4] || range[2]);
+    if (a != null && b != null) return Math.max(a, b);
+  }
+  if (!rangeShaped && single) return val(single[1], single[2]);
+  return null;
+}
+
+/** Seniority from a job title: picks the highest ladder word present.
+    Defaults to mid — junior postings almost always say "junior". */
+export function seniorityOf(title) {
+  const t = String(title ?? "").toLowerCase();
+  for (let i = SENIORITY_LADDER.length - 1; i >= 0; i--) {
+    if (new RegExp("\\b" + SENIORITY_LADDER[i] + "\\b").test(t)) return SENIORITY_LADDER[i];
+  }
+  if (/\bdirector|vp\b|head of/.test(t)) return "principal";
+  return "mid";
+}
+
+/**
+ * Apply the money-rule filters to one posting. Returns { candidates:
+ * "pass" | "filtered", reason }. Brand matching is substring ("google"
+ * rejects "Google India Pvt Ltd"); locations accept substring too. remoteOnly
+ * rejects only when the posting clearly says hybrid/onsite AND isn't marked
+ * remote.
+ */
+export function jobPassesFilters(job, prefs = {}) {
+  const p = prefs ?? {};
+  const title = String(job?.title ?? "");
+  const company = String(job?.company ?? "");
+  const excludes = (p.excludeCompanies ?? []).map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+  if (excludes.length && company) {
+    /* exact-word matching would let "Meta" reject "Metallica Systems" —
+    substring wins are OK for brand names, ALL of which the owner typed in
+    full ("tata consultancy services"), so substring it is */
+    const hit = excludes.find((e) => company.toLowerCase().includes(e));
+    if (hit) return { pass: "filtered", reason: `excluded company: ${hit}` };
+  }
+  if (p.salaryMin != null) {
+    const sal = parseSalary(job.salaryText ?? job.salary ?? job?.meta?.salaryText ?? "");
+    if (sal != null && sal < Number(p.salaryMin))
+      return { pass: "filtered", reason: `salary below floor (${sal} < ${Number(p.salaryMin)})` };
+  }
+  if (p.remoteOnly) {
+    const remote = job.remote === true || /\bremote\b|work from home|wfh/i.test(`${title} ${job.location ?? ""}`);
+    const hybrid = /\bhybrid\b|on-?site|from office/i.test(`${title} ${job.location ?? ""}`);
+    if (remote) { /* remote always passes its own rule */ }
+    else return { pass: "filtered", reason: "remoteOnly — posting is hybrid/onsite (or unclear)" };
+  }
+  if (Array.isArray(p.locations) && p.locations.length) {
+    /* a location allow-list also grants remote postings the owner wants */
+    const loc = String(job?.location ?? "").toLowerCase();
+    const wants = p.locations.map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+    const wanted = wants.some((w) => loc.includes(w));
+    if (!wanted && !(/\bremote\b|work from home/i.test(loc))) return { pass: "filtered", reason: `outside preferred locations (${wants.join(", ")})` };
+    return { pass: "pass", reason: "" };
+  }
+  if (p.seniorityMin) {
+    const rank = (x) => SENIORITY_LADDER.indexOf(String(x).toLowerCase());
+    const mine = rank(seniorityOf(title));
+    const minRank = rank(String(p.seniorityMin));
+    if (mine >= 0 && minRank >= 0 && mine < minRank)
+      return { pass: "filtered", reason: `too junior (${seniorityOf(title)} < ${p.seniorityMin})` };
+  }
+  if (p.seniorityMax) {
+    const rank = (x) => SENIORITY_LADDER.indexOf(String(x).toLowerCase());
+    const mine = rank(seniorityOf(title));
+    const maxRank = rank(String(p.seniorityMax));
+    if (mine >= 0 && maxRank >= 0 && mine > maxRank)
+      return { pass: "filtered", reason: `too senior (${seniorityOf(title)} > ${p.seniorityMax})` };
+  }
+  return { pass: "pass", reason: "" };
+}
+
+/* ─────────────────── Phase 3 — outcome-driven board suspension ───────────────────
+
+   The --outcomes loop collects employer behavior but had no teeth: a board
+   whose postings were never even VIEWED kept its active status forever, and
+   its weekly quota of applications kept being spent there. This rule gives
+   the existing probation machinery a second, data-driven path: boards that
+   don't convert get put BACK on probation (status 'pending'), where the
+   7-day sweep can't re-activate them (they have no jobs_url wait anymore —
+   they already served it) until the owner manually approves or the site's
+   response rates recover. Deliberately conservative: only ALREADY-scraped
+   data speaks, never guesses; a board with fewer applications than the
+   window needs to judge is left alone; ACTIVE-owned boards that convert
+   fine are never touched.*/
+
+/** The suspension rule: pure decision from engine_outcome_stats-like rows.
+    Rows: [{ site_host, applications, viewed, responded }] over the window.
+    Verdict per row: 'suspend' | 'watch' | 'keep'. A board is suspended when
+    it has >= minApplications applications and ZERO views or responses; a
+    board with SOME responses but rates under the floor and >= application
+    threshold is 'watch' (digest only); anything else stays. */
+export function boardSuspensionRule(rows, { minApplications = 10, minViewRate = 0.05 } = {}) {
+  return (rows ?? []).map((r) => {
+    const applications = Number(r.applications ?? 0);
+    const viewed = Number(r.viewed ?? 0);
+    const responded = Number(r.responded ?? 0);
+    if (applications < minApplications) return { ...r, verdict: "keep", reason: `only ${applications} applications — not enough evidence` };
+    if (viewed === 0 && responded === 0) return { ...r, verdict: "suspend", reason: `${applications} applications, zero views/responses in the window — postings never even read` };
+    const viewRate = viewed / applications;
+    if (viewRate < minViewRate) return { ...r, verdict: "watch", reason: `view rate ${Math.round(viewRate * 100)}% below floor ${Math.round(minViewRate * 100)}% — watch in the digest` };
+    return { ...r, verdict: "keep", reason: `${viewed}/${applications} viewed — converting fine` };
+  });
+}
+
+/** Digest section for the suspension report — Telegram text. Pure so the
+    digest format is pinned exactly like outcomeDigestLines. */
+export function suspensionDigestLines(suspensions) {
+  if (!suspensions?.length) return "";
+  const fmt = (s) => `• ${s.site_host ?? s.host}: ${s.reason}`;
+  return `\n🪦 outcome-driven board review:\n${suspensions.map(fmt).join("\n")}`;
+}

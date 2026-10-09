@@ -266,3 +266,76 @@ export function ownerExemplarFor(
 ): string;
 
 export function parseJudgeReply(text: string | null | undefined): JudgeVerdict;
+
+/* ── Phase 0 — cross-run governance (budget caps, quiet hours, job filters) ── */
+
+export const DEFAULT_DAILY_CAP: number;
+export const DEFAULT_WEEKLY_CAP: number;
+export const SPENDING_RESULTS: string[];
+
+export function spendCount(
+  rows: { created_at: string | number | Date; result: string }[] | null | undefined,
+  resultKinds?: string[],
+  now?: Date
+): { day: number; week: number };
+
+/** True while `now` is inside the owner's quiet-hours window ("22:00-06:00",
+    from>to crosses midnight). False on any doubt — quiet hours never false-
+    positive a run stop. */
+export function isQuietHours(
+  now: Date | string | number,
+  quietFrom: string | null | undefined,
+  quietTo: string | null | undefined
+): boolean;
+
+export interface BudgetGateResult {
+  ok: boolean;
+  verdict: "ok" | "budget_capped";
+  reason: string;
+}
+
+export function budgetGate(
+  spend: { day: number; week: number } | null | undefined,
+  caps?: { dailyCap?: number | null; weeklyCap?: number | null }
+): BudgetGateResult;
+
+export const SENIORITY_LADDER: string[];
+
+/** Parse a posted salary string ("12-18 LPA", "$120k - $150k", "₹12,00,000")
+    into an annual number in the job's own currency-unit, null when none. */
+export function parseSalary(text: string | null | undefined): number | null;
+
+export function seniorityOf(title: string | null | undefined): string;
+
+export interface JobFilterPrefs {
+  excludeCompanies?: string[];
+  salaryMin?: number | null;
+  locations?: string[];
+  remoteOnly?: boolean;
+  seniorityMin?: string | null;
+  seniorityMax?: string | null;
+}
+
+export function jobPassesFilters(
+  job: { title?: string; company?: string; location?: string; remote?: boolean; salaryText?: string | null; salary?: string | number | { min?: number } | null; meta?: { salaryText?: string } | null } | null | undefined,
+  prefs: JobFilterPrefs | null | undefined
+): { pass: "pass" | "filtered"; reason: string };
+
+/* ── Phase 3 — outcome-driven board suspension rule ── */
+
+export interface SuspensionRow {
+  site_host?: string; host?: string;
+  applications?: number;
+  viewed?: number;
+  responded?: number;
+  [k: string]: unknown;
+}
+
+export function boardSuspensionRule(
+  rows: SuspensionRow[] | null | undefined,
+  opts?: { minApplications?: number; minViewRate?: number }
+): (SuspensionRow & { verdict: "suspend" | "watch" | "keep"; reason: string })[];
+
+export function suspensionDigestLines(
+  suspensions: (SuspensionRow & { reason: string })[] | null | undefined
+): string;

@@ -15,6 +15,8 @@ import {
   parsePostedAge, isFreshPosted, sortByFreshness, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, cardAgeText, POSTED_AGE_TEXT_RE,
+  spendCount, budgetGate, isQuietHours, jobPassesFilters, parseSalary, seniorityOf,
+  boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -886,5 +888,163 @@ describe("employer-behavior learning — outcome classification + judge prior", 
     expect(POSTED_AGE_TEXT_RE.test("Apply today! Great team")).toBe(false); // CTA never captured
     expect(POSTED_AGE_TEXT_RE.test("posted 5 days ago")).toBe(true); // embedded stamp captured
     expect(cardAgeText("posted 5 days ago")).toBe("5 days ago");
+  });
+});
+
+/* ═══════════ Phase 0 — cross-run governance (budget + money-rules) ═══════════ */
+
+describe("Phase 0 — spendCount (spend from the owner's own results)", () => {
+  const DAY = 24 * 3600_000;
+  it("counts only submitted rows (needsReview never spent a click)", () => {
+    const now = new Date("2026-10-07T10:00:00Z");
+    const rows = [
+      { created_at: new Date(now.getTime() - 2 * 3600_000).toISOString(), result: "submitted" },
+      { created_at: new Date(now.getTime() - 3 * 3600_000).toISOString(), result: "needs_review" },
+      { created_at: new Date(now.getTime() - 3 * 3600_000).toISOString(), result: "submitted" },
+    ];
+    expect(spendCount(rows, ["submitted"], now).day).toBe(2);
+  });
+
+  it("splits day vs week on real calendar boundaries", () => {
+    const now = new Date("2026-10-07T10:00:00Z"); // Wednesday
+    const rows = [
+      { created_at: "2026-10-07T08:00:00Z", result: "submitted" },  // today
+      { created_at: "2026-10-05T08:00:00Z", result: "submitted" },  // Monday — this week, not today
+      { created_at: "2026-09-30T08:00:00Z", result: "submitted" },  // last week (Wed)
+    ];
+    const s = spendCount(rows, ["submitted"], now);
+    expect(s.day).toBe(1);
+    expect(s.week).toBe(2);
+  });
+
+  it("is null/empty safe", () => {
+    expect(spendCount(null).day).toBe(0);
+    expect(spendCount([]).week).toBe(0);
+  });
+});
+
+describe("Phase 0 — budgetGate (the cross-run ceiling)", () => {
+  it("caps at the agreed defaults conceptually 20/day 80/week", () => {
+    expect(DEFAULT_DAILY_CAP).toBe(20);
+    expect(DEFAULT_WEEKLY_CAP).toBe(80);
+  });
+
+  it("passes under the cap", () => {
+    expect(budgetGate({ day: 3, week: 10 }, { dailyCap: 20, weeklyCap: 80 }).ok).toBe(true);
+    expect(budgetGate({ day: 3, week: 10 }, {}).verdict).toBe("ok");
+  });
+
+  it("stops at the daily cap with an owner-readable reason", () => {
+    const g = budgetGate({ day: 20, week: 30 }, { dailyCap: 20, weeklyCap: 80 });
+    expect(g.ok).toBe(false);
+    expect(g.verdict).toBe("budget_capped");
+    expect(g.reason).toContain("20");
+  });
+
+  it("stops at the weekly cap even mid-day", () => {
+    const g = budgetGate({ day: 5, week: 80 }, { dailyCap: 20, weeklyCap: 80 });
+    expect(g.verdict).toBe("budget_capped");
+    expect(g.reason).toContain("weekly");
+  });
+
+  it("null caps mean no cap (owners who never set policy keep today's behavior)", () => {
+    expect(budgetGate({ day: 999, week: 9999 }, { dailyCap: null, weeklyCap: null }).ok).toBe(true);
+  });
+});
+
+describe("Phase 0 — isQuietHours (submits pause, collection continues)", () => {
+  it("crosses midnight (22:00–06:00)", () => {
+    expect(isQuietHours(new Date("2026-10-07T23:00:00"), "22:00", "06:00")).toBe(true);
+    expect(isQuietHours(new Date("2026-10-07T03:00:00"), "22:00", "06:00")).toBe(true);
+    expect(isQuietHours(new Date("2026-10-07T12:00:00"), "22:00", "06:00")).toBe(false);
+  });
+
+  it("handles a same-day window", () => {
+    expect(isQuietHours(new Date("2026-10-07T13:00:00"), "12:00", "14:00")).toBe(true);
+    expect(isQuietHours(new Date("2026-10-07T15:00:00"), "12:00", "14:00")).toBe(false);
+  });
+
+  it("never false-positives: unset window, junk time, zero-length", () => {
+    expect(isQuietHours(new Date(), null, null)).toBe(false);
+    expect(isQuietHours(new Date(), "", "")).toBe(false);
+    expect(isQuietHours(new Date("2026-10-07T13:00:00"), "22:00", "22:00")).toBe(false);
+    expect(isQuietHours("not a date", "22:00", "06:00")).toBe(false);
+  });
+});
+
+describe("Phase 0 — money-rule job filters (checked BEFORE the AI judge)", () => {
+  it("parses the real salary dialects boards post", () => {
+    expect(parseSalary("12-18 LPA")).toBe(1800000);
+    expect(parseSalary("$120k - $150k")).toBe(150000);
+    expect(parseSalary("₹12,00,000 per annum")).toBe(1200000);
+    expect(parseSalary("")).toBeNull();
+    expect(parseSalary("competitive")).toBeNull();
+  });
+
+  it("salary floor below → filtered; unparseable salary → job survives (never auto-reject)", () => {
+    const job = { title: "Frontend Engineer", company: "Acme", salaryText: "10-14 LPA" };
+    expect(jobPassesFilters(job, { salaryMin: 1500000 }).pass).toBe("filtered");
+    expect(jobPassesFilters({ ...job, salaryText: "market standard" }, { salaryMin: 1500000 }).pass).toBe("pass");
+    expect(jobPassesFilters({ ...job, salaryText: "18-24 LPA" }, { salaryMin: 1500000 }).pass).toBe("pass");
+  });
+
+  it("excludes companies by brand substring", () => {
+    expect(jobPassesFilters({ title: "Dev", company: "Tata Consultancy Services Ltd" }, { excludeCompanies: ["tata consultancy"] }).reason).toContain("excluded");
+    expect(jobPassesFilters({ title: "Dev", company: "Acme Labs" }, { excludeCompanies: ["tata consultancy"] }).pass).toBe("pass");
+  });
+
+  it("seniority band via the ladder", () => {
+    expect(SENIORITY_LADDER.indexOf("senior")).toBeGreaterThan(SENIORITY_LADDER.indexOf("junior"));
+    expect(seniorityOf("Senior Frontend Engineer")).toBe("senior");
+    expect(seniorityOf("Engineering Intern")).toBe("intern");
+    expect(jobPassesFilters({ title: "Junior React Developer", company: "A" }, { seniorityMin: "mid" }).pass).toBe("filtered");
+    expect(jobPassesFilters({ title: "Senior Frontend Engineer", company: "A" }, { seniorityMin: "mid" }).pass).toBe("pass");
+  });
+
+  it("empty prefs are a no-op (default behavior unchanged)", () => {
+    expect(jobPassesFilters({ title: "anything", company: "anyone" }, {}).pass).toBe("pass");
+    expect(jobPassesFilters(null, null).pass).toBe("pass");
+  });
+});
+
+/* ═══════════ Phase 3 — outcome-driven board suspension ═══════════ */
+
+describe("Phase 3 — boardSuspensionRule (dead boards go back on probation)", () => {
+  const rows = (apps: number, viewed: number, responded: number) => [{ site_host: "x.com", applications: apps, viewed, responded }];
+
+  it("suspends: 10+ applications, ZERO views — postings never even read", () => {
+    const [d] = boardSuspensionRule(rows(15, 0, 0), { minApplications: 10 });
+    expect(d.verdict).toBe("suspend");
+    expect(d.reason).toContain("15 applications");
+  });
+
+  it("keeps: not enough evidence yet (under the threshold)", () => {
+    expect(boardSuspensionRule(rows(5, 0, 0), { minApplications: 10 })[0].verdict).toBe("keep");
+  });
+
+  it("watches: some views but under the rate floor", () => {
+    // 1/30 ≈ 3.3% — clearly below the 5% floor. (1/20 sits exactly AT the
+    // floor and correctly keeps: the boundary belongs to the board.)
+    const [d] = boardSuspensionRule(rows(30, 1, 0), { minApplications: 10, minViewRate: 0.05 });
+    expect(d.verdict).toBe("watch");
+    // the exact-floor boundary keeps
+    expect(boardSuspensionRule(rows(20, 1, 0), { minApplications: 10, minViewRate: 0.05 })[0].verdict).toBe("keep");
+  });
+
+  it("keeps: converting fine", () => {
+    expect(boardSuspensionRule(rows(20, 12, 3), { minApplications: 10 })[0].verdict).toBe("keep");
+  });
+
+  it("null/empty rows are a no-op", () => {
+    expect(boardSuspensionRule(null)).toEqual([]);
+    expect(boardSuspensionRule([])).toEqual([]);
+  });
+
+  it("digest lines are honest when empty and name hosts when not", () => {
+    expect(suspensionDigestLines([])).toBe("");
+    expect(suspensionDigestLines(null)).toBe("");
+    const s = suspensionDigestLines([{ site_host: "dead.example", reason: "15 applications, zero views" }]);
+    expect(s).toContain("dead.example");
+    expect(s).toContain("15 applications");
   });
 });

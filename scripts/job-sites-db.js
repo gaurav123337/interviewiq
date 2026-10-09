@@ -106,6 +106,20 @@ export async function getApplyConfig() {
   return rpc(loadLocalCreds(), "engine_get_apply_config", {});
 }
 
+/** Phase 0 governance: mode + policy caps/filters + current spend, one RPC
+    (supabase/apply-governance.sql). Honest [] when the SQL isn't applied —
+    the engine degrades to a logged skip, per the repo's degradation rule. */
+export async function engineGetApplyPolicy() {
+  return rpc(loadLocalCreds(), "engine_get_apply_policy", {});
+}
+
+/** Phase 3: flip dead boards back to probation after the --outcomes
+    scrape proves they never earned a view. Returns [{host, applications,
+    reason}] for the digest. [] when the SQL isn't applied (honest skip). */
+export async function suspendDeadBoards(minApplications = 10, maxSweeps = 3) {
+  return rpc(loadLocalCreds(), "engine_suspend_dead_boards", { p_min_applications: minApplications, p_max_sweeps: maxSweeps });
+}
+
 /* ── judge exemplars (the judge's training set) ───────────────────── */
 
 export async function getJudgeExemplars() {
