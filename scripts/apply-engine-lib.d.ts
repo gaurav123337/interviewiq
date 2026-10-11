@@ -81,6 +81,7 @@ export interface ApplyProfileLike {
 export interface ApplyJobLike {
   title?: string; company?: string; location?: string; url?: string;
   skills?: string[]; seniority?: string; instaMatch?: string | null;
+  __instaMatch?: string | null;
   __coverLetter?: string; __fit?: number | null; __fitNote?: string; __judge?: { verdict?: string; reason?: string; missingCore?: string[] };
   __submitted?: boolean; __successText?: string;
 }
@@ -157,7 +158,19 @@ export function isExternalApplyButton(text: string | null | undefined): boolean;
 
 export function detectSubmissionSuccess(pageText: string | null | undefined, siteKey: string): boolean;
 
-export function fitScore(matched: string[] | null | undefined, missing: string[] | null | undefined, coreMissing?: string[]): number | null;
+export function fitScore(
+  matched: string[] | null | undefined,
+  missing: string[] | null | undefined,
+  coreMissing?: string[],
+  opts?: { jobSeniority?: string; profileSeniority?: string; location?: string; preferredLocations?: string[] }
+): number | null;
+
+/** Instahyre badge pre-filter — "skip" only for a LOW signal on instahyre;
+    null everywhere else (missing signal never rejects). */
+export function instaSkip(job: { __instaMatch?: string | null; instaMatch?: string | null } | null | undefined, siteKey: string): "skip" | null;
+
+/** Extract the badge verdict ("high"|"mid"|"low"|null) from a card's text. */
+export function instaMatchFromCardText(text: string | null | undefined): "high" | "mid" | "low" | null;
 
 /* ── feedback learning loop (skip rows + strike decay + buzz gating) ── */
 

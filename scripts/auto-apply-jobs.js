@@ -34,11 +34,11 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, isExternalApplyButton,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, detectSubmissionSuccess, seniorityOf, isExternalApplyButton,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
-  matchSiteRow, POSTED_AGE_TEXT_RE,
+  matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
@@ -1381,7 +1381,7 @@ async function collectJobs(page, url, site, max) {
         const text = (a.innerText || a.textContent || "").trim();
         if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
-        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a) });
+        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a), __cardText: site === "instahyre" ? text.slice(0, 400) : undefined });
       }
     }
     return out;
@@ -1423,6 +1423,18 @@ async function collectJobs(page, url, site, max) {
      sort, so a full budget spends its slots on postings recruiters are
      still reading instead of aging ones that merely appeared first on the
      page. Older/unknown rows keep the board's own order. */
+  /* POST-EVALUATE at the node boundary (functions can't cross into
+     page.evaluate): extract Instahyre's card badge from the collected text
+     — the generic collector does not read cards, so __ageText (the card's
+     innerText) is where the badge text lives. Fail-safe by construction:
+     no badge → null → the pre-filter never rejects. */
+  if (site === "instahyre") {
+    for (const j of deduped) {
+      const card = (j.__cardText ?? "") + "\n" + j.title + "\n" + (j.__ageText ?? "");
+      const badge = instaMatchFromCardText(card);
+      if (badge) j.__instaMatch = badge;
+    }
+  }
   const ordered = sortByFreshness(deduped);
   const freshCount = ordered.filter((j) => j.__fresh).length;
   if (freshCount > 0) console.log(dim(`  ⚡ ${freshCount} posting(s) <${FRESH_MAX_HOURS}h old collected first (freshness beats fit at the margin)`));
@@ -1857,7 +1869,9 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
       }).catch(() => false);
       if (clicked) {
         await page.waitForTimeout(4000);
-        const success = rules.successText.test(await page.evaluate(() => document.body?.innerText ?? ""));
+        /* the lib's detector is the same rules.successText check, kept as a
+           single pinned implementation so the test suite governs both doors */
+        const success = detectSubmissionSuccess(await page.evaluate(() => document.body?.innerText ?? ""), site);
         return { auto: success, note: success ? "submitted (auto, js)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
       }
       /* still stuck: surface WHY (LinkedIn's validation error if present, else
@@ -1909,7 +1923,9 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
        the whole page — read BOTH, positive evidence only */
     const pageBody = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
     const frameBody = target !== page ? await target.evaluate(() => document.body?.innerText ?? "").catch(() => "") : "";
-    const success = rules.successText.test(pageBody + "\n" + frameBody);
+    /* same single pinned detector — page body + form frame BOTH count as
+       success evidence (embedded Greenhouse renders in the frame) */
+    const success = detectSubmissionSuccess(pageBody + "\n" + frameBody, site);
     return { auto: success, note: success ? "submitted (auto)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
   }
   return { auto: false, note: "review gate — human submits" };
@@ -2188,6 +2204,16 @@ async function runSingle(args, { existingCtx = null } = {}) {
          deterministic: title-critical skills, coverage ratio). An owner-
          confirmed posting (positive exemplar) bypasses the title leg —
          the owner's verdict outranks board title mangling. */
+      /* Instahyre's own ML badge (🟢 HIGH / 🟡 MID / 🔴 LOW) is FREE evidence:
+         a LOW badge skips the gate stack before any AI token is spent — the
+         budget spends on plausible postings, not obviously wrong ones.
+         Could not parse the badge → null → normal gates (fail-open). */
+      const insta = instaSkip(job, site);
+      if (insta === "skip") {
+        recordResultBoth(report, job, "skipped", "Instahyre match LOW — board ML and gates agree, skipped without evaluation");
+        console.log(dim("  ⏭ skipped — Instahyre match LOW (their ML + our gates agree)"));
+        continue;
+      }
       const gate = postingRelevant({ title: job.title, description: job.description }, profile, { learnedCritical: await learnedCriticalSkills(), ownerConfirmed: Boolean(ownerHit) });
         if (!gate.ok) {
           recordResultBoth(report, job, "skipped", gate.reason);
@@ -2232,7 +2258,15 @@ async function runSingle(args, { existingCtx = null } = {}) {
            parade around as fit 60. Fallbacks keep the raw overlap score. */
         const coreMissing = job.__judge?.missingCore ?? [];
         if (gate.matched?.length) {
-          job.__fit = fitScore(gate.matched, gate.missing, coreMissing);
+          /* smarter fit (#164): seniority gap + outside-preferred-locations
+             only when the driver actually captured that evidence — absent
+             fields must never move the score */
+          job.__fit = fitScore(gate.matched, gate.missing, coreMissing, {
+            jobSeniority: seniorityOf(job.title),
+            profileSeniority: profile?.seniority,
+            location: job.location,
+            preferredLocations: profile?.locations,
+          });
           const judgeNote = job.__judge?.verdict === "apply" ? " · judge: apply" : job.__judge?.verdict === "skip" ? "" : job.__judge?.reason ? ` · judge unsure: ${job.__judge.reason.slice(0, 60)}` : "";
           console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""}${coreMissing.length ? ` (core missing: ${coreMissing.slice(0, 3).join(", ")})` : ""} · fit ${job.__fit}${judgeNote}`));
         } else if (job.__judge?.reason) {

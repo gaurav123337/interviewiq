@@ -16,7 +16,9 @@ import {
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, cardAgeText, POSTED_AGE_TEXT_RE,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, parseSalary, seniorityOf,
+  extractJdSkills, detectSubmissionSuccess,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
+  instaSkip, instaMatchFromCardText,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -1046,5 +1048,70 @@ describe("Phase 3 — boardSuspensionRule (dead boards go back on probation)", (
     const s = suspensionDigestLines([{ site_host: "dead.example", reason: "15 applications, zero views" }]);
     expect(s).toContain("dead.example");
     expect(s).toContain("15 applications");
+  });
+});
+
+describe("#164 wiring — extractJdSkills is the gate's single JD scanner", () => {
+  it("jdSkillMatch's JD scan agrees with extractJdSkills on the same text", () => {
+    const jd = "Key Technologies: React, TypeScript, Node.js. Required skills: AWS, PostgreSQL. Nice to have GraphQL.";
+    const extracted = new Set(extractJdSkills(jd));
+    const profile = { skills: ["React", "TypeScript", "Node.js", "AWS", "PostgreSQL"] };
+    const gate = jdSkillMatch(jd, profile, {});
+    for (const m of gate.matched) expect(extracted.has(m)).toBe(true);
+    for (const miss of gate.missing) expect(extracted.has(miss)).toBe(true);
+  });
+});
+
+describe("#164 wiring — detectSubmissionSuccess stays fail-closed", () => {
+  it("true only on the site's success text, false on absence and unknown sites", () => {
+    expect(detectSubmissionSuccess("Your application was submitted successfully", "greenhouse")).toBe(true);
+    expect(detectSubmissionSuccess("Applied — 3 openings match your profile", "instahyre")).toBe(true);
+    expect(detectSubmissionSuccess("Application form — fill in your details", "instahyre")).toBe(false);
+    expect(detectSubmissionSuccess("", "instahyre")).toBe(false);
+    expect(detectSubmissionSuccess(null, "instahyre")).toBe(false);
+    expect(detectSubmissionSuccess("random page state without success words", "some-unknown-board")).toBe(false);
+  });
+});
+
+describe("#164 wiring — instaMatch pre-filter (board ML as free evidence)", () => {
+  it("caption verdicts map to high/mid/low; prose without a badge maps to null", () => {
+    expect(instaMatchFromCardText("Senior React Dev\nAcme\nHigh Match")).toBe("high");
+    expect(instaMatchFromCardText("Backend Dev\nAcme\nMedium Match")).toBe("mid");
+    expect(instaMatchFromCardText("DevOps role\nAcme\nLow Match")).toBe("low");
+    expect(instaMatchFromCardText("85% match")).toBe("high");
+    expect(instaMatchFromCardText("55% match")).toBe("mid");
+    expect(instaMatchFromCardText("20% match")).toBe("low");
+    expect(instaMatchFromCardText("Senior React Dev — 3 hours ago")).toBeNull();
+    expect(instaMatchFromCardText("")).toBeNull();
+  });
+
+  it("skip fires only for LOW signals on instahyre; mid/high/absent/other-sites never skip", () => {
+    expect(instaSkip({ __instaMatch: "low" }, "instahyre")).toBe("skip");
+    expect(instaSkip({ instaMatch: "low" }, "instahyre")).toBe("skip");
+    expect(instaSkip({ __instaMatch: "high" }, "instahyre")).toBeNull();
+    expect(instaSkip({ __instaMatch: "mid" }, "instahyre")).toBeNull();
+    expect(instaSkip({}, "instahyre")).toBeNull();
+    expect(instaSkip({ __instaMatch: "low" }, "naukri")).toBeNull();
+  });
+});
+
+describe("#164 wiring — smarter fitScore (evidence-based penalties only)", () => {
+  it("penalizes the job out-ranking the profile on the seniority ladder", () => {
+    const matched = ["react", "typescript", "css", "performance"];
+    const missing: string[] = [];
+    expect(fitScore(matched, missing, [], { jobSeniority: "senior", profileSeniority: "mid" })).toBe(92); // 100 - 8
+    expect(fitScore(matched, missing, [], { jobSeniority: "staff", profileSeniority: "junior" })).toBe(84); // capped 16
+    expect(fitScore(matched, missing, [], { jobSeniority: "junior", profileSeniority: "senior" })).toBe(100); // more senior than job: no penalty
+    expect(fitScore(matched, missing, [], { jobSeniority: "senior" })).toBe(100); // absent profile seniority: unchanged
+  });
+
+  it("penalizes known non-remote locations outside preferred locations; remote always passes", () => {
+    const matched = ["react"];
+    const missing = ["node", "python", "sql"];
+    expect(fitScore(matched, missing, [], { location: "New York, NY", preferredLocations: ["bengaluru"] })).toBe(15); // 25 - 10
+    expect(fitScore(matched, missing, [], { location: "Bengaluru, India", preferredLocations: ["bengaluru"] })).toBe(25);
+    expect(fitScore(matched, missing, [], { location: "Remote — worldwide", preferredLocations: ["bengaluru"] })).toBe(25);
+    expect(fitScore(matched, missing, [], { preferredLocations: ["bengaluru"] })).toBe(25); // no captured location: unchanged
+    expect(fitScore(matched, missing, [], { location: "New York" })).toBe(25); // no preference list: unchanged
   });
 });

@@ -532,17 +532,14 @@ export function titleSkills(title) {
  * profile lacks python for = reject, whatever the overall coverage. The
  * caller may pass learned strikes (apply_skill_strikes) — a skill the owner
  * 👎-ed twice is treated as permanently critical (the engine learned it).
- */
-export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2, critical = [], learnedCritical = [] } = {}) {
+ */export function jdSkillMatch(jdText, profile, { minJd = 0.6, minProfile = 2, critical = [], learnedCritical = [] } = {}) {
   const text = " " + String(jdText || "").toLowerCase().replace(/[^a-z0-9+#./ -]/g, " ").replace(/\s+/g, " ") + " ";
   const prof = profileSkillSet(profile);
   if (!prof.size) return { ok: true, reason: "profile lists no skills — title gate only", matched: [], missing: [], jdSkills: [] };
 
-  const jdSkills = new Set();
-  for (const [alias, canon] of Object.entries(SKILL_ALIASES)) {
-    const esc = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\//g, "\\/");
-    if (new RegExp("(?:^| )" + esc + "(?: |$)").test(text)) jdSkills.add(canon);
-  }
+  /* single source of truth (#164): the gate's JD scan IS extractJdSkills —
+     the duplicate alias loop here could only ever drift from it */
+  const jdSkills = new Set(extractJdSkills(jdText));
   const generic = new Set(["git", "agile", "design", "performance", "testing", "rest"]);
   const required = [...jdSkills].filter((s) => !generic.has(s) || prof.has(s));
   if (!required.length) {
@@ -1063,14 +1060,62 @@ export function extractJdSkills(description) {
     labels it as such. `coreMissing` (the AI judge's missingCore — skills the
     posting fundamentally requires that the resume lacks) applies a 12-point
     penalty each, capped at 48, so a Java-core JD never shows a flattering
-    60 just because the resume also says "testing" and "performance". */
-export function fitScore(matched, missing, coreMissing = []) {
+    60 just because the resume also says "testing" and "performance".
+
+    Smarter-fit opts (#164): an exact-title junior applying to a staff
+    posting scores lower than the same keyword overlap suggests — 8 points
+    per seniority-rung gap the JOB out-ranks the PROFILE (capped 16; being
+    MORE senior than the posting is not penalized, matching the judge rule
+    that senior-adjacent applies are normal). A known non-remote posting
+    outside the owner's preferred locations costs 10. Both opts are
+    optional — absent/unparsed evidence NEVER changes the score (only the
+    evidence the driver actually captured may). */
+export function fitScore(matched, missing, coreMissing = [], opts = {}) {
   const m = matched?.length ?? 0;
   const x = missing?.length ?? 0;
   if (!m && !x) return null;
   const base = Math.round((m / (m + x)) * 100);
-  const penalty = Math.min(48, (coreMissing?.length ?? 0) * 12);
+  let penalty = Math.min(48, (coreMissing?.length ?? 0) * 12);
+  if (opts.jobSeniority && opts.profileSeniority) {
+    const rank = (s) => SENIORITY_LADDER.indexOf(String(s).toLowerCase());
+    const gap = rank(opts.jobSeniority) - rank(opts.profileSeniority);
+    if (gap > 0) penalty += Math.min(16, gap * 8);
+  }
+  const loc = String(opts.location ?? "").toLowerCase();
+  const wants = (opts.preferredLocations ?? []).map((s) => String(s).toLowerCase().trim()).filter(Boolean);
+  if (loc && wants.length && !/\bremote\b|work from home/i.test(loc) && !wants.some((w) => loc.includes(w))) penalty += 10;
   return Math.max(0, base - penalty);
+}
+
+/** Extract Instahyre's match badge from a card's text lines. Cards render
+    the badge as "High Match" / "Medium Match" / "Low Match" (older layouts:
+    a percentage). Returns "high" | "mid" | "low" | null — null when the card
+    says nothing (the pre-filter must never invent a verdict). */
+export function instaMatchFromCardText(text) {
+  const s = String(text || "").toLowerCase();
+  if (/\bhigh( |-)?match\b|\bhighly matched\b/.test(s)) return "high";
+  if (/\b(medium|moderate)( |-)?match\b/.test(s)) return "mid";
+  const pct = s.match(/(\d{1,3})\s*%\s*(match)?\b/);
+  if (pct) { const n = Number(pct[1]); return n >= 70 ? "high" : n >= 40 ? "mid" : "low"; }
+  if (/\b(low|poor|weak)( |-)?match\b/.test(s)) return "low";
+  return null;
+}
+
+/** Instahyre's own match badge as a FREE pre-filter: their ML and our gates
+    agree often enough that a LOW badge can skip the skill gate + AI judge
+    entirely (the plan's "engine agrees with their ML"). Returns "skip"
+    only for LOW/very-low-percentage signals on instahyre; MID/HIGH proceed
+    through the normal gates. Any other site, absent badge, or unparsable
+    text → null: a MISSING signal must never reject a posting. */
+export function instaSkip(job, siteKey) {
+  if (siteKey !== "instahyre") return null;
+  const raw = String(job?.__instaMatch ?? job?.instaMatch ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  if (/^\d{1,3}$/.test(raw)) {
+    const n = Number(raw);
+    return n < 40 ? "skip" : null;
+  }
+  return /^(low|average|poor|weak)/.test(raw) ? "skip" : null;
 }
 
 /* Skill strikes: decay after 30 days — the owner's taste changes and a
