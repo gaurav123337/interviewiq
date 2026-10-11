@@ -55,6 +55,24 @@ export function probationAutoActivateAt(s: JobSite): string | null {
   return new Date(d.getTime() + PROBATION_DAYS * 24 * 3600_000).toISOString();
 }
 
+/* The discovery evidence the registry previously only hinted at with a bare
+   "discovered" text badge: WHEN the engine found the portal. Renders a
+   "🧭 DD-MMM HH:mm" chip with a full "discovered <date + time>" tooltip.
+   Null for builtin/ats/manual sources (their registration was not a
+   discovery event) and for rows without a parseable discovered_at. */
+export function discoveredStamp(s: Pick<JobSite, "source" | "discovered_at">): { text: string; long: string } | null {
+  if (s.source !== "discovered" || !s.discovered_at) return null;
+  const d = new Date(s.discovered_at);
+  if (isNaN(d.getTime())) return null;
+  const text = `🧭 ${d.toLocaleString(undefined, {
+    day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+  })}`;
+  const long = `discovered ${d.toLocaleString(undefined, {
+    day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
+  })}`;
+  return { text, long };
+}
+
 /* Three-state session health for the per-site strip. "verified ✓" means a
    fresh headless probe (hourly watchdog) or a completed sign-in landed on a
    signed-in state; "expired ✗" means the probe hit the login wall — one OTP

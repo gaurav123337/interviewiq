@@ -7,7 +7,7 @@ vi.mock("../services/cloud", () => ({
   getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig, probationAutoActivateAt } from "../services/jobSites";
+import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig, probationAutoActivateAt, discoveredStamp } from "../services/jobSites";
 
 const rpc = vi.fn();
 const invoke = vi.fn();
@@ -352,5 +352,21 @@ describe("probation auto-activation (pending discoveries)", () => {
     expect(probationAutoActivateAt({ status: "pending", discovered_at: null, rules: {} } as never)).toBeNull();
     expect(probationAutoActivateAt({ status: "pending", discovered_at: "not-a-date", rules: {} } as never)).toBeNull();
     expect(probationAutoActivateAt({ status: "pending", discovered_at: D, rules: { probation: { skip: true } } } as never)).toBeNull();
+  });
+});
+
+describe("discovered stamp (UI discovery evidence)", () => {
+  const D2 = "2026-10-01T00:00:00Z";
+
+  it("shows the discovery date for pending discovered portals", () => {
+    expect(discoveredStamp({ source: "discovered", discovered_at: D2 } as never)).not.toBeNull();
+  });
+
+  it("never for builtin/ats/manual rows or missing dates", () => {
+    expect(discoveredStamp({ source: "builtin", discovered_at: D2 } as never)).toBeNull();
+    expect(discoveredStamp({ source: "ats", discovered_at: D2 } as never)).toBeNull();
+    expect(discoveredStamp({ source: "manual", discovered_at: D2 } as never)).toBeNull();
+    expect(discoveredStamp({ source: "discovered", discovered_at: null } as never)).toBeNull();
+    expect(discoveredStamp({ source: "discovered", discovered_at: "junk" } as never)).toBeNull();
   });
 });

@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, sessionStateOf, probationAutoActivateAt, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, summarizeSite, sessionStateOf, probationAutoActivateAt, discoveredStamp, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -21,6 +21,8 @@ const SIGNIN_STATUS_TEXT: Record<LoginLifecycle, { text: string; cls: string }> 
   verified: { text: "✅ Session verified — this site's future runs are signed-in.", cls: "bg-emerald-500/15 text-emerald-300" },
   failed: { text: "⚠️ The sign-in window closed without a completed sign-in — click 🔑 Sign in to retry.", cls: "bg-amber-500/10 text-amber-300" },
 };
+
+
 
 export default function JobSitesPanel() {
   const [sites, setSites] = useState<JobSite[] | null>(null);
@@ -150,6 +152,15 @@ export default function JobSitesPanel() {
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm text-zinc-200">
                 {s.label} <span className="text-zinc-400">· {s.host}</span>
+                {(() => {
+                  const ds = discoveredStamp(s);
+                  if (!ds) return null;
+                  return (
+                    <span title={ds.long} className="ml-1 rounded bg-sky-500/10 px-1 py-0.5 text-[10px] font-semibold text-sky-300">
+                      {ds.text}
+                    </span>
+                  );
+                })()}
                 {s.source === "discovered" && <span className="ml-1 text-[10px] uppercase tracking-wide text-sky-400">discovered</span>}
                 {s.source === "ats" && <span className="ml-1 text-[10px] uppercase tracking-wide text-violet-400">ats board</span>}
               </div>
