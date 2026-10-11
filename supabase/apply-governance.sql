@@ -52,6 +52,8 @@ update public.apply_config
    with the full extended list. */
 alter table public.apply_results drop constraint if exists apply_results_result_check;
 do $$
+declare
+  r record; -- FOR over rows needs a declared record in plpgsql; an undeclared `r` fails with 42601 on apply
 begin
   -- any lingering inline check will have a generated name; drop it by
   -- exact shape-match so repeated applies never error
@@ -62,7 +64,7 @@ begin
         and contype = 'c'
         and pg_get_constraintdef(oid) like '%result%' and pg_get_constraintdef(oid) like '%submitted%'
         and conname <> 'apply_results_result_check'
-  loop
+    loop
       execute format('alter table public.apply_results drop constraint %I', r.conname);
     end loop;
   end;
@@ -118,9 +120,11 @@ returns table (
   policy_quiet_from text, policy_quiet_to text,
   policy_filters jsonb
 ) language sql security definer set search_path = public as $$
+  -- guarded like admin_set beneath: policy config is owner-private, not
+  -- dashboard decoration any signed-in row could read
   select policy_daily_cap, policy_weekly_cap, policy_quiet_from,
          policy_quiet_to, policy_filters
-  from public.apply_config where id = 'global';
+  from public.apply_config where id = 'global' and public.is_admin();
 $$;
 
 create or replace function public.admin_set_apply_policy(
@@ -151,6 +155,10 @@ begin
     where id = 'global';
 end $$;
 
+/* explicit grants + revokes (repo doctrine: never rely on the implicit
+   PUBLIC execute default) */
+revoke execute on function public.admin_get_apply_policy() from anon, public;
+revoke execute on function public.admin_set_apply_policy(int, int, text, text, jsonb) from anon, public;
 grant execute on function public.admin_get_apply_policy() to authenticated;
 grant execute on function public.admin_set_apply_policy(int, int, text, text, jsonb) to authenticated;
 
