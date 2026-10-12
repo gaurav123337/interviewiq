@@ -82,6 +82,9 @@ export interface ApplyJobLike {
   title?: string; company?: string; location?: string; url?: string;
   skills?: string[]; seniority?: string; instaMatch?: string | null;
   __instaMatch?: string | null;
+  boardMatch?: string | null;
+  __boardMatch?: string | null;
+  __cardText?: string;
   __coverLetter?: string; __fit?: number | null; __fitNote?: string; __judge?: { verdict?: string; reason?: string; missingCore?: string[] };
   __submitted?: boolean; __successText?: string;
 }
@@ -165,12 +168,22 @@ export function fitScore(
   opts?: { jobSeniority?: string; profileSeniority?: string; location?: string; preferredLocations?: string[] }
 ): number | null;
 
-/** Instahyre badge pre-filter — "skip" only for a LOW signal on instahyre;
-    null everywhere else (missing signal never rejects). */
-export function instaSkip(job: { __instaMatch?: string | null; instaMatch?: string | null } | null | undefined, siteKey: string): "skip" | null;
+/** Permanent alias — boardMatchSkip is what runs (instahyre/linkedin/naukri
+    allowlist; LOW signal only). */
+export function instaSkip(job: { __boardMatch?: string | null; boardMatch?: string | null; __instaMatch?: string | null; instaMatch?: string | null } | null | undefined, siteKey: string): "skip" | null;
+
+/** The generalized pre-filter — "skip" only for a LOW signal on an
+    allowlisted site; null everywhere else (missing signal never rejects). */
+export function boardMatchSkip(job: { __boardMatch?: string | null; boardMatch?: string | null; __instaMatch?: string | null; instaMatch?: string | null } | null | undefined, siteKey: string): "skip" | null;
 
 /** Extract the badge verdict ("high"|"mid"|"low"|null) from a card's text. */
 export function instaMatchFromCardText(text: string | null | undefined): "high" | "mid" | "low" | null;
+
+export function linkedinMatchFromDetailText(text: string | null | undefined): "high" | "mid" | "low" | null;
+
+export function naukriMatchFromCardText(text: string | null | undefined): "high" | "mid" | "low" | null;
+
+export const BOARD_MATCH_SITES: Set<string>;
 
 /* ── feedback learning loop (skip rows + strike decay + buzz gating) ── */
 

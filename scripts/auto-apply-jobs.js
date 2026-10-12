@@ -38,7 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
-  matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText,
+  matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
@@ -1352,8 +1352,7 @@ async function collectJobs(page, url, site, max) {
       const title = ((t?.textContent || art.innerText || "").trim().split("\n")[0] || "").slice(0, 140);
       if (!title || title.length < 8 || junk.test(title)) continue;
       seen.add(id);
-      const company = (c?.textContent || "").trim().split("\n")[0].replace(/\s*[\d.]+\s*(Reviews?|stars?)\s*$/i, "").replace(/\s+\d+(\.\d+)?$/, "").slice(0, 80);
-      out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company, __ageText: ageOf(art) });
+      const company = (c?.textContent || "").trim().split("\n")[0].replace(/\s*[\d.]+\s*(Reviews?|stars?)\s*$/i, "").replace(/\s+\d+(\.\d+)?$/, "").slice(0, 80);        out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company, __ageText: ageOf(art), __cardText: (art.innerText || "").slice(0, 400) });
     }
     /* LinkedIn landing/search cards: currentJobId=<id> inside search-results hrefs */
     for (const a of document.querySelectorAll("a[href*='currentJobId=']")) {
@@ -1370,7 +1369,7 @@ async function collectJobs(page, url, site, max) {
       const noise = /^(promoted|view job|save|apply|show more|verified job|see more|\d+\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|[mhd])\s* ago)|people clicked apply|clicks|applicants?\s*$|reviews?\s*$|stars?\s*$/i;
       const company = (lines.find(l => l !== title && l.replace(/\s*\(Verified job\)\s*$/i, "") !== title && l.length > 1 && l.length < 60 && !noise.test(l)) || "")
         .replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 80);
-      out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company, __ageText: ageOf(a) });
+      out.push({ url: `https://www.linkedin.com/jobs/view/${m[1]}`, title, company, __ageText: ageOf(a), __cardText: text.slice(0, 400) });
     }
     for (const sel of hints) {
       for (const a of document.querySelectorAll(sel)) {
@@ -1381,7 +1380,7 @@ async function collectJobs(page, url, site, max) {
         const text = (a.innerText || a.textContent || "").trim();
         if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
-        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a), __cardText: site === "instahyre" ? text.slice(0, 400) : undefined });
+        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a), __cardText: text.slice(0, 400) });
       }
     }
     return out;
@@ -1424,15 +1423,18 @@ async function collectJobs(page, url, site, max) {
      still reading instead of aging ones that merely appeared first on the
      page. Older/unknown rows keep the board's own order. */
   /* POST-EVALUATE at the node boundary (functions can't cross into
-     page.evaluate): extract Instahyre's card badge from the collected text
-     — the generic collector does not read cards, so __ageText (the card's
-     innerText) is where the badge text lives. Fail-safe by construction:
-     no badge → null → the pre-filter never rejects. */
-  if (site === "instahyre") {
+     page.evaluate): extract each site's OWN match badge from the card text
+     now carried for every explicit collector. Fail-safe by construction:
+     no badge → null → the pre-filter never rejects. Instahyre reads its
+     High/Med/Low badge; naukri's parser is deliberately narrower (its
+     cards are full of non-match % noise); linkedin cards carry no match
+     signal at all (the real one lives on the detail page — openJob). */
+  if (site === "instahyre" || site === "naukri") {
+    const parse = site === "instahyre" ? instaMatchFromCardText : naukriMatchFromCardText;
     for (const j of deduped) {
       const card = (j.__cardText ?? "") + "\n" + j.title + "\n" + (j.__ageText ?? "");
-      const badge = instaMatchFromCardText(card);
-      if (badge) j.__instaMatch = badge;
+      const badge = parse(card);
+      if (badge) j.__boardMatch = badge;
     }
   }
   const ordered = sortByFreshness(deduped);
@@ -1574,6 +1576,15 @@ async function openJob(page, job) {
     job.pageText = g.pageText;
     if ((container.length >= 400 && stable >= 2) || i === 9) break; // text settled or budget gone
     await page.waitForTimeout(1400);
+  }
+  /* LinkedIn's own match signal ("your profile matches N%", "Top Applicant")
+     lives on THIS detail page — the last learned pageText is the freshest
+     look at it. Parsed FAIL-OPEN at the node boundary: no signal → null →
+     the pre-filter never rejects; a REAL signal lands in __boardMatch so
+     the gate's LOW-skip can use it like Instahyre's badge. */
+  if (/linkedin\.com/i.test(job.url || "")) {
+    const badge = linkedinMatchFromDetailText(job.pageText);
+    if (badge) job.__boardMatch = badge;
   }
   if (container.length >= 120) {
     job.description = container;
@@ -2204,14 +2215,15 @@ async function runSingle(args, { existingCtx = null } = {}) {
          deterministic: title-critical skills, coverage ratio). An owner-
          confirmed posting (positive exemplar) bypasses the title leg —
          the owner's verdict outranks board title mangling. */
-      /* Instahyre's own ML badge (🟢 HIGH / 🟡 MID / 🔴 LOW) is FREE evidence:
-         a LOW badge skips the gate stack before any AI token is spent — the
-         budget spends on plausible postings, not obviously wrong ones.
-         Could not parse the badge → null → normal gates (fail-open). */
+      /* Board-owned match signals (Instahyre badge 🟢🟡🔴, LinkedIn's detail
+         page "your profile matches N%", naukri's narrow card badge) are FREE
+         evidence: a LOW signal skips the gate stack before any AI token is
+         spent — the budget spends on plausible postings, not obviously wrong
+         ones. Could not parse a signal → null → normal gates (fail-open). */
       const insta = instaSkip(job, site);
       if (insta === "skip") {
-        recordResultBoth(report, job, "skipped", "Instahyre match LOW — board ML and gates agree, skipped without evaluation");
-        console.log(dim("  ⏭ skipped — Instahyre match LOW (their ML + our gates agree)"));
+        recordResultBoth(report, job, "skipped", `${rules.label} match LOW — board ML and gates agree, skipped without evaluation`);
+        console.log(dim(`  ⏭ skipped — ${rules.label} match LOW (their ML + our gates agree)`));
         continue;
       }
       const gate = postingRelevant({ title: job.title, description: job.description }, profile, { learnedCritical: await learnedCriticalSkills(), ownerConfirmed: Boolean(ownerHit) });

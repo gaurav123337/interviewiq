@@ -7,6 +7,16 @@
 > instaSkip — LOW skips gates, missing badge never rejects); smarter fitScore
 > with evidence-gated seniority-gap (−8/run, cap 16) and outside-preferred-
 > location (−10) penalties. 8 new test pins; 1678/1678 green.
+>
+> **2026-10-12 — PRE-FILTER GENERALIZED TO LINKEDIN + NAUKRI**: LinkedIn's "your
+> profile matches N% / Top Applicant" detail-page signal and Naukri's narrow card
+> badge join Instahyre's badge via `boardMatchSkip` (allowlist instahyre/
+> linkedin/naukri; LOW-only; missing signal never rejects). LinkedIn's
+> match lives on the DETAIL page (openJob captures it; verified against
+> LinkedIn's own help docs), naukri cards carry promo-% noise (20-30% hike) so
+> its parser only trusts explicit match badges, linkedin cards carry no match
+> signal at all and never parsed one. Legacy __instaMatch still honored on
+> instahyre. 6 new pins; 1684/1684 deterministic green.
 
 ## 1. Full JD Capture ✅ IMPLEMENTED
 **Extract skill chips and tags from job postings, not just description text**
@@ -57,6 +67,15 @@
 - **HIGH** (green badge) = prioritize; often auto-apply
 - Example: SDET role with LOW InstaMatch for Frontend profile = skip without gate cost
 - **Impact**: Saves gate evaluations on obviously wrong matches; respects their signal
+- **Generalized 2026-10-12**: `instaMatchFromCardText` → `linkedinMatchFromDetailText`/
+  `naukriMatchFromCardText`/`instaSkip` (alias) with `BOARD_MATCH_SITES`
+  allowlist = instahyre + linkedin + naukri, stamp `__boardMatch` on every
+  explicit collector; obfuscated-class-name collector keeps its instahyre-only
+  `__cardText` capture. LinkedIn's signal is on the DETAIL page (OpenJob
+  captures from the last learned pageText; verified against their help docs);
+  naukri's parser only trusts explicit match badges (its cards carry
+  "20-30% hike"-style promo % that a generic parser would misread);
+  linkedin cards carry no match signal at all and never parsed one.
 
 ---
 

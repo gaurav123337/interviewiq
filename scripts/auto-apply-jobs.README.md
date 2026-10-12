@@ -34,6 +34,15 @@ posted-age stamp ("3 hours ago", "30+ Days Ago", "Just posted") and orders
 budget slices — a full budget spends its slots on postings recruiters are
 still reading.
 
+**Board match signals as a free pre-filter:** each board's OWN match signal
+skips the gate stack (LOW-only, fail-open — missing signal never rejects):
+Instahyre's High/Med/Low card badge, LinkedIn's "your profile matches N%"/
+"Top Applicant" DETAIL-page signal (their match lives on the job page, not
+the cards), and Naukri's explicit match badge (deliberately narrow — its
+cards carry "20-30% hike"-style promo percent that must never read as a
+match). Parsers: `instaMatchFromCardText` / `linkedinMatchFromDetailText` /
+`naukriMatchFromCardText` → `boardMatchSkip`.
+
 **Fail-closed:** any *required* question the engine can't answer confidently
 (work authorization, certificates, unseen essays…) leaves the form open and
 marks the job **needs-review** in the report. A wrong submission is worse than

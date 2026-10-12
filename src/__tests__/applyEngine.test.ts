@@ -18,7 +18,7 @@ import {
   spendCount, budgetGate, isQuietHours, jobPassesFilters, parseSalary, seniorityOf,
   extractJdSkills, detectSubmissionSuccess,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
-  instaSkip, instaMatchFromCardText,
+  instaSkip, instaMatchFromCardText, boardMatchSkip, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -1091,7 +1091,41 @@ describe("#164 wiring — instaMatch pre-filter (board ML as free evidence)", ()
     expect(instaSkip({ __instaMatch: "high" }, "instahyre")).toBeNull();
     expect(instaSkip({ __instaMatch: "mid" }, "instahyre")).toBeNull();
     expect(instaSkip({}, "instahyre")).toBeNull();
-    expect(instaSkip({ __instaMatch: "low" }, "naukri")).toBeNull();
+    // (was "naukri never skips" in the pre-generalization era — naukri is now
+    // allowlisted, so a positive LOW signal there skips: pinned in the
+    // boardMatchSkip block below)
+  });
+
+  it("boardMatchSkip — aliased to instaSkip for back-compat, allowlisted sites, legacy __instaMatch still reads on instahyre", () => {
+    expect(instaSkip({ __instaMatch: "low" }, "instahyre")).toBe(boardMatchSkip({ __instaMatch: "low" }, "instahyre")); // same behavior
+    expect(BOARD_MATCH_SITES.has("linkedin") && BOARD_MATCH_SITES.has("naukri") && BOARD_MATCH_SITES.has("instahyre")).toBe(true);
+    expect(boardMatchSkip({ __boardMatch: "low" }, "linkedin")).toBe("skip");
+    expect(boardMatchSkip({ __boardMatch: "low" }, "naukri")).toBe("skip");
+    expect(boardMatchSkip({ __boardMatch: "high" }, "naukri")).toBeNull();
+    expect(boardMatchSkip({ __boardMatch: "low" }, "greenhouse")).toBeNull(); // not allowlisted
+    expect(boardMatchSkip({}, "linkedin")).toBeNull();
+    expect(boardMatchSkip({ __instaMatch: "low" }, "instahyre")).toBe("skip"); // legacy instahyre stamp still honored
+  });
+
+  it("linkedinMatchFromDetailText — only profile-match percentages and Top Applicant count; a requirements-count or applicant-% is noise", () => {
+    expect(linkedinMatchFromDetailText("Your profile matches 85% of the job poster's requirements")).toBe("high");
+    expect(linkedinMatchFromDetailText("your profile matches 50% of the requirements")).toBe("mid");
+    expect(linkedinMatchFromDetailText("You match 20% of the job poster's requirements")).toBe("low");
+    expect(linkedinMatchFromDetailText("you're a Top Applicant for this job")).toBe("high");
+    expect(linkedinMatchFromDetailText("You match 6 of the 10 job poster's requirements")).toBeNull(); // a COUNT, not a percentage
+    expect(linkedinMatchFromDetailText("30% more applicants than usual")).toBeNull(); // social proof, not a match
+    expect(linkedinMatchFromDetailText("Actively recruiting · Easy Apply · Be an early applicant")).toBeNull();
+    expect(linkedinMatchFromDetailText("")).toBeNull();
+  });
+
+  it("naukriMatchFromCardText — only explicit match badges count; hike-% / ratings / fees are never a verdict", () => {
+    expect(naukriMatchFromCardText("Senior React Developer\nAcme\n78% job match")).toBe("high");
+    expect(naukriMatchFromCardText("45% match")).toBe("mid");
+    expect(naukriMatchFromCardText("25% match")).toBe("low");
+    expect(naukriMatchFromCardText("Low Match")).toBe("low");
+    expect(naukriMatchFromCardText("20-30% salary hike · Acme · 3.6\n203 Jobs · Actively hiring")).toBeNull(); // promo %, not a match
+    expect(naukriMatchFromCardText("java developer · 5 days ago· Be an early applicant · Save")).toBeNull();
+    expect(naukriMatchFromCardText("")).toBeNull();
   });
 });
 

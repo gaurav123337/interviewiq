@@ -1101,21 +1101,64 @@ export function instaMatchFromCardText(text) {
   return null;
 }
 
-/** Instahyre's own match badge as a FREE pre-filter: their ML and our gates
-    agree often enough that a LOW badge can skip the skill gate + AI judge
+/** LinkedIn's profile-match signal, which lives on the JOB DETAIL page (their
+    "How you match" is a detail-page feature, not a list-card badge —
+    verified against LinkedIn's own help docs while wiring the pre-filter;
+    list cards carry only social proof). The only strings we trust are
+    explicit PROFILE-matching percentages — a "matches N of the job
+    poster's requirements" count is NOT a percentage and never reads as
+    one. "Top Applicant" (Premium) is positive-only evidence: it can raise
+    the badge to high but is never a LOW signal. Anything unparsable → null
+    (fail-open, like every badge parser here). */
+export function linkedinMatchFromDetailText(text) {
+  const s = String(text || "").toLowerCase();
+  if (!s) return null;
+  const pct = s.match(/\b(?:your profile|you)\s+match(?:es)?\s+(\d{1,3})\s*%/);
+  if (pct) { const n = Number(pct[1]); return n >= 70 ? "high" : n >= 40 ? "mid" : "low"; }
+  if (/\btop applicant\b/.test(s)) return "high";
+  return null;
+}
+
+/** Naukri's card parser — deliberately NARROWER than Instahyre's. Research
+    into live naukri cards found NO per-card match score, but PLENTY of
+    percentages a generic parser would misread ("20-30% hike", reviews,
+    promo banners). Only an explicit "N% (job )match" badge or a
+    High/Medium/Low Match badge counts; every other % is noise. Until a
+    real match badge is observed live on naukri, this keeps returning
+    null — the pre-filter stays fail-open instead of inventing a verdict. */
+export function naukriMatchFromCardText(text) {
+  const s = String(text || "").toLowerCase();
+  if (!s) return null;
+  const badge = s.match(/\b(\d{1,3})\s*%\s*(?:job\s*)?match\b/);
+  if (badge) { const n = Number(badge[1]); return n >= 70 ? "high" : n >= 40 ? "mid" : "low"; }
+  const named = s.match(/\b(high|medium|moderate|low)\s+match\b/);
+  if (named) return named[1] === "high" ? "high" : named[1] === "low" ? "low" : "mid";
+  return null;
+}
+
+/** Board-owned match signals (Instahyre badges, LinkedIn detail-page match,
+    Naukri card badges) as a FREE pre-filter: their ML and our gates agree
+    often enough that a LOW signal can skip the skill gate + AI judge
     entirely (the plan's "engine agrees with their ML"). Returns "skip"
-    only for LOW/very-low-percentage signals on instahyre; MID/HIGH proceed
-    through the normal gates. Any other site, absent badge, or unparsable
-    text → null: a MISSING signal must never reject a posting. */
-export function instaSkip(job, siteKey) {
-  if (siteKey !== "instahyre") return null;
-  const raw = String(job?.__instaMatch ?? job?.instaMatch ?? "").trim().toLowerCase();
+    only for LOW/very-low-percentage signals on a site in the allowlist;
+    MID/HIGH proceed through the normal gates. Any other site, absent
+    badge, or unparsable text → null: a MISSING signal must never reject
+    a posting. Reads __boardMatch (current) and the older __instaMatch
+    (instahyre rows collected before the generalization) alike. */
+export const BOARD_MATCH_SITES = new Set(["instahyre", "linkedin", "naukri"]);
+export function boardMatchSkip(job, siteKey) {
+  if (!BOARD_MATCH_SITES.has(String(siteKey || "").toLowerCase())) return null;
+  const raw = String(job?.__boardMatch ?? job?.boardMatch ?? job?.__instaMatch ?? job?.instaMatch ?? "").trim().toLowerCase();
   if (!raw) return null;
   if (/^\d{1,3}$/.test(raw)) {
     const n = Number(raw);
     return n < 40 ? "skip" : null;
   }
   return /^(low|average|poor|weak)/.test(raw) ? "skip" : null;
+}
+
+export function instaSkip(job, siteKey) {
+  return boardMatchSkip(job, siteKey);
 }
 
 /* Skill strikes: decay after 30 days — the owner's taste changes and a
