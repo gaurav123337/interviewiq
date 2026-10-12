@@ -18,7 +18,7 @@ import {
   spendCount, budgetGate, isQuietHours, jobPassesFilters, parseSalary, seniorityOf,
   extractJdSkills, detectSubmissionSuccess,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
-  instaSkip, instaMatchFromCardText, boardMatchSkip, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES,
+  instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -1116,6 +1116,28 @@ describe("#164 wiring — instaMatch pre-filter (board ML as free evidence)", ()
     expect(linkedinMatchFromDetailText("30% more applicants than usual")).toBeNull(); // social proof, not a match
     expect(linkedinMatchFromDetailText("Actively recruiting · Easy Apply · Be an early applicant")).toBeNull();
     expect(linkedinMatchFromDetailText("")).toBeNull();
+  });
+
+  it("owner rules opt-in admits OTHER boards; opt-out beats even a builtin LOW stamp; truthy strings accepted", () => {
+    // rules.boardMatch = true opts a brand-new board in (generic badge parser upstream)
+    expect(boardMatchSkip({ __boardMatch: "low" }, "yc", {})).toBeNull(); // no laws of default: allowlist only
+    expect(boardMatchSkip({ __boardMatch: "low" }, "yc", { boardMatch: true })).toBe("skip");
+    expect(boardMatchSkip({ __boardMatch: "low" }, "yc", { boardMatch: "true" })).toBe("skip"); // JSONB bool may arrive as text
+    expect(boardMatchSkip({ __boardMatch: "low" }, "yc", { boardMatch: "on" })).toBe("skip");
+    expect(boardMatchSkip({ __boardMatch: "low" }, "yc", { boardMatch: "garbage" })).toBeNull(); // non-truthy = not opted in
+    // rules.boardMatch = false turns a builtin site OFF — the explicit owner
+    // opt-out must beat a LOW stamp captured before the toggle
+    expect(boardMatchSkip({ __boardMatch: "low" }, "instahyre", { boardMatch: false })).toBeNull();
+    expect(boardMatchSkip({ __instaMatch: "low" }, "instahyre", { boardMatch: false })).toBeNull(); // legacy stamp too
+    expect(boardMatchSkip({ __boardMatch: "low" }, "linkedin", { optOut: true })).toBeNull();
+    // absent rules → today's behavior, untouched
+    expect(boardMatchSkip({ __boardMatch: "low" }, "instahyre", {})).toBe("skip");
+    expect(boardMatchSkip({ __instaMatch: "low" }, "greenhouse", {})).toBeNull();
+    // boardMatchOpt is the exact decision the parser/gate share
+    expect(boardMatchOpt(true)).toBe(true);
+    expect(boardMatchOpt("TRUE")).toBe(true);
+    expect(boardMatchOpt(1)).toBe(false); // JSONB numbers are ambiguous owner intent — require an explicit bool/word
+    expect(boardMatchOpt(undefined)).toBe(false);
   });
 
   it("naukriMatchFromCardText — only explicit match badges count; hike-% / ratings / fees are never a verdict", () => {

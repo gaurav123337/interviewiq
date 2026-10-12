@@ -168,6 +168,37 @@ begin
     where host = p_host;
 end $$;
 
+/* owner writes ONE whitelisted rules key per call (admin only). The apply
+   engine's registry plumbing spreads row.rules over builtin rules, so an
+   owner-tuned key (rules.boardMatch = true|false — the board-match
+   pre-filter opt-in/opt-out) must survive engine_set_job_site_rules
+   merging: key-by-key instead of a blanket rules overwrite (the blanket
+   path is still there for the engine, but the merge is key-safe).
+   Whitelist (not a freeform update!): the rules column also carries
+   engine-learned selectors and probation state that the UI must never
+   clobber — and a freeform RPC would let any admin session rewrite
+   engine behavior. Adding a key = one line here + one prop in
+   JobSite.ts's rules handling + the engine reader. */
+create or replace function public.admin_set_site_rules(p_host text, p_key text, p_value jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'forbidden'; end if;
+  if p_key not in ('boardMatch') then raise exception 'key not owner-editable'; end if;
+  if p_value is null then
+    /* NULL = remove the key: the owner is restoring builtin behavior
+       ("match: default"), not storing a null that the engine readers
+       would have to treat as a third state. */
+    update public.job_sites
+      set rules = coalesce(rules, '{}'::jsonb) - p_key, updated_at = now()
+      where host = p_host;
+    return;
+  end if;
+  if p_key = 'boardMatch' and (jsonb_typeof(p_value) <> 'boolean') then raise exception 'boardMatch wants true, false, or null (default)'; end if;
+  update public.job_sites
+    set rules = coalesce(rules, '{}'::jsonb) || jsonb_build_object(p_key, p_value), updated_at = now()
+    where host = p_host;
+end $$;
+
 /* ── execute grants ────────────────────────────────────────────────────
    Postgres grants EXECUTE on new functions to PUBLIC by default, so the
    in-function guards are the only thing standing between the publishable
@@ -187,4 +218,7 @@ revoke execute on function public.engine_record_job_site_run(text, boolean, int,
 grant execute on function public.engine_record_job_site_run(text, boolean, int, int, int, int, text) to service_role;
 
 revoke execute on function public.engine_set_job_site_rules(text, jsonb) from anon, public;
+
+revoke execute on function public.admin_set_site_rules(text, text, jsonb) from anon, public;
+grant execute on function public.admin_set_site_rules(text, text, jsonb) to authenticated, service_role;
 grant execute on function public.engine_set_job_site_rules(text, jsonb) to service_role;

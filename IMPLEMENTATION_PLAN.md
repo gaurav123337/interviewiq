@@ -8,6 +8,13 @@
 > with evidence-gated seniority-gap (−8/run, cap 16) and outside-preferred-
 > location (−10) penalties. 8 new test pins; 1678/1678 green.
 >
+> **2026-10-12 — OWNER-VISITABLE OPT-IN/OUT**: `rules.boardMatch` on each job_sites
+> row (🎯 match: on / off / default in the registry panel; `admin_set_site_rules`
+> RPC, SQL pending manual apply) opts any board into the pre-filter without a
+> code change or turns it off for a builtin site. Lib: `boardMatchSkip(…, opts)`;
+> driver threads the opt through collectJobs + openJob + the gate. SQL NOT yet
+> applied — the toggle errors honestly until it is.
+>
 > **2026-10-12 — PRE-FILTER GENERALIZED TO LINKEDIN + NAUKRI**: LinkedIn's "your
 > profile matches N% / Top Applicant" detail-page signal and Naukri's narrow card
 > badge join Instahyre's badge via `boardMatchSkip` (allowlist instahyre/

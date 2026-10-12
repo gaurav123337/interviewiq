@@ -168,13 +168,34 @@ export function fitScore(
   opts?: { jobSeniority?: string; profileSeniority?: string; location?: string; preferredLocations?: string[] }
 ): number | null;
 
+export interface BoardMatchOpts {
+  /** Registry rules.boardMatch: true/"true" opts ANY board in; false opts a
+      builtin site out (always wins). Absent = builtin allowlist behavior. */
+  boardMatch?: boolean | string | null;
+  /** Force-off (the owner opt-out has to beat a stale job stamp). */
+  optOut?: boolean;
+}
+
 /** Permanent alias — boardMatchSkip is what runs (instahyre/linkedin/naukri
-    allowlist; LOW signal only). */
-export function instaSkip(job: { __boardMatch?: string | null; boardMatch?: string | null; __instaMatch?: string | null; instaMatch?: string | null } | null | undefined, siteKey: string): "skip" | null;
+    allowlist; LOW signal only; owner rules.boardMatch may opt any board in
+    or turn a builtin one off). */
+export function instaSkip(
+  job: { __boardMatch?: string | null; boardMatch?: string | null; __instaMatch?: string | null; instaMatch?: string | null } | null | undefined,
+  siteKey: string,
+  opts?: BoardMatchOpts
+): "skip" | null;
 
 /** The generalized pre-filter — "skip" only for a LOW signal on an
-    allowlisted site; null everywhere else (missing signal never rejects). */
-export function boardMatchSkip(job: { __boardMatch?: string | null; boardMatch?: string | null; __instaMatch?: string | null; instaMatch?: string | null } | null | undefined, siteKey: string): "skip" | null;
+    allowlisted (or owner-opted) site; null everywhere else (missing
+    signal never rejects). */
+export function boardMatchSkip(
+  job: { __boardMatch?: string | null; boardMatch?: string | null; __instaMatch?: string | null; instaMatch?: string | null } | null | undefined,
+  siteKey: string,
+  opts?: BoardMatchOpts
+): "skip" | null;
+
+/** rules.boardMatch is owner-authored — booleans and truthy strings count. */
+export function boardMatchOpt(raw: unknown): boolean;
 
 /** Extract the badge verdict ("high"|"mid"|"low"|null) from a card's text. */
 export function instaMatchFromCardText(text: string | null | undefined): "high" | "mid" | "low" | null;

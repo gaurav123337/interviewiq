@@ -38,7 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
-  matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip,
+  matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip, boardMatchOpt,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
@@ -1261,8 +1261,14 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
 
 /* ------------------------- job list collection ------------------------- */
 
-async function collectJobs(page, url, site, max) {
+async function collectJobs(page, url, site, max, { boardMatch } = {}) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
+  /* OWNER OPT-IN from the site's registry rules (dot boardMatchd: true/on/"true"):
+     generic boards get the same card-text capture + parse as instahyre;
+     the builtin sites keep their parsers; boardMatch:false removes
+     instahyre/linkedin/naukri from parsing entirely (the skip already won't
+     fire — no signal is captured). Fail-open: absent key = today's behavior. */
+  const optIn = boardMatchOpt(boardMatch);
   await gotoWithRetry(page, url);
   /* LinkedIn authwall: /jobs/view/<id>/ intermittently bounces to the
      signup wall (stale/guest sessions). Guest access DOES pass sometimes —
@@ -1429,11 +1435,20 @@ async function collectJobs(page, url, site, max) {
      High/Med/Low badge; naukri's parser is deliberately narrower (its
      cards are full of non-match % noise); linkedin cards carry no match
      signal at all (the real one lives on the detail page — openJob). */
-  if (site === "instahyre" || site === "naukri") {
-    const parse = site === "instahyre" ? instaMatchFromCardText : naukriMatchFromCardText;
+  /* PARSING MAP — builtin sites get their researched parser; an owner-opted
+     generic board gets the Instahyre badge reader (the broadest of the
+     three). boardMatch:false → no parsing at all, so no signal exists and
+     the skip can never fire for that site (fail-open by construction). */
+  const BOARD_MATCH_PARSERS = {
+    instahyre: instaMatchFromCardText,
+    naukri: naukriMatchFromCardText,
+    linkedin: null, // real signal lives on the DETAIL page (openJob), not cards
+  };
+  const siteHandler = BOARD_MATCH_PARSERS[site] ?? (optIn ? instaMatchFromCardText : null);
+  if (siteHandler) {
     for (const j of deduped) {
       const card = (j.__cardText ?? "") + "\n" + j.title + "\n" + (j.__ageText ?? "");
-      const badge = parse(card);
+      const badge = siteHandler(card);
       if (badge) j.__boardMatch = badge;
     }
   }
@@ -1470,7 +1485,7 @@ const largestFragment = (t) => String(t || "")
    judge nothing — detect it right after the JD capture and skip. */
 const CLOSED_POSTING_RE = /no longer accepting applications|not accepting applications|no longer accepting job applications/i;
 
-async function openJob(page, job) {
+async function openJob(page, job, { boardMatch } = {}) {
   await gotoWithRetry(page, job.url);
   await page.waitForTimeout(2500);
   /* same wall retry as collection: openJob's OWN navigation hits the wall
@@ -1582,7 +1597,7 @@ async function openJob(page, job) {
      look at it. Parsed FAIL-OPEN at the node boundary: no signal → null →
      the pre-filter never rejects; a REAL signal lands in __boardMatch so
      the gate's LOW-skip can use it like Instahyre's badge. */
-  if (/linkedin\.com/i.test(job.url || "")) {
+  if (/linkedin\.com/i.test(job.url || "") && boardMatchOpt(boardMatch ?? true)) {
     const badge = linkedinMatchFromDetailText(job.pageText);
     if (badge) job.__boardMatch = badge;
   }
@@ -2083,13 +2098,13 @@ async function runSingle(args, { existingCtx = null } = {}) {
       return;
     }
 
-    let jobs = await collectJobs(page, args.url, site, args.max);
+    let jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch });
     console.log(dim(`collected ${jobs.length} posting(s)`));
     if (!jobs.length) {
       /* LinkedIn wall flakiness: guest access alternates wall/pass between
          navigations — one more collect attempt before declaring defeat */
       await page.waitForTimeout(3000);
-      jobs = await collectJobs(page, args.url, site, args.max);
+      jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch });
       console.log(dim(`collected (retry) ${jobs.length} posting(s)`));
     }
     if (!jobs.length) {
@@ -2201,7 +2216,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
       const jw = setTimeout(() => { jwFired = true; console.log(yellow(`  ⏱ job timed out after ${JOB_BUDGET_MS / 60_000} min — skipping`)); try { page.close().catch(() => {}); } catch { /* already closed */ } }, JOB_BUDGET_MS);
       if (page.isClosed?.()) { try { page = await ctx.newPage(); } catch (e) { console.error(red(`  ✗ browser gone (${e.message.slice(0, 80)}) — ending site leg early`)); break; } } // watchdog closed it last job — fresh page; a DEAD context (window closed) must end the leg gracefully, not crash the run
       try {
-        await openJob(page, job);
+        await openJob(page, job, { boardMatch: rules.boardMatch });
         /* closed posting: LinkedIn banners "No longer accepting applications"
            — captured in the learning window's pageText. Skip BEFORE any AI
            spend, and remember locally so future runs never re-open it. */
@@ -2220,7 +2235,11 @@ async function runSingle(args, { existingCtx = null } = {}) {
          evidence: a LOW signal skips the gate stack before any AI token is
          spent — the budget spends on plausible postings, not obviously wrong
          ones. Could not parse a signal → null → normal gates (fail-open). */
-      const insta = instaSkip(job, site);
+      /* rules.boardMatch (owner-authored, opt where=false beats builtin): the
+         lib's gate reads it so the owner can turn the pre-filter OFF for a
+         builtin site or admit a brand-new board without a code change. */
+      const boardMatchOff = rules.boardMatch === false || String(rules.boardMatch ?? "").toLowerCase() === "false";
+      const insta = boardMatchOff ? null : instaSkip(job, site, { boardMatch: rules.boardMatch });
       if (insta === "skip") {
         recordResultBoth(report, job, "skipped", `${rules.label} match LOW — board ML and gates agree, skipped without evaluation`);
         console.log(dim(`  ⏭ skipped — ${rules.label} match LOW (their ML + our gates agree)`));

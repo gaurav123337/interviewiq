@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, summarizeSite, sessionStateOf, probationAutoActivateAt, discoveredStamp, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, setSiteRule, summarizeSite, sessionStateOf, probationAutoActivateAt, discoveredStamp, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -90,6 +90,30 @@ export default function JobSitesPanel() {
     setBusy(s.id);
     try {
       await setJobSiteStatus(s.id, status);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /* Board-match pre-filter toggle (registry rules.boardMatch): the engine
+     reads this each run — CURRENTLY the engine only parses badges on
+     instahyre/naukri cards + LinkedIn detail page, so the toggle ADMITS a
+     new board only if/when a parser exists for it; false turns the skip
+     off for a builtin site. Fail-open legacy: absent = builtin behavior. */
+  const boardMatchOf = (s: JobSite): boolean | null => {
+    const v = s.rules?.boardMatch;
+    return v === true ? true : v === false ? false : null;
+  };
+  const flipBoardMatch = async (s: JobSite) => {
+    setBusy(s.id);
+    try {
+      const cur = boardMatchOf(s);
+      /* cycle: null → true → false → null (absent restores builtin behavior) */
+      const next = cur === null ? true : cur === true ? false : null;
+      await setSiteRule(s.host, "boardMatch", next);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -191,6 +215,16 @@ export default function JobSitesPanel() {
               <span className="text-xs text-zinc-300">…</span>
             ) : (
               <>
+                {(() => {
+                  const bm = boardMatchOf(s);
+                  return (
+                    <button onClick={() => void flipBoardMatch(s)}
+                      title={`Board match pre-filter (rules.boardMatch): the engine skips LOW match signals before spending AI tokens. Now: ${bm === true ? "on" : bm === false ? "off" : "builtin default"}. Click to cycle on → off → default.`}
+                      className={`rounded px-2 py-1 text-xs font-medium ${bm === true ? "bg-emerald-600 text-white hover:bg-emerald-500" : bm === false ? "border border-zinc-700 text-zinc-300 hover:text-zinc-100" : "border border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}>
+                      🎯 {bm === true ? "match: on" : bm === false ? "match: off" : "match: default"}
+                    </button>
+                  );
+                })()}
                 <button onClick={() => void signIn(s)} title="Open the engine's sign-in window for this site — complete Google/OTP there once; the session persists for every future run"
                   className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-500">🔑 Sign in</button>
             {s.status === "pending" ? (

@@ -41,6 +41,20 @@ export async function setJobSiteStatus(id: string, status: JobSite["status"]): P
   if (error) throw error;
 }
 
+/* Owner-tuned engine rules, one whitelisted key per call (admin_set_site_rules
+   rejects anything outside the list — the rules column also carries
+   engine-learned selectors and probation state the UI must never clobber).
+   The engine reads rules.boardMatch each run: true opts any board's cards
+   into the match-badge pre-filter; false turns it off even for instahyre/
+   linkedin/naukri; absent = builtin behavior. */
+export async function setSiteRule(host: string, key: "boardMatch", value: boolean | null): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  /* null = remove the key (RPC deletes it) — the owner restoring builtin behavior */
+  const { error } = await client.rpc("admin_set_site_rules", { p_host: host, p_key: key, p_value: value });
+  if (error) throw error;
+}
+
 /* Probation (job-sites-probation.sql): pending sites auto-activate once they
    have waited this long, oldest first, capped per sweep — the engine's --all
    cycle runs the sweep and DMs every activation. A site can opt out via

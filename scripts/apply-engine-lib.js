@@ -1144,10 +1144,31 @@ export function naukriMatchFromCardText(text) {
     MID/HIGH proceed through the normal gates. Any other site, absent
     badge, or unparsable text → null: a MISSING signal must never reject
     a posting. Reads __boardMatch (current) and the older __instaMatch
-    (instahyre rows collected before the generalization) alike. */
+    (instahyre rows collected before the generalization) alike.
+
+    OWNER OPT-IN (registry rules.boardMatch): any OTHER board can be
+    opted in via its job_sites rules ("boardMatch": true — generic badge
+    parser) and any builtin site turned OFF via rules.boardMatch = false.
+    Truthy strings ("true", "on", "1" — a hand-typed JSONB value may
+    arrive as text) count as opt-in too. The opt-out always wins, so the
+    owner can disable the pre-filter for a builtin site without a code
+    change. Default (no rules key) keeps today's behavior for every site. */
 export const BOARD_MATCH_SITES = new Set(["instahyre", "linkedin", "naukri"]);
-export function boardMatchSkip(job, siteKey) {
-  if (!BOARD_MATCH_SITES.has(String(siteKey || "").toLowerCase())) return null;
+
+/** Registry rules.bordMatch is authored by a human — accept booleans and
+    the truthy strings a hand-edited JSONB value could arrive as. */
+export function boardMatchOpt(raw) {
+  if (raw === true) return true;
+  if (typeof raw === "string") return /^(true|on|yes|1)$/i.test(raw.trim());
+  return false;
+}
+
+export function boardMatchSkip(job, siteKey, opts = {}) {
+  const key = String(siteKey || "").toLowerCase();
+  /* the explicit owner opt-out wins over everything — even a builtin site */
+  if (opts.optOut === true || opts.boardMatch === false) return null;
+  /* owner opt-in admits any board; absent opts keeps the builtin allowlist */
+  if (!BOARD_MATCH_SITES.has(key) && !boardMatchOpt(opts.boardMatch)) return null;
   const raw = String(job?.__boardMatch ?? job?.boardMatch ?? job?.__instaMatch ?? job?.instaMatch ?? "").trim().toLowerCase();
   if (!raw) return null;
   if (/^\d{1,3}$/.test(raw)) {
@@ -1157,8 +1178,8 @@ export function boardMatchSkip(job, siteKey) {
   return /^(low|average|poor|weak)/.test(raw) ? "skip" : null;
 }
 
-export function instaSkip(job, siteKey) {
-  return boardMatchSkip(job, siteKey);
+export function instaSkip(job, siteKey, opts = {}) {
+  return boardMatchSkip(job, siteKey, opts);
 }
 
 /* Skill strikes: decay after 30 days — the owner's taste changes and a

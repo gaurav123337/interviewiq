@@ -43,6 +43,15 @@ cards carry "20-30% hike"-style promo percent that must never read as a
 match). Parsers: `instaMatchFromCardText` / `linkedinMatchFromDetailText` /
 `naukriMatchFromCardText` → `boardMatchSkip`.
 
+**Owner control (no code change):** the site's registry row carries
+`rules.boardMatch` — set **true** (🎯 match: on in the Job-sites panel) to
+opt ANY board into the pre-filter (its cards get the generic Instahyre-style
+badge reader), **false** (🎯 match: off) to turn the skip off even for a
+builtin site, or clear it (🎯 match: default) to restore builtin behavior.
+Applied live: the engine reads the row's rules every run — no restart, no
+re-deploy. Writes go through `admin_set_site_rules` (whitelisted keys only,
+SQL applied manually per the repo convention).
+
 **Fail-closed:** any *required* question the engine can't answer confidently
 (work authorization, certificates, unseen essays…) leaves the form open and
 marks the job **needs-review** in the report. A wrong submission is worse than
