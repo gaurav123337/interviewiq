@@ -67,15 +67,33 @@ returns boolean language sql security definer set search_path = public as $$
   select public.is_admin();
 $$;
 
+/* three-state session-vote columns (session-state.sql added them to live
+   projects): declared here too so this file stays runnable on its own
+   regardless of file order — the list RPC below selects them. */
+alter table public.job_sites
+  add column if not exists session_state text default 'unknown',
+  add column if not exists session_checked_at timestamptz,
+  add column if not exists session_expired_at timestamptz;
+
 /* list sites + last run summary for the admin UI. `security definer` means
    the RLS policies above do NOT apply to this function, so it carries the
    same explicit admin guard as the engine RPCs — without it, anyone holding
-   the publishable key could call it and read the registry. */
+   the publishable key could call it and read the registry.
+   Return type must stay the SUPERSET of every later file's version
+   (session-state.sql's three-state session strip, job-sites-probation.sql's
+   probation timeline): postgres cannot alter a table function in place, so
+   the narrow original here made re-running this file fail with 42P13
+   ("cannot change return type") — and replacing narrow on live would have
+   silently stripped the session-health and probation columns from the UI.
+   When widening this row type anywhere: drop-if-exists before create. */
+drop function if exists public.admin_list_job_sites();
 create or replace function public.admin_list_job_sites()
 returns table (
   id uuid, host text, label text, jobs_url text, status text, source text,
   rules jsonb, session_ok boolean, last_run_at timestamptz,
-  last_submitted int, last_collected int, last_ok boolean
+  last_submitted int, last_collected int, last_ok boolean,
+  session_state text, session_checked_at timestamptz, session_expired_at timestamptz,
+  discovered_at timestamptz, approved_at timestamptz
 ) language plpgsql security definer set search_path = public as $$
 begin
   if not (public.is_admin() or auth.jwt() ->> 'role' = 'service_role') then
@@ -86,7 +104,9 @@ begin
          s.rules, s.session_ok, s.last_run_at,
          coalesce((s.last_result ->> 'submitted')::int, 0),
          coalesce((s.last_result ->> 'collected')::int, 0),
-         coalesce((s.last_result ->> 'ok')::boolean, false)
+         coalesce((s.last_result ->> 'ok')::boolean, false),
+         s.session_state, s.session_checked_at, s.session_expired_at,
+         s.discovered_at, s.approved_at
   from public.job_sites s
   order by (s.status = 'active') desc, s.host;
 end $$;
