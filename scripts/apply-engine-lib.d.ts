@@ -107,6 +107,9 @@ export interface ApplyRunReport {
   sourceUrl: string; site: string; startedAt: number;
   results: ApplyRunResult[];
   counts: { submitted: number; needsReview: number; skipped: number; error: number };
+  /** board-match pre-filter savings (registry rules.boardMatch): one stamp
+      per saved AI judge call, keyed by board — set only when a LOW skip ran. */
+  judgeSaves?: Record<string, number>;
 }
 
 export function newReport(sourceUrl: string, site: string): ApplyRunReport;
@@ -196,6 +199,10 @@ export function boardMatchSkip(
 
 /** rules.boardMatch is owner-authored — booleans and truthy strings count. */
 export function boardMatchOpt(raw: unknown): boolean;
+
+/** Board-match pre-filter SAVINGS (rules.boardMatch): "🛡 N AI judge call(s)
+    saved by the board pre-filter — board N · board N" — "" when empty. */
+export function judgeSavesDigestLines(saves: Record<string, number> | null | undefined): string;
 
 /** rules.maxAgeDays (owner-authored per-board max posting age): only a sane
     non-negative integer counts; anything else → null (key not set). */

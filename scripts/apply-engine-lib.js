@@ -1291,8 +1291,31 @@ const ANSI = { green: (s) => `\x1b[32m${s}\x1b[0m`, yellow: (s) => `\x1b[33m${s}
 export function reportLine(report) {
   const c = report.counts;
   const line = `submitted ${c.submitted} · review ${c.needsReview} · skipped ${c.skipped} · errors ${c.error}`;
+  /* judge-call savings (registry boardMatch pre-filter) ride the same line
+     — only when the run actually saved something, so no existing pin or
+     routine output changes shape */
+  const saves = judgeSavesDigestLines(report.judgeSaves);
   if (c.submitted === 0 && c.needsReview === 0) return ANSI.red(`SUSPICIOUS RUN — ${line} (check selectors/login; see report)`);
-  return `${ANSI.green("DONE")} — ${line}`;
+  return `${ANSI.green("DONE")} — ${line}${saves ? ` — ${saves}` : ""}`;
+}
+
+/* ── judge-call savings (board-match pre-filter, owner-set rules) ─────────── */
+
+/** Each LOW board-match skip is an AI judge call that NEVER ran — the
+    pre-filter's whole point, now measured. The driver stamps
+    `report.judgeSaves = { board: n }` at the skip (board = the registry
+    host, falling back to the site key with no registry row); the daily
+    summarizer merges every run file's stamp across the day. Formatting is
+    pinned exactly like outcomeDigestLines; empty/absent → "" so the line
+    disappears on savings-free days instead of reporting a fake zero. */
+export function judgeSavesDigestLines(saves) {
+  const entries = Object.entries(saves ?? {})
+    .map(([board, n]) => [String(board), Number(n)])
+    .filter(([, n]) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (!entries.length) return "";
+  const total = entries.reduce((sum, [, n]) => sum + n, 0);
+  return `🛡 ${total} AI judge call${total === 1 ? "" : "s"} saved by the board pre-filter — ${entries.map(([b, n]) => `${b} ${n}`).join(" · ")}`;
 }
 
 /** Markdown report body (written next to the JSON report). */

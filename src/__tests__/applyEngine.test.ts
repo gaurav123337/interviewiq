@@ -18,7 +18,7 @@ import {
   spendCount, budgetGate, isQuietHours, jobPassesFilters, parseSalary, seniorityOf,
   extractJdSkills, detectSubmissionSuccess,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
-  instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES,
+  instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES, judgeSavesDigestLines,
   maxAgeDaysOf, olderThanMaxAge,
 } from "../../scripts/apply-engine-lib.js";
 
@@ -860,6 +860,24 @@ describe("employer-behavior learning — outcome classification + judge prior", 
     // a band under the evidence threshold never wins the learning line
     const underThreshold = outcomeDigestLines(rows, [{ fit_band: "70-84", applications: 3, responded: 3, response_rate: 1 }]);
     expect(underThreshold).toContain("needs 5+ per band");
+  });
+
+  it("prices the pre-filter: judgeSavesDigestLines counts saved judge calls per board, silent when zero", () => {
+    // a savings-free day disappears from the digest — a fake "0 saved" would be noise
+    expect(judgeSavesDigestLines(null)).toBe("");
+    expect(judgeSavesDigestLines(undefined)).toBe("");
+    expect(judgeSavesDigestLines({})).toBe("");
+    expect(judgeSavesDigestLines({ instahyre: 0, naukri: -2 })).toBe(""); // zero/junk are not savings
+    const one = judgeSavesDigestLines({ instahyre: 1 });
+    expect(one).toBe("🛡 1 AI judge call saved by the board pre-filter — instahyre 1");
+    const many = judgeSavesDigestLines({ naukri: 1, instahyre: 2 }); // biggest saver first, tie = alphabetical
+    expect(many.startsWith("🛡 3 AI judge calls saved")).toBe(true);
+    expect(many.endsWith("— instahyre 2 · naukri 1")).toBe(true);
+  });
+
+  it("reportLine shows per-run savings only when the run actually saved", () => {
+    expect(reportLine({ ...newReport("https://x/jobs", "instahyre"), counts: { submitted: 1, needsReview: 0, skipped: 3, error: 0 }, judgeSaves: { instahyre: 2 } })).toContain("🛡 2 AI judge calls saved");
+    expect(reportLine(newReport("https://x/jobs", "instahyre"))).not.toContain("judge call"); // no stamps → unchanged shape
   });
 
   it("resolves the registry row for a run URL: full jobs_url first, bare host second", () => {

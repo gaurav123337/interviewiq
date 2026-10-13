@@ -108,6 +108,13 @@ Every run writes `freebuff-apply-reports/run-<timestamp>.json` + `.md`
 zero submits and zero reviews prints a **SUSPICIOUS RUN** banner (selector or
 login drift — same spirit as the scraper's alarm).
 
+**Judge-call savings:** whenever the board-match pre-filter (🎯 / owner-set
+`rules.boardMatch`) skips a LOW posting, the run stamps one saved AI judge
+call per board (`judgeSaves` in the report). `reportLine` shows the per-run
+amount after its DONE line, and the daily summary (--status / the watcher)
+adds a `🛡 N AI judge calls saved — <board> n · <board> n` line totalling
+today's runs — the pre-filter's token payoff, measured per board, per day.
+
 ## Learning from employers (--outcomes)
 
 The engine already learns from **you** (review verdicts → judge exemplars).

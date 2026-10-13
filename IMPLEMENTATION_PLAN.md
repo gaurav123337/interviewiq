@@ -1,5 +1,16 @@
 # Four Engine Capability Improvements
 
+> **2026-10-13 — PRE-FILTER PAYOFF MEASURED (judge-saves accounting):** every LOW
+> board-match skip stamps one saved AI judge call per board onto the run
+> (`report.judgeSaves` — the skill gate stack + judge never ran for that
+> posting, which is the pre-filter's whole point). `reportLine` appends the
+> per-run amount after its DONE line (only when non-zero, so no pin or
+> routine output changes shape); the daily summary (--status / watcher —
+> built from today's run files by `summarizeDayFromReports`) totals them
+> across runs: `🛡 N AI judge calls saved by the board pre-filter — instahyre
+> 2 · naukri 1`. Lib: `judgeSavesDigestLines` — empty/absent → "" so a
+> savings-free day vanishes instead of reporting a fake 0. 6 new pins.
+>
 > **2026-10-13 — PER-BOARD MAX JOB AGE (registry rules.maxAgeDays):** mirrors the
 > feed's date filter at the engine's collect door. The ⏱ chip (next to the 🎯
 > chip) cycles any → 7d → 14d → 30d → any per board; the engine reads the

@@ -38,7 +38,7 @@ import {
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS, maxAgeDaysOf, olderThanMaxAge,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
-  matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip, boardMatchOpt,
+  matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip, boardMatchOpt, judgeSavesDigestLines,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
@@ -786,13 +786,16 @@ async function summarizeDayFromReports() {
     files = readdirSync(REPORTS_DIR).filter((f) => /^run-.*\.json$/.test(f) && f.includes(today)).sort();
   } catch { /* no reports dir yet */ }
   const totals = { submitted: 0, needsReview: 0, skipped: 0, error: 0 };
+  const saves = {};
   for (const f of files.slice(-12)) {
     try {
       const r = JSON.parse(readFileSync(path.join(REPORTS_DIR, f), "utf8"));
       for (const x of r.results ?? []) totals[x.result] = (totals[x.result] ?? 0) + 1;
+      for (const [b, n] of Object.entries(r.judgeSaves ?? {})) if (Number(n) > 0) saves[b] = (saves[b] ?? 0) + Number(n);
     } catch { /* skip unreadable report */ }
   }
-  return `Freebuff apply · ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC — ✅ ${totals.submitted} submitted · ⏸ ${totals.needsReview} review · ⏭ ${totals.skipped} skipped · ✗ ${totals.error} errors (${files.length} run${files.length === 1 ? "" : "s"} today)`;
+  const savesLine = judgeSavesDigestLines(saves);
+  return `Freebuff apply · ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC — ✅ ${totals.submitted} submitted · ⏸ ${totals.needsReview} review · ⏭ ${totals.skipped} skipped · ✗ ${totals.error} errors (${files.length} run${files.length === 1 ? "" : "s"} today)${savesLine ? `\n  ${savesLine}` : ""}`;
 }
 
 /* --- selector auto-learning: deduce what worked on this site and persist it ---
@@ -2254,6 +2257,12 @@ async function runSingle(args, { existingCtx = null } = {}) {
       const boardMatchOff = rules.boardMatch === false || String(rules.boardMatch ?? "").toLowerCase() === "false";
       const insta = boardMatchOff ? null : instaSkip(job, site, { boardMatch: rules.boardMatch });
       if (insta === "skip") {
+        /* savings accounting: this skip means the skill gate stack + the AI
+           judge NEVER ran — stamp one saved call per board on the report so
+           the daily digest can price the pre-filter (reportLine shows the
+           per-run amount; summarizeDayFromReports totals today across runs). */
+        const saveKey = RUN_HOST || site;
+        report.judgeSaves = { ...(report.judgeSaves ?? {}), [saveKey]: ((report.judgeSaves ?? {})[saveKey] ?? 0) + 1 };
         recordResultBoth(report, job, "skipped", `${rules.label} match LOW — board ML and gates agree, skipped without evaluation`);
         console.log(dim(`  ⏭ skipped — ${rules.label} match LOW (their ML + our gates agree)`));
         continue;
