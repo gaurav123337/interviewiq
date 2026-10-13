@@ -371,7 +371,7 @@ describe("job feed filters", () => {
   const a = mk({ id: "a", salary: { min: 100000, max: 120000, currency: "USD" }, companySize: "large", remote: true });
   const b = mk({ id: "b", salary: { min: 20000, max: 30000, currency: "INR" }, companySize: "small", remote: false });
 
-  const base = { query: "", remote: null as boolean | null, companySize: null as string | null, salaryMin: null as number | null, salaryMax: null as number | null, currency: null as string | null, source: null as string | null };
+  const base = { query: "", remote: null as boolean | null, companySize: null as string | null, salaryMin: null as number | null, salaryMax: null as number | null, currency: null as string | null, source: null as string | null, maxAgeDays: null as number | null };
 
   it("filters by remote, size, and currency", () => {
     expect(filterJobs([a, b], { ...base, remote: true }).map(j => j.id)).toEqual(["a"]);
@@ -386,6 +386,30 @@ describe("job feed filters", () => {
     const noSal = mk({ id: "c", salary: null });
     const r = filterJobs([a, b, noSal], { ...base, salaryMin: 90000 });
     expect(r.map(j => j.id)).toEqual(["a"]);
+  });
+
+  it("age filter keeps only postings inside the window; unknown ages are hidden while it is active", () => {
+    /* timestamps built relative to Date.now() so the pins don't rot — the
+       filter compares against now (same convention as salaryLabel, no clock
+       injection; deterministic because both sides move together). */
+    const day = 86_400_000, now = Date.now();
+    const fresh = mk({ id: "fresh", postedAt: new Date(now - 2 * day).toISOString() });
+    const stale = mk({ id: "stale", postedAt: new Date(now - 21 * day).toISOString() });
+    const undated = mk({ id: "undated", postedAt: null });
+    const junk = mk({ id: "junk", postedAt: "posted recently" }); /* crawler text, not a date */
+
+    /* active: only provably-fresh postings survive — a window the user
+       explicitly sets is a strict ask, unlike the engine's fail-open rule */
+    expect(filterJobs([fresh, stale, undated, junk], { ...base, maxAgeDays: 7 }).map(j => j.id)).toEqual(["fresh"]);
+    /* 1s INSIDE the window: filterJobs reads Date.now() live, so the exact
+       razor edge (age == maxAgeDays) races the test's own clock tick and
+       cannot be pinned deterministically (this exact flake fired in the
+       pre-push suite once). What matters is the windowing, which 1s shows
+       just as honestly. */
+    const edge = mk({ id: "edge", postedAt: new Date(now - 7 * day + 1000).toISOString() });
+    expect(filterJobs([edge], { ...base, maxAgeDays: 7 }).map(j => j.id)).toEqual(["edge"]);
+    /* inactive: maxAgeDays null = no date filtering at all */
+    expect(filterJobs([fresh, stale, undated, junk], base)).toHaveLength(4);
   });
 
   it("formats a salary label per currency", () => {

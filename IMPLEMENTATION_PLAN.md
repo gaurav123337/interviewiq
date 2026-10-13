@@ -1,5 +1,16 @@
 # Four Engine Capability Improvements
 
+> **2026-10-13 — FEED DATE FILTER (owner request):** the jobs feed gains a
+> ⏱ age filter — `JobFilters.maxAgeDays` (null = any age) + `filterJobs`
+> windowing on `postedAt`, exposed as an "Any age / 24h / 3/7/14/30 days"
+> select in FeedFilters. STRICT by design while active: postings without a
+> parsable `postedAt` are hidden, because a user who asks "last 7 days"
+> wants fresh-only (unlike the engine board-match rule, where a missing
+> signal must never reject — there the cost of a wrong skip is a lost
+> application, here it's just an unfiltered view). Pins in
+> applyKitPhase4.test.ts; fixture literals updated in extracted-components
+> + currency tests.
+>
 > **2026-10-11 — ALL FOUR ITEMS NOW WIRED** (commit 08944497+): extractJdSkills is
 > jdSkillMatch's single JD scanner; detectSubmissionSuccess is the pinned
 > success detector at both submit doors (JS-click + auto-submit, page+frame);

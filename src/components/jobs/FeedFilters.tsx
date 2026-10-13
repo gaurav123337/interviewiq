@@ -67,7 +67,20 @@ export const FeedFilters = memo(function FeedFilters({
           onChange={e => setFilters(f => ({ ...f, salaryMin: e.target.value ? Number(e.target.value) : null }))}
           title={`Minimum annual salary (in ${displayCurrency}, converted)`}
         />
-        {(filters.query || filters.remote !== null || filters.companySize || filters.currency || filters.salaryMin !== null || filters.salaryMax !== null || filters.source) && (
+        <select
+          className="inp w-auto cursor-pointer"
+          value={filters.maxAgeDays ?? ""}
+          onChange={e => setFilters(f => ({ ...f, maxAgeDays: e.target.value ? Number(e.target.value) : null }))}
+          title="Only postings published within the window — jobs with an unknown posting date are hidden while a window is set"
+        >
+          <option value="">⏱ Any age</option>
+          <option value="1">⏱ Last 24 hours</option>
+          <option value="3">⏱ Last 3 days</option>
+          <option value="7">⏱ Last 7 days</option>
+          <option value="14">⏱ Last 14 days</option>
+          <option value="30">⏱ Last 30 days</option>
+        </select>
+        {(filters.query || filters.remote !== null || filters.companySize || filters.currency || filters.salaryMin !== null || filters.salaryMax !== null || filters.source || filters.maxAgeDays !== null) && (
           <button className={btnGhost + btnSm} onClick={() => setFilters(EMPTY_FILTERS)}>✕ Clear</button>
         )}
       </div>

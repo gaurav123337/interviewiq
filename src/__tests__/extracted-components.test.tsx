@@ -8,7 +8,7 @@ import type { JobPosting } from "../types";
 /* ------------------------------------------------------------------ */
 
 vi.mock("../services/jobs", () => ({
-  EMPTY_FILTERS: { query: "", remote: null, companySize: null, currency: "", salaryMin: null, salaryMax: null, source: null },
+  EMPTY_FILTERS: { query: "", remote: null, companySize: null, currency: "", salaryMin: null, salaryMax: null, source: null, maxAgeDays: null },
   salaryLabel: vi.fn().mockReturnValue(null),
   VERDICT_META: {
     strong: { label: "Strong Match", tone: "ok" },
@@ -53,7 +53,7 @@ import { FeedFilters } from "../components/jobs/FeedFilters";
 
 describe("FeedFilters", () => {
   const defaultProps = {
-    filters: { query: "", remote: null, companySize: null, currency: "", salaryMin: null, salaryMax: null, source: null },
+    filters: { query: "", remote: null, companySize: null, currency: "", salaryMin: null, salaryMax: null, source: null, maxAgeDays: null },
     setFilters: vi.fn(),
     displayCurrency: "USD",
     setDisplayCurrency: vi.fn(),

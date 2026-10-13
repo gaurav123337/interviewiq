@@ -180,6 +180,12 @@ export interface JobFilters {
   currency: string | null;
   /** Feed source (e.g. "greenhouse", "imported:naukri") or null = all. */
   source: string | null;
+  /** Only postings published within the last N days; null = any age.
+      STRICT on unknown age (deliberate, unlike the engine's fail-open rule):
+      a user who asks for "last 7 days" wants a fresh-only list, so postings
+      without a parsable postedAt are hidden while this is active — the UI
+      select's tooltip says so. Set null to see everything again. */
+  maxAgeDays: number | null;
 }
 
 export const EMPTY_FILTERS: JobFilters = {
@@ -189,13 +195,21 @@ export const EMPTY_FILTERS: JobFilters = {
   salaryMin: null,
   salaryMax: null,
   currency: null,
-  source: null
+  source: null,
+  maxAgeDays: null
 };
 
 /** Pure filter over the feed — testable, keeps the view dumb. */
 export function filterJobs(jobs: JobPosting[], f: JobFilters): JobPosting[] {
   const q = f.query.trim().toLowerCase();
+  const maxAgeMs = f.maxAgeDays !== null ? f.maxAgeDays * 86_400_000 : null;
   return jobs.filter(j => {
+    if (maxAgeMs !== null) {
+      if (!j.postedAt) return false;
+      const ts = Date.parse(j.postedAt);
+      if (Number.isNaN(ts)) return false;
+      if (Date.now() - ts > maxAgeMs) return false;
+    }
     if (f.source && j.source !== f.source) return false;
     if (f.remote === true && !j.remote) return false;
     if (f.remote === false && j.remote) return false;

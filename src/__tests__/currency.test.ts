@@ -97,7 +97,7 @@ describe("filterJobs — salary min/max in the display currency", () => {
        behavior would have silently dropped it from an INR filter */
     const out = filterJobs([usd, inr], {
       query: "", remote: null, companySize: null,
-      salaryMin: 0, salaryMax: 15000000, currency: "INR", source: null
+      salaryMin: 0, salaryMax: 15000000, currency: "INR", source: null, maxAgeDays: null
     });
     expect(out.map(j => j.id)).toEqual(["usd", "inr"]);
   });
@@ -105,7 +105,7 @@ describe("filterJobs — salary min/max in the display currency", () => {
   it("drops postings below the min in the chosen currency", () => {
     const out = filterJobs([usd, inr], {
       query: "", remote: null, companySize: null,
-      salaryMin: 5000000, salaryMax: null, currency: "INR", source: null
+      salaryMin: 5000000, salaryMax: null, currency: "INR", source: null, maxAgeDays: null
     });
     expect(out.map(j => j.id)).toEqual(["usd"]);
   });
@@ -114,7 +114,7 @@ describe("filterJobs — salary min/max in the display currency", () => {
     /* raw comparison against each posting's own currency when none chosen */
     const out = filterJobs([usd, inr], {
       query: "", remote: null, companySize: null,
-      salaryMin: 100000, salaryMax: null, currency: null, source: null
+      salaryMin: 100000, salaryMax: null, currency: null, source: null, maxAgeDays: null
     });
     expect(out.map(j => j.id)).toEqual(["usd", "inr"]);
   });
