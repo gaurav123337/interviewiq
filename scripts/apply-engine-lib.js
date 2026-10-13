@@ -1155,6 +1155,35 @@ export function naukriMatchFromCardText(text) {
     change. Default (no rules key) keeps today's behavior for every site. */
 export const BOARD_MATCH_SITES = new Set(["instahyre", "linkedin", "naukri"]);
 
+/* ── per-board max job age (registry rules.maxAgeDays) ─────────────────
+   Mirrors the feed's maxAgeDays filter at the ENGINE's collect door: an
+   owner-set cap drops stale postings before they consume the --max collect
+   budget or an AI judge call. STRICT about unknown age — inverted from the
+   feed filter, deliberately: a wrong hide in the feed costs nothing, a
+   wrong drop here silently removes a possibly-fresh posting from a board
+   that simply formats ages differently — the doctrinal "a MISSING signal
+   must never reject a posting" applies. Parsed stamps (parsePostedAge →
+   __ageH, set by sortByFreshness) are the ONLY trusted source. */
+
+/** rules.maxAgeDays authored by a human: accept only a sane non-negative
+    INTEGER number. Strings/booleans/fractions/negatives are rejected as
+    ambiguous rather than coerced (hand-edited JSONB values have arrived as
+    text before — boardMatch pins the same habit) → null = not set, which
+    keeps every existing row unchanged (fail-open). */
+export function maxAgeDaysOf(raw) {
+  if (typeof raw !== "number" || !isFinite(raw) || raw < 0 || Math.floor(raw) !== raw) return null;
+  return raw;
+}
+
+/** Age vs cap, in the engine's age unit (HOURS — lib never parses postedAt
+    ISO strings, only board card stamps). Known age >= cap → stale;
+    unknown age (null/NaN/negative) or absent cap → not stale (fail-open). */
+export function olderThanMaxAge(ageH, maxAgeDays) {
+  const max = maxAgeDaysOf(maxAgeDays);
+  if (max == null || ageH == null || !isFinite(ageH) || ageH < 0) return false;
+  return ageH >= max * 24;
+}
+
 /** Registry rules.bordMatch is authored by a human — accept booleans and
     the truthy strings a hand-edited JSONB value could arrive as. */
 export function boardMatchOpt(raw) {

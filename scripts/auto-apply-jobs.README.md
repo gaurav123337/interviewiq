@@ -52,6 +52,14 @@ Applied live: the engine reads the row's rules every run — no restart, no
 re-deploy. Writes go through `admin_set_site_rules` (whitelisted keys only,
 SQL applied manually per the repo convention).
 
+**Per-board max job age:** registry `rules.maxAgeDays` (⏱ chip next to the
+🎯 chip — cycle any → 7d → 14d → 30d → any). Postings older than the cap
+are dropped at COLLECT time, before they consume the `--max` budget or an
+AI judge call (`maxAgeDaysOf` + `olderThanMaxAge` in the lib, strict on a
+known age, ≥ cap). Unlike the feed's age filter, postings with an
+UNKNOWN age are always collected — a missing stamp must never reject.
+Restore "any age" by clearing the chip (NULL removes the key).
+
 **Fail-closed:** any *required* question the engine can't answer confidently
 (work authorization, certificates, unseen essays…) leaves the form open and
 marks the job **needs-review** in the report. A wrong submission is worse than

@@ -1,5 +1,18 @@
 # Four Engine Capability Improvements
 
+> **2026-10-13 — PER-BOARD MAX JOB AGE (registry rules.maxAgeDays):** mirrors the
+> feed's date filter at the engine's collect door. The ⏱ chip (next to the 🎯
+> chip) cycles any → 7d → 14d → 30d → any per board; the engine reads the
+> row each run, `collectJobs` drops stale postings AFTER the freshness sort
+> (before they consume the --max budget or an AI judge call), counting the
+> drops honestly. Lib: `maxAgeDaysOf` (only a sane non-negative integer —
+> same authorship rule as boardMatchOpt) + `olderThanMaxAge` (hours; strict
+> at ≥ cap, but UNKNOWN age always stays — a missing stamp never rejects,
+> inverted from the feed filter by doctrine: a wrong drop here loses an
+> application). SQL: maxAgeDays joins admin_set_site_rules's whitelist with
+> an integer DB guard matching the lib exactly (re-run of the file is
+> idempotent; only this function's body changes, no 42P13 risk). 9 new pins.
+>
 > **2026-10-13 — FEED DATE FILTER (owner request):** the jobs feed gains a
 > ⏱ age filter — `JobFilters.maxAgeDays` (null = any age) + `filterJobs`
 > windowing on `postedAt`, exposed as an "Any age / 24h / 3/7/14/30 days"

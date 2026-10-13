@@ -19,6 +19,7 @@ import {
   extractJdSkills, detectSubmissionSuccess,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
   instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES,
+  maxAgeDaysOf, olderThanMaxAge,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -930,25 +931,25 @@ describe("Phase 0 — budgetGate (the cross-run ceiling)", () => {
     expect(DEFAULT_DAILY_CAP).toBe(20);
     expect(DEFAULT_WEEKLY_CAP).toBe(80);
   });
-
+
   it("passes under the cap", () => {
     expect(budgetGate({ day: 3, week: 10 }, { dailyCap: 20, weeklyCap: 80 }).ok).toBe(true);
     expect(budgetGate({ day: 3, week: 10 }, {}).verdict).toBe("ok");
   });
-
+
   it("stops at the daily cap with an owner-readable reason", () => {
     const g = budgetGate({ day: 20, week: 30 }, { dailyCap: 20, weeklyCap: 80 });
     expect(g.ok).toBe(false);
     expect(g.verdict).toBe("budget_capped");
     expect(g.reason).toContain("20");
   });
-
+
   it("stops at the weekly cap even mid-day", () => {
     const g = budgetGate({ day: 5, week: 80 }, { dailyCap: 20, weeklyCap: 80 });
     expect(g.verdict).toBe("budget_capped");
     expect(g.reason).toContain("weekly");
   });
-
+
   it("null caps mean no cap (owners who never set policy keep today's behavior)", () => {
     expect(budgetGate({ day: 999, week: 9999 }, { dailyCap: null, weeklyCap: null }).ok).toBe(true);
   });
@@ -960,12 +961,12 @@ describe("Phase 0 — isQuietHours (submits pause, collection continues)", () =>
     expect(isQuietHours(new Date("2026-10-07T03:00:00"), "22:00", "06:00")).toBe(true);
     expect(isQuietHours(new Date("2026-10-07T12:00:00"), "22:00", "06:00")).toBe(false);
   });
-
+
   it("handles a same-day window", () => {
     expect(isQuietHours(new Date("2026-10-07T13:00:00"), "12:00", "14:00")).toBe(true);
     expect(isQuietHours(new Date("2026-10-07T15:00:00"), "12:00", "14:00")).toBe(false);
   });
-
+
   it("never false-positives: unset window, junk time, zero-length", () => {
     expect(isQuietHours(new Date(), null, null)).toBe(false);
     expect(isQuietHours(new Date(), "", "")).toBe(false);
@@ -982,19 +983,19 @@ describe("Phase 0 — money-rule job filters (checked BEFORE the AI judge)", () 
     expect(parseSalary("")).toBeNull();
     expect(parseSalary("competitive")).toBeNull();
   });
-
+
   it("salary floor below → filtered; unparseable salary → job survives (never auto-reject)", () => {
     const job = { title: "Frontend Engineer", company: "Acme", salaryText: "10-14 LPA" };
     expect(jobPassesFilters(job, { salaryMin: 1500000 }).pass).toBe("filtered");
     expect(jobPassesFilters({ ...job, salaryText: "market standard" }, { salaryMin: 1500000 }).pass).toBe("pass");
     expect(jobPassesFilters({ ...job, salaryText: "18-24 LPA" }, { salaryMin: 1500000 }).pass).toBe("pass");
   });
-
+
   it("excludes companies by brand substring", () => {
     expect(jobPassesFilters({ title: "Dev", company: "Tata Consultancy Services Ltd" }, { excludeCompanies: ["tata consultancy"] }).reason).toContain("excluded");
     expect(jobPassesFilters({ title: "Dev", company: "Acme Labs" }, { excludeCompanies: ["tata consultancy"] }).pass).toBe("pass");
   });
-
+
   it("seniority band via the ladder", () => {
     expect(SENIORITY_LADDER.indexOf("senior")).toBeGreaterThan(SENIORITY_LADDER.indexOf("junior"));
     expect(seniorityOf("Senior Frontend Engineer")).toBe("senior");
@@ -1002,7 +1003,7 @@ describe("Phase 0 — money-rule job filters (checked BEFORE the AI judge)", () 
     expect(jobPassesFilters({ title: "Junior React Developer", company: "A" }, { seniorityMin: "mid" }).pass).toBe("filtered");
     expect(jobPassesFilters({ title: "Senior Frontend Engineer", company: "A" }, { seniorityMin: "mid" }).pass).toBe("pass");
   });
-
+
   it("empty prefs are a no-op (default behavior unchanged)", () => {
     expect(jobPassesFilters({ title: "anything", company: "anyone" }, {}).pass).toBe("pass");
     expect(jobPassesFilters(null, null).pass).toBe("pass");
@@ -1013,17 +1014,17 @@ describe("Phase 0 — money-rule job filters (checked BEFORE the AI judge)", () 
 
 describe("Phase 3 — boardSuspensionRule (dead boards go back on probation)", () => {
   const rows = (apps: number, viewed: number, responded: number) => [{ site_host: "x.com", applications: apps, viewed, responded }];
-
+
   it("suspends: 10+ applications, ZERO views — postings never even read", () => {
     const [d] = boardSuspensionRule(rows(15, 0, 0), { minApplications: 10 });
     expect(d.verdict).toBe("suspend");
     expect(d.reason).toContain("15 applications");
   });
-
+
   it("keeps: not enough evidence yet (under the threshold)", () => {
     expect(boardSuspensionRule(rows(5, 0, 0), { minApplications: 10 })[0].verdict).toBe("keep");
   });
-
+
   it("watches: some views but under the rate floor", () => {
     // 1/30 ≈ 3.3% — clearly below the 5% floor. (1/20 sits exactly AT the
     // floor and correctly keeps: the boundary belongs to the board.)
@@ -1032,16 +1033,16 @@ describe("Phase 3 — boardSuspensionRule (dead boards go back on probation)", (
     // the exact-floor boundary keeps
     expect(boardSuspensionRule(rows(20, 1, 0), { minApplications: 10, minViewRate: 0.05 })[0].verdict).toBe("keep");
   });
-
+
   it("keeps: converting fine", () => {
     expect(boardSuspensionRule(rows(20, 12, 3), { minApplications: 10 })[0].verdict).toBe("keep");
   });
-
+
   it("null/empty rows are a no-op", () => {
     expect(boardSuspensionRule(null)).toEqual([]);
     expect(boardSuspensionRule([])).toEqual([]);
   });
-
+
   it("digest lines are honest when empty and name hosts when not", () => {
     expect(suspensionDigestLines([])).toBe("");
     expect(suspensionDigestLines(null)).toBe("");
@@ -1148,6 +1149,35 @@ describe("#164 wiring — instaMatch pre-filter (board ML as free evidence)", ()
     expect(naukriMatchFromCardText("20-30% salary hike · Acme · 3.6\n203 Jobs · Actively hiring")).toBeNull(); // promo %, not a match
     expect(naukriMatchFromCardText("java developer · 5 days ago· Be an early applicant · Save")).toBeNull();
     expect(naukriMatchFromCardText("")).toBeNull();
+  });
+});
+
+describe("board max-age — rules.maxAgeDays (per-board stale filter at collect)", () => {
+  it("maxAgeDaysOf accepts only a sane non-negative integer; everything else is 'not set'", () => {
+    expect(maxAgeDaysOf(7)).toBe(7);
+    expect(maxAgeDaysOf(0)).toBe(0); // 0 = drop everything with a known age
+    // same authorship rule as boardMatchOpt: hand-edited JSONB values arrive
+    // as text/booleans, and coercing them silently would invent engine policy
+    expect(maxAgeDaysOf("14")).toBeNull();
+    expect(maxAgeDaysOf(true)).toBeNull();
+    expect(maxAgeDaysOf(6.5)).toBeNull();
+    expect(maxAgeDaysOf(-1)).toBeNull();
+    expect(maxAgeDaysOf(undefined)).toBeNull();
+  });
+
+  it("olderThanMaxAge is strict on KNOWN age, fail-open on UNKNOWN age or absent cap", () => {
+    const day = 24; // the unit is HOURS — parsePostedAge's output, not ISO dates
+    expect(olderThanMaxAge(7 * day + 1, 7)).toBe(true);  // just past the cap → stale
+    expect(olderThanMaxAge(7 * day, 7)).toBe(true);      // exactly at the cap → stale (>=)
+    expect(olderThanMaxAge(14 * day, 7)).toBe(true);
+    expect(olderThanMaxAge(6 * day + 23, 7)).toBe(false); // inside the window
+    expect(olderThanMaxAge(1, 7)).toBe(false);
+    // the doctrine holds HERE even though the feed hides unknowns: a wrong
+    // hide in the feed costs nothing, a wrong drop here loses an application
+    expect(olderThanMaxAge(null, 7)).toBe(false);       // no stamp → keep
+    expect(olderThanMaxAge(30 * day, undefined)).toBe(false); // no cap set
+    expect(olderThanMaxAge(30 * day, "14")).toBe(false); // garbage cap never filters
+    expect(olderThanMaxAge(NaN, 7)).toBe(false);        // parsePostedAge returned nothing usable
   });
 });
 

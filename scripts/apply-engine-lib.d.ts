@@ -197,6 +197,14 @@ export function boardMatchSkip(
 /** rules.boardMatch is owner-authored — booleans and truthy strings count. */
 export function boardMatchOpt(raw: unknown): boolean;
 
+/** rules.maxAgeDays (owner-authored per-board max posting age): only a sane
+    non-negative integer counts; anything else → null (key not set). */
+export function maxAgeDaysOf(raw: unknown): number | null;
+
+/** Known age (hours) >= cap → stale; unknown age or absent cap → false
+    (fail-open: the engine never rejects on a missing signal). */
+export function olderThanMaxAge(ageH: number | null | undefined, maxAgeDays: unknown): boolean;
+
 /** Extract the badge verdict ("high"|"mid"|"low"|null) from a card's text. */
 export function instaMatchFromCardText(text: string | null | undefined): "high" | "mid" | "low" | null;
 

@@ -122,6 +122,31 @@ export default function JobSitesPanel() {
     }
   };
 
+  /* Per-board max posting age (registry rules.maxAgeDays): the engine drops
+     older postings at collect time, before they consume the --max budget or
+     an AI judge call. Cycle null → 7 → 14 → 30 → null (absent = any age).
+     UNKNOWN-age rows are never dropped (fail-open, like boardMatch) — the
+     tooltip says so because the feed's age filter hides them (strict) and
+     the two must not be confused. */
+  const AGE_CYCLE = [null, 7, 14, 30] as const;
+  const boardAgeOf = (s: JobSite): number | null => {
+    const v: unknown = s.rules?.maxAgeDays;
+    return typeof v === "number" && Number.isFinite(v) && v >= 0 && Number.isInteger(v) ? v : null;
+  };
+  const flipBoardAge = async (s: JobSite) => {
+    setBusy(s.id);
+    try {
+      const i = AGE_CYCLE.findIndex(v => v === boardAgeOf(s));
+      const next = AGE_CYCLE[(i + 1) % AGE_CYCLE.length];
+      await setSiteRule(s.host, "maxAgeDays", next);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const addUrl = async () => {
     if (!/^https?:\/\//.test(url.trim())) { setUrlNote("Paste a full URL starting with https://"); return; }
     setBusy("url");
@@ -217,12 +242,20 @@ export default function JobSitesPanel() {
               <>
                 {(() => {
                   const bm = boardMatchOf(s);
+                  const age = boardAgeOf(s);
                   return (
-                    <button onClick={() => void flipBoardMatch(s)}
-                      title={`Board match pre-filter (rules.boardMatch): the engine skips LOW match signals before spending AI tokens. Now: ${bm === true ? "on" : bm === false ? "off" : "builtin default"}. Click to cycle on → off → default.`}
-                      className={`rounded px-2 py-1 text-xs font-medium ${bm === true ? "bg-emerald-600 text-white hover:bg-emerald-500" : bm === false ? "border border-zinc-700 text-zinc-300 hover:text-zinc-100" : "border border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}>
-                      🎯 {bm === true ? "match: on" : bm === false ? "match: off" : "match: default"}
-                    </button>
+                    <>
+                      <button onClick={() => void flipBoardMatch(s)}
+                        title={`Board match pre-filter (rules.boardMatch): the engine skips LOW match signals before spending AI tokens. Now: ${bm === true ? "on" : bm === false ? "off" : "builtin default"}. Click to cycle on → off → default.`}
+                        className={`rounded px-2 py-1 text-xs font-medium ${bm === true ? "bg-emerald-600 text-white hover:bg-emerald-500" : bm === false ? "border border-zinc-700 text-zinc-300 hover:text-zinc-100" : "border border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}>
+                        🎯 {bm === true ? "match: on" : bm === false ? "match: off" : "match: default"}
+                      </button>
+                      <button onClick={() => void flipBoardAge(s)}
+                        title={`Max job age (rules.maxAgeDays): the engine drops postings older than this at collect time — before they consume the collect budget or an AI judge. Unlike the feed's age filter, postings with an UNKNOWN age are always collected (fail-open). Now: ${age === null ? "any age" : `≤ ${age} days`}. Click to cycle any → 7d → 14d → 30d → any.`}
+                        className={`rounded px-2 py-1 text-xs font-medium ${age !== null ? "bg-sky-600 text-white hover:bg-sky-500" : "border border-zinc-700 text-zinc-400 hover:text-zinc-200"}`}>
+                        ⏱ {age === null ? "any age" : `≤ ${age}d`}
+                      </button>
+                    </>
                   );
                 })()}
                 <button onClick={() => void signIn(s)} title="Open the engine's sign-in window for this site — complete Google/OTP there once; the session persists for every future run"

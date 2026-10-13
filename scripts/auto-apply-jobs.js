@@ -36,7 +36,7 @@ import {
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
   isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, detectSubmissionSuccess, seniorityOf, isExternalApplyButton,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
-  classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS,
+  classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS, maxAgeDaysOf, olderThanMaxAge,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip, boardMatchOpt,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
@@ -1261,7 +1261,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
 
 /* ------------------------- job list collection ------------------------- */
 
-async function collectJobs(page, url, site, max, { boardMatch } = {}) {
+async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
   /* OWNER OPT-IN from the site's registry rules (dot boardMatchd: true/on/"true"):
      generic boards get the same card-text capture + parse as instahyre;
@@ -1453,9 +1453,22 @@ async function collectJobs(page, url, site, max, { boardMatch } = {}) {
     }
   }
   const ordered = sortByFreshness(deduped);
-  const freshCount = ordered.filter((j) => j.__fresh).length;
+  /* per-board max age (registry rules.maxAgeDays, owner-set): stale postings
+     are dropped HERE, before they consume the --max collect budget or reach
+     an AI judge. Unknown-age rows always stay — a missing stamp must never
+     reject (see olderThanMaxAge); measured stamps come from parsePostedAge,
+     never from postedAt ISO strings. */
+  const maxAge = maxAgeDaysOf(maxAgeDays);
+  let collected = ordered;
+  if (maxAge != null) {
+    const kept = ordered.filter((j) => !olderThanMaxAge(j.__ageH, maxAge));
+    const dropped = ordered.length - kept.length;
+    if (dropped > 0) console.log(dim(`  ⏭ ${dropped} stale posting(s) dropped — older than this board's ${maxAge}d max age (unknown-age rows kept)`));
+    collected = kept;
+  }
+  const freshCount = collected.filter((j) => j.__fresh).length;
   if (freshCount > 0) console.log(dim(`  ⚡ ${freshCount} posting(s) <${FRESH_MAX_HOURS}h old collected first (freshness beats fit at the margin)`));
-  return ordered.slice(0, max);
+  return collected.slice(0, max);
 }
 
 /* ------------------------ job page + JD text ------------------------ */
@@ -2098,13 +2111,13 @@ async function runSingle(args, { existingCtx = null } = {}) {
       return;
     }
 
-    let jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch });
+    let jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays });
     console.log(dim(`collected ${jobs.length} posting(s)`));
     if (!jobs.length) {
       /* LinkedIn wall flakiness: guest access alternates wall/pass between
          navigations — one more collect attempt before declaring defeat */
       await page.waitForTimeout(3000);
-      jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch });
+      jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays });
       console.log(dim(`collected (retry) ${jobs.length} posting(s)`));
     }
     if (!jobs.length) {

@@ -47,7 +47,7 @@ export async function setJobSiteStatus(id: string, status: JobSite["status"]): P
    The engine reads rules.boardMatch each run: true opts any board's cards
    into the match-badge pre-filter; false turns it off even for instahyre/
    linkedin/naukri; absent = builtin behavior. */
-export async function setSiteRule(host: string, key: "boardMatch", value: boolean | null): Promise<void> {
+export async function setSiteRule(host: string, key: "boardMatch" | "maxAgeDays", value: boolean | number | null): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
   /* null = remove the key (RPC deletes it) — the owner restoring builtin behavior */
