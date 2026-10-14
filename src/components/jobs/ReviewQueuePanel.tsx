@@ -10,6 +10,7 @@ import {
 } from "../../services/jobSites.ts";
 import { serverAutoApply } from "../../services/entitlement.ts";
 import { getCloudState } from "../../services/cloud.ts";
+import { postedAgeChip } from "../../../scripts/apply-engine-lib.js";
 
 /* form-field preview: label + kind + answered marker, one line per field */
 function FieldPreviewList({ fields }: { fields: ReviewFormField[] }) {
@@ -238,6 +239,14 @@ export default function ReviewQueuePanel() {
                   {it.company && <div className="text-xs text-zinc-400 mt-0.5 font-medium">{it.company}</div>}
                   {typeof it.fit === "number" && (
                     <span className={`ml-0 mt-1 inline-block rounded px-1.5 py-0.5 text-[10px] font-extrabold ${it.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : it.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match (seniority and core stack not included).">fit {it.fit}</span>
+                  )}
+                  {/* the POSTING's own age (the board's card stamp) — distinct from
+                      the meta line below, which is how long ago the engine queued it;
+                      a 30d-old posting can have been queued 2h ago. Unknown → nothing. */}
+                  {it.posted_age_h != null && postedAgeChip(it.posted_age_h).trim() !== "" && (
+                    <span title="The posting's own age when the engine saw it (the board's card stamp) — the line below is how long ago it was queued" className="ml-1 mt-1 inline-block rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-extrabold text-sky-300">
+                      {postedAgeChip(it.posted_age_h).trim()}
+                    </span>
                   )}
                 </div>
                 <div className="text-xs text-zinc-300 mt-1.5">

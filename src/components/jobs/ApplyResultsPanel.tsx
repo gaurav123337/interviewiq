@@ -8,7 +8,13 @@ import {
   listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar,
   type ApplyResultRow,
 } from "../../services/jobSites.ts";
-import { extractFeedbackSkills } from "../../../scripts/apply-engine-lib.js";
+import { extractFeedbackSkills, postedAgeChip, passesAgeFilter } from "../../../scripts/apply-engine-lib.js";
+
+/** max-age filter cycle for the report (shown only when filtering): rows
+    whose posting age the board never stamped are ALWAYS shown — a missing
+    stamp must never hide a posting from the owner's own list. */
+const MAX_AGE_OPTIONS = [null, 7, 14, 30] as const;
+const MAX_AGE_LABEL = { "7": "≤ 7d", "14": "≤ 14d", "30": "≤ 30d" } as const;
 
 /** host part of a job/form URL → source chip; falls back to the row's site_host */
 function sourceOf(r: ApplyResultRow): string {
@@ -36,6 +42,9 @@ export default function ApplyResultsPanel() {
   const [strikes, setStrikes] = useState<{ skill: string; strikes: number }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ApplyResultRow["result"] | "all">("all");
+  /* posting-age filter (the board's clock, NOT created_at): cycles any →
+     ≤7d → ≤14d → ≤30d → any; UNDATED rows survive every step (fail-open). */
+  const [maxAge, setMaxAge] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -93,7 +102,11 @@ export default function ApplyResultsPanel() {
   if (rows === null) return <div className="mt-3 text-xs text-zinc-300">Loading applications report…</div>;
 
   const counts = applyResultCounts(rows);
-  const shown = filter === "all" ? rows : rows.filter((r) => r.result === filter);
+  /* result filter ∩ posting-age filter (postedAgeChip/passesAgeFilter: the
+     lib's own meaning of "stale" — undated rows always survive) */
+  const shown = rows.filter((r) =>
+    (filter === "all" || r.result === filter) &&
+    passesAgeFilter(r.posted_age_h ?? null, maxAge));
 
   return (
     <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
@@ -114,6 +127,16 @@ export default function ApplyResultsPanel() {
           </button>
         ))}
         {filter !== "all" && <button onClick={() => setFilter("all")} className="rounded px-2 py-0.5 text-[11px] text-zinc-300 hover:text-zinc-100">✕ clear filter</button>}
+        {/* posting-age filter: the BOARD's clock (posted_age_h), not created_at;
+            undated rows always shown — a missing stamp never hides a posting */}
+        <button onClick={() => setMaxAge(prev => {
+          const i = MAX_AGE_OPTIONS.findIndex(v => v === prev);
+          return MAX_AGE_OPTIONS[(i + 1) % MAX_AGE_OPTIONS.length] as number | null;
+        })}
+          title="Filter by the posting's own age (its board stamp) — cycle any → ≤7d → ≤14d → ≤30d → any. Rows the board never stamped are ALWAYS shown (fail-open)."
+          className={`rounded px-2 py-0.5 text-[11px] font-bold ${maxAge !== null ? "bg-sky-600 text-white" : "bg-zinc-800 text-zinc-300 hover:text-zinc-100"}`}>
+          ⏱ {maxAge === null ? "posting age: any" : `posting ${(MAX_AGE_LABEL as Record<string, string>)[String(maxAge)]}`}
+        </button>
       </div>
 
       {error && <div className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
@@ -137,6 +160,14 @@ export default function ApplyResultsPanel() {
               </span>
               {typeof r.fit === "number" && (
                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${r.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : r.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match. It ignores seniority, core function and core stack; the AI judge's verdict is in the detail line below.">fit {r.fit}</span>
+              )}
+              {/* the POSTING's own age chip (the board's clock) — rendered through
+                  postedAgeChip, the same format the engine's console uses; null
+                  (board never stamped) renders nothing, never "—" */}
+              {r.posted_age_h != null && postedAgeChip(r.posted_age_h).trim() !== "" && (
+                <span title="The posting's own age when the engine saw it (the board's card stamp) — not how long ago this decision was recorded" className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">
+                  {postedAgeChip(r.posted_age_h).trim()}
+                </span>
               )}
               <span className="shrink-0 text-[11px] text-zinc-400">{ago(r.created_at)}</span>
             </div>

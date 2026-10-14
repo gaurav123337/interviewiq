@@ -133,6 +133,10 @@ export interface ReviewItem {
   reason: string | null;
   fit: number | null;
   form_fields: ReviewFormField[] | null;
+  /** the POSTING's parsed age in hours at collect (board card stamp) —
+      null = the board never said. Distinguish from created_at, which is
+      the decision row's age. */
+  posted_age_h: number | null;
   created_at: string;
 }
 
@@ -457,6 +461,9 @@ export interface ApplyResultRow {
   result: "submitted" | "needs_review" | "skipped" | "error";
   detail: string | null;
   fit: number | null;
+  /** the POSTING's parsed age in hours at collect (board card stamp) —
+      null = the board never said. created_at is the DECISION's age. */
+  posted_age_h: number | null;
   feedback: "good" | "bad" | null;
   created_at: string;
 }

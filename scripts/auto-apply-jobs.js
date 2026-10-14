@@ -452,6 +452,10 @@ async function recordResultDb(host, job, result, detail) {
       siteHost: host, jobUrl: job?.url ?? "", title: job?.title ?? null,
       company: job?.company ?? null, result, detail: String(detail ?? "").slice(0, 400),
       fit: job?.__fit ?? null,
+      /* the posting's OWN age at collect (board card stamp, hours) — the
+         report row then shows the board's clock, not "how long ago the
+         engine decided" (the two were indistinguishable before) */
+      ageH: typeof job?.__ageH === "number" && isFinite(job.__ageH) && job.__ageH >= 0 ? job.__ageH : null,
     });
   } catch { /* report push is best-effort — never breaks a run */ }
 }
@@ -2379,7 +2383,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           if (guestModal) {
             recordResultBoth(report, job, "needsReview", "LinkedIn sign-in required to apply — finish manually (browser left on the posting)");
             console.log(yellow("  ⏸ LinkedIn guest apply needs sign-in — queued for manual finish"));
-            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "LinkedIn sign-in required to apply", fit: job.__fit ?? null });
+            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "LinkedIn sign-in required to apply", fit: job.__fit ?? null, ageH: job.__ageH ?? null });
             await page.waitForTimeout(rules.minIntervalMs);
             continue;
           }
@@ -2406,7 +2410,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
               const preview = formFieldsPreview(res2.fields, res2.plan);
               recordResultBoth(report, job, "needsReview", `external ATS form filled (${res2.filled} fields) — submit manually from the review queue`);
               console.log(yellow(`  ⏸ external ATS: filled ${res2.filled} fields — queued; you submit (never auto on unknown ATS)`));
-              await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null, formFields: preview });
+              await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null, formFields: preview, ageH: job.__ageH ?? null });
               if (atsPage) await atsPage.close().catch(() => {}); // don't leak tabs
             }
             await page.waitForTimeout(rules.minIntervalMs);
@@ -2420,7 +2424,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
              direct URL means "this one matters" — queue it with the kit
              rather than dead-ending; the owner applies signed-in. */
           recordResultBoth(report, job, "needsReview", "guest view has no apply button — open signed-in and submit (kit in reports)");
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "no apply button on guest view — apply manually", fit: job.__fit ?? null });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "no apply button on guest view — apply manually", fit: job.__fit ?? null, ageH: job.__ageH ?? null });
           console.log(yellow("  ⏸ no apply button on the guest view — queued for manual apply"));
           continue;
         } else {
@@ -2437,7 +2441,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
           /* ALWAYS queue (deduped per job URL) — the report's "needs you" row
              must have a review-queue counterpart with one-click Open/Done */
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null });
           /* ASYNC REVIEW: take a screenshot for the UI, close the tab, move on.
              Attended manual runs still get the pause for immediate human finish. */
           if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
@@ -2456,7 +2460,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
         const nowBudget = probe.available ? budgetGate({ ...probe.spend, day: probe.spend.day + budgetSpendThisRun, week: probe.spend.week + budgetSpendThisRun }, { dailyCap: probe.dailyCap, weeklyCap: probe.weeklyCap }) : { ok: true, verdict: "ok", reason: "" };
         if (!nowBudget.ok) {
           recordResultBoth(report, job, "budget_capped", `${nowBudget.reason} — form is filled; queued so nothing is lost`);
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `budget: ${nowBudget.reason} — form filled, submit from the queue`, fit: job.__fit ?? null, formFields: ffPreview });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `budget: ${nowBudget.reason} — form filled, submit from the queue`, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null });
           console.log(yellow(`  🛑 ${nowBudget.reason} — form filled + queued; nothing lost`));
           await page.close().catch(() => {});
           continue;
@@ -2480,7 +2484,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
              runs ALSO pause here so the human can finish immediately.
              App-triggered / unattended runs: async review — screenshot,
              close the tab, move on. */
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null, formFields: ffPreview });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null });
           if (args.unattended || appTriggered) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
           await page.pause();
         }

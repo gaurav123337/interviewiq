@@ -85,6 +85,10 @@ export interface ApplyJobLike {
   boardMatch?: string | null;
   __boardMatch?: string | null;
   __cardText?: string;
+  /** parsed posting age in HOURS (from the board's card stamp via
+      parsePostedAge/setByFreshness) — the only trusted age source; the ISO
+      postedAt string is NOT parsed by the lib. */
+  __ageH?: number | null;
   __coverLetter?: string; __fit?: number | null; __fitNote?: string; __judge?: { verdict?: string; reason?: string; missingCore?: string[] };
   __submitted?: boolean; __successText?: string;
 }
@@ -104,6 +108,11 @@ export interface ApplyRunResult {
   /** verdict the board's own match signal declared for this posting
       ("high"|"mid"|"low"|raw string) — null = no stamp landed. */
   boardStamp?: string | null;
+  /** the POSTING's parsed age in hours at collect time (board card stamp) —
+      null = the board didn't say. Pushed to apply_results/job_apply_reviews
+      so the report and review queue show the board's clock, not the
+      decision row's. */
+  ageH?: number | null;
 }
 
 export interface ApplyRunReport {
@@ -214,6 +223,16 @@ export function maxAgeDaysOf(raw: unknown): number | null;
 /** Known age (hours) >= cap → stale; unknown age or absent cap → false
     (fail-open: the engine never rejects on a missing signal). */
 export function olderThanMaxAge(ageH: number | null | undefined, maxAgeDays: unknown): boolean;
+
+/** Display chip for a posting's own age (" ⚡<24h" / " (30d old)") — empty
+    string when the age is unknown/invalid (never invent a stamp). Same
+    rendering as the engine's console judge loop (ageMark). */
+export function postedAgeChip(ageH: number | null | undefined): string;
+
+/** Report/queue age filter (maxAgeDays, the registry's chip): passes when
+    the cap is unset OR the age is unknown (a missing stamp must never
+    hide a posting from the owner's own review list) OR age < cap·24. */
+export function passesAgeFilter(ageH: number | null | undefined, maxAgeDays: unknown): boolean;
 
 /** Extract the badge verdict ("high"|"mid"|"low"|null) from a card's text. */
 export function instaMatchFromCardText(text: string | null | undefined): "high" | "mid" | "low" | null;

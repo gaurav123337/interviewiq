@@ -1184,6 +1184,29 @@ export function olderThanMaxAge(ageH, maxAgeDays) {
   return ageH >= max * 24;
 }
 
+/** Display chip for a posting's own age (“ ⚡<24h”, “ (30d old)”) — the SAME
+    rendering the engine's console lines use (ageMark at the judge loop), so
+    the report and queue show the board's clock, not the decision row's.
+    Unknown/invalid age → "" (never invent a stamp). */
+export function postedAgeChip(ageH) {
+  if (ageH == null || !isFinite(ageH) || ageH < 0) return "";
+  if (ageH < 24) return " ⚡<24h";
+  return ` (${Math.round(ageH / 24)}d old)`;
+}
+
+/** A parsed posting age passes an owner-set maxAgeDays filter (the REPORT's
+    filter — a UI convenience, NOT the engine gate): undated rows survive
+    any filter because a missing stamp must never hide a posting from the
+    owner's own review list (stricter would be safe here, but the review
+    queue is where the owner rescues gate edge-cases — hiding one there is
+    the worst possible failure). */
+export function passesAgeFilter(ageH, maxAgeDays) {
+  const max = maxAgeDaysOf(maxAgeDays);
+  if (max == null) return true;
+  if (ageH == null || !isFinite(ageH) || ageH < 0) return true;
+  return ageH < max * 24;
+}
+
 /** Registry rules.bordMatch is authored by a human — accept booleans and
     the truthy strings a hand-edited JSONB value could arrive as. */
 export function boardMatchOpt(raw) {
@@ -1286,7 +1309,11 @@ export function recordResult(report, job, result, detail = "") {
      the current __boardMatch are equal in the owner's eyes; the null-hit
      rate (signals the parsers missed) is the health metric to watch. */
   const boardStamp = job?.__boardMatch ?? job?.instaMatch ?? job?.__instaMatch ?? job?.instaMatch ?? null;
-  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail: note, fit: job?.__fit ?? null, boardStamp: typeof boardStamp === "string" ? boardStamp : null, at: Date.now() });
+  /* the posting's OWN parsed age (hours at collect, from the board card) —
+     travels to the report so the app can show the board's clock. Unknown →
+     null: never invent the stamp. */
+  const ageH = typeof job?.__ageH === "number" && isFinite(job.__ageH) && job.__ageH >= 0 ? job.__ageH : null;
+  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail: note, fit: job?.__fit ?? null, boardStamp: typeof boardStamp === "string" ? boardStamp : null, ageH, at: Date.now() });
   const key = { submitted: "submitted", needsReview: "needsReview", skipped: "skipped", error: "error" }[result];
   if (key) report.counts[key] += 1;
 }

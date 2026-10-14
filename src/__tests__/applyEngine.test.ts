@@ -19,7 +19,7 @@ import {
   extractJdSkills, detectSubmissionSuccess,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
   instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES, judgeSavesDigestLines,
-  maxAgeDaysOf, olderThanMaxAge,
+  maxAgeDaysOf, olderThanMaxAge, postedAgeChip, passesAgeFilter,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -1191,6 +1191,34 @@ describe("board max-age — rules.maxAgeDays (per-board stale filter at collect)
     expect(maxAgeDaysOf(6.5)).toBeNull();
     expect(maxAgeDaysOf(-1)).toBeNull();
     expect(maxAgeDaysOf(undefined)).toBeNull();
+  });
+
+  it("postedAgeChip renders the engine's console format; unknown ages render nothing", () => {
+    expect(postedAgeChip(2)).toBe(" ⚡<24h");          // fresh, same as the judge-loop mark
+    expect(postedAgeChip(23.9)).toBe(" ⚡<24h");
+    expect(postedAgeChip(24)).toBe(" (1d old)");
+    expect(postedAgeChip(90 * 24)).toBe(" (90d old)"); // the observed iTCart stamp
+    // never invent a stamp: unknown / garbage must be the EMPTY string, not "—" —
+    // the UI hides the chip entirely when the board didn't stamp the card
+    expect(postedAgeChip(null)).toBe("");
+    expect(postedAgeChip(undefined)).toBe("");
+    expect(postedAgeChip(NaN)).toBe("");
+    expect(postedAgeChip(-1)).toBe("");
+  });
+
+  it("passesAgeFilter (report/queue filter) is fail-open on UNDATED rows — unlike the engine gate", () => {
+    const day = 24;
+    expect(passesAgeFilter(6 * day, 7)).toBe(true);
+    expect(passesAgeFilter(7 * day, 7)).toBe(false);    // at the cap → filtered out
+    expect(passesAgeFilter(90 * day, 7)).toBe(false);
+    // the report must never hide a row the board never stamped: the review
+    // queue is where the owner RESCUES gate edge-cases — hiding one there
+    // is the worst possible failure (inverted from olderThanMaxAge on purpose:
+    // both are strict about KNOWN ages, both fail-open on unknowns)
+    expect(passesAgeFilter(null, 7)).toBe(true);
+    expect(passesAgeFilter(NaN, 7)).toBe(true);
+    expect(passesAgeFilter(90 * day, null)).toBe(true); // no cap → no filtering
+    expect(passesAgeFilter(90 * day, "14")).toBe(true); // garbage cap never filters
   });
 
   it("olderThanMaxAge is strict on KNOWN age, fail-open on UNKNOWN age or absent cap", () => {
