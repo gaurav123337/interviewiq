@@ -1279,7 +1279,14 @@ export function recordResult(report, job, result, detail = "") {
      had no opinion, __fitNote carries "judge (apply|skip|unknown): reason" so
      the app's detail line explains WHY, not just what happened */
   const note = job?.__fitNote ? `${detail ? detail + " — " : ""}${job.__fitNote}` : detail;
-  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail: note, fit: job?.__fit ?? null, at: Date.now() });
+  /* board stamp telemetry: which verdict (if any) the board's own match
+     signal declared for this posting — lets rehearsal reports ANSWER "do
+     the stamps actually land on instahyre/linkedin/naukri cards" instead
+     of making that a console-only guess. Legacy stamps (__instaMatch) and
+     the current __boardMatch are equal in the owner's eyes; the null-hit
+     rate (signals the parsers missed) is the health metric to watch. */
+  const boardStamp = job?.__boardMatch ?? job?.instaMatch ?? job?.__instaMatch ?? job?.instaMatch ?? null;
+  report.results.push({ title: job?.title ?? "?", company: job?.company ?? "?", url: job?.url ?? "", result, detail: note, fit: job?.__fit ?? null, boardStamp: typeof boardStamp === "string" ? boardStamp : null, at: Date.now() });
   const key = { submitted: "submitted", needsReview: "needsReview", skipped: "skipped", error: "error" }[result];
   if (key) report.counts[key] += 1;
 }

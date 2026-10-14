@@ -101,6 +101,9 @@ export interface ApplyRunResult {
   title: string; company: string; url: string;
   result: "submitted" | "needsReview" | "skipped" | "error";
   detail: string; fit?: number | null; at: number;
+  /** verdict the board's own match signal declared for this posting
+      ("high"|"mid"|"low"|raw string) — null = no stamp landed. */
+  boardStamp?: string | null;
 }
 
 export interface ApplyRunReport {

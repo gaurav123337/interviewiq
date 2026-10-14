@@ -403,6 +403,16 @@ describe("fitScore — re-rank the review queue by skill fit", () => {
     expect(r.results[1].fit).toBeNull();
   });
 
+  it("recordResult carries the board stamp into the report row (stamp-landing telemetry)", () => {
+    const r = newReport("https://x/jobs", "instahyre");
+    recordResult(r, { title: "T", company: "C", url: "u", __boardMatch: "low" }, "skipped", "match LOW");
+    expect(r.results[0].boardStamp).toBe("low"); // current stamp name
+    recordResult(r, { title: "T2", company: "C", url: "u2", __instaMatch: "low" }, "skipped", "match LOW");
+    expect(r.results[1].boardStamp).toBe("low"); // legacy stamp name still surfaces
+    recordResult(r, { title: "T3", company: "C", url: "u3" }, "skipped", "no signal");
+    expect(r.results[2].boardStamp).toBeNull(); // no stamp landed — the health metric to watch
+  });
+
   it("recordResult appends the judge note (__fitNote) to the app's detail line (#164)", () => {
     const r = newReport("https://x/jobs", "instahyre");
     recordResult(r, { title: "T", company: "C", url: "u", __fitNote: "judge (apply): owner-confirmed relevant (exemplar)" }, "submitted", "submitted (auto)");
