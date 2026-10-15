@@ -69,6 +69,20 @@ describe("ReviewQueuePanel ⏱ posting-age filter", () => {
     expect(screen.getByText("Job fresh")).toBeTruthy();
     expect(screen.getByText("Job undated")).toBeTruthy(); // missing stamp never hides a row
     expect(screen.getByText("2 of 3 shown")).toBeTruthy();
+    /* the owner's pick: undated rows survive every cap BUT are marked, so a
+       10d-posted row under ≤7d reads as "no stamp", never "filter bug" —
+       shown only while a cap is active */
+    expect(screen.getAllByText(/no stamp/).length).toBe(1);
+  });
+
+  it("the 'no stamp' marker hides when no cap is active — chips only speak when the ⏱ filter matters", async () => {
+    vi.mocked(listJobReviews).mockResolvedValue([item("undated", null)]);
+    render(<ReviewQueuePanel />);
+    fireEvent.click(await screen.findByText(/Review queue/));
+    await screen.findByText("Job undated");
+    expect(screen.queryByText(/no stamp/)).toBeNull(); // posting age: any → unmarked
+    fireEvent.click(screen.getByTitle(/cycle any/)); // → ≤7d
+    expect(screen.getByText(/no stamp/)).toBeTruthy();
   });
 
   it("full cycle any → ≤7d → ≤14d → ≤30d → any restores every row", async () => {

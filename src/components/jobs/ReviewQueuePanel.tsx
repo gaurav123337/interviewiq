@@ -272,6 +272,16 @@ export default function ReviewQueuePanel() {
                       {postedAgeChip(it.posted_age_h).trim()}
                     </span>
                   )}
+                  {/* owner's pick (fail-open kept): an unstamped row can't be
+                      judged against any age cap, so it ALWAYS shows — mark it
+                      so "why is 10d-old listed under ≤7d?" answers itself:
+                      no chip = the board never stamped it, not a filter bug.
+                      Shown only while a cap is active, when it matters. */}
+                  {maxAge !== null && it.posted_age_h == null && (
+                    <span title="This board never stamped the posting's age, so the ⏱ filter can't judge it — it always shows (a missing stamp must never hide a posting you might need to rescue)" className="ml-1 mt-1 inline-block rounded bg-zinc-700/60 px-1.5 py-0.5 text-[10px] font-bold text-zinc-300">
+                      ⏱ no stamp
+                    </span>
+                  )}
                 </div>
                 <div className="text-xs text-zinc-300 mt-1.5">
                   {it.site_host} · {ago(it.created_at)}{it.reason ? ` · ${it.reason}` : ""}
