@@ -6,7 +6,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, putJudgeExemplar, testNotifyConfig,
-  type ReviewItem, type ReviewFormField,
+  listResolvedJobReviews,
+  type ReviewItem, type ResolvedReviewItem, type ReviewFormField,
 } from "../../services/jobSites.ts";
 import { serverAutoApply } from "../../services/entitlement.ts";
 import { getCloudState } from "../../services/cloud.ts";
@@ -46,6 +47,14 @@ function ago(iso: string): string {
 
 export default function ReviewQueuePanel() {
   const [items, setItems] = useState<ReviewItem[] | null>(null);
+  /* resolved history (done/dismissed/closed) — the "Applied by User" section.
+     null = RPC not applied yet (honest degraded skip: hide the section, never
+     crash the pending list). */
+  const [resolved, setResolved] = useState<ResolvedReviewItem[] | null>(null);
+  const [resolvedOpen, setResolvedOpen] = useState(false);
+  /* posting-age filter for the resolved section — mirrors the pending list's
+     ⏱ state so both sections read from the same owner intent */
+  const [resolvedMaxAge, setResolvedMaxAge] = useState<number | null>(null);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -72,6 +81,14 @@ export default function ReviewQueuePanel() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setItems([]);
+    }
+    /* resolved history loads alongside: failure degrades to null (section
+       hidden) — the RPC may not exist until review-queue-resolved.sql is
+       applied, and that must block only the history, never the queue */
+    try {
+      setResolved(await listResolvedJobReviews());
+    } catch {
+      setResolved(null);
     }
   }, []);
 
@@ -143,9 +160,20 @@ export default function ReviewQueuePanel() {
       await resolveJobReview(it.id, status);
       /* OPTIMISTIC: the resolver folds the verdict into every URL variant
          of this posting server-side — mirror that locally so the row (and
-         any twin) leaves the list INSTANTLY; refresh() stays the truth */
+         any twin) LEAVES the pending list and LANDS in the resolved
+         section INSTANTLY (not only after refresh() refetches); the
+         keep-first rule mirrors the RPC's newest-variant-wins dedupe. */
       const key = canonicJobUrl(it.job_url);
       setItems((prev) => (prev ?? []).filter((r) => canonicJobUrl(r.job_url) !== key));
+      if (resolved !== null) {
+        setResolved((prev) => {
+          const entry: ResolvedReviewItem = {
+            ...it, status, resolved_at: new Date().toISOString(),
+          };
+          const rest = (prev ?? []).filter((r) => canonicJobUrl(r.job_url) !== key);
+          return [entry, ...rest];
+        });
+      }
       /* Hide feedback after 1.5 seconds */
       setTimeout(() => setFeedbackShown(null), 1500);
       await refresh();
@@ -317,6 +345,66 @@ export default function ReviewQueuePanel() {
           </div>
         ))}
       </div>
+
+      {/* ── Applied by User (resolved history) ────────────────────────────
+          Done/Dismissed/Closed rows, ONE per posting, newest first. Hidden
+          entirely when the RPC isn't applied yet (resolved === null) — an
+          honest degraded skip for the history, never a crash. */}
+      {resolved !== null && resolved.length > 0 && (
+        <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-950/40 px-2.5 py-2">
+          <button type="button" onClick={() => setResolvedOpen(o => !o)} className="flex w-full items-center gap-1.5 text-left text-xs font-semibold text-zinc-300 hover:text-zinc-200">
+            <span>{resolvedOpen ? "▾" : "▸"}</span>
+            <span className="text-emerald-400">✓</span> Applied by User
+            <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold text-zinc-400">{resolved.length}</span>
+          </button>
+          {resolvedOpen && (<>
+          <div className="mt-1 mb-2 flex flex-wrap items-center gap-1.5">
+            <button onClick={() => setResolvedMaxAge(prev => {
+              const i = MAX_AGE_OPTIONS.findIndex(v => v === prev);
+              return MAX_AGE_OPTIONS[(i + 1) % MAX_AGE_OPTIONS.length] as number | null;
+            })}
+              title="Filter by the posting's own age (its board stamp) — cycle any → ≤7d → ≤14d → ≤30d → any. Rows the board never stamped are ALWAYS shown (fail-open)."
+              className={`rounded px-2 py-0.5 text-[11px] font-bold ${resolvedMaxAge !== null ? "bg-sky-600 text-white" : "bg-zinc-800 text-zinc-300 hover:text-zinc-100"}`}>
+              ⏱ {resolvedMaxAge === null ? "posting age: any" : `posting ${(MAX_AGE_LABEL as Record<string, string>)[String(resolvedMaxAge)]}`}
+            </button>
+            {resolvedMaxAge !== null && <span className="text-[11px] text-zinc-400">{resolved.filter((r) => passesAgeFilter(r.posted_age_h ?? null, resolvedMaxAge)).length} of {resolved.length} shown</span>}
+          </div>
+          <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+            {resolved.filter((r) => passesAgeFilter(r.posted_age_h ?? null, resolvedMaxAge)).map((r) => (
+              <div key={r.id} className="flex flex-wrap items-center gap-2 rounded border border-zinc-800 bg-zinc-900 px-2 py-1.5">
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-extrabold ${
+                  r.status === "done" ? "bg-emerald-500/15 text-emerald-400"
+                  : r.status === "dismissed" ? "bg-red-500/15 text-red-400"
+                  : "bg-zinc-500/15 text-zinc-300"}`}>
+                  {r.status === "done" ? "✓ applied" : r.status === "dismissed" ? "✕ not interested" : "🚫 closed"}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-zinc-200">
+                  {r.title || "(untitled posting)"}{r.company ? <span className="text-zinc-400"> — {r.company}</span> : null}
+                </span>
+                {typeof r.fit === "number" && (
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-extrabold ${r.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : r.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`}>fit {r.fit}</span>
+                )}
+                {r.posted_age_h != null && postedAgeChip(r.posted_age_h).trim() !== "" && (
+                  <span title="The posting's own age when the engine saw it (the board's card stamp)" className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-bold text-sky-300">
+                    {postedAgeChip(r.posted_age_h).trim()}
+                  </span>
+                )}
+                {resolvedMaxAge !== null && r.posted_age_h == null && (
+                  <span title="This board never stamped the posting's age, so the ⏱ filter can't judge it — it always shows (fail-open)" className="shrink-0 rounded bg-zinc-700/60 px-1.5 py-0.5 text-[10px] font-bold text-zinc-300">
+                    ⏱ no stamp
+                  </span>
+                )}
+                <span className="shrink-0 text-[11px] text-zinc-400">{ago(r.resolved_at)}</span>
+                <a href={r.job_url} target="_blank" rel="noopener noreferrer" className="shrink-0 text-sky-500 hover:text-sky-400">open ↗</a>
+              </div>
+            ))}
+            {!resolved.some((r) => passesAgeFilter(r.posted_age_h ?? null, resolvedMaxAge)) && (
+              <div className="text-xs text-zinc-400">No resolved rows for this filter.</div>
+            )}
+          </div>
+          </>)}
+        </div>
+      )}
       </>)}
     </div>
   );

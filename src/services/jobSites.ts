@@ -148,6 +148,26 @@ export async function listJobReviews(): Promise<ReviewItem[]> {
   return (data ?? []) as ReviewItem[];
 }
 
+/* Resolved review rows (done/dismissed/closed), ONE per posting (newest
+   variant wins server-side, same review_posting_key dedupe as the pending
+   list) — powers the panel's "Applied by User" section. Carries fit and
+   posted_age_h so the ⏱ posting-age filter and chips behave identically
+   to the pending list. The RPC must exist first (supabase/
+   review-queue-resolved.sql); until applied, callers must degrade to an
+   honest skip, never crash. */
+export interface ResolvedReviewItem extends ReviewItem {
+  status: "done" | "dismissed" | "closed";
+  resolved_at: string;
+}
+
+export async function listResolvedJobReviews(): Promise<ResolvedReviewItem[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_list_resolved_job_reviews");
+  if (error) throw error;
+  return (data ?? []) as ResolvedReviewItem[];
+}
+
 export async function resolveJobReview(id: string, status: "done" | "dismissed" | "closed"): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
