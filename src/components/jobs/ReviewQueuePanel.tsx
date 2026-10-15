@@ -10,7 +10,14 @@ import {
 } from "../../services/jobSites.ts";
 import { serverAutoApply } from "../../services/entitlement.ts";
 import { getCloudState } from "../../services/cloud.ts";
-import { postedAgeChip } from "../../../scripts/apply-engine-lib.js";
+import { postedAgeChip, passesAgeFilter } from "../../../scripts/apply-engine-lib.js";
+
+/* max-age filter cycle for the queue (shown only when filtering): same
+   semantics as the Applications report's ⏱ button — rows whose posting age
+   the board never stamped are ALWAYS shown — a missing stamp must never
+   hide a posting the owner might need to rescue (fail-open, like the report). */
+const MAX_AGE_OPTIONS = [null, 7, 14, 30] as const;
+const MAX_AGE_LABEL = { "7": "≤ 7d", "14": "≤ 14d", "30": "≤ 30d" } as const;
 
 /* form-field preview: label + kind + answered marker, one line per field */
 function FieldPreviewList({ fields }: { fields: ReviewFormField[] }) {
@@ -45,6 +52,9 @@ export default function ReviewQueuePanel() {
   const [notifyOpen, setNotifyOpen] = useState(false);
   const notifyRef = useRef<HTMLDivElement | null>(null);
   const [feedbackShown, setFeedbackShown] = useState<{id: string; type: 'applied'|'dismissed'|'closed'; show: boolean} | null>(null);
+  /* posting-age filter (the board's clock, NOT created_at): cycles any →
+     ≤7d → ≤14d → ≤30d → any; UNDATED rows survive every step (fail-open). */
+  const [maxAge, setMaxAge] = useState<number | null>(null);
   const [chatId, setChatId] = useState("");
   const [botToken, setBotToken] = useState("");
   const [notifyState, setNotifyState] = useState<string | null>(null);
@@ -229,8 +239,22 @@ export default function ReviewQueuePanel() {
       )}
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!items.length && <div className="text-xs text-zinc-300">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
+      {/* posting-age filter: the BOARD's clock (posted_age_h), not created_at;
+          undated rows always shown — a missing stamp never hides a posting.
+          Cycle any → ≤7d → ≤14d → ≤30d → any (same as the report's ⏱). */}
+      <div className="mb-2 flex flex-wrap gap-1.5">
+        <button onClick={() => setMaxAge(prev => {
+          const i = MAX_AGE_OPTIONS.findIndex(v => v === prev);
+          return MAX_AGE_OPTIONS[(i + 1) % MAX_AGE_OPTIONS.length] as number | null;
+        })}
+          title="Filter by the posting's own age (its board stamp) — cycle any → ≤7d → ≤14d → ≤30d → any. Rows the board never stamped are ALWAYS shown (fail-open)."
+          className={`rounded px-2 py-0.5 text-[11px] font-bold ${maxAge !== null ? "bg-sky-600 text-white" : "bg-zinc-800 text-zinc-300 hover:text-zinc-100"}`}>
+          ⏱ {maxAge === null ? "posting age: any" : `posting ${(MAX_AGE_LABEL as Record<string, string>)[String(maxAge)]}`}
+        </button>
+        {maxAge !== null && <span className="self-center text-[11px] text-zinc-400">{items.filter((it) => passesAgeFilter(it.posted_age_h ?? null, maxAge)).length} of {items.length} shown</span>}
+      </div>
       <div className="space-y-2">
-        {items.map((it) => (
+        {items.filter((it) => passesAgeFilter(it.posted_age_h ?? null, maxAge)).map((it) => (
           <div key={it.id} className={`rounded-md border transition-all duration-300 ${feedbackShown?.id === it.id && feedbackShown.show ? "border-emerald-500/50 bg-emerald-500/5" : "border-zinc-800 bg-zinc-900"} px-2.5 py-2`}>
             <div className="flex flex-col gap-2.5">
               <div className="min-w-0 flex-1">
