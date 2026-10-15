@@ -1194,6 +1194,25 @@ export function postedAgeChip(ageH) {
   return ` (${Math.round(ageH / 24)}d old)`;
 }
 
+/** Clean a mangled board title for DISPLAY (“(untitled)” for nothing ✓ —
+    several boards concatenate card chrome into the title string: price,
+    salary, location and CTA (“Hyreo20h agoPython Developer - New … ₹5–₹9
+    LPABengaluruView”). UI-only: the stored title stays untouched, so new
+    boards' mangle patterns can't destroy source data; if nothing matches,
+    the original string returns unchanged (fail-open like postedAgeChip). */
+export function cleanPostingTitle(raw) {
+  let t = String(raw ?? "").trim();
+  if (!t) return "(untitled posting)";
+  t = t.replace(/(?:Hyreo\s*)?\d+h\s*ago/gi, "");                        // board name + relative-age prefix
+  t = t.replace(/Full[- ]?Time(?:On[- ]?Site)?|\bOn[- ]?Site\b/gi, " "); // employment chrome
+  t = t.replace(/₹\s?\d+(?:[.,]\d+)?\s?[-–]\s?₹\s?\d+(?:[.,]\d+)?\s?(?:LPA)?/gi, " "); // ₹x–₹y (LPA or not)
+  t = t.replace(/\bLPA\b/gi, " ");                                       // stray LPA slab
+  t = t.replace(/(?:\b|(?<=[a-z]))(View|Apply\s?now|Easy\s?Apply|Save|Share)\s*$/i, ""); // trailing CTA (also glued: "…BengaluruView")
+  t = t.replace(/\s{2,}/g, " ").trim();
+  if (!t) return String(raw ?? "").trim() || "(untitled posting)"; // cleaned to empty → never blank a real title
+  return t;
+}
+
 /** A parsed posting age passes an owner-set maxAgeDays filter (the REPORT's
     filter — a UI convenience, NOT the engine gate): undated rows survive
     any filter because a missing stamp must never hide a posting from the

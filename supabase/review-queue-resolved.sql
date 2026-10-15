@@ -31,3 +31,33 @@ $$;
 
 revoke execute on function public.admin_list_resolved_job_reviews() from anon, public;
 grant execute on function public.admin_list_resolved_job_reviews() to authenticated;
+
+/* Un-resolve: send a mistakenly resolved posting back to pending. The owner
+   fat-fingers ✓ Applied occasionally; the row must not stay "applied" forever.
+   Variant-wide like the resolver (#160): the posting key admits twins, and an
+   un-resolved twin that re-pends brings its siblings back to the queue with it
+   — otherwise the panel says "un-done" while its identical-looking twin
+   stays applied. resolved_at resets ONLY on re-resolve; created_at (before
+   which the engine tried to reach the posting) stays untouched. */
+create or replace function public.admin_unresolve_job_review(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+  declare v_key text;
+  begin
+    if not public.is_admin() then raise exception 'forbidden'; end if;
+    update public.job_apply_reviews
+      set status = 'pending', resolved_at = null
+      where id = p_id
+        and status in ('done', 'dismissed', 'closed');
+    select public.review_posting_key(job_url) into v_key
+      from public.job_apply_reviews where id = p_id;
+    if v_key is not null and v_key <> '' then
+      update public.job_apply_reviews r
+        set status = 'pending', resolved_at = null
+        where r.status in ('done', 'dismissed', 'closed')
+          and r.id <> p_id
+          and public.review_posting_key(r.job_url) = v_key;
+    end if;
+  end $$;
+
+revoke execute on function public.admin_unresolve_job_review(uuid) from anon, public;
+grant execute on function public.admin_unresolve_job_review(uuid) to authenticated;

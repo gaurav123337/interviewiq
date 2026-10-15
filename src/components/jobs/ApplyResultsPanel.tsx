@@ -8,7 +8,7 @@ import {
   listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar,
   type ApplyResultRow,
 } from "../../services/jobSites.ts";
-import { extractFeedbackSkills, postedAgeChip, passesAgeFilter } from "../../../scripts/apply-engine-lib.js";
+import { extractFeedbackSkills, postedAgeChip, passesAgeFilter, cleanPostingTitle } from "../../../scripts/apply-engine-lib.js";
 
 /** max-age filter cycle for the report (shown only when filtering): rows
     whose posting age the board never stamped are ALWAYS shown — a missing
@@ -156,7 +156,7 @@ export default function ApplyResultsPanel() {
                 {RESULT_META[r.result].icon} {RESULT_META[r.result].label}
               </span>
               <span className="min-w-0 flex-1 truncate text-xs text-zinc-200">
-                {r.title || "(untitled posting)"}{r.company ? <span className="text-zinc-400"> — {r.company}</span> : null}
+                {cleanPostingTitle(r.title)}{r.company ? <span className="text-zinc-400"> — {cleanPostingTitle(r.company)}</span> : null}
               </span>
               {typeof r.fit === "number" && (
                 <span className={`rounded px-1.5 py-0.5 text-[10px] font-extrabold ${r.fit >= 80 ? "bg-emerald-500/15 text-emerald-400" : r.fit >= 50 ? "bg-amber-500/15 text-amber-400" : "bg-red-500/15 text-red-400"}`} title="Keyword overlap between the JD and your resume's skills — NOT an overall match. It ignores seniority, core function and core stack; the AI judge's verdict is in the detail line below.">fit {r.fit}</span>

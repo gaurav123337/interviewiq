@@ -12,6 +12,7 @@ import JobSitesPanel from "./JobSitesPanel";
 import CredentialsPanel from "./CredentialsPanel";
 import ApplyModePanel from "./ApplyModePanel";
 import ApplyResultsPanel from "./ApplyResultsPanel";
+import AppliedByUserPanel from "./AppliedByUserPanel";
 import ReviewQueuePanel from "./ReviewQueuePanel";
 import ExemplarsPanel from "./ExemplarsPanel";
 
@@ -174,6 +175,9 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
 
           {/* full per-job decision report (submitted / needs-you / skipped / error) */}
           <ApplyResultsPanel />
+
+          {/* resolved history (✓ applied / ✕ / 🚫) — parallel panel, not a hidden queue sub-section */}
+          <AppliedByUserPanel />
 
           <JobSitesPanel />
 

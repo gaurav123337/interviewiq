@@ -229,6 +229,11 @@ export function olderThanMaxAge(ageH: number | null | undefined, maxAgeDays: unk
     rendering as the engine's console judge loop (ageMark). */
 export function postedAgeChip(ageH: number | null | undefined): string;
 
+/** Clean a mangled board title for display ("(untitled posting)" for empty;
+    chrome like "20h ago"/"Full-TimeOn-Site"/"₹x–₹y LPA"/trailing "View"
+    stripped; empty-after-clean → the original string, never blanked). */
+export function cleanPostingTitle(raw: string | null | undefined): string;
+
 /** Report/queue age filter (maxAgeDays, the registry's chip): passes when
     the cap is unset OR the age is unknown (a missing stamp must never
     hide a posting from the owner's own review list) OR age < cap·24. */

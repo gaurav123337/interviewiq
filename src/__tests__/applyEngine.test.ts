@@ -19,7 +19,7 @@ import {
   extractJdSkills, detectSubmissionSuccess,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
   instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES, judgeSavesDigestLines,
-  maxAgeDaysOf, olderThanMaxAge, postedAgeChip, passesAgeFilter,
+  maxAgeDaysOf, olderThanMaxAge, postedAgeChip, passesAgeFilter, cleanPostingTitle,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -1204,6 +1204,22 @@ describe("board max-age — rules.maxAgeDays (per-board stale filter at collect)
     expect(postedAgeChip(undefined)).toBe("");
     expect(postedAgeChip(NaN)).toBe("");
     expect(postedAgeChip(-1)).toBe("");
+  });
+
+  it("cleanPostingTitle strips a board's glued card chrome; legit titles pass through untouched", () => {
+    /* the observed Hyreo.mangle: board name + age + employment + salary ALL
+       glued onto the real title */
+    expect(cleanPostingTitle("Hyreo20h agoPython Developer - New GCP Testing VerifiedFull-TimeOn-Site\u20B95\u2013\u20B99 LPABengaluruView"))
+      .toBe("Python Developer - New GCP Testing Verified Bengaluru");
+    expect(cleanPostingTitle("20h agoStaff Engineer")).toBe("Staff Engineer");
+    expect(cleanPostingTitle("Frontend Engineer  View")).toBe("Frontend Engineer");
+    /* nothing to clean → unchanged; empty → the untitled placeholder;
+       cleaning to empty keeps the ORIGINAL (never blank a real title) */
+    expect(cleanPostingTitle("Frontend Engineer")).toBe("Frontend Engineer");
+    expect(cleanPostingTitle("Video Viewer")).toBe("Video Viewer");
+    expect(cleanPostingTitle("")).toBe("(untitled posting)");
+    expect(cleanPostingTitle(null)).toBe("(untitled posting)");
+    expect(cleanPostingTitle("   ")).toBe("(untitled posting)");
   });
 
   it("passesAgeFilter (report/queue filter) is fail-open on UNDATED rows — unlike the engine gate", () => {

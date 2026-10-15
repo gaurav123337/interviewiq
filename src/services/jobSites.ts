@@ -168,6 +168,17 @@ export async function listResolvedJobReviews(): Promise<ResolvedReviewItem[]> {
   return (data ?? []) as ResolvedReviewItem[];
 }
 
+/* Send a mistakenly resolved posting back to pending (variant-wide
+   server-side, like the resolver). Needs admin_unresolve_job_review from
+   review-queue-resolved.sql — callers treat failure honestly (the row
+   stays until the SQL is applied). */
+export async function unresolveJobReview(id: string): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_unresolve_job_review", { p_id: id });
+  if (error) throw error;
+}
+
 export async function resolveJobReview(id: string, status: "done" | "dismissed" | "closed"): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
