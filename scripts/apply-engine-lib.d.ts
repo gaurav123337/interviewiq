@@ -356,6 +356,34 @@ export function ownerExemplarFor(
 
 export function parseJudgeReply(text: string | null | undefined): JudgeVerdict;
 
+/* ── LLM field mapping (Tier 2) ─────────────────────────────────────── */
+
+export const FIELD_PROMPT_SYSTEM: string;
+
+export function cannedAnswersBlock(extras?: Record<string, string> | null | undefined): string;
+
+export function aiFieldPrompt(
+  fields: FormFieldMeta[] | null | undefined,
+  plan: (PlannedAnswer | null | undefined)[] | null | undefined,
+  ctx?: { profile?: ApplyProfileLike | null; job?: ApplyJobLike | null }
+): { system: string; user: string } | null;
+
+export interface FieldMappingEntry { how: "profile" | "canned" | "unanswerable"; value: string | null; reason?: string }
+
+export function parseFieldMapping(text: string | null | undefined): Record<number, FieldMappingEntry>;
+
+export function mappedValuePlausibleForProfile(value: string | null | undefined, profile: ApplyProfileLike | null | undefined, job?: ApplyJobLike | null): boolean;
+
+export function applyFieldMapping(
+  plan: (PlannedAnswer | null | undefined)[] | null | undefined,
+  mapping: Record<number, FieldMappingEntry> | null | undefined,
+  ctx?: { profile?: ApplyProfileLike | null; job?: ApplyJobLike | null }
+): PlannedAnswer[];
+
+export function mappedAnswerFor(plan: (PlannedAnswer | null | undefined)[] | null | undefined, index: number): string;
+
+export function weekKeyForMap(now?: Date | number | string): string;
+
 /* ── Phase 0 — cross-run governance (budget caps, quiet hours, job filters) ── */
 
 export const DEFAULT_DAILY_CAP: number;

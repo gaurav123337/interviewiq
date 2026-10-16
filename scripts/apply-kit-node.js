@@ -10,7 +10,7 @@
  */
 
 import { loadAiProviderConfig } from "./ai-config.js";
-import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity } from "./apply-engine-lib.js";
+import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity, aiFieldPrompt, parseFieldMapping, applyFieldMapping } from "./apply-engine-lib.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -300,6 +300,9 @@ export async function buildKit(ai, profile, job) {
   return { resume: resume.text, coverLetter: cover.text, ai: resume.ai || cover.ai, notes: [resume.note, cover.note].filter(Boolean) };
 }
 
+// re-exported for the driver (it imports everything AI-related from here)
+export { weekKeyForMap } from "./apply-engine-lib.js";
+
 /** Loads the admin-configured provider; exits cleanly when none is set. */
 export async function loadAi({ token, projectRef }) {
   try {
@@ -307,4 +310,50 @@ export async function loadAi({ token, projectRef }) {
     if (cfg?.key && cfg?.base && cfg?.model) return cfg;
   } catch { /* fall through */ }
   return null;
+}
+
+/* --- Tier 2: LLM field mapping (one call per FORM, cached per field) ---
+
+   Regex classification stops at `unknown`; every such field used to be a
+   permanent review-queue resident. The same provider reads them now and
+   copies an owner fact VERBATIM into each mapped answer — never invents
+   (unanswerable sits blank → required-empty fails closed as always).
+   Fail-open end-to-end: any error/empty decode returns the plan untouched
+   (`mapped: 0`), identical to today's behavior. The result per field is
+   cached under the driver's local+DB form-memory keys — the LLM cost is
+   one call per NOVEL field label within the 7-day window, not per form,
+   per application or per run. */
+
+/** Cache key for one mapped field (driver namespace: NONE = natural labels
+    from forms — answer memory never collides with `kind:` engine keys). */
+function mapCacheKey(label, wp) { return `${label} · ${wp}`; }
+
+/** One Tier-2 mapping for a whole form's still-unknown fields: prompts,
+    calls the provider ONCE, verifies + applies the mapping, and returns
+    { plan2, cache: Record<label,answer> } for the driver to persist.
+    Everything falls back to the unmodified plan when AI is off or wrong. */
+export async function mapUnknownFields(ai, fields, plan, { profile, job, now } = {}) {
+  if (!ai?.key || !plan?.length) return { plan2: plan, cache: {}, mapped: 0 };
+  const prompt = aiFieldPrompt(fields, plan, { profile, job });
+  if (!prompt) return { plan2: plan, cache: {}, mapped: 0 };
+  try {
+    const raw = await chatOnce(ai, [{ role: "system", content: prompt.system }, { role: "user", content: prompt.user }], 300);
+    const mapping = parseFieldMapping(raw);
+    const plan2 = applyFieldMapping(plan, mapping, { profile, job });
+    const cache = {};
+    let mapped = 0;
+    for (let i = 0; i < (fields?.length ?? 0); i++) {
+      const p1 = plan[i];
+      const p2 = plan2[i];
+      if (!p1 || !p2 || p1.cls?.kind !== "unknown" || String(p2.answer ?? "").trim() === String(p1.answer ?? "").trim() || !p2.answer) continue;
+      const f = fields[i];
+      const label = f?.label ?? "";
+      if (!label) continue;
+      cache[label] = p2.answer;
+      mapped++;
+    }
+    return { plan2, cache, mapped };
+  } catch (e) {
+    return { plan2: plan, cache: {}, mapped: 0, note: e?.message?.slice(0, 100) ?? "map failed" };
+  }
 }

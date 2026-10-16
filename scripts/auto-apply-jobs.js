@@ -42,7 +42,7 @@ import {
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
-import { buildKit, loadAi, judgeFit } from "./apply-kit-node.js";
+import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap } from "./apply-kit-node.js";
 import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 import { sweepEngineProcesses } from "./engine-lifecycle.js";
 
@@ -478,6 +478,26 @@ function rememberLocalAnswer(host, key, answer) {
     writeFileSync(ANSWERS_FILE, JSON.stringify(all, null, 2));
   } catch { /* best effort — the DB copy is authoritative */ }
 }
+
+/* --- Tier 2: mapped-answer cache (LLM-read labels, 7-day window) ---
+
+   The form-answer memory (form_answers / freebuff-apply-answers.json)
+   only holds answers the REGEX path produced — labels classified
+   unknown never land there, so an LLM mapping would be re-read (and
+   re-paid) on every form's every novel label. These helpers give mapped
+   answers their own local mirror in the same file, keyed natural-label +
+   week stamp, with the 7-day expiry ENGINE-imposed here — the DB's
+   same-key upsert only ever holds the CURRENT week's row, and reading
+   it with getFormAnswers is safe because week-stamped keys stop
+   colliding with the profile/fact answers planFormAnswers reads. */
+
+/** enforce week expiry: the value must CONTAIN the current week stamp —
+    writer/reader share one canonical format via weekKeyForMap (the cache
+    key itself carries the stamp; the value check is the belt-and-braces
+    read side). Any older or shape-breaking entry expires. */
+function mineWeekStamps(v, wk) {
+  return typeof v === "string" && v.includes(wk) ? v : "";
+}
 async function storeFormAnswers(host, plan, fields) {
   const db = await sitesDb();
   for (let i = 0; i < (fields?.length ?? 0); i++) {
@@ -485,6 +505,21 @@ async function storeFormAnswers(host, plan, fields) {
     if (!p?.answer || !p.key || !canStoreAnswer(p.cls.kind)) continue;
     rememberLocalAnswer(host, p.key, p.answer);
     await db?.putFormAnswer?.({ siteHost: host, fieldKey: p.key, answer: p.answer, kind: p.cls.kind, label: fields[i].label }).catch(() => {});
+  }
+}
+
+/* mapUnknownFields returns { cache } keyed NATURAL LABEL, not the kind
+   classifyQuestion produced — store those separately: they are model-
+   generated, week-stamped, and MUST NOT rank above a real owner-confirmed
+   answer for the same normalized key. A mapped answer is only used when
+   planFormAnswers drafted nothing (empty answer = no profile fact, no
+   remembered pass answer), so this cache can never OVERRIDE — it can
+   only FILL what nothing honest has filled yet. */
+async function storeMappedAnswers(host, cache) {
+  const wk = weekKeyForMap();
+  for (const [label, answer] of Object.entries(cache ?? {})) {
+    if (!label || !answer) continue;
+    rememberLocalAnswer(host, `${label} · ${wk}`, answer);
   }
 }
 async function loadAnswerMemory(host) {
@@ -1714,7 +1749,7 @@ async function formFrame(page) {
   return page;
 }
 
-async function fillApplicationForm(page, { profile, job, resumePath, dryRun, siteHost, storedAnswers }) {
+async function fillApplicationForm(page, { profile, job, resumePath, dryRun, siteHost, storedAnswers, ai }) {
   /* resolve the document that actually holds the form (iframe or main page) */
   const target = await formFrame(page);
   if (target !== page) console.log(dim("  🪟 application form lives in an embedded frame — extracting there"));
@@ -1734,8 +1769,42 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
   }, scopedSelector);
   const controls = await target.$$(scopedSelector);
   /* one plan per form: draft from the profile, then fall back to the
-     remembered answer for the same field label (form-answer memory) */
-  const plan = planFormAnswers(fields, profile, job, storedAnswers ?? {});
+     remembered answer for the same field label (form-answer memory).
+     TIER 2 (novel labels): regex unknowns that planFormAnswers left
+     empty go to the AI field mapper — same provider as the judge — ONCE
+     per novel label within the week; its verified verbatim-copy answers
+     are cached `${label} · ${weekKey}` in the local answer cache and
+     consulted before the call, so the LLM is idle on every REPEAT of a
+     label within the window. Fail-open: no AI, or any error → the plan
+     is untouched and the form behaves exactly as before. */
+  let plan = planFormAnswers(fields, profile, job, storedAnswers ?? {});
+  const hasEmptyUnknown = plan.some((p) => p.cls?.kind === "unknown" && !String(p.answer ?? "").trim());
+  if (ai && hasEmptyUnknown) {
+    /* consult the mapped cache first: a REPEAT label fills straight from
+       the week's answer — no provider call at all */
+    const wk = weekKeyForMap();
+    const cacheAll = localAnswerCache();
+    const preWarmed = plan.map((p, i) => {
+      if (!p || p.cls?.kind !== "unknown" || String(p.answer ?? "").trim()) return p;
+      const label = fields[i]?.label ?? "";
+      const key = label ? `${label} · ${wk}` : "";
+      const v = key ? mineWeekStamps(cacheAll?.[siteHost ?? ""]?.[key], wk) : "";
+      return v ? { ...p, answer: v, mapped: { how: "cache", reason: "mapped cache" } } : p;
+    });
+    const stillEmpty = preWarmed.some((p) => p.cls?.kind === "unknown" && !String(p.answer ?? "").trim());
+    if (!stillEmpty) {
+      plan = preWarmed;
+      if (dryRun !== true) console.log(dim("  ↺ tier-2: all unknowns filled from the mapped-answer cache (no AI call)"));
+    } else {
+      try {
+        const { plan2, cache, mapped, note } = await mapUnknownFields(ai, fields, preWarmed, { profile, job });
+        if (mapped > 0) {
+          plan = plan2;
+          if (dryRun !== true) { await storeMappedAnswers(siteHost ?? "", cache); console.log(dim(`  ↺ tier-2: AI mapped ${mapped} novel field(s) — cached for the week`)); }
+        } else if (note) console.log(dim(`  ↺ tier-2 unmapped (${note})`));
+      } catch { /* mapping is an optimization — never a gate */ }
+    }
+  }
   const unfilledRequired = [];
   let filled = 0;
   /* LinkedIn's inline Easy Apply flow RE-RENDERS constantly — every Playwright
@@ -1875,7 +1944,7 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
       if (ctx.profile && !ctx.dryRun) {
         try {
           const mem = ctx.storedAnswers ?? (ctx.storedAnswers = {});
-          const stepRes = await fillApplicationForm(page, { profile: ctx.profile, job: ctx.job ?? {}, resumePath: ctx.resumePath, dryRun: false, siteHost: "linkedin", storedAnswers: mem });
+          const stepRes = await fillApplicationForm(page, { profile: ctx.profile, job: ctx.job ?? {}, resumePath: ctx.resumePath, dryRun: false, siteHost: "linkedin", storedAnswers: mem, ai: ctx.ai });
           if (stepRes.unfilledRequired.length) {
             return { auto: false, note: `Easy Apply step ${step + 1}: cannot answer: ${stepRes.unfilledRequired.slice(0, 3).join("; ")} — form left open for review` };
           }
@@ -2406,7 +2475,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
               const resumePath2 = path.join(REPORTS_DIR, `resume-${Date.now()}.txt`);
               writeFileSync(resumePath2, kit.resume);
               const mem2 = await loadAnswerMemory(site);
-              const res2 = await fillApplicationForm(target, { profile, job, resumePath: resumePath2, dryRun: false, siteHost: site, storedAnswers: mem2 });
+              const res2 = await fillApplicationForm(target, { profile, job, resumePath: resumePath2, dryRun: false, siteHost: site, storedAnswers: mem2, ai });
               const preview = formFieldsPreview(res2.fields, res2.plan);
               recordResultBoth(report, job, "needsReview", `external ATS form filled (${res2.filled} fields) — submit manually from the review queue`);
               console.log(yellow(`  ⏸ external ATS: filled ${res2.filled} fields — queued; you submit (never auto on unknown ATS)`));
@@ -2434,7 +2503,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
         }
 
         const mem = await loadAnswerMemory(site); // form-answer memory: stored labels reuse their last answer
-        const { filled, unfilledRequired, fields: ffFields, plan: ffPlan } = await fillApplicationForm(page, { profile, job, resumePath, dryRun: args["dry-run"], siteHost: site, storedAnswers: mem });
+        const { filled, unfilledRequired, fields: ffFields, plan: ffPlan } = await fillApplicationForm(page, { profile, job, resumePath, dryRun: args["dry-run"], siteHost: site, storedAnswers: mem, ai });
         const ffPreview = formFieldsPreview(ffFields, ffPlan); // the queue must show WHAT was filled
         if (unfilledRequired.length) {
           recordResultBoth(report, job, "needsReview", `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")} — form left open`);
@@ -2465,7 +2534,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           await page.close().catch(() => {});
           continue;
         }
-        const sub = await trySubmit(page, site, rules, { profile, job, resumePath, dryRun: args["dry-run"], storedAnswers: mem }); // merged registry rules — the owner's autoSubmit decision
+        const sub = await trySubmit(page, site, rules, { profile, job, resumePath, dryRun: args["dry-run"], storedAnswers: mem, ai }); // merged registry rules — the owner's autoSubmit decision
         if (sub.auto) {
           recordResultBoth(report, job, "submitted", sub.note);
           budgetSpendThisRun++; // Phase 0: this run's own submissions count against the cap the NEXT re-check sees

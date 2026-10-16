@@ -731,6 +731,135 @@ export function normalizeFieldKey(label) {
 const NON_REUSABLE_KINDS = new Set(["coverLetter", "longText", "unknown", "workAuth", "certificate"]);
 export function canStoreAnswer(kind) { return !NON_REUSABLE_KINDS.has(String(kind || "unknown")); }
 
+/* ─────────────────── LLM field mapping (Tier 2) ─────────────────── */
+/* Regex classification stops at `unknown` the moment a board phrases a
+   recurring question differently ("CTC details", "Preferred interview
+   location") — every such label lands in the review queue forever. The
+   fix is reading comprehension, not another regex: the same AI that
+   judges JDs also maps unknown FORM FIELDS onto the candidate's own
+   facts. Non-negotiable guards (Tier-2 doctrine):
+   - facts only: field_value must be copied VERBATIM from the profile (or
+     an owner canned answer) — the model never composes, formats or
+     invents; parallels "never invent answers" for the whole engine;
+   - NEVER-ANSWER kinds stay review-gated: workAuth/certificate are
+     reviewed regardless of what the model returns (planFormAnswers maps
+     ONLY cls.kind === unknown, and those kinds never classify there);
+   - the result is cached per (field label) for one week in answer_maps —
+     the LLM is called once per NOVEL question, never once per form or
+     per application (cost scale of the AI judge applies here too). */
+
+export const FIELD_PROMPT_SYSTEM = "You map job-application form fields to a candidate profile. You never invent facts.\nFor each field output JSON only: {\"mappings\":[{\"index\":<number as given>,\"how\":\"profile_answer\"|\"canned_answer\"|\"unanswerable\",\"field_value\":<string copied verbatim from the candidate profile or canned answers, or null>,\"reason\":\"<10 words max>\"}]}.\nRules:\n- field_value MUST be copied verbatim from the candidate profile or canned answers. Do not compose, format, translate or estimate values.\n- If the profile has no honest value (sensitive facts like work authorization, certifications, IDs, and profile-blank facts), use \"unanswerable\" with field_value null.\n- Never answer \"unanswerable\" for basic identity facts (name parts, email, phone) when the profile clearly holds them.\n- Reply with ONLY the JSON object.";
+
+/** The owner's canned answers (profile.extraAnswers) as prompt lines —
+    these are the ONLY values the model may place verbatim besides the
+    first-class profile fields. */
+export function cannedAnswersBlock(extraAnswers = {}) {
+  const lines = Object.entries(extraAnswers ?? {})
+    .filter(([, v]) => typeof v === "string" && v.trim())
+    .slice(0, 8)
+    .map(([k, v]) => `- ${k}: ${v.trim().slice(0, 60)}`);
+  return lines.length ? `Canned answers (owner-approved for this exact question kind):\n${lines.join("\n")}` : "";
+}
+
+/** One prompt for ALL still-unknown required/optional fields of a form:
+    the call is per FORM, not per field, but the answer cache makes the
+    EFFECTIVE frequency once per novel label. Null when nothing is
+    unknown-and-unanswered — no call is made at all then. */
+export function aiFieldPrompt(fields, plan, { profile, job } = {}) {
+  const p = profile ?? {};
+  const lines = [];
+  (plan ?? []).forEach((pPlan, i) => {
+    if (!pPlan || pPlan.cls?.kind !== "unknown" || String(pPlan.answer ?? "").trim()) return;
+    const f = (fields ?? [])[i] ?? { label: "" };
+    const opts = Array.isArray(f.options) && f.options.length ? ` options=[${f.options.slice(0, 8).map((o) => String(o).slice(0, 40)).join(" | ")}]` : "";
+    lines.push(`index ${i}: label="${String(f.label ?? "").slice(0, 120)}" tag=${f.tag ?? "input"}${f.required ? " (required)" : ""}${opts}`);
+  });
+  if (!lines.length) return null;
+  const user = [
+    `FORM FIELDS:\n${lines.join("\n")}`,
+    `CANDIDATE PROFILE (the ONLY source for field values):\nname=${p.name ?? ""} | email=${p.email ?? ""} | phone=${p.phone ?? ""} | headline=${p.headline ?? ""} | years=${p.years ?? ""} | locations=${(p.locations ?? []).join(", ")} | linkedin=${p.linkedin ?? ""} | portfolio=${p.portfolio ?? ""} | notice period=${p.noticePeriod ?? ""} | salary expectation=${p.salaryExpectation ?? ""}`,
+    typeof p.summary === "string" && p.summary.trim() ? `SUMMARY: ${p.summary.trim().slice(0, 300)}` : "",
+    cannedAnswersBlock(p.extraAnswers),
+    `JOB (context only, never a source for field values): ${job?.title ?? ""}${job?.company ? ` at ${job.company}` : ""}`,
+  ].filter(Boolean).join("\n\n");
+  return { system: FIELD_PROMPT_SYSTEM, user };
+}
+
+/** Defensive parse of the mapping reply — same standard as parseJudgeReply:
+    any deviation (prose, wrong `how`, rejected reply) yields {} entries
+    for those indices, and the caller proceeds on the deterministic plan. */
+export function parseFieldMapping(text) {
+  const m = String(text || "").match(/\{[\s\S]*\}/);
+  if (!m) return {};
+  try {
+    const j = JSON.parse(m[0]);
+    const out = {};
+    for (const mv of Array.isArray(j.mappings) ? j.mappings.slice(0, 24) : []) {
+      const how = mv?.how === "canned_answer" ? "canned" : mv?.how === "unanswerable" ? "unanswerable" : mv?.how === "profile_answer" ? "profile" : null;
+      if (!how) continue;
+      const idx = Number(mv.index);
+      out[idx] = { how, value: how === "unanswerable" ? null : String(mv?.field_value ?? "").slice(0, 300), reason: String(mv?.reason ?? "").slice(0, 80) };
+    }
+    return out;
+  } catch { return {}; }
+}
+
+const normaliseFact = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9@.]+/g, " ").replace(/\s+/g, " ").trim();
+
+/** Is this mapped value an honest copy of a profile fact? A mapped value
+    must be CONTAINED in some first-class fact (name, email, phone,
+    years, locations, links, salary, notice) or in an owner canned answer
+    — "Certificate: XYZ" for a profile without.Xr fails and the field
+    stays blank (fail-closed like every unknown answer). Whitespace and
+    punctuation are normalized so "₹ 12,00,000" vs "12,00,000" match. */
+export function mappedValuePlausibleForProfile(value, profile, job = null) {
+  const p = profile ?? {};
+  const facts = [
+    p.name, p.headline, p.email, p.phone, p.noticePeriod, p.salaryExpectation,
+    p.linkedin, p.portfolio, String(p.years ?? ""), job?.location ?? "",
+    ...(Array.isArray(p.locations) ? p.locations : []),
+    ...(p.extraAnswers && typeof p.extraAnswers === "object" ? Object.values(p.extraAnswers) : []),
+  ].map(normaliseFact).filter(Boolean);
+  const v = normaliseFact(value);
+  if (!v || v.length > 200) return false;
+  return facts.some((f) => f.includes(v) || v.includes(f));
+}
+
+/** Apply a verified mapping to the deterministic plan: fills ONLY kind
+    unknown + empty-answer slots; how=profile is accepted as-is (the model
+    copied a named fact), how=canned must additionally pass the profile
+    containment check; how=unanswerable leaves the field blank (its
+    default — required+empty then fail-closes to needs-review as always).
+    Returns a NEW array; unmatched indices are untouched. */
+export function applyFieldMapping(plan, mapping, { profile, job } = {}) {
+  return (plan ?? []).map((p, i) => {
+    if (!p || p.cls?.kind !== "unknown" || String(p.answer ?? "").trim()) return p;
+    const m = mapping?.[i];
+    if (!m || m.how === "unanswerable") return p;
+    const v = String(m.value ?? "").trim();
+    if (!v || (m.how === "canned" && !mappedValuePlausibleForProfile(v, profile, job))) return p;
+    return { ...p, answer: v, mapped: { how: m.how, reason: String(m.reason ?? "").slice(0, 80) } };
+  });
+}
+
+/** Read a mapped answer out of a plan (readability shim for the driver:
+    plan[i]?.answer ?? ""). */
+export function mappedAnswerFor(plan, index) {
+  const p = (plan ?? [])[index];
+  return p ? String(p.answer ?? "") : "";
+}
+
+/** The 7-day window for mapped answers (stored + read): maps are
+    MODEL-GENERATED — time-boxed how long yesterday's model cleverness can
+    steer the engine, unlike owner answers in form_answers (kept forever). */
+export function weekKeyForMap(now = new Date()) {
+  const d = new Date(now.getTime());
+  d.setUTCDate(d.getUTCDate() - 7);
+  const jan1 = Date.UTC(d.getUTCFullYear(), 0, 1);
+  const wk = Math.ceil(((d.getUTCDay() + 1 + Math.floor((d - jan1) / 86400000)) / 7));
+  return `${d.getUTCFullYear()}-W${wk}`;
+}
+
 /**
  * One classification pass per field: draft from the profile first, then
  * fall back to a remembered answer for this exact label key. Returns the

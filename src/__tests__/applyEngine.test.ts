@@ -20,6 +20,7 @@ import {
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
   instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES, judgeSavesDigestLines,
   maxAgeDaysOf, olderThanMaxAge, postedAgeChip, passesAgeFilter, cleanPostingTitle,
+  aiFieldPrompt, parseFieldMapping, mappedValuePlausibleForProfile, applyFieldMapping, mappedAnswerFor, weekKeyForMap,
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
@@ -1271,5 +1272,81 @@ describe("#164 wiring — smarter fitScore (evidence-based penalties only)", () 
     expect(fitScore(matched, missing, [], { location: "Remote — worldwide", preferredLocations: ["bengaluru"] })).toBe(25);
     expect(fitScore(matched, missing, [], { preferredLocations: ["bengaluru"] })).toBe(25); // no captured location: unchanged
     expect(fitScore(matched, missing, [], { location: "New York" })).toBe(25); // no preference list: unchanged
+  });
+});
+
+/* ───── Tier 2 — LLM field mapping (verified verbatim-copy answers) ───── */
+/* The Playwright driver can't run in CI; the mapping's safety-critical
+   halves live in the pure lib and are pinned here: prompt assembly,
+   defensive reply parse, profile-containment verification, plan-fill
+   narrowing (only unknown+empty), and the 7-day cache-window key. */
+
+describe("Tier 2 — aiFieldPrompt / parseFieldMapping / applyFieldMapping", () => {
+  const profile = { name: "Gaurav Kumar", email: "g@x.com", phone: "9876543210", skills: ["react"], extraAnswers: { noticePeriodShort: "Immediate" } };
+
+  it("aiFieldPrompt: null when nothing is unknown-and-unanswered — no AI call", () => {
+    const fields = [{ label: "First name", tag: "input", required: true }];
+    const plan = planFormAnswers(fields, profile, {}, {});
+    expect(plan[0].cls.kind).not.toBe("unknown");
+    expect(plan[0].answer).toBe("Gaurav");
+    expect(aiFieldPrompt(fields, plan, { profile })).toBeNull();
+  });
+
+  it("aiFieldPrompt: unknown+empty fields get index/label/options lines; canned answers ride along", () => {
+    const fields = [{ label: "Preferred interview location", tag: "select", required: true, options: ["Bengaluru", "Remote"] }];
+    const plan = [{ cls: { kind: "unknown", confidence: "answer" }, key: "preferred interview location", answer: "" }];
+    const prompt = aiFieldPrompt(fields, plan as never, { profile, job: { title: "FE" } });
+    expect(prompt).not.toBeNull();
+    expect(prompt!.system).toContain("never invent facts");
+    expect(prompt!.user).toContain('index 0: label="Preferred interview location"');
+    expect(prompt!.user).toContain("options=[Bengaluru | Remote]");
+    expect(prompt!.user).toContain("noticePeriodShort: Immediate"); // canned answers are the only non-profile source
+  });
+
+  it("parseFieldMapping accepts the valid contract and degrades any deviation to nothing", () => {
+    const good = '{"mappings":[{"index":0,"how":"profile_answer","field_value":"Gaurav Kumar","reason":"name field"},{"index":3,"how":"unanswerable","field_value":null,"reason":"sensitive"}]}';
+    const m = parseFieldMapping(good);
+    expect(m[0]).toEqual({ how: "profile", value: "Gaurav Kumar", reason: "name field" });
+    expect(m[3]).toEqual({ how: "unanswerable", value: null, reason: "sensitive" });
+    expect(parseFieldMapping("I cannot do that")).toEqual({});           // refusal → no mappings
+    expect(parseFieldMapping('{"mappings":[{"index":1,"how":"invent","field_value":"x"}]}')).toEqual({}); // bad how
+  });
+  it("mappedValuePlausibleForProfile: verbatim profile/copied facts pass, invented facts fail", () => {
+    expect(mappedValuePlausibleForProfile("Gaurav Kumar", profile)).toBe(true);
+    expect(mappedValuePlausibleForProfile("g@x.com", profile)).toBe(true);
+    expect(mappedValuePlausibleForProfile("9876543210", profile)).toBe(true);
+    expect(mappedValuePlausibleForProfile("Immediate", profile)).toBe(true);    // canned answer
+    expect(mappedValuePlausibleForProfile("Gaurav", profile)).toBe(true);       // a named fact substring (model copied the given name into a First name field)
+    expect(mappedValuePlausibleForProfile("Certificate in Cloud Computing", profile)).toBe(false);
+    expect(mappedValuePlausibleForProfile("", profile)).toBe(false);
+  });
+  it("applyFieldMapping fills ONLY unknown+empty slots and drop-tests canned claims", () => {
+    const fields = [
+      { label: "First name", tag: "input", required: true },       // 0 — known
+      { label: "Preferred location 1", tag: "input", required: true },  // 1 — unknown
+      { label: "Certifications", tag: "input", required: false },   // 2 — unknown, will map canned-invalid
+    ];
+    const base = planFormAnswers(fields, profile, {}, {});
+    expect(base[0].cls.kind).toBe("firstName");
+    expect(base[0].answer).toBe("Gaurav");
+    expect(base[1].cls.kind).toBe("unknown");
+    expect(base[1].answer).toBe("");
+    const mapping = parseFieldMapping('{"mappings":[{"index":1,"how":"profile_answer","field_value":"Gaurav Kumar","reason":"name"},{"index":2,"how":"canned_answer","field_value":"XYZ-CERT","reason":"claim"}]}');
+    const mapped = applyFieldMapping(base, mapping, { profile });
+    expect(mapped[0].answer).toBe("Gaurav");                 // known slot untouched
+    expect(mapped[1].answer).toBe("Gaurav Kumar");           // profile-copy applied
+    expect(mapped[1]).toHaveProperty("mapped");
+    expect(mapped[2].answer).toBe("");                       // unverifiable canned claim dropped
+    // unanswerable never answers — stays blank → required+empty fail-closes in the driver as always
+    const m2 = parseFieldMapping('{"mappings":[{"index":1,"how":"unanswerable","field_value":null,"reason":"sensitive"}]}');
+    expect(applyFieldMapping(base, m2, { profile })[1].answer).toBe("");
+  });
+  it("mappedAnswerFor reads the plan; weekKeyForMap is a stable, stamped row-key", () => {
+    const plan = [{ cls: { kind: "unknown", confidence: "answer" }, key: "k", answer: "Bengaluru" }, { cls: { kind: "years", confidence: "answer" }, key: "k2", answer: "4" }];
+    expect(mappedAnswerFor(plan as never, 0)).toBe("Bengaluru");
+    expect(mappedAnswerFor(plan as never, 1)).toBe("4");
+    expect(mappedAnswerFor(null, 0)).toBe("");
+    expect(weekKeyForMap(new Date("2026-10-16T00:00:00Z"))).toMatch(/^\d{4}-W\d{1,2}$/);
+    expect(weekKeyForMap(new Date("2026-10-16T00:00:00Z"))).toBe(weekKeyForMap(new Date("2026-10-13T00:00:00Z"))); // stable per week
   });
 });
