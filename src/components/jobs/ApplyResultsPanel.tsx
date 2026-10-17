@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar,
-  type ApplyResultRow,
+  listFormAnswerStats, type ApplyResultRow, type FormAnswerStats,
 } from "../../services/jobSites.ts";
 import { extractFeedbackSkills, postedAgeChip, passesAgeFilter, cleanPostingTitle } from "../../../scripts/apply-engine-lib.js";
 
@@ -40,6 +40,10 @@ function ago(iso: string): string {
 export default function ApplyResultsPanel() {
   const [rows, setRows] = useState<ApplyResultRow[] | null>(null);
   const [strikes, setStrikes] = useState<{ skill: string; strikes: number }[]>([]);
+  /* 🧠 answer-memory savings: per site, how many remembered answers exist
+     and how often the engine actually reused them while filling forms
+     (form-answer-reuse.sql). Absent SQL = empty strip, no crash. */
+  const [memory, setMemory] = useState<FormAnswerStats[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ApplyResultRow["result"] | "all">("all");
   /* posting-age filter (the board's clock, NOT created_at): cycles any →
@@ -53,6 +57,7 @@ export default function ApplyResultsPanel() {
       setError(null);
       setRows(await listApplyResults(150));
       setStrikes(await getSkillStrikes().catch(() => []));
+      setMemory(await listFormAnswerStats().catch(() => null));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setRows([]);
@@ -141,6 +146,18 @@ export default function ApplyResultsPanel() {
 
       {error && <div className="mt-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!rows.length && <div className="mt-2 text-xs text-zinc-300">No decisions recorded yet — they land here as soon as the engine runs a site.</div>}
+
+      {memory && memory.length > 0 && (
+        <div className="mt-2 rounded bg-teal-500/10 px-2 py-1.5 text-[11px] text-teal-300">
+          🧠 Answer memory — the engine reuses your previously-confirmed answers instead of re-drafting or spending an AI call:
+          {memory.filter((m) => m.answers > 0).map((m) => (
+            <span key={m.site_host} className="ml-2 rounded bg-zinc-800/80 px-1.5 py-0.5 font-bold"
+              title={`${m.answers} remembered answers · ${m.reused} reused at least once${m.last_used ? ` · last reuse ${new Date(m.last_used).toLocaleString()}` : ""}`}>
+              {m.site_host}: {m.answers} stored{m.total_reuses > 0 ? ` · ↺${m.total_reuses}` : ""}
+            </span>
+          ))}
+        </div>
+      )}
 
       {strikes.length > 0 && (
         <div className="mt-2 rounded bg-fuchsia-500/10 px-2 py-1.5 text-[11px] text-fuchsia-300">

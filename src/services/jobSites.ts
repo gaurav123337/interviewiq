@@ -4,6 +4,7 @@
    `auto-apply-jobs.js --all`. */
 
 import { getSupabaseClient } from "./cloud.ts";
+import { autoSubmitTrustPatch, autoSubmitTrustVerdict, AUTO_SUBMIT_NEVER_HOSTS } from "../../scripts/apply-engine-lib.js";
 
 export interface JobSite {
   id: string;
@@ -511,6 +512,73 @@ export function applyResultCounts(rows: ApplyResultRow[]): Record<ApplyResultRow
   const counts = { submitted: 0, needs_review: 0, skipped: 0, error: 0 };
   for (const r of rows) if (r.result in counts) counts[r.result] += 1;
   return counts;
+}
+
+/* ── form-answer memory stats (#heal-reuse): every field the engine FILLED
+   straight from a remembered answer bumps reuse_count server-side; the doc
+   table drives the report's 🧠 strip so the owner sees the memory paying
+   rent (how many remembered answers sit per site, how often reused). The
+   RPC exists since form-answer-reuse.sql — until applied, degrade to an
+   honest [] strip, never crash. ── */
+
+export interface FormAnswerStats {
+  site_host: string;
+  /** remembered answers currently held for this site */
+  answers: number;
+  /** of those, how many have been reused at least once */
+  reused: number;
+  /** total reuse events — the AI-call/time-savings counter */
+  total_reuses: number;
+  last_used: string | null;
+}
+
+export async function listFormAnswerStats(): Promise<FormAnswerStats[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_form_answer_stats");
+  if (error) throw error;
+  return (data ?? []) as FormAnswerStats[];
+}
+
+/* ── auto-submit trust state (#trust-chips): recompute the same per-host
+   latch the engine computes at run start (autoSubmitTrustVerdict in the
+   pure lib) from the rows this admin session can see — up to 40 newest
+   per host, capped by the RPC's window. This is EVIDENCE-ONLY: the UI
+   shows what the engine would decide NOW; the owner's explicit
+   autoSubmit:false stays "explicit off", and gmail/linkedin-style never
+   hosts stay blocked regardless of history. ── */
+
+export interface SiteTrustState {
+  /** trust = would auto-submit this run; review = still at the review gate */
+  verdict: "trust" | "review";
+  trusted: boolean;
+  blocked: boolean;
+  note: string;
+}
+
+export function siteTrustState(
+  host: string,
+  rows: Pick<ApplyResultRow, "result" | "detail">[],
+  rules: Record<string, unknown> | null | undefined,
+): SiteTrustState {
+  const adapted = rows
+    .filter((r) => r.result === "submitted" || r.result === "needs_review" || r.result === "skipped" || r.result === "error")
+    .slice(0, 40) // same 40-row window the engine grants its latch
+    .map((r) => ({
+      result: r.result as string,
+      unknownModeled: /healed/i.test(r.detail ?? ""),
+      submittedUnverified: /not detected/i.test(r.detail ?? ""),
+    }));
+  const libVerdict = autoSubmitTrustVerdict(adapted);
+  const patch = autoSubmitTrustPatch(libVerdict, host, rules ?? {});
+  return {
+    /* the ENGINE's decision this run: autoSubmit flips on only for a trusted,
+       non-blocked host the owner hasn't explicitly turned off */
+    verdict: patch.autoSubmit ? ("trust" as const) : ("review" as const),
+    trusted: patch.trusted === true,
+    blocked: AUTO_SUBMIT_NEVER_HOSTS.some((h) => host.toLowerCase().includes(h)),
+    note: patch.trustNote ?? "",
+  };
 }
 
 /* ── feedback loop: 👍/👎 on applied jobs teach the gate ────────────────── */

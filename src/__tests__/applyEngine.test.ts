@@ -11,6 +11,7 @@ import {
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
   titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor, classifyJobLink,
+  isChromeTitle, CHROME_TITLE_RE,
   extractFeedbackSkills, strikesWithDecay, skillIsBuzzOnly,
   parsePostedAge, isFreshPosted, sortByFreshness, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
@@ -26,6 +27,34 @@ import {
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
+  /* live-audit regression (2026-10-17): crawled boards scraped nav anchors as
+     postings — ~200 history rows titled "Apply now" / "Sign in for My Jobs".
+     isChromeTitle is the collect-time guard the audit exported. */
+  it("isChromeTitle drops the exact audit junk whole-line", () => {
+    for (const t of ["Apply now", "Register", "Sign in for My Jobs", "Browse latest jobs", "Find Resumes",
+      "Create Resume", "Employers / Post Job", "Create Alert", "Verified Listings",
+      "apply now!", "Sign in"])
+      expect(isChromeTitle(t)).toBe(true);
+  });
+
+  it("isChromeTitle keeps real postings that merely START with the same verb", () => {
+    for (const t of ["Apply as a DevOps Engineer", "Apply now — Senior Go Developer",
+      "Staff Backend Engineer", "Posting for a well-known product firm",
+      "Register-keeper for your team (weird but real)"])
+      expect(isChromeTitle(t)).toBe(false);
+  });
+
+  it("isChromeTitle treats blank extractions as chrome", () => {
+    expect(isChromeTitle("")).toBe(true);
+    expect(isChromeTitle("   ")).toBe(true);
+    expect(isChromeTitle(null)).toBe(true);
+  });
+
+  it("classifyJobLink calls nav-chrome labels nav even on unknown boards (was fail-open)", () => {
+    expect(classifyJobLink({ href: "https://bayt.com/x", text: "Apply now", host: "bayt.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://bayt.com/x", text: "Sign in for My Jobs", host: "bayt.com" }).kind).toBe("nav");
+  });
+
   it("keeps real posting detail links (id-bearing routes)", () => {
     expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).kind).toBe("posting");
     expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).id).toBe("4471345244");
@@ -577,6 +606,17 @@ describe("form-answer memory — store and reuse what was filled", () => {
     expect(plan[1].answer).toBe("30 days");        // memory fills the gap
     expect(plan[1].key).toBe("notice period");
     expect(plan[2].answer).toBe("https://linkedin.com/in/me"); // memory-only field
+    /* the 🧠 reuse counter keys off this provenance pin — reuse touches
+       run ONLY on the memory-fallback path, never on a from-profile draft */
+    expect(plan[0].fromMemory).toBe(false);
+    expect(plan[1].fromMemory).toBe(true);
+    expect(plan[2].fromMemory).toBe(true);
+  });
+
+  it("fromMemory is false on blank plans too (no reuse of nothing)", () => {
+    const plan = planFormAnswers([{ label: "Expected CTC", tag: "input", required: true }], {}, {}, {});
+    expect(plan[0].answer).toBe("");
+    expect(plan[0].fromMemory).toBe(false);
   });
 
   it("still leaves blanks blank when neither profile nor memory has an answer", () => {
@@ -1587,5 +1627,21 @@ describe("Tier 4 — autoSubmitTrustVerdict / autoSubmitTrustPatch", () => {
     const v = autoSubmitTrustVerdict(clean(5));
     expect(autoSubmitTrustPatch(v, "linkedin.com", {}).autoSubmit).toBe(false);
     expect(autoSubmitTrustPatch(v, "linkedin.com", {}).trustNote).toContain("platform policy");
+  });
+
+  it("UI derivation contract: detail-text flags mirror the driver exactly (siteTrustState relies on this)", () => {
+    /* src/services/jobSites.ts#siteTrustState maps rows with the SAME two
+       regexes the driver uses before calling the verdict — pin them here so
+       a lib change for the driver cannot silently break the UI chips */
+    const rows = clean(3).concat([
+      { result: "needs_review", detail: "recovered via a HEALED control" },
+    ]);
+    const adapted = rows.map((r) => ({
+      result: String(r.result ?? "") as string,
+      unknownModeled: /healed/i.test(String(r.detail ?? "")),
+      submittedUnverified: /not detected/i.test(String(r.detail ?? "")),
+    }));
+    expect(adapted.slice(-1)[0].unknownModeled).toBe(true);
+    expect(adapted[0].unknownModeled).toBe(false);
   });
 });
