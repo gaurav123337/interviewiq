@@ -105,9 +105,9 @@ end $$;
 create or replace function public.admin_list_apply_results(p_limit int default 100)
 returns table (
   id uuid, site_host text, job_url text, title text, company text,
-  result text, detail text, fit int, created_at timestamptz
+  result text, detail text, fit int, posted_age_h int, feedback text, created_at timestamptz
 ) language sql security definer set search_path = public as $$
-  select id, site_host, job_url, title, company, result, detail, fit, created_at
+  select id, site_host, job_url, title, company, result, detail, fit, posted_age_h, feedback, created_at
   from public.apply_results
   order by created_at desc
   limit least(greatest(p_limit, 1), 500);

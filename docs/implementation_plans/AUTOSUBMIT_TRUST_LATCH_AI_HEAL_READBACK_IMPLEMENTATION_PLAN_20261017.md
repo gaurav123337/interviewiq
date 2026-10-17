@@ -5,7 +5,8 @@
 ## Overview
 
 Tiers 3–4 of the auto-apply hardening plan ([Claude-plan.txt](../../Claude-plan.txt)):
-introduce an easing-on-evidence **auto-submit trust latch** per job site, and make the
+introduce an easing-on-evidence **auto-submit trust latch** per job site (recomputed
+per run from server-side `apply_results` history — no stored trust flag), and make the
 **AI heal flow verifiable** (button readback + answer recording) instead of
 fire-and-forget. All pure decision logic lives in `scripts/apply-engine-lib.js`
 (pinned by vitest); the Playwright driver only executes what the pure layer decided.
@@ -33,10 +34,7 @@ fire-and-forget. All pure decision logic lives in `scripts/apply-engine-lib.js`
    a platform-prohibition blocklist (LinkedIn never auto-submits regardless of
    trust). Driver reads recent `apply_results` via
    `engine_list_apply_results(host, n)` and latches per host for the run.
-3. **SQL wiring (done).** Idr `engine_list_apply_recent_results` RPC +
-   `auto_submit_trusted` boolean on `job_sites` in
-   [apply-config-and-results.sql](../../supabase/apply-config-and-results.sql)
-   (idempotent, drop-first RPC pattern; revoked from anon/public).
+3. **SQL wiring (done, applied live).** `engine_list_apply_results_for_host(p_host, p_limit)` RPC in [apply-config-and-results.sql](../../supabase/apply-config-and-results.sql): returns the host's recent `apply_results` rows (result + detail timestamps cap 200); service-role only (revoked from anon/public, re-created idempotently). There is deliberately **no persisted trust flag**: the latch is recomputed from server evidence at the start of every run, so an owner run with `--no-trust`-style explicit registry rules always wins and trust can silently snap back. While applying, the live `admin_list_apply_results` was found ahead of the file (it selects `posted_age_h int` + `feedback text`, added by later PRs) — the file was reconciled to the live row type instead of dropping, so the UI panel keeps its columns.
 
 ## Technical Considerations
 
@@ -60,9 +58,15 @@ fire-and-forget. All pure decision logic lives in `scripts/apply-engine-lib.js`
   `respondedName` while the implementation exposes `respondentName` — types
   corrected to match the implementation (test assertions kept aligned with the
   designed semantics: one weak row tolerated, two block, unverified blocks).
+- Applied live via the linked CLI (`npx supabase db query --linked --file …`,
+  the path this repo used for #98 Platinum when the Management token isn't
+  configured): Executed green; catalog-verified — RPC exists and is revoked
+  from anon/public, `feedback`/`posted_age_h` columns intact.
 
 ## Next Steps
 
-- Apply `apply-config-and-results.sql` to the live project (manual SQL step).
-- Set `auto_submit_trusted` on a pilot host and observe one supervised run
-  before enabling across sites.
+- No pilot host flip is needed — trust is evidence-computed per run, not stored.
+  Live preflight (2026-10-17): all five active hosts show only skipped/review
+  rows in their recent windows, so auto-submit currently stays at the review
+  gate everywhere (correct fail-closed behavior); the attached command starts
+  accumulating `submitted` evidence the moment the owner runs it.
