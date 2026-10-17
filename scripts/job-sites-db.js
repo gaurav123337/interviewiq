@@ -67,6 +67,15 @@ export async function recordRun({ host, ok, collected, submitted, skipped, error
   });
 }
 
+/** Tier 4 — recent per-job decisions for ONE host (auto-submit trust).
+    Reads the apply_results history the engine already writes; the RPC
+    must exist BEFORE trust can ever flip a host. Until the SQL is
+    applied the latch stays closed: the call rejects → [] → verdict
+    'review' → the review gate holds (honest-degradation rule). */
+export async function listApplyResultsForHost(host, limit = 40) {
+  return rpc(loadLocalCreds(), "engine_list_apply_results_for_host", { p_host: host, p_limit: limit });
+}
+
 /** Merge learned selector rules into a site's rules blob. */
 export async function setSiteRules(host, rules) {
   return rpc(loadLocalCreds(), "engine_set_job_site_rules", { p_host: host, p_rules: rules });

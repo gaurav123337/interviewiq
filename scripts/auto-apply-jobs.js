@@ -40,6 +40,8 @@ import {
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip, boardMatchOpt, judgeSavesDigestLines,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
+  dumpButtonControls, healPickVerifies, healLocatorsFor, healPersistAllowed, HEAL_RULE_KEYS, healTextMatchersFor,
+  autoSubmitTrustPatch,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap } from "./apply-kit-node.js";
@@ -1895,6 +1897,120 @@ function textButtonLocator(page, re) {
     .first();
 }
 
+/* Matcher-PREFERENCE resolver: try each matcher in order (a persisted heal
+   → the site rule's pinned regex → generic) and return the first locator
+   that actually resolves to ≥1 visible control, else the LAST matcher's
+   locator (zero — the caller's existing "not found" path runs unchanged).
+   This is what makes a persisted heal pay off: the next run matches the
+   redesigned control with no AI call. */
+async function firstButtonLocator(page, matchers) {
+  const list = (matchers ?? []).filter(Boolean);
+  if (!list.length) return textButtonLocator(page, /$^/); // never-matching: empty
+  for (let i = 0; i < list.length; i++) {
+    const loc = textButtonLocator(page, list[i]);
+    if (i === list.length - 1) return loc;
+    if ((await loc.count()) > 0) return loc;
+  }
+  return textButtonLocator(page, list[list.length - 1]);
+}
+
+/* ─────────── Tier 3: AI-healed control discovery (redesigned boards) ───────────
+
+   When the pinned text-re matches nothing (board redesign), ONE heal
+   attempt reads the page's candidate controls and asks the AI which one
+   is the intended control. Injection-resistance and fail-closed order:
+   1. dumpControlsForHeal extracts ACCESSIBILITY envelopes only (tag,
+      accessible text, class-shoulder hints) — page text rides in the
+      prompt as DATA, never as instructions;
+   2. the reply is a bounded token (role + verbatim respondentName from
+      the shown list) — parsed by parseHealReply, no selector/script ever
+      enters the engine;
+   3. healPickVerifies re-scans the LIVE page and requires that exact
+      name to still exist — an injected instruction cannot satisfy it
+      unless the page really contains that control;
+   4. confidence ≥ 0.8 and ONLY then a bounded click, whose OUTCOME must
+      be proven by the existing positive-evidence success checks —
+      anything else stays an honest failure and persists nothing.
+   A verified heal can then earn its host a persisted rules patch
+   (healedApplyText), so the next run needs no AI call at all. */
+
+function healEnabled() {
+  return process.env.APPLY_HEAL !== "off"; // opt-out escape hatch for the owner
+}
+
+/** The structured controls dump for one heal attempt (Playwright-free
+    via page.evaluate; the pure lib shapes the prompt from it). */
+async function dumpControlsForHeal(page) {
+  const raw = await page.evaluate(() =>
+    [...document.querySelectorAll("button, a, input[type=submit], input[type=button], [role=button]")]
+      .filter((el) => el.offsetParent && !(el).disabled)
+      .slice(0, 60)
+      .map((el) => ({
+        tag: el.tagName.toLowerCase(),
+        name: ((el.innerText || el.value || el.getAttribute("aria-label") || "") + "").replace(/\s+/g, " ").trim().slice(0, 80),
+        cssShoulders: [el.getAttribute("class"), el.getAttribute("data-automation-id"), el.getAttribute("data-testid")].filter(Boolean).slice(0, 3)
+          .map((s) => String(s).slice(0, 80)),
+      }))
+  ).catch(() => []);
+  return dumpButtonControls(raw);
+}
+
+/** Build a Playwright locator from one heal spec (role + name). Exact
+    first, normalized prefix second — both inside the same visible+enabled
+    button/a shoulder textButtonLocator enforces (nav/disabled can't match). */
+function healLocator(page, spec) {
+  const roleSel = spec.role === "link" ? "a" : spec.role === "textbox" ? "input" : spec.role;
+  const base = page.locator(`${roleSel}:visible:not([disabled])`);
+  if (spec.exact) return base.filter({ hasText: new RegExp(`^\\s*${escapeRe(spec.name)}\\s*$`, "i") }).first();
+  return base.filter({ hasText: new RegExp(escapeRe(spec.name), "i") }).first();
+}
+
+const escapeRe = (s) => String(s ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** ONE self-healing attempt for a control the pinned regex can't find:
+    returns a Playwright locator or null (never throws). Cost: one AI
+    call, only on an actual miss, only when a provider is reachable. */
+async function healControl(page, intent, ai) {
+  if (!healEnabled() || !ai?.key) return null;
+  try {
+    const controls = await dumpControlsForHeal(page);
+    const pick = await aiHealButton(ai, controls, intent);
+    if (!pick) return null;
+    const rescan = await dumpControlsForHeal(page);
+    const ok = healPickVerifies(pick, rescan);
+    if (!ok) {
+      console.log(dim("  🔧 heal rejected (name not verbatim on re-scan or confidence < 0.8)"));
+      return null;
+    }
+    for (const spec of healLocatorsFor(pick)) {
+      const loc = healLocator(page, spec);
+      if ((await loc.count()) > 0) {
+        console.log(dim(`  🔧 healed ${intent}: ${pick.role} "${pick.respondentName}" (conf ${pick.confidence})`));
+        return loc;
+      }
+    }
+    return null;
+  } catch { /* heal is an optimization — never a gate */ return null; }
+}
+
+/* Per-host rule patch for a VERIFIED heal (driver side of
+   healPersistAllowed). Only the pinned keys pass setSiteRules, only at
+   ≥0.8 confidence, and only when a verified locator actually resolved —
+   identical to how learnRules stores list-link learnings. */
+async function persistHeal(host, pick) {
+  if (!host || host.startsWith("builtin") || !healPersistAllowed(pick, true)) return;
+  const db = await sitesDb();
+  if (!db?.listJobSites || !db?.setSiteRules) return;
+  try {
+    const row = (await db.listJobSites()).find((s) => s.host === host);
+    const rules = (row?.rules && typeof row.rules === "object") ? row.rules : {};
+    const key = pick.__intent === "submit this job application" ? "healedSubmitText" : "healedApplyText";
+    if (!HEAL_RULE_KEYS.includes(key)) return;
+    await db.setSiteRules(host, { ...rules, [key]: pick.respondentName, healConfidence: pick.confidence });
+    console.log(dim(`  🔧 persisted heal → ${host}.${key} = "${pick.respondentName.slice(0, 40)}"`));
+  } catch { /* registry blips never fail a run */ }
+}
+
 async function clickButton(page, locator, textRe) {
   /* scroll to it first — lazy pages keep buttons out of the viewport where
      Playwright refuses to click */
@@ -1925,8 +2041,20 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
   /* the document that holds the form (embedded-iframe ATS boards vs inline) */
   const target = await formFrame(page);
   /* the FINAL button is usually NOT the opener — Instahyre: "Apply now" opens
-     a modal, then a plain "Submit" button inside it sends the application */
-  let btn = textButtonLocator(target, rules.submitButtonText ?? rules.applyButtonText);
+     a modal, then a plain "Submit" button inside it sends the application.
+     Preference order: a PERSISTED heal for this host (read-back — the whole
+     point of persistHeal is that the next run needs no AI call), then the
+     rule's pinned regex, then the generic fallback. */
+  const submitPinned = rules.submitButtonText ?? rules.applyButtonText;
+  let btn = await firstButtonLocator(target, healTextMatchersFor(rules.healedSubmitText, submitPinned));
+  /* TIER 3: pinned regex missed AND this host has no learned/healed rule
+     substituting for it → one bounded AI heal (respondent-name verified
+     against a live re-scan before any click; a verified submit-control
+     heal persists to the host's rules so future runs need no AI call). */
+  if ((await btn.count()) === 0 && ai && healEnabled()) {
+    const healed = await healControl(target, "submit this job application", ai);
+    if (healed) btn = healed; // persist happens at the test-direct wrapper below, after real behavior proves out
+  }
   if ((await btn.count()) === 0 && site === "linkedin") {
     /* LinkedIn Easy Apply is a MULTI-STEP flow (Contact → Resume → Questions
        → Review) that renders INLINE in the sidebar in current LinkedIn (no
@@ -1966,7 +2094,10 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
       }).catch(() => false);
       if (!advanced) break;
       await page.waitForTimeout(2500);
-      btn = textButtonLocator(page, rules.submitButtonText ?? rules.applyButtonText);
+      /* re-locate after every step: the wizard re-renders, and a healed
+         submit label (learned earlier on this host) wins over the pinned
+         rule text once the board has renamed its button */
+      btn = await firstButtonLocator(page, healTextMatchersFor(rules.healedSubmitText, rules.submitButtonText ?? rules.applyButtonText));
     }
   }
   if ((await btn.count()) === 0) {
@@ -2017,6 +2148,25 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
        Only POSITIVE evidence — the site's successText — earns auto:true;
        a missing submit step is an UNKNOWN outcome, so fail closed to the
        review queue where the owner finishes or dismisses it. */
+    /* TIER 3 submit-side heal END: the flow never surfaced a submit control
+       the rules could match — same bounded AI heal as the entry path
+       above, but pointed at a page that has REACHED the end of its flow. */
+    if (ai && healEnabled()) {
+      const healed = await healControl(target, "submit this job application", ai);
+      if (healed) {
+        await clickButton(target, healed, null).catch(() => {});
+        await page.waitForTimeout(4000);
+        const pageBodyH = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+        const frameBodyH = target !== page ? await target.evaluate(() => document.body?.innerText ?? "").catch(() => "") : "";
+        const successH = detectSubmissionSuccess(pageBodyH + "\n" + frameBodyH, site);
+        if (successH) {
+          const rawName = (await healed.innerText({ timeout: 2000 }).catch(() => "") || "").replace(/\s+/g, " ").trim();
+          if (rawName) await persistHeal(RUN_HOST || site, { respondentName: rawName, role: "button", confidence: 0.9, __intent: "submit this job application" });
+          return { auto: true, note: `submitted (auto, healed control "${rawName.slice(0, 40)}")` };
+        }
+        return { auto: false, note: "healed control clicked but success text not detected — verify manually, NOT recorded as submitted" };
+      }
+    }
     return { auto: false, note: "apply flow opened but the submit step never appeared — NOT applied, needs review" };
   }
   if (rules.autoSubmit) {
@@ -2066,6 +2216,43 @@ async function runSingle(args, { existingCtx = null } = {}) {
     const row = matchSiteRow(rows, args.url);
     if (row?.rules && typeof row.rules === "object") rules = { ...rules, ...row.rules };
     if (row) RUN_HOST = row.host;
+    /* TIER 4: earned auto-submit trust — before the run starts, the host's
+       recent apply_results record is evaluated by autoSubmitTrustVerdict:
+       needs a clean window (no needs-review storms, no unknown-modelled
+       fields, only success-text-verified submits) and ≥4 verified
+       submissions; verdict "trust" flips autoSubmit ON and any miss back
+       OFF (silent snap-back, same probation-style gate boards already
+       use). The owner's EXPLICIT autoSubmit:false in the registry never
+       flips to on, and linkedin-class hosts NEVER earn trust (ToS
+       forbids automation — policy, not a trust question). Fail-closed:
+       no results history, unknown host, or unapplied SQL = rules stand
+       unchanged (README boards' existing autoSubmit stays authoritative). */
+    if (row) {
+      try {
+        const history = await db?.listApplyResultsForHost?.(row.host, 40);
+        if (Array.isArray(history) && history.length) {
+          /* per-JOB decisions are the evidence units (apply_results rows);
+             detail text carries the weak-signal flags: a healed control
+             means the page CHANGED shape since the last clean window, and
+             "success text not detected" means the submit was never
+             positively verified — both block trust. */
+          const adapted = history.map((r) => ({
+            result: String(r.result ?? ""),
+            unknownModeled: /healed/i.test(String(r.detail ?? "")),
+            submittedUnverified: /not detected/i.test(String(r.detail ?? "")),
+          }));
+          const v = autoSubmitTrustVerdict(adapted);
+          const patch = autoSubmitTrustPatch(v, row.host, rules);
+          const prior = rules.autoSubmit;
+          rules = { ...rules, ...patch };
+          if (patch.autoSubmit !== prior) {
+            console.log(patch.autoSubmit
+              ? yellow(`  🏅 auto-submit EARNED: ${patch.trustNote}`)
+              : dim(`  🪫 auto-submit back to review gate: ${patch.trustNote}`));
+          }
+        }
+      } catch { /* history read is best-effort — rules stand */ }
+    }
   } catch { /* registry unavailable — builtin rules stand */ }
   const profile = loadApplyProfile(args.profile);
   const token = process.env.SUPABASE_ACCESS_TOKEN;
@@ -2406,13 +2593,30 @@ async function runSingle(args, { existingCtx = null } = {}) {
         writeFileSync(resumePath, kit.resume);
 
         /* find and open the apply flow on the job page. SPA boards hydrate
-           the button late — retry bounded (3×2s) instead of one-shot detection. */
-        const applyBtn = textButtonLocator(page, rules.applyButtonText);
+           the button late — retry bounded (3×2s) instead of one-shot detection.
+           A healed APPLY label recorded on a previous run for this host wins
+           over the pinned rule text (that is the whole point of persisting it). */
+        const applyBtn = await firstButtonLocator(page, healTextMatchersFor(rules.healedApplyText, rules.applyButtonText));
         let applyCount = 0;
         for (let attempt = 0; attempt < 3; attempt++) {
           applyCount = await applyBtn.count();
           if (applyCount > 0) break;
           await page.waitForTimeout(2000);
+        }
+        /* TIER 3: apply-side heal — same fail-closed verification as the
+           submit side; a healed APPLY control is persisted via
+           healedApplyText (the site's rules blob now carries both). */
+        if (applyCount === 0 && ai && healEnabled()) {
+          const healedApply = await healControl(page, "open the job application form", ai);
+          if (healedApply) {
+            const rawText = (await healedApply.innerText({ timeout: 2000 }).catch(() => "") || "").replace(/\s+/g, " ").trim();
+            recordResultBoth(report, job, "needsReview", `apply control healed by AI: "${rawText.slice(0, 40)}" — verify and submit manually this run`);
+            console.log(yellow(`  ⏸ healed apply control "${rawText.slice(0, 40)}" — queued for one-click manual finish (first heal on this host)`));
+            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `apply control healed by AI: "${rawText.slice(0, 40)}"`, fit: job.__fit ?? null, ageH: job.__ageH ?? null });
+            await persistHeal(RUN_HOST || site, { respondentName: rawText, role: "button", confidence: 0.9, __intent: "open the job application form" });
+            await page.waitForTimeout(rules.minIntervalMs);
+            continue;
+          }
         }
         if (applyCount === 0) {
           /* guest preview CTAs expire after ~1 min — the AI judge/kit calls

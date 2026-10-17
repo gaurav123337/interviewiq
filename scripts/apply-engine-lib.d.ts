@@ -384,6 +384,81 @@ export function mappedAnswerFor(plan: (PlannedAnswer | null | undefined)[] | nul
 
 export function weekKeyForMap(now?: Date | number | string): string;
 
+/* ── Tier 3: self-healing button selectors ─────────────────────────── */
+
+export const HEAL_PROMPT_SYSTEM: string;
+export const HEAL_ROLES: string[];
+/** The only rules-blob keys a heal may write — as a literal union so the
+    driver's `HEAL_RULE_KEYS.includes(key)` guard actually narrows `key`. */
+export const HEAL_RULE_KEYS: readonly ["healedApplyText", "healedSubmitText", "healConfidence"];
+export const HEAL_MIN_CONFIDENCE: number;
+
+export interface HealControlDump {
+  name: string; tag: string; hints: string[];
+}
+
+export function dumpButtonControls(controls: { name?: string; tag?: string; cssShoulders?: unknown }[] | null | undefined): HealControlDump[];
+
+export function buttonHealPrompt(
+  controls: { name?: string; tag?: string; cssShoulders?: unknown }[] | null | undefined,
+  intent?: string
+): { system: string; user: string } | null;
+
+export interface HealPick {
+  role: string; respondentName: string; confidence: number; reason?: string;
+  /** driver-side provenance: which half of the loop this pick heals — the
+      submit control or the apply control (chooses the persisted rules key).
+      Not part of the model's reply; parseHealReply never sets it. */
+  __intent?: string;
+}
+
+export function parseHealReply(text: string | null | undefined): HealPick | null;
+
+export interface HealLocatorSpec {
+  via: "exact" | "prefix"; role: string; name: string; exact?: boolean;
+}
+
+export function healLocatorsFor(pick: HealPick | null | undefined): HealLocatorSpec[];
+
+export function healPickVerifies(pick: HealPick | null | undefined, rescannedControls: { name?: string }[] | null | undefined): boolean;
+
+export function healPersistAllowed(pick: HealPick | null | undefined, verified: boolean): boolean;
+
+/** Read-back half of the heal loop: a persisted per-host heal text becomes
+    an ordered matcher list (learned → pinned → fallback), escaped so page
+    text can never build a malformed regex. */
+export function healTextMatchersFor(
+  learnedText: string | null | undefined,
+  pinnedRe: RegExp | null | undefined,
+  opts?: { fallbackRe?: RegExp | null }
+): RegExp[];
+
+/* ── Tier 4: earned auto-submit trust ─────────────────────────────── */
+
+export const AUTO_SUBMIT_TRUST_RUNS: number;
+export const AUTO_SUBMIT_TRUST_APPS_MIN: number;
+export const AUTO_SUBMIT_WEAK_RUNS_MAX: number;
+
+export interface AutoSubmitTrustVerdict {
+  verdict: "trust" | "review";
+  reason: string;
+}
+
+export function autoSubmitTrustVerdict(
+  runRows: { result: string; unknownModeled?: boolean; submittedUnverified?: boolean; detail?: string }[] | null | undefined,
+  opts?: { requiredRuns?: number; minApplications?: number; maxWeakRuns?: number }
+): AutoSubmitTrustVerdict;
+
+export function autoSubmitTrustPatch(
+  verdict: AutoSubmitTrustVerdict | null | undefined,
+  host: string | null | undefined,
+  currentRules?: Record<string, unknown> | null
+): { autoSubmit: boolean; trusted: boolean; trustNote: string };
+
+/** Hosts that may NEVER earn auto-submit, whatever the trust window says
+    (owner decision — LinkedIn accounts are precious). Matched by substring. */
+export const AUTO_SUBMIT_NEVER_HOSTS: string[];
+
 /* ── Phase 0 — cross-run governance (budget caps, quiet hours, job filters) ── */
 
 export const DEFAULT_DAILY_CAP: number;

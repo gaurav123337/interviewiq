@@ -105,9 +105,9 @@ end $$;
 create or replace function public.admin_list_apply_results(p_limit int default 100)
 returns table (
   id uuid, site_host text, job_url text, title text, company text,
-  result text, detail text, fit int, created_at timestamptz
+  result text, detail text, fit int, posted_age_h int, feedback text, created_at timestamptz
 ) language sql security definer set search_path = public as $$
-  select id, site_host, job_url, title, company, result, detail, fit, created_at
+  select id, site_host, job_url, title, company, result, detail, fit, posted_age_h, feedback, created_at
   from public.apply_results
   order by created_at desc
   limit least(greatest(p_limit, 1), 500);
@@ -119,3 +119,23 @@ revoke execute on function public.engine_record_apply_result(text, text, text, t
 grant execute on function public.admin_get_apply_config() to authenticated;
 grant execute on function public.admin_set_apply_config(text, text, text) to authenticated;
 grant execute on function public.admin_list_apply_results(int) to authenticated;
+
+/* Tier 4 — earned auto-submit trust: the engine reads ONE host's recent
+   decisions (newest first). Service-role only, like every engine_* RPC;
+   idempotent recreate so re-pasting this file stays safe. Until this
+   RPC exists the engine's listApplyResultsForHost degrades to [] and
+   the review gate holds (fail-closed, never flips trust blind). */
+create or replace function public.engine_list_apply_results_for_host(
+  p_host text, p_limit int default 40
+)
+returns table (
+  result text, detail text, created_at timestamptz
+) language sql security definer set search_path = public as $$
+  select r.result, r.detail, r.created_at
+  from public.apply_results r
+  where r.site_host = p_host
+  order by r.created_at desc
+  limit least(greatest(p_limit, 1), 200);
+$$;
+
+revoke execute on function public.engine_list_apply_results_for_host(text, int) from anon, public;
