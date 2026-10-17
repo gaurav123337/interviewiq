@@ -11,6 +11,7 @@ import {
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
   titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor, classifyJobLink,
+  isChromeTitle, CHROME_TITLE_RE,
   extractFeedbackSkills, strikesWithDecay, skillIsBuzzOnly,
   parsePostedAge, isFreshPosted, sortByFreshness, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
@@ -26,6 +27,34 @@ import {
 } from "../../scripts/apply-engine-lib.js";
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
+  /* live-audit regression (2026-10-17): crawled boards scraped nav anchors as
+     postings — ~200 history rows titled "Apply now" / "Sign in for My Jobs".
+     isChromeTitle is the collect-time guard the audit exported. */
+  it("isChromeTitle drops the exact audit junk whole-line", () => {
+    for (const t of ["Apply now", "Register", "Sign in for My Jobs", "Browse latest jobs", "Find Resumes",
+      "Create Resume", "Employers / Post Job", "Create Alert", "Verified Listings",
+      "apply now!", "Sign in"])
+      expect(isChromeTitle(t)).toBe(true);
+  });
+
+  it("isChromeTitle keeps real postings that merely START with the same verb", () => {
+    for (const t of ["Apply as a DevOps Engineer", "Apply now — Senior Go Developer",
+      "Staff Backend Engineer", "Posting for a well-known product firm",
+      "Register-keeper for your team (weird but real)"])
+      expect(isChromeTitle(t)).toBe(false);
+  });
+
+  it("isChromeTitle treats blank extractions as chrome", () => {
+    expect(isChromeTitle("")).toBe(true);
+    expect(isChromeTitle("   ")).toBe(true);
+    expect(isChromeTitle(null)).toBe(true);
+  });
+
+  it("classifyJobLink calls nav-chrome labels nav even on unknown boards (was fail-open)", () => {
+    expect(classifyJobLink({ href: "https://bayt.com/x", text: "Apply now", host: "bayt.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://bayt.com/x", text: "Sign in for My Jobs", host: "bayt.com" }).kind).toBe("nav");
+  });
+
   it("keeps real posting detail links (id-bearing routes)", () => {
     expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).kind).toBe("posting");
     expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).id).toBe("4471345244");

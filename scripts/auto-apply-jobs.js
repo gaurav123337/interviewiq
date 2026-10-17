@@ -34,7 +34,7 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, detectSubmissionSuccess, seniorityOf, isExternalApplyButton,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, detectSubmissionSuccess, seniorityOf, isExternalApplyButton, isChromeTitle, CHROME_TITLE_RE,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS, maxAgeDaysOf, olderThanMaxAge,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
@@ -1377,7 +1377,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
     await page.mouse.wheel(0, 2400);
     await page.waitForTimeout(900);
   }
-  const jobs = await page.evaluate(({ hints, ageRe }) => {
+  const jobs = await page.evaluate(({ hints, ageRe, chromeRe }) => {
     const seen = new Set();
     const out = [];
     /* nav junk that looks like a link but is chrome, not a posting */
@@ -1400,7 +1400,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
       const t = art.querySelector("p[class*='title'], [class*='designation']");
       const c = art.querySelector("[class*='company']");
       const title = ((t?.textContent || art.innerText || "").trim().split("\n")[0] || "").slice(0, 140);
-      if (!title || title.length < 8 || junk.test(title)) continue;
+      if (!title || title.length < 8 || junk.test(title) || chromeRe.test(title)) continue;
       seen.add(id);
       const company = (c?.textContent || "").trim().split("\n")[0].replace(/\s*[\d.]+\s*(Reviews?|stars?)\s*$/i, "").replace(/\s+\d+(\.\d+)?$/, "").slice(0, 80);        out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company, __ageText: ageOf(art), __cardText: (art.innerText || "").slice(0, 400) });
     }
@@ -1410,7 +1410,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
       if (!m || seen.has(m[1])) continue;
       const text = (a.innerText || "").trim();
       const title = (text.split("\n")[0] || "").replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 140);
-      if (!title || title.length < 8 || junk.test(title)) continue;
+      if (!title || title.length < 8 || junk.test(title) || chromeRe.test(title)) continue;
       seen.add(m[1]);
       const lines = text.split("\n").map(s => s.trim()).filter(Boolean);
       /* company = first line that is not the title echo, social-proof noise
@@ -1428,13 +1428,13 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
         const abs = new URL(href, location.origin).toString();
         if (seen.has(abs)) continue;
         const text = (a.innerText || a.textContent || "").trim();
-        if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim())) continue;
+        if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim()) || chromeRe.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
         out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a), __cardText: text.slice(0, 400) });
       }
     }
     return out;
-  }, { hints: rules.listSelectorHints, ageRe: POSTED_AGE_TEXT_RE.source });
+  }, { hints: rules.listSelectorHints, ageRe: POSTED_AGE_TEXT_RE.source, chromeRe: CHROME_TITLE_RE.source });
   /* POSTING-VS-NAV discriminator (Phase 1): the generic hint loop matches
      broad hrefs, so on YC/Built In it collected site chrome ("Startup Jobs",
      "Design & UI/UX") as postings — every row then skipped and the run was
@@ -1444,6 +1444,10 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
   const host = (() => { try { return normHost(url); } catch { return ""; } })();
   const adjudicated = jobs.filter((j) => {
     if (!j.__navCandidate) return true; // explicit id-bearing collectors
+    /* nav-chrome titles crawled boards extract as postings ("Apply now",
+       "Register") never reach the gate: no --max slot, no AI call, no
+       skip row flooding the history (audit root cause, 2026-10-17) */
+    if (isChromeTitle(j.title)) return false;
     const cls = classifyJobLink({ href: j.url, text: j.title, host });
     if (cls.kind === "posting") { if (cls.id) j.__jobId = cls.id; return true; }
     if (cls.kind === "nav") return false;

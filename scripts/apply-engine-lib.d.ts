@@ -37,6 +37,14 @@ export interface JobLinkClass {
 /** Discriminate a posting detail link from site chrome (nav/category tiles). */
 export function classifyJobLink(opts: { href?: string; text?: string; host?: string }): JobLinkClass;
 
+/** TRUE when the extracted first-line "title" is navigation chrome that a
+    crawled board scraped as a posting — matched whole-line only, so real
+    postings beginning with the same verb ("Apply as a DevOps Engineer")
+    survive. Blind titles (empty/whitespace) count as chrome too. */
+export const CHROME_TITLE_RE: RegExp;
+
+export function isChromeTitle(title: string | null | undefined): boolean;
+
 export function titleFieldMismatch(jobTitle: string | null | undefined, profileHeadline: string | null | undefined): boolean;
 
 export function titleRelevant(title: string | null | undefined, profile: { headline?: string; skills?: string[] } | null | undefined): boolean;

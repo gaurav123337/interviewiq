@@ -296,6 +296,28 @@ const SLUG_POSTING_HOSTS = /(^|\.)(workatastartup|wellfound|angel)\.co$|(^|\.)yc
 /* Nav/category labels that LOOK like postings to a naive text filter. */
 const NAV_LABEL_RE = /^(all jobs?|jobs?|job search|search jobs?|startup jobs?|remote jobs?|find jobs?|browse jobs?|jobs? by (category|role|location)|engineering|design|design & ui\/ux|ui\/ux|recruiting( & hr)?|human resources|marketing|sales|finance|legal|operations|product|product management|data|data & analytics|customer service|administrative|healthcare services|accounting|arts and design|community and social services|consulting|education|entrepreneurship|information technology|business development|program and project management|retail|more jobs?|view all|see all|see more|show more|view more)$/i;
 
+/* NAV-CHROME TITLES crawled boards scrape AS postings — the live 7-day skip
+   audit (2026-10-17) found ~200 rows titled "Apply now" / "Sign in for My
+   Jobs" / "Register" / "Find Resumes" — anchor chrome that classifyJobLink
+   could not call nav on unknown boards (fail-open) and that burned the run
+   budget + the history. WHOLE-LINE matching only: real postings like
+   "Apply as a DevOps Engineer" start with the same verb but carry a full
+   phrase after it, so a whole-line test keeps them and still drops the
+   chrome (extraction takes the first line only — a chrome anchor's first
+   line is exactly the phrase). Optional trailing punctuation/space. */
+export const CHROME_TITLE_RE = /^(apply|apply now|sign in|sign up|log in|login|register|browse( latest)?( jobs?)?|find( resumes)?|create resume|create( an)? account|employers?( \/ )?(post( a| the)? job)?|for employers|for job seekers|post( a| the)? job|upload( your)?( cv|resume)?|create( a)?( job)? alert( for jobs?)?|verified listings?|sign in for my jobs|saved jobs?|help|contact( us)?|about( us)?|privacy|terms( & conditions)?|faqs?|sign out|log out|settings|profile|my profile)\s*[!|:–—-]?\s*$/i;
+
+/** TRUE = the extracted "title" is navigation chrome, not a posting.
+    Used at COLLECT time (never on stored titles): chrome that sneaks past
+    site-specific junk regexes on unknown boards never becomes a "job", so
+    it cannot consume a --max slot, an AI judge call, or a history row. */
+export function isChromeTitle(title) {
+  const t = String(title ?? "").trim();
+  if (!t) return true; // blank "title" from a broken extraction IS chrome
+  if (NAV_LABEL_RE.test(t)) return true;
+  return CHROME_TITLE_RE.test(t);
+}
+
 /**
  * Classify an anchor as a real posting link or site chrome.
  * @returns {{"kind":"posting"|"nav"|"unknown", "id": string|null, "routeKey": string|null}}
@@ -310,7 +332,11 @@ export function classifyJobLink({ href, text, host = "" } = {}) {
   const label = String(text || "").trim().split("\n")[0].trim();
   const h = String(host || (u && u.hostname !== "x.invalid" ? u.hostname : "")).replace(/^www\./, "");
 
-  if (NAV_LABEL_RE.test(label)) return { kind: "nav", id: null, routeKey: null };
+  /* label chrome check runs ONLY on a present label — a blank/absent label
+     is merely a missing extraction and must NOT devour an id-bearing href
+     (the LIVE bug this test caught: linkedin /jobs/view/<id> with no text
+     was scored nav). The id-bearing checks below then decide. */
+  if (label && (NAV_LABEL_RE.test(label) || isChromeTitle(label))) return { kind: "nav", id: null, routeKey: null };
   if (!raw) return { kind: "unknown", id: null, routeKey: null };
 
   const path = (u?.pathname || raw.split(/[?#]/)[0]);
