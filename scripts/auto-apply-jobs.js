@@ -1891,7 +1891,10 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
       .map((p) => p.key)
       .filter(Boolean);
     if (reusedKeys.length) {
-      (await sitesDb())?.touchFormAnswers?.(siteHost ?? "", reusedKeys).catch?.(() => {});
+      /* touched via try/catch, not just .catch — a borrowed machine with no
+         SUPA creds makes loadLocalCreds throw SYNCHRONOUSLY, and an uncaught
+         sync throw here would kill the whole form fill, not just the stat */
+      try { (await sitesDb())?.touchFormAnswers?.(siteHost ?? "", reusedKeys)?.catch(() => {}); } catch { /* best-effort stat */ }
     }
   }
   return { filled, unfilledRequired, fields, plan };
