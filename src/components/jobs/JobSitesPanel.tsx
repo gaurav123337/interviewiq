@@ -3,7 +3,7 @@
    misbehaving ones, and surfaces last-run stats the engine syncs. */
 
 import { useCallback, useEffect, useState } from "react";
-import { listJobSites, setJobSiteStatus, setSiteRule, summarizeSite, sessionStateOf, probationAutoActivateAt, discoveredStamp, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, type ApplyMode, type JobSite, type LoginLifecycle } from "../../services/jobSites.ts";
+import { listJobSites, setJobSiteStatus, setSiteRule, summarizeSite, sessionStateOf, probationAutoActivateAt, discoveredStamp, addJobSiteUrl, requestSiteLogin, fetchLoginStatus, getApplyConfig, listApplyResults, siteTrustState, type ApplyMode, type JobSite, type LoginLifecycle, type ApplyResultRow } from "../../services/jobSites.ts";
 
 const STATUS_STYLES: Record<JobSite["status"], string> = {
   active: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -32,6 +32,15 @@ export default function JobSitesPanel() {
   const [urlNote, setUrlNote] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
+  /* 🎖 per-host auto-submit trust latch — the SAME evidence verdict the
+     engine recomputes at every run start (autoSubmitTrustVerdict over the
+     host's latest apply_results rows; the lib's reasons are the tooltip).
+     Newest-500 admin rows are enough to cover every active board's
+     40-row window most days; a host with zero rows gets no chip at all
+     ("no history yet" is different information from "not trusted"). */
+  const [resultRows, setResultRows] = useState<ApplyResultRow[] | null>(null);
+  useEffect(() => { listApplyResults(500).then(setResultRows).catch(() => setResultRows([])); }, []);
+
   const refresh = useCallback(async () => {
     try {
       setError(null);
@@ -56,6 +65,13 @@ export default function JobSitesPanel() {
     return () => { dead = true; clearInterval(t); };
   }, []);
   const engineOff = applyMode === "off";
+
+  const hostRows = new Map<string, Pick<ApplyResultRow, "result" | "detail">[]>();
+  for (const r of resultRows ?? []) {
+    const arr = hostRows.get(r.site_host);
+    if (arr) { if (arr.length < 40) arr.push({ result: r.result, detail: r.detail }); }
+    else hostRows.set(r.site_host, [{ result: r.result, detail: r.detail }]);
+  }
 
   /* 🔑 app-triggered sign-in: the desktop listener opens the engine's own
      window for this host within ~30s — the owner completes Google/OTP there
@@ -222,6 +238,19 @@ export default function JobSitesPanel() {
                       {st.key === "verified" ? "✓" : st.key === "expired" ? "✗" : "?"} {st.label}
                     </span>
                   );
+                })()}
+                {(() => {
+                  /* 🎖 the same verdict the engine computes at its own run
+                     start — note explains WHY this host is/ isn't trusted.
+                     No rows = no chip: no history is not "not trusted". */
+                  const rowsH = hostRows.get(s.host);
+                  if (!rowsH?.length) return null;
+                  const t = siteTrustState(s.host, rowsH, s.rules);
+                  if (t.blocked)
+                    return <span title={t.note || "platform policy: never auto-submit (ToS prohibits automation)"} className="rounded bg-red-500/10 px-1 py-0.5 text-[10px] font-bold text-red-300">🔒 never auto-submit</span>;
+                  if (t.verdict === "trust")
+                    return <span title={t.note} className="rounded bg-emerald-500/15 px-1 py-0.5 text-[10px] font-bold text-emerald-300">🏅 auto-submit earned</span>;
+                  return <span title={t.note} className="rounded bg-amber-500/10 px-1 py-0.5 text-[10px] font-bold text-amber-300">🪫 review gate</span>;
                 })()}
                 {(() => {
                   const at = probationAutoActivateAt(s);

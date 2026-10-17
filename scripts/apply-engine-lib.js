@@ -1050,9 +1050,12 @@ export function planFormAnswers(fields, profile, job, stored = {}) {
   return (fields ?? []).map((meta) => {
     const cls = classifyQuestion(meta.label, { tag: meta.tag, required: meta.required });
     const key = normalizeFieldKey(meta.label);
-    let answer = draftAnswer(cls.kind, profile, job);
-    if (!answer && key && typeof stored[key] === "string" && stored[key].trim()) answer = stored[key].trim();
-    return { cls, key, answer };
+    const drafted = draftAnswer(cls.kind, profile, job);
+    const answer = drafted ? drafted : (key && typeof stored[key] === "string" && stored[key].trim() ? stored[key].trim() : "");
+    /* fromMemory marks the REUSE path (not the profile draft): the fill loop
+       tallies these per form so the owner's UI can show how often the
+       answer memory is paying for itself (touchFormAnswers → 🧠 stats) */
+    return { cls, key, answer, fromMemory: !drafted && Boolean(answer) };
   });
 }
 

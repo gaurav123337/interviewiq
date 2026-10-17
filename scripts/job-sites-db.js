@@ -95,10 +95,18 @@ export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl
 /** Upsert one field's answer (freshest wins). Fire-and-forget per field is
     fine — failures are non-fatal (memory is an optimization, never a gate). */
 export async function putFormAnswer({ siteHost, fieldKey, answer, kind, label }) {
-  return rpc(loadLocalCreds(), "engine_put_form_answer", {
-    p_site_host: siteHost, p_field_key: fieldKey, p_answer: answer,
-    p_kind: kind ?? null, p_label: label ?? null,
-  });
+  return rpc(loadLocalCreds(), "engine_put_form_answer", {  p_site_host: siteHost, p_field_key: fieldKey, p_answer: answer,
+  p_kind: kind ?? null, p_label: label ?? null,
+});
+}
+
+/** engine_touch_form_answers — mark remembered answers REUSED this form
+    (form-answer-reuse.sql): reuse_count++ / last_used_at, summed per site
+    by admin_form_answer_stats for the report's 🧠 strip. Best-effort by
+    convention: callers wrap in catch. */
+export async function touchFormAnswers(siteHost, fieldKeys) {
+  if (!Array.isArray(fieldKeys) || !fieldKeys.length) return;
+  return rpc(loadLocalCreds(), "engine_touch_form_answers", { p_site_host: siteHost, p_field_keys: fieldKeys });
 }
 
 /** The remembered (label → answer) map for one site. Empty map when the

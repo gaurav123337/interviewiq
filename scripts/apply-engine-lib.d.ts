@@ -301,6 +301,10 @@ export interface PlannedAnswer {
   cls: QuestionClass;
   key: string;
   answer: string;
+  /** true when the answer came from the form-answer memory (a previous
+      owner-confirmed reuse candidate) rather than the profile draft —
+      drives the 🧠 reuse counter in the applications report. */
+  fromMemory: boolean;
 }
 
 export function planFormAnswers(

@@ -1880,7 +1880,20 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
       }
     } catch { /* field-specific failure — count as unfilled if required */ if (meta.required) unfilledRequired.push(meta.label || cls.kind); }
   }
-  if (!dryRun) await storeFormAnswers(siteHost ?? "", plan, fields);
+  if (!dryRun) {
+    await storeFormAnswers(siteHost ?? "", plan, fields);
+    /* 🧠 answer-memory savings: count every field this fill REUSED from the
+       memory (rather than answering from the profile / AI) — the report's
+       🧠 strip sums these per site, so the owner can see the memory paying
+       rent. Best-effort: a registry blip never gates a form fill. */
+    const reusedKeys = plan
+      .filter((p) => p?.fromMemory && String(p.answer ?? "").trim())
+      .map((p) => p.key)
+      .filter(Boolean);
+    if (reusedKeys.length) {
+      (await sitesDb())?.touchFormAnswers?.(siteHost ?? "", reusedKeys).catch?.(() => {});
+    }
+  }
   return { filled, unfilledRequired, fields, plan };
 }
 
@@ -2051,8 +2064,11 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
      substituting for it → one bounded AI heal (respondent-name verified
      against a live re-scan before any click; a verified submit-control
      heal persists to the host's rules so future runs need no AI call). */
-  if ((await btn.count()) === 0 && ai && healEnabled()) {
-    const healed = await healControl(target, "submit this job application", ai);
+  /* ctx.ai, not a bare `ai` — trySubmit runs inside runSingle where the AI
+     provider only exists on the ctx (LIVE bug the pilot surfaced: bare `ai`
+     here threw "ai is not defined" out of the whole submission) */
+  if ((await btn.count()) === 0 && ctx.ai && healEnabled()) {
+    const healed = await healControl(target, "submit this job application", ctx.ai);
     if (healed) btn = healed; // persist happens at the test-direct wrapper below, after real behavior proves out
   }
   if ((await btn.count()) === 0 && site === "linkedin") {
@@ -2151,8 +2167,8 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
     /* TIER 3 submit-side heal END: the flow never surfaced a submit control
        the rules could match — same bounded AI heal as the entry path
        above, but pointed at a page that has REACHED the end of its flow. */
-    if (ai && healEnabled()) {
-      const healed = await healControl(target, "submit this job application", ai);
+    if (ctx.ai && healEnabled()) {
+      const healed = await healControl(target, "submit this job application", ctx.ai);
       if (healed) {
         await clickButton(target, healed, null).catch(() => {});
         await page.waitForTimeout(4000);

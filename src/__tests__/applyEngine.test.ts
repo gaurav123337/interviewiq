@@ -577,6 +577,17 @@ describe("form-answer memory — store and reuse what was filled", () => {
     expect(plan[1].answer).toBe("30 days");        // memory fills the gap
     expect(plan[1].key).toBe("notice period");
     expect(plan[2].answer).toBe("https://linkedin.com/in/me"); // memory-only field
+    /* the 🧠 reuse counter keys off this provenance pin — reuse touches
+       run ONLY on the memory-fallback path, never on a from-profile draft */
+    expect(plan[0].fromMemory).toBe(false);
+    expect(plan[1].fromMemory).toBe(true);
+    expect(plan[2].fromMemory).toBe(true);
+  });
+
+  it("fromMemory is false on blank plans too (no reuse of nothing)", () => {
+    const plan = planFormAnswers([{ label: "Expected CTC", tag: "input", required: true }], {}, {}, {});
+    expect(plan[0].answer).toBe("");
+    expect(plan[0].fromMemory).toBe(false);
   });
 
   it("still leaves blanks blank when neither profile nor memory has an answer", () => {
@@ -1587,5 +1598,21 @@ describe("Tier 4 — autoSubmitTrustVerdict / autoSubmitTrustPatch", () => {
     const v = autoSubmitTrustVerdict(clean(5));
     expect(autoSubmitTrustPatch(v, "linkedin.com", {}).autoSubmit).toBe(false);
     expect(autoSubmitTrustPatch(v, "linkedin.com", {}).trustNote).toContain("platform policy");
+  });
+
+  it("UI derivation contract: detail-text flags mirror the driver exactly (siteTrustState relies on this)", () => {
+    /* src/services/jobSites.ts#siteTrustState maps rows with the SAME two
+       regexes the driver uses before calling the verdict — pin them here so
+       a lib change for the driver cannot silently break the UI chips */
+    const rows = clean(3).concat([
+      { result: "needs_review", detail: "recovered via a HEALED control" },
+    ]);
+    const adapted = rows.map((r) => ({
+      result: String(r.result ?? "") as string,
+      unknownModeled: /healed/i.test(String(r.detail ?? "")),
+      submittedUnverified: /not detected/i.test(String(r.detail ?? "")),
+    }));
+    expect(adapted.slice(-1)[0].unknownModeled).toBe(true);
+    expect(adapted[0].unknownModeled).toBe(false);
   });
 });
