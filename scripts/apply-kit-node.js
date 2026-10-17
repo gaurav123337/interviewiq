@@ -10,7 +10,7 @@
  */
 
 import { loadAiProviderConfig } from "./ai-config.js";
-import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity, aiFieldPrompt, parseFieldMapping, applyFieldMapping } from "./apply-engine-lib.js";
+import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity, aiFieldPrompt, parseFieldMapping, applyFieldMapping, buttonHealPrompt, parseHealReply } from "./apply-engine-lib.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -355,5 +355,25 @@ export async function mapUnknownFields(ai, fields, plan, { profile, job, now } =
     return { plan2, cache, mapped };
   } catch (e) {
     return { plan2: plan, cache: {}, mapped: 0, note: e?.message?.slice(0, 100) ?? "map failed" };
+  }
+}
+
+/* --- Tier 3: heal a redesigned apply/submit control (one AI call) ---
+
+   Receives the STRUCTURED controls dump (accessibility envelope, never
+   raw HTML) and returns the parsed pick or null. Fail-open: any error →
+   null → caller proceeds exactly as if healing were unavailable. The
+   VERIFICATION and locator resolution live in the pure lib / driver —
+   this shim is only prompt→send→parse, mirroring mapUnknownFields. */
+export async function aiHealButton(ai, controls, intent = "submit this job application") {
+  if (!ai?.key) return null;
+  const prompt = buttonHealPrompt(controls, intent);
+  if (!prompt) return null;
+  try {
+    const raw = await chatOnce(ai, [{ role: "system", content: prompt.system }, { role: "user", content: prompt.user }], 160);
+    return parseHealReply(raw);
+  } catch (e) {
+    if (ai && !ai.__unhealthy && /HTTP|fetch|timeout|ENOTFOUND|ECONNREFUSED/i.test(String(e?.message ?? ""))) ai.__unhealthy = String(e.message).slice(0, 80);
+    return null;
   }
 }

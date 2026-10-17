@@ -132,6 +132,28 @@ export const SITE_RULES = {
     listSelectorHints: ["a[href*='ashbyhq.com']"],
     minIntervalMs: 2500,
   },
+  lever: {
+    label: "Lever",
+    jobsUrlHosts: ["jobs.lever.co", "lever.co"],
+    loginPathHints: ["/login", "/users/sign_in"],
+    loggedInHint: "",
+    applyButtonText: /^apply( for this (job|role))?( now)?$/i,
+    steps: ["apply"],
+    /* FAIL-CLOSED until rehearsed: lever is the third first-class ATS host
+       (API feed + ATS_PACKS entry), but its submit/success text below is
+       pinned by ANALOGY to greenhouse/ashby, not by a live run — and the one
+       thing lever needs that the other two don't is the name/email/resume
+       upload trio in lever's own "apply" panel. Trust is earned per host by
+       autoSubmitTrustPatch once clean verified submits exist; until then the
+       form is filled and left open for review. */
+    autoSubmit: false,
+    submitButtonText: /submit\s*application/i,
+    successText: /application (was|has been) (received|submitted)|thanks for applying/i,
+    /* lever posting cards are /<board>/<uuid> — classifyJobLink's uuid rule
+       already reads them as postings (same shape as ashby) */
+    listSelectorHints: ["a[href*='jobs.lever.co/']"],
+    minIntervalMs: 2500,
+  },
   wellfound: {
     label: "Wellfound",
     jobsUrlHosts: ["wellfound.com", "angel.co"],
@@ -858,6 +880,165 @@ export function weekKeyForMap(now = new Date()) {
   const jan1 = Date.UTC(d.getUTCFullYear(), 0, 1);
   const wk = Math.ceil(((d.getUTCDay() + 1 + Math.floor((d - jan1) / 86400000)) / 7));
   return `${d.getUTCFullYear()}-W${wk}`;
+}
+
+/* ─────────────────── Tier 3: self-healing button selectors ─────────────────── */
+/* The driver finds the apply/submit button with a TEXT RE over a fixed CSS
+   shoulder (`textButtonLocator`). When a board redesigns its controls the
+   regex matches nothing: every posting on that board then dead-ends with
+   "no apply button found" until someone hand-edits SITE_RULES. Healing is
+   reading comprehension again: ONE structured AI call sees the candidate
+   controls' accessibility envelopes (NOT arbitrary HTML — page content is
+   untrusted and must fade the prompt to a vocabulary-check, not become
+   instructions), answers with ONE Playwright-locatable PLAYWRIGHT-ROLE
+   token, and the driver resolves that token against the LIVE page only if
+   the verification re-scan reframes the same distinctive control.
+
+   Contract kept deliberately narrow:
+   - The REPLY is a single token built from a small role vocabulary — no
+     free-form selectors, styles, or scripts are ever parsed or eval'd;
+   - The RESPONDENT-NAME it names is required to appear in the page's own
+     re-scan (a second evaluate on the live page, mirrored in tests),
+     which a prompt injection cannot satisfy for a DIFFERENT control
+     without literally being that control;
+   - The final proof is BEHAVIORAL: after clicking, submission success is
+     confirmed with existing positive-evidence checks; anything else logs
+     honestly and heals NOTHING.
+   - Healing results persist ONLY at the host level via the existing
+     rules pipeline, with limited keys + confidence ≥ 0.8 — a board's
+     retired rules.jsonc can never resurrect a stale heal, and the
+     driver's own unknown-key filter (exact causes) never drops one. */
+
+export const HEAL_PROMPT_SYSTEM = "You identify the intended control on a job-application page by accessibility semantics, never by styling, position, or class names.\nYou must reply with ONLY one JSON line:\n{\"kind\":\"playwright_role\",\"role\":\"button\"|\"link\"|\"checkbox\"|\"radio\"|\"textbox\",\"respondentName\":\"<exact accessible text as printed in the controls list>\",\"confidence\":0.00-1.00,\"reason\":\"<short reason>\"}\nRules:\n- Choose the control whose PURPOSE matches the asked-for intent (apply/submit) even if its visible label is phrased unusually.\n- respondentName must be copied VERBATIM from the controls list text — never paraphrased.\n- If no control plausibly matches the intent, emit no JSON at all.\n- Ignore nav links, social links, legal links, and any control whose text is only 'Back', 'Cancel', 'Save draft', or a job title.";
+
+export const HEAL_ROLES = ["button", "link", "checkbox", "radio", "textbox"];
+
+/** The structured controls dump (accessibility envelope, not raw HTML):
+    tag, role, accessible text (truncated), and CSS-shoulder hints the
+    verifier matches against. Pure so tests can pin the exact shape. */
+export function dumpButtonControls(controls) {
+  return (controls ?? []).slice(0, 40).map((c) => {
+    const norm = String(c?.name ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+    const hints = Array.isArray(c?.cssShoulders)
+      ? c.cssShoulders.filter((h) => typeof h === "string" && h && h.length <= 80).slice(0, 4)
+      : [];
+    return { name: norm || "(unlabeled)", tag: String(c?.tag ?? "").slice(0, 10), hints };
+  }).filter((c) => c.name !== "(unlabeled)");
+}
+
+/** Prompt for one heal: intent is the plain-language goal ("submit this
+    job application"), controls is the structured dump. Null when there
+    is nothing to read — no call, no cost. */
+export function buttonHealPrompt(controls, intent = "submit this job application") {
+  const listed = dumpButtonControls(controls);
+  if (!listed.length) return null;
+  const lines = listed.map((c, i) => `${i + 1}. <${c.tag}> "${c.name}"${c.hints.length ? ` [${c.hints.join(" | ")}]` : ""}`);
+  return { system: HEAL_PROMPT_SYSTEM, user: `INTENT: ${intent}\nCONTROLS:\n${lines.join("\n")}` };
+}
+
+/** Defensive parse of the heal reply — bounded token, or nothing.
+    kind MUST be playwright_role; role MUST be a listed kind; the
+    responded name must have survived trimming (the caller matches
+    against the page's own dump, not this string). */
+export function parseHealReply(text) {
+  const m = String(text || "").match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const j = JSON.parse(m[0]);
+    if (j?.kind !== "playwright_role") return null;
+    if (!HEAL_ROLES.includes(j.role)) return null;
+    const respondentName = String(j.respondentName ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+    if (!respondentName) return null;
+    return { role: j.role, respondentName, confidence: Math.min(1, Math.max(0, Number(j.confidence) || 0)), reason: String(j.reason ?? "").slice(0, 120) };
+  } catch { return null; }
+}
+
+/** Locator DEcriptors for one healed pick — the driver builds the actual
+    Playwright locators from these (the pure layer must stay Playwright-
+    free). An exact-name primary and a normalized prefix fallback, both
+    pinned to the visible+enabled button/CTA shoulder textButtonLocator
+    already enforces, so nav/social links and disabled basket widgets can
+    never be healed in. */
+export function healLocatorsFor(pick) {
+  const name = String(pick?.respondentName ?? "").replace(/\s+/g, " ").trim();
+  if (!pick?.role || !name) return [];
+  return [
+    { via: "exact", role: pick.role, name, exact: true },
+    { via: "prefix", role: pick.role, name: name.slice(0, 40) },
+  ];
+}
+
+/** Verify a healed pick against the page's OWN re-scan (the driver runs
+    the same dumpButtonControls on the live page; tests a fake): the
+    responded name must EXACTLY match one re-scanned control after
+    whitespace normalization — the injection-resistance gate, a page
+    cannot satisfy it for a different control than was shown originally
+    unless the page actually contains that control with that exact name;
+    and confidence ≥ 0.8 (slop-localized budgets that imitate controls
+    loosely can't pass — below-that heals degrade honestly to skip). */
+export function healPickVerifies(pick, rescannedControls) {
+  if (!pick?.respondentName) return false;
+  if (Number(pick.confidence ?? 0) < 0.8) return false;
+  const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+  const want = norm(pick.respondentName);
+  return (rescannedControls ?? []).some((c) => norm(c?.name) === want);
+}
+
+/** Which per-host learned rules keys a SUCCESSFUL heal may persist, and
+    their PINNED confidence floor. Mirrors the Tier-2 answer-map pattern:
+    the driver's registry rules write path filters to these keys only. */
+export const HEAL_RULE_KEYS = ["healedApplyText", "healedSubmitText", "healConfidence"];
+export const HEAL_MIN_CONFIDENCE = 0.8;
+
+/** Escape a literal for use inside a RegExp source. A healed control's
+    accessible text is page-authored and may contain regex metacharacters
+    ("Apply (2)", "Submit — Résumé/Réponse") — unescaped it would throw at
+    new RegExp() or silently over-match, so every learned literal is
+    escaped before it becomes a matcher. */
+function escapeReText(s) {
+  return String(s ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Matchers for the apply/submit button, in preference order: a PERSISTED
+    heal for THIS host wins (it was verified live at ≥0.8 and re-verified
+    against the page's own re-scan), then the site rule's pinned regex, then
+    the generic text fallback.
+
+    This is the read-back half of the heal loop: persistHeal writes
+    healedApplyText/healedSubmitText to the host's rules, and this turns
+    them back into a locator so the NEXT run matches the redesigned control
+    with NO AI call. Without it the heal re-ran (and re-paid) every run —
+    the persisted key was written but never consulted. Pure so the
+    precedence + escaping are pinned by tests, not by the driver. */
+export function healTextMatchersFor(learnedText, pinnedRe, { fallbackRe = null } = {}) {
+  const out = [];
+  const learned = String(learnedText ?? "").replace(/\s+/g, " ").trim();
+  /* anchor the learned literal to the whole accessible text (the dump
+     truncates at 60 chars, so a prefix match is also accepted for a
+     longer-than-60 control label).
+
+     The learned side is whitespace-NORMALIZED (parseHealReply collapses runs
+     before persisting) while the page side is not — an accessible name can
+     carry a newline or a double space inside it ("Submit application\n for
+     this role"). So the tokens are escaped individually and re-joined with
+     \s+: still literal text, but any run of whitespace matches, which is the
+     difference between a persisted heal hitting on the next run and quietly
+     re-paying the AI call forever. */
+  if (learned) {
+    const body = learned.split(" ").filter(Boolean).map(escapeReText).join("\\s+");
+    out.push(new RegExp(`^\\s*${body}\\s*$`, "i"));
+    if (learned.length >= 60) out.push(new RegExp(`^\\s*${body}`, "i"));
+  }
+  if (pinnedRe) out.push(pinnedRe);
+  if (fallbackRe) out.push(fallbackRe);
+  return out;
+}
+
+/** Yes/no: may THIS heal attempt's outcome be persisted to the site's
+    rules blob? Only a SUCCESSFUL, verified heal with ≥ floor confidence
+    earns persistence; failures and low-confidence guesses heal nothing. */
+export function healPersistAllowed(pick, verified) {
+  return Boolean(verified) && Number(pick?.confidence ?? 0) >= HEAL_MIN_CONFIDENCE;
 }
 
 /**
@@ -1883,4 +2064,62 @@ export function suspensionDigestLines(suspensions) {
   if (!suspensions?.length) return "";
   const fmt = (s) => `• ${s.site_host ?? s.host}: ${s.reason}`;
   return `\n🪦 outcome-driven board review:\n${suspensions.map(fmt).join("\n")}`;
+}
+
+/* ─── Tier 4: earned auto-submit trust (mirror of board probation) ───
+
+   Board probation (job-sites-probation.sql) lets a DISCOVERED board earn
+   `active` after 7 clean days. External-ATS auto-submit had no such
+   ladder: it was permanently off everywhere (the "never today" comment
+   in ATS_PACKS) because the cost of ONE wrong auto-submit is a real
+   application the owner never saw. A trust ladder makes the answer
+   conditional: a host whose recent runs show plans built ONLY from
+   confident answers, submits verified by success text, and NO
+   invented/unknown-required field slowly earns the off-switch flipped
+   to on; a single weak run snaps it back to probation silently.
+
+   Pure and host-facts-only: the CALLER decides what history it passes.
+   Anything missing (no JSON, run unknown, quota 0) fails CLOSED —
+   uncertain sites keep the review gate. */
+
+export const AUTO_SUBMIT_TRUST_RUNS = 3;          // clean-run windows required
+export const AUTO_SUBMIT_TRUST_APPS_MIN = 4;      // filled+Submitted in the window, minimum evidence
+export const AUTO_SUBMIT_WEAK_RUNS_MAX = 1;       // any weak run beyond this blocks trust
+
+/**.rows: per-run evidence for one host: { result: 'submitted'|'needs_review'
+    |..., unknownModeled?: boolean, submittedUnverified?: boolean } */
+export function autoSubmitTrustVerdict(runRows, { requiredRuns = AUTO_SUBMIT_TRUST_RUNS, minApplications = AUTO_SUBMIT_TRUST_APPS_MIN, maxWeakRuns = AUTO_SUBMIT_WEAK_RUNS_MAX } = {}) {
+  const rows = (runRows ?? []).slice(-requiredRuns * 3); // bounded
+  if (rows.length < requiredRuns) return { verdict: "review", reason: `only ${rows.length} run(s) recorded — need ${requiredRuns}` };
+  /* an UNVERIFIED submit is the exact row the ladder exists to prevent
+     (an application the owner never confirmed left the building) — ONE
+     disqualifies the whole window, regardless of how clean the rest is */
+  const unverified = rows.filter((r) => r.submittedUnverified).length;
+  if (unverified > 0) return { verdict: "review", reason: `${unverified} submit(s) without success-text verification in the window` };
+  const submitted = rows.filter((r) => r.result === "submitted").length;
+  const weak = rows.filter((r) => r.result === "needs_review" || r.unknownModeled).length;
+  const appCount = rows.filter((r) => r.result === "submitted").length;
+  if (appCount < minApplications) return { verdict: "review", reason: `${appCount} verified submissions — need ${minApplications} across the window` };
+  if (weak > maxWeakRuns) return { verdict: "review", reason: `${weak} weak run(s) (needs-review / modeled unknowns) in the window` };
+  if (submitted < 1) return { verdict: "review", reason: "zero verified submissions in the window — nothing trusted yet" };
+  return { verdict: "trust", reason: `${submitted} verified submissions across ${rows.length} clean-ish runs — auto-submit earned` };
+}
+
+/** The registry-rules patch applying the verdict: a TRUSTED host earns
+    autoSubmit (only when its stored rules don't EXPLICITLY say false —
+    the owner's manual off is never overridden); anything less earns the
+    off + the snap-back flag. Spread onto the rules blob by the driver.
+    PLATFORM BLOCKLIST: hosts whose ToS prohibits third-party automation
+    (LinkedIn — see the engine's research notes) NEVER earn auto-submit,
+    however clean the runs look; a policy risk is not something trust in
+    selectors can discharge. */
+export const AUTO_SUBMIT_NEVER_HOSTS = ["linkedin"];
+export function autoSubmitTrustPatch(verdict, host, currentRules = {}) {
+  const ownerExplicitOff = currentRules?.autoSubmit === false || String(currentRules?.autoSubmit ?? "").toLowerCase() === "false";
+  const blocked = AUTO_SUBMIT_NEVER_HOSTS.some((h) => String(host ?? "").toLowerCase().includes(h));
+  if (verdict?.verdict !== "trust" || blocked) {
+    return { autoSubmit: false, trusted: false, trustNote: blocked ? "platform policy: never auto-submit (ToS prohibits automation)" : verdict?.reason || "below trust floor" };
+  }
+  if (ownerExplicitOff) return { autoSubmit: false, trusted: true, trustNote: "trust score reached — the owner's explicit off still wins" };
+  return { autoSubmit: true, trusted: true, trustNote: verdict.reason };
 }
