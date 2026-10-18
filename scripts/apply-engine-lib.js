@@ -2152,3 +2152,133 @@ export function autoSubmitTrustPatch(verdict, host, currentRules = {}) {
   if (ownerExplicitOff) return { autoSubmit: false, trusted: true, trustNote: "trust score reached — the owner's explicit off still wins" };
   return { autoSubmit: true, trusted: true, trustNote: verdict.reason };
 }
+
+/* ─────────────────── ATS keyless JSON APIs (API-first collection) ─────────────────── */
+
+/* Greenhouse and Lever publish the SAME postings the engine scrapes via
+   PUBLIC, keyless JSON endpoints (the jobs-fetch edge function already
+   reads them server-side). Collecting from the API instead of the listing
+   page is strictly better whenever it works: no anti-bot wall to trip, a
+   real posted timestamp instead of a parsed card stamp, and the company
+   name from the board itself. The API result feeds the UNCHANGED program:
+   rows enter sortByFreshness/maxAge/dedupe through __ageText stamps derived
+   from the API timestamps, then the normal loop opens each posting page.
+   Where it can't (bad token, transient 5xx) the driver scrapes exactly as
+   before — a collect-time failure must never become a failed run. */
+
+/** Derive the API collection plan for a jobs-list URL, or null when the
+    host is not an API-capable ATS board. Greenhouse boards may be registered
+    either on the boards host (path-qualified: /lyft) or the app host;
+    Lever boards are jobs.lever.co/<token>. Board tokens areURL segments —
+    no spaces, no query strings — which is also the guard against garbage
+    being sent to the API host. */
+export function atsApiCollectPlan(url) {
+  let u = null;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const segs = u.pathname.split("/").filter(Boolean);
+  const token = segs.length && /^[a-z0-9][a-z0-9_-]{1,60}$/i.test(segs[0]) ? segs[0].toLowerCase() : null;
+  if (/^(job-)?boards\.greenhouse\.io$/.test(host) || (host === "greenhouse.io" && token)) {
+    return token ? {
+      provider: "greenhouse",
+      board: token,
+      infoUrl: `https://boards-api.greenhouse.io/v1/boards/${token}`,
+      apiUrl: `https://boards-api.greenhouse.io/v1/boards/${token}/jobs`,
+    } : null;
+  }
+  if (/^(jobs\.)?lever\.co$/.test(host)) {
+    return token ? {
+      provider: "lever",
+      board: token,
+      infoUrl: null,
+      apiUrl: `https://api.lever.co/v0/postings/${token}?mode=json`,
+    } : null;
+  }
+  return null;
+}
+
+/** Turn an API timestamp (epoch ms or ISO) into the card-stamp text the
+    freshness pipeline already parses ("3 hours ago" → __ageText), so
+    API-collected rows pass through sortByFreshness/maxAgeDays unchanged.
+    Empty string = unknown age — the maxAge filter never rejects unknowns. */
+export function ageStampFromTimestamp(ts, now = Date.now()) {
+  const n = typeof ts === "number" ? ts : Date.parse(String(ts ?? ""));
+  if (!Number.isFinite(n) || n <= 0 || n > now + 60_000) return "";
+  const hours = Math.max(0, (now - n) / 3_600_000);
+  if (hours < 1) return "just posted";
+  if (hours < 48) return `${Math.floor(hours)} hours ago`;
+  return `${Math.floor(hours / 24)} days ago`;
+}
+
+/** Parse a Greenhouse boards-api /jobs payload into collect rows. Mirrors
+    the edge function's fetchGreenhouse mapping (external id, hosted URL,
+    location) but WITHOUT pulling content[] HTML — JSON payloads can be
+    10k chars per posting and the loop opens the posting's own page for
+    the JD anyway; the collect row only needs the entry signal. */
+export function parseGreenhouseJobs(payload, { company = null, now = Date.now() } = {}) {
+  const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+  const out = [];
+  for (const j of jobs) {
+    const title = String(j?.title ?? "").trim();
+    const url = String(j?.absolute_url ?? j?.absoluteUrl ?? "").trim();
+    if (!title || !url) continue; // a row with no title or no detail URL can't be opened later — skip, honest
+    out.push({
+      url: url.split("?")[0], // ?gh_jid=<id> query dedupes to the bare detail path
+      title: title.slice(0, 140),
+      company: (String(company ?? "") || String(j?.company ?? "") || "").slice(0, 80),
+      location: String(j?.location?.name ?? "").slice(0, 80),
+      __ageText: ageStampFromTimestamp(j?.updated_at, now),
+      __apiId: String(j?.id ?? ""),
+      __viaApi: true,
+    });
+  }
+  return out;
+}
+
+/** Parse a Lever v0 postings payload into collect rows (same contract as
+    parseGreenhouseJobs). Lever stamps createdAt in epoch milliseconds. */
+export function parseLeverPostings(payload, { company = null, now = Date.now() } = {}) {
+  const jobs = Array.isArray(payload) ? payload : [];
+  const out = [];
+  for (const j of jobs) {
+    const title = String(j?.text ?? j?.title ?? "").trim();
+    const url = String(j?.hostedUrl ?? j?.applyUrl ?? "").trim();
+    if (!title || !url) continue;
+    out.push({
+      url: url.split("?")[0],
+      title: title.slice(0, 140),
+      company: (String(company ?? "") || String(j?.company ?? "") || "").slice(0, 80),
+      location: String(j?.categories?.location ?? "").slice(0, 80),
+      __ageText: ageStampFromTimestamp(j?.createdAt, now),
+      __apiId: String(j?.id ?? ""),
+      __viaApi: true,
+    });
+  }
+  return out;
+}
+
+/** Fetch + parse one ATS board's postings over its public API. Returns
+    { rows } or { rows: [], error } — never throws (the caller falls back
+    to scraping). Node 22 global fetch; a 4xx/5xx or unparsable body is an
+    honest fallback, and the error string is trimmed for the run log. */
+export async function fetchAtsApiJobs(plan) {
+  if (!plan?.apiUrl) return { rows: [], error: "no plan" };
+  try {
+    const res = await fetch(plan.apiUrl, {
+      headers: { "User-Agent": "InterviewIQ-auto-apply (+local engine)" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return { rows: [], error: `HTTP ${res.status}` };
+    const body = await res.json();
+    const company = plan.infoUrl ? await fetch(plan.infoUrl, {
+      headers: { "User-Agent": "InterviewIQ-auto-apply (+local engine)" },
+      signal: AbortSignal.timeout(10_000),
+    }).then((r) => (r.ok ? r.json().then((b) => b?.name ?? null) : Promise.resolve(null))).catch(() => null) : null;
+    const rows = plan.provider === "lever"
+      ? parseLeverPostings(body, { company })
+      : parseGreenhouseJobs(body, { company });
+    return { rows, error: rows.length ? null : "payload carried 0 postings" };
+  } catch (e) {
+    return { rows: [], error: String(e?.message ?? e).slice(0, 120) };
+  }
+}

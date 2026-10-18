@@ -40,8 +40,8 @@ import {
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip, boardMatchOpt, judgeSavesDigestLines,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
-  dumpButtonControls, healPickVerifies, healLocatorsFor, healPersistAllowed, HEAL_RULE_KEYS, healTextMatchersFor,
-  autoSubmitTrustPatch,
+  dumpButtonControls,  healPickVerifies, healLocatorsFor, healPersistAllowed, HEAL_RULE_KEYS, healTextMatchersFor,
+  autoSubmitTrustPatch, atsApiCollectPlan, fetchAtsApiJobs,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap } from "./apply-kit-node.js";
@@ -1305,8 +1305,32 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
 
 /* ------------------------- job list collection ------------------------- */
 
+/* Shared collection harness (API rows and scraped rows BOTH flow in):
+   discriminates posting-vs-nav, dedupes, extracts the board's own match
+   badge, then applies the freshness-first order, the per-board max-age
+   drop and the --max slice. Kept above collectJobs so the API-first path
+   and the scrape path can never drift apart. Host is the registry host
+   (url) for drift logging from the scrape path; the API path passes a
+   synthetic provider.board host and carries no __navCandidate rows, so
+   the discriminator's scrape-only branches stay inert for it. */
 async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
+  /* API-FIRST COLLECTION (greenhouse/lever): the board's own keyless JSON
+     API carries the same postings with a REAL timestamp and no anti-bot
+     wall — when it answers, the run never opens the listing page at all
+     (fewer bot-check trips, honest posted-age stamps) and falls through to
+     the DOM collector only when the API fails or is empty (fail-open, the
+     scrape stays the baseline). The rows enter the SAME harness below:
+     freshness sort, max-age drop, dedupe, --max slice. */
+  const apiPlan = atsApiCollectPlan(url);
+  if (apiPlan) {
+    const api = await fetchAtsApiJobs(apiPlan);
+    if (api.rows.length > 0) {
+      console.log(dim(`  🌐 ${api.rows.length} posting(s) collected via the ${apiPlan.provider} API (${apiPlan.board}) — no listing-page scrape needed`));
+      return finalizeCollected(api.rows, { max, maxAgeDays, boardMatch, site, host: apiPlan.provider + "." + apiPlan.board });
+    }
+    console.log(dim(`  ⚠ ${apiPlan.provider} API collect empty (${api.error}) — falling back to the page scrape`));
+  }
   /* OWNER OPT-IN from the site's registry rules (dot boardMatchd: true/on/"true"):
      generic boards get the same card-text capture + parse as instahyre;
      the builtin sites keep their parsers; boardMatch:false removes
@@ -1435,15 +1459,31 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
     }
     return out;
   }, { hints: rules.listSelectorHints, ageRe: POSTED_AGE_TEXT_RE.source, chromeRe: CHROME_TITLE_RE.source });
+  const host = (() => { try { return normHost(url); } catch { return ""; } })();
+  return finalizeCollected(jobs, { max, maxAgeDays, boardMatch, site, host });
+}
+
+/* Shared collection harness (API rows and scraped rows BOTH flow in):
+   discriminates posting-vs-nav, dedupes, extracts the board's own match
+   badge, then applies the freshness-first order, the per-board max-age
+   drop and the --max slice. Kept as its own function so the API-first
+   path and the scrape path can never drift apart in behavior. Host is the
+   registry URL's host for drift logging from the scrape path; the API
+   path passes a synthetic provider.board host and carries no
+   __navCandidate rows, so the discriminator's scrape-only branches stay
+   inert for it. */
+function finalizeCollected(jobs, { max, maxAgeDays, boardMatch, site, host = "" }) {
+  const optIn = boardMatchOpt(boardMatch);
   /* POSTING-VS-NAV discriminator (Phase 1): the generic hint loop matches
      broad hrefs, so on YC/Built In it collected site chrome ("Startup Jobs",
      "Design & UI/UX") as postings — every row then skipped and the run was
      all noise. Keep the two EXPLICIT, id-bearing collectors (Naukri cards,
      LinkedIn currentJobId) unconditionally; for the generic loop, keep only
-     links classifyJobLink calls a real posting detail. */
-  const host = (() => { try { return normHost(url); } catch { return ""; } })();
+     links classifyJobLink calls a real posting detail. API rows carry
+     structured ids from the ATS itself and no __navCandidate flag, so
+     they pass unchanged. */
   const adjudicated = jobs.filter((j) => {
-    if (!j.__navCandidate) return true; // explicit id-bearing collectors
+    if (!j.__navCandidate) return true; // explicit id-bearing collectors + API rows
     /* nav-chrome titles crawled boards extract as postings ("Apply now",
        "Register") never reach the gate: no --max slot, no AI call, no
        skip row flooding the history (audit root cause, 2026-10-17) */
@@ -1464,7 +1504,8 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
   }
   /* If we saw links but they were ALL chrome, the collector is scraping nav
      — surface it as selector drift (Phase 4 learns from this) instead of a
-     silent empty run. */
+     silent empty run. API rows can't drift (no markup involved) — the
+     drift branch never fires for them. */
   if (dropped > 0 && deduped.length === 0 && jobs.length > 0) {
     console.log(yellow(`  ⚠ collection drift: ${dropped} link(s) scanned, 0 real postings — the board's list markup may have changed.`));
     try { recordCollectionDrift(host, { scanned: jobs.length, kept: 0 }); } catch { /* best-effort */ }
@@ -1475,7 +1516,9 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
      head of the queue (freshest first) and the --max budget slices AFTER the
      sort, so a full budget spends its slots on postings recruiters are
      still reading instead of aging ones that merely appeared first on the
-     page. Older/unknown rows keep the board's own order. */
+     page. Older/unknown rows keep the board's own order. API rows carry
+     __ageText stamps derived from the ATS's own timestamps, so they sort
+     through the exact same parsePostedAge pipeline. */
   /* POST-EVALUATE at the node boundary (functions can't cross into
      page.evaluate): extract each site's OWN match badge from the card text
      now carried for every explicit collector. Fail-safe by construction:
@@ -1975,14 +2018,26 @@ async function dumpControlsForHeal(page) {
   return dumpButtonControls(raw);
 }
 
-/** Build a Playwright locator from one heal spec (role + name). Exact
-    first, normalized prefix second — both inside the same visible+enabled
-    button/a shoulder textButtonLocator enforces (nav/disabled can't match). */
-function healLocator(page, spec) {
+/** Locators for one heal spec, in preference order. ROLE-BASED FIRST
+    (Playwright web-first best practice): getByRole matches the ARIA role +
+    accessible name the way assistive tech reads the page — resilient to
+    the exact markup churn that triggers healing, and immune to CSS-
+    shoulder renames. The legacy CSS+hasText path stays SECOND for controls
+    whose accessible name diverges from their innerText (the dump captures
+    innerText; an aria-label override changes only the role name). Both
+    keep the visible+enabled shoulders textButtonLocator enforces, so nav
+    links and disabled widgets are never healable. */
+function healLocatorsForSpec(page, spec) {
+  const roleOpts = spec.exact ? { name: spec.name, exact: true } : { name: spec.name };
+  const roleLoc = page.getByRole(spec.role, roleOpts)
+    .and(page.locator(":not([disabled]):visible"))
+    .first();
   const roleSel = spec.role === "link" ? "a" : spec.role === "textbox" ? "input" : spec.role;
   const base = page.locator(`${roleSel}:visible:not([disabled])`);
-  if (spec.exact) return base.filter({ hasText: new RegExp(`^\\s*${escapeRe(spec.name)}\\s*$`, "i") }).first();
-  return base.filter({ hasText: new RegExp(escapeRe(spec.name), "i") }).first();
+  const legacy = spec.exact
+    ? base.filter({ hasText: new RegExp(`^\\s*${escapeRe(spec.name)}\\s*$`, "i") }).first()
+    : base.filter({ hasText: new RegExp(escapeRe(spec.name), "i") }).first();
+  return [roleLoc, legacy];
 }
 
 const escapeRe = (s) => String(s ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2003,10 +2058,11 @@ async function healControl(page, intent, ai) {
       return null;
     }
     for (const spec of healLocatorsFor(pick)) {
-      const loc = healLocator(page, spec);
-      if ((await loc.count()) > 0) {
-        console.log(dim(`  🔧 healed ${intent}: ${pick.role} "${pick.respondentName}" (conf ${pick.confidence})`));
-        return loc;
+      for (const loc of healLocatorsForSpec(page, spec)) {
+        if ((await loc.count()) > 0) {
+          console.log(dim(`  🔧 healed ${intent}: ${pick.role} "${pick.respondentName}" (conf ${pick.confidence})`));
+          return loc;
+        }
       }
     }
     return null;

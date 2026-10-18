@@ -25,6 +25,113 @@ import {
   HEAL_PROMPT_SYSTEM, dumpButtonControls, buttonHealPrompt, parseHealReply, healLocatorsFor, healPickVerifies, healPersistAllowed, HEAL_MIN_CONFIDENCE, HEAL_RULE_KEYS, healTextMatchersFor,
   autoSubmitTrustVerdict, autoSubmitTrustPatch, AUTO_SUBMIT_NEVER_HOSTS,
 } from "../../scripts/apply-engine-lib.js";
+import { atsApiCollectPlan, ageStampFromTimestamp, parseGreenhouseJobs, parseLeverPostings } from "../../scripts/apply-engine-lib.js";
+
+/* ─────────────────── ATS API-first collection (2026-10-18) ───────────────────
+   Greenhouse/Lever publish the same postings via keyless JSON — the driver
+   collects from the API when it answers, scraping only on failure. The pure
+   layer (plan derivation + payload parsers + age stamps) is pinned here so
+   the LIVE payload shapes stay caught by CI, not just by the last manual run. */
+describe("atsApiCollectPlan — URL → keyless API endpoints", () => {
+  it("derives greenhouse endpoints from path-qualified and bare hosts", () => {
+    expect(atsApiCollectPlan("https://boards.greenhouse.io/lyft")).toEqual({
+      provider: "greenhouse",
+      board: "lyft",
+      infoUrl: "https://boards-api.greenhouse.io/v1/boards/lyft",
+      apiUrl: "https://boards-api.greenhouse.io/v1/boards/lyft/jobs",
+    });
+    expect(atsApiCollectPlan("https://job-boards.greenhouse.io/airbnb")?.apiUrl)
+      .toBe("https://boards-api.greenhouse.io/v1/boards/airbnb/jobs");
+    expect(atsApiCollectPlan("https://www.greenhouse.io/groww")?.board).toBe("groww");
+  });
+
+  it("derives lever endpoints from jobs.lever.co/<token>", () => {
+    expect(atsApiCollectPlan("https://jobs.lever.co/fampay")).toEqual({
+      provider: "lever",
+      board: "fampay",
+      infoUrl: null,
+      apiUrl: "https://api.lever.co/v0/postings/fampay?mode=json",
+    });
+  });
+
+  it("returns null for non-ATS URLs and garbage board segments", () => {
+    expect(atsApiCollectPlan("https://www.instahyre.com/search-jobs/?search=react")).toBeNull();
+    expect(atsApiCollectPlan("https://linkedin.com/jobs/")).toBeNull();
+    expect(atsApiCollectPlan("https://boards.greenhouse.io/")).toBeNull(); // no board token
+    expect(atsApiCollectPlan("https://boards.greenhouse.io/not a token")).toBeNull();
+    expect(atsApiCollectPlan("not a url")).toBeNull();
+    expect(atsApiCollectPlan("")).toBeNull();
+  });
+});
+
+describe("ageStampFromTimestamp — API timestamps → card-stamp text", () => {
+  const now = Date.parse("2026-10-18T12:00:00Z");
+  it("formats hours and days in the card-dialect the freshness pipeline parses", () => {
+    expect(ageStampFromTimestamp(now - 5 * 3600e3, now)).toBe("5 hours ago");
+    expect(ageStampFromTimestamp(now - 30 * 24 * 3600e3, now)).toBe("30 days ago");
+    expect(ageStampFromTimestamp(now - 800e3, now)).toBe("just posted");
+    expect(parsePostedAge(ageStampFromTimestamp(now - 5 * 3600e3, now), now)).toBe(5);
+    expect(isFreshPosted(parsePostedAge(ageStampFromTimestamp(now - 5 * 3600e3, now), now))).toBe(true);
+  });
+
+  it("returns '' for absent/invalid/future stamps (unknown age is never rejected)", () => {
+    expect(ageStampFromTimestamp(null, now)).toBe("");
+    expect(ageStampFromTimestamp("not-a-date", now)).toBe("");
+    expect(ageStampFromTimestamp(now + 24 * 3600e3, now)).toBe(""); // future = bad clock, not fresh
+    expect(ageStampFromTimestamp(0, now)).toBe("");
+  });
+});
+
+describe("parseGreenhouseJobs / parseLeverPostings — live-payload shape", () => {
+  it("maps a greenhouse boards-api payload (updated_at ISO stamps)", () => {
+    const now = Date.parse("2026-10-18T12:00:00Z");
+    const rows = parseGreenhouseJobs(
+      {
+        jobs: [
+          { id: 8791500002, title: "Software Engineer, Frontend", absolute_url: "https://boards.greenhouse.io/lyft/jobs/8791500002?gh_jid=8791500002", location: { name: "San Francisco, CA" }, updated_at: "2026-10-18T02:00:00-04:00" },
+          { id: 3, title: "", absolute_url: "" }, // no title / no url → skipped
+        ],
+      },
+      { company: "Lyft", now },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual({
+      url: "https://boards.greenhouse.io/lyft/jobs/8791500002", // ?gh_jid deduped away
+      title: "Software Engineer, Frontend",
+      company: "Lyft",
+      location: "San Francisco, CA",
+      __ageText: rows[0].__ageText, // shape only; value asserted below
+      __apiId: "8791500002",
+      __viaApi: true,
+    });
+    expect(isFreshPosted(parsePostedAge(rows[0].__ageText, now))).toBe(true); // fresh → collected first
+    expect(rows[0].__apiId).toBe("8791500002");
+  });
+
+  it("maps a lever postings payload (createdAt ms stamps, categories.location)", () => {
+    const now = Date.parse("2026-10-18T12:00:00Z");
+    const rows = parseLeverPostings(
+      [
+        { id: "abc-1", text: "Senior Frontend Engineer", hostedUrl: "https://jobs.lever.co/fampay/abc-1", categories: { location: "Bengaluru, India" }, createdAt: now - 50 * 3600e3 },
+        {}, // empty row → skipped
+      ],
+      { company: "Fampay", now },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("Senior Frontend Engineer");
+    expect(rows[0].company).toBe("Fampay");
+    expect(rows[0].location).toBe("Bengaluru, India");
+    expect(parsePostedAge(rows[0].__ageText, now)).toBe(48); // 50h minus the "just posted" floor → days
+    expect(rows[0].__viaApi).toBe(true);
+  });
+
+  it("handles hostile payloads without throwing", () => {
+    expect(parseGreenhouseJobs(null)).toEqual([]);
+    expect(parseGreenhouseJobs({ jobs: "nope" })).toEqual([]);
+    expect(parseLeverPostings({ notAnArray: true })).toEqual([]);
+    expect(parseLeverPostings(null)).toEqual([]);
+  });
+});
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
   /* live-audit regression (2026-10-17): crawled boards scraped nav anchors as

@@ -20,6 +20,31 @@ employer's own ATS — the best possible channel. Embedded forms (Greenhouse
 renders its application form inside an iframe) are extracted and submitted
 in the right frame.
 
+**API-first collection (greenhouse/lever):** Greenhouse and Lever publish
+the same postings over PUBLIC, keyless JSON endpoints
+(`boards-api.greenhouse.io/v1/boards/<board>/jobs`,
+`api.lever.co/v0/postings/<board>?mode=json`). When the API answers, the
+collector never opens the listing page at all — no anti-bot wall to trip,
+a REAL posted timestamp instead of a parsed card stamp, and the company
+name from the board itself. Rows enter the same harness (freshness-first
+order, per-board max age, `--max` slice) via stamps derived from the API
+timestamps; only an API failure or empty payload falls back to the DOM
+scrape (`⚠ … falling back to the page scrape` in the run log). Parsers:
+`atsApiCollectPlan` / `parseGreenhouseJobs` / `parseLeverPostings` /
+`ageStampFromTimestamp` in [apply-engine-lib.js](apply-engine-lib.js).
+Both providers return `updated_at`/`createdAt`-level timestamps, which is
+also why API-collected freshness ordering is exact rather than a parse of
+"3 hours ago" prose.
+
+**Platform-policy note (LinkedIn):** LinkedIn's User Agreement prohibits
+using bots or unauthorized automation on their service and documents
+enforcement via account restriction — that is why the LinkedIn entry is a
+REVIEW GATE (`autoSubmit: false`, `AUTO_SUBMIT_NEVER_HOSTS` blocks any
+probation-trust auto-submit for it) and why its runs stay on your own
+machine/IP with a real persistent profile, never CI. Other boards that
+publish public posting APIs (Greenhouse/Lever) are the compliant channel
+for scale: the employer is literally offering the data.
+
 **Probation auto-activation:** pending sites no longer wait forever for a
 manual approval. At every `--all` cycle the engine runs the probation sweep
 (`engine_activate_probation_sites`): a pending site with a jobs_url that has

@@ -543,3 +543,40 @@ export function boardSuspensionRule(
 export function suspensionDigestLines(
   suspensions: (SuspensionRow & { reason: string })[] | null | undefined
 ): string;
+
+/* ── ATS keyless JSON APIs (API-first collect) ────────────────────── */
+
+export interface AtsApiCollectPlan {
+  provider: "greenhouse" | "lever";
+  board: string;
+  infoUrl: string | null;
+  apiUrl: string;
+}
+
+export function atsApiCollectPlan(url: string | null | undefined): AtsApiCollectPlan | null;
+
+export function ageStampFromTimestamp(ts: unknown, now?: number): string;
+
+export interface AtsApiJobRow {
+  url: string;
+  title: string;
+  company: string;
+  location: string;
+  __ageText: string;
+  __apiId: string;
+  __viaApi: boolean;
+}
+
+export function parseGreenhouseJobs(
+  payload: unknown,
+  opts?: { company?: string | null; now?: number }
+): AtsApiJobRow[];
+
+export function parseLeverPostings(
+  payload: unknown,
+  opts?: { company?: string | null; now?: number }
+): AtsApiJobRow[];
+
+export function fetchAtsApiJobs(
+  plan: AtsApiCollectPlan | null | undefined
+): Promise<{ rows: AtsApiJobRow[]; error: string | null }>;
