@@ -42,9 +42,10 @@ import {
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
   dumpButtonControls,  healPickVerifies, healLocatorsFor, healPersistAllowed, HEAL_RULE_KEYS, healTextMatchersFor,
   autoSubmitTrustPatch, atsApiCollectPlan, fetchAtsApiJobs,
+  postingHintFromUrl, collectHintsForSite,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
-import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap } from "./apply-kit-node.js";
+import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton } from "./apply-kit-node.js";
 import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 import { sweepEngineProcesses } from "./engine-lifecycle.js";
 
@@ -888,6 +889,71 @@ async function recordCollectionDrift(host, info) {
   } catch { /* best-effort — a registry blip must never fail a collection */ }
 }
 
+/* BOARD SELF-HEAL (collect layer), mirroring dumpControlsForHeal → one AI
+   call → re-scan verification: the AI names ONE anchor by its accessible
+   text; the driver requires that name verbatim in a fresh dump; the
+   matching anchors are collected as __navCandidate rows so the NORMAL
+   adjudicator (classifyJobLink) decides posting-vs-nav — the pick cannot
+   insert chrome no matter what the model says. NOTHING is clicked here
+   (unlike the button heal) — collection only reads links. Cost: one AI
+   call, only on an actual zero collect, only when a provider is reachable. */
+async function healListCollection(page, { ai } = {}) {
+  if (!healEnabled() || !ai?.key) return null;
+  try {
+    const controls = await dumpControlsForHeal(page);
+    const pick = await aiHealButton(ai, controls, "open a real job posting from the list");
+    if (!pick) return null;
+    const rescan = await dumpControlsForHeal(page);
+    if (!healPickVerifies(pick, rescan)) {
+      console.log(dim("  🔧 list heal rejected (name not verbatim on re-scan or confidence < 0.8)"));
+      return null;
+    }
+    /* collect ONLY anchors whose normalized accessible text equals the
+       verified pick's name — siblings included, since the named anchor is
+       the representative of the board's new detail-link family */
+    const rows = await page.evaluate((pickName) => {
+      const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+      const want = norm(pickName);
+      const out = [];
+      const seen = new Set();
+      for (const a of document.querySelectorAll("a")) {
+        const text = (a.innerText || a.textContent || "").trim();
+        if (!text || norm(text.split("\n")[0]) !== want) continue;
+        const href = a.href || a.getAttribute("href") || "";
+        if (!href) continue;
+        const abs = new URL(href, location.origin).toString();
+        if (seen.has(abs)) continue;
+        seen.add(abs);
+        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: (text.match(/\b(\d+\s*\+?\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\s*ago|just posted|posted today)\b/i) || [""])[0], __cardText: text.slice(0, 400) });
+      }
+      return out.slice(0, 40);
+    }, pick.respondentName).catch(() => []);
+    if (!rows.length) {
+      console.log(dim("  🔧 list heal verified the pick but no matching anchors resolved from the page"));
+      return null;
+    }
+    console.log(dim(`  🔧 list heal: "${pick.respondentName}" matched ${rows.length} link(s) — adjudicator decides what's a real posting`));
+    return rows;
+  } catch { /* heal is an optimization — never a gate */ return null; }
+}
+
+/* Persist the healed pattern on the board's rules row so the NEXT run's
+   hint ladder leads with it (read-back half of the loop). Best-effort. */
+async function persistHealedListPattern(host, pattern) {
+  if (!host || host.startsWith("builtin")) return;
+  const db = await sitesDb();
+  if (!db?.listJobSites || !db?.setSiteRules) return;
+  try {
+    const row = (await db.listJobSites()).find((s) => s.host === host);
+    const rules = (row?.rules && typeof row.rules === "object") ? row.rules : {};
+    await db.setSiteRules(host, {
+      ...rules,
+      healedListPattern: pattern,
+      collectHeal: { count: Number(rules.collectHeal?.count ?? 0) + 1, at: new Date().toISOString(), pattern },
+    });
+  } catch { /* best-effort — persistence must never fail a collection */ }
+}
+
 /* Phase 2 — transient network failures. After a reboot (or a DNS blip)
    page.goto throws ERR_NAME_NOT_RESOLVED / ERR_CONNECTION_* and the whole
    site leg dies with one empty run. Bounded retry with backoff rides out the
@@ -1313,8 +1379,21 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
    (url) for drift logging from the scrape path; the API path passes a
    synthetic provider.board host and carries no __navCandidate rows, so
    the discriminator's scrape-only branches stay inert for it. */
-async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}) {
+async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays, learnedRules = null, ai = null } = {}) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
+  /* HINT LADDER read-back (the missing half of the learn→use loop): the
+     registry's learned (`listLinkPattern`, from every successful run's
+     report) and healed (`healedListPattern`, from a verified AI list heal)
+     selectors LEAD the collect order ahead of the builtin pack. Generic
+     broad hints belong ONLY to the widen retry + AI heal below — never
+     the primary pass (tight-scope boards must not see a[href*='job']
+     unless a widen was actually needed; fail-open unknown-kind rows
+     would otherwise come back). */
+  const hintSel = collectHintsForSite({
+    builtinHints: rules.listSelectorHints,
+    learnedRules,
+    healedPattern: learnedRules?.healedListPattern,
+  });
   /* API-FIRST COLLECTION (greenhouse/lever): the board's own keyless JSON
      API carries the same postings with a REAL timestamp and no anti-bot
      wall — when it answers, the run never opens the listing page at all
@@ -1401,7 +1480,9 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
     await page.mouse.wheel(0, 2400);
     await page.waitForTimeout(900);
   }
-  const jobs = await page.evaluate(({ hints, ageRe, chromeRe }) => {
+  /* the in-page scan is declared ONCE and invoked per hint pass (primary
+     ladder, then the widened retry with generic superset on top) */
+  const scanJobCards = (pass) => page.evaluate(({ hints, ageRe, chromeRe }) => {
     const seen = new Set();
     const out = [];
     /* nav junk that looks like a link but is chrome, not a posting */
@@ -1458,9 +1539,48 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
       }
     }
     return out;
-  }, { hints: rules.listSelectorHints, ageRe: POSTED_AGE_TEXT_RE.source, chromeRe: CHROME_TITLE_RE.source });
+  }, pass);
+  const ageReSource = POSTED_AGE_TEXT_RE.source;
+  const chromeReSource = CHROME_TITLE_RE.source;
+  const jobs = await scanJobCards({ hints: hintSel, ageRe: ageReSource, chromeRe: chromeReSource });
   const host = (() => { try { return normHost(url); } catch { return ""; } })();
-  return finalizeCollected(jobs, { max, maxAgeDays, boardMatch, site, host });
+  const first = finalizeCollected(jobs, { max, maxAgeDays, boardMatch, site, host });
+  if (first.length > 0) return first;
+  /* WIDEN-ONLY RETRY: the learned/healed/builtin ladder collected zero and
+     even a board with intact builtin hints may simply be missing its new
+     markup shape — re-run the SAME scan with the generic superset added.
+     Generic pushes are not part of the primary pass by design (tight-scope
+     boards never see `a[href*='job']` unless a widen was actually needed). */
+  const widenedSet = [...new Set([...hintSel, ...SITE_RULES.generic.listSelectorHints])];
+  let widenedJobs = [];
+  if (widenedSet.length > hintSel.length) {
+    widenedJobs = await scanJobCards({ hints: widenedSet, ageRe: ageReSource, chromeRe: chromeReSource });
+    const widenedRows = finalizeCollected(widenedJobs, { max, maxAgeDays, boardMatch, site, host });
+    if (widenedRows.length > 0) return widenedRows; // recovered without AI
+  }
+  /* BOARD SELF-HEAL — the last human-input requirement at collect time:
+     a zero collect (no links at all, or every link adjudicated nav) gets
+     ONE AI list-heal attempt when a provider is reachable. The pick is
+     re-verified against a live re-scan, the matching anchors are collected,
+     and they must STILL survive the normal finalize adjudicator — an
+     AI-picked chrome anchor self-destructs there. Success persists the
+     derived href pattern so the NEXT run leads with it, no human no edits. */
+  const healedRows = await healListCollection(page, { ai });
+  if (healedRows && healedRows.length > 0) {
+    const out = finalizeCollected(healedRows, { max, maxAgeDays, boardMatch, site, host });
+    if (out.length > 0) {
+      const pattern = postingHintFromUrl(out[0].url);
+      if (pattern) await persistHealedListPattern(host, pattern);
+      console.log(dim(`  🔧 board self-healed — ${out.length} posting(s) via the AI-picked list ${pattern ? `(pattern: ${pattern})` : "(name-matched only)"}`));
+      return out;
+    }
+  }
+  /* drift persisted ONCE, after every recovery path above failed — the
+     digest line now reflects persistent drift (the heal was tried). */
+  if (Math.max(jobs.length, widenedJobs.length) > 0) {
+    try { recordCollectionDrift(host, { scanned: Math.max(jobs.length, widenedJobs.length), kept: 0 }); } catch { /* registry blip */ }
+  }
+  return first;
 }
 
 /* Shared collection harness (API rows and scraped rows BOTH flow in):
@@ -1503,12 +1623,11 @@ function finalizeCollected(jobs, { max, maxAgeDays, boardMatch, site, host = "" 
     deduped.push(j);
   }
   /* If we saw links but they were ALL chrome, the collector is scraping nav
-     — surface it as selector drift (Phase 4 learns from this) instead of a
-     silent empty run. API rows can't drift (no markup involved) — the
-     drift branch never fires for them. */
+     — surface it honestly instead of a silent empty run (the CALLER owns
+     registry persistence on total failure, after the heal ladder; this
+     function only logs). API rows can't drift (no markup involved). */
   if (dropped > 0 && deduped.length === 0 && jobs.length > 0) {
     console.log(yellow(`  ⚠ collection drift: ${dropped} link(s) scanned, 0 real postings — the board's list markup may have changed.`));
-    try { recordCollectionDrift(host, { scanned: jobs.length, kept: 0 }); } catch { /* best-effort */ }
   } else if (dropped > 0) {
     console.log(dim(`  (discriminator dropped ${dropped} nav/category link(s))`));
   }
@@ -2453,13 +2572,13 @@ async function runSingle(args, { existingCtx = null } = {}) {
       return;
     }
 
-    let jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays });
+    let jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays, learnedRules: rules, ai });
     console.log(dim(`collected ${jobs.length} posting(s)`));
     if (!jobs.length) {
       /* LinkedIn wall flakiness: guest access alternates wall/pass between
          navigations — one more collect attempt before declaring defeat */
       await page.waitForTimeout(3000);
-      jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays });
+      jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays, learnedRules: rules, ai });
       console.log(dim(`collected (retry) ${jobs.length} posting(s)`));
     }
     if (!jobs.length) {
@@ -3381,7 +3500,7 @@ async function main() {
       const sites = (await db?.listJobSites?.().catch(() => [])) ?? [];
       const drifted = sites.filter((s) => Number(s?.rules?.collectionDrift?.count ?? 0) >= 3 && s.status !== "pending");
       if (drifted.length) {
-        driftLines = `\n⚠️ collection drift (board markup likely moved — re-run --login-only / check selectors):\n${drifted.map((s) => `• ${s.host} ×${s.rules.collectionDrift.count} (last: ${s.rules.collectionDrift.scanned} scanned, ${s.rules.collectionDrift.kept} kept)`).join("\n")}`;
+        driftLines = `\n⚠️ collection drift (markup moved — self-heal ran and could NOT recover these; AI heal + fallbacks exhausted):\n${drifted.map((s) => `• ${s.host} ×${s.rules.collectionDrift.count} (last: ${s.rules.collectionDrift.scanned} scanned, ${s.rules.collectionDrift.kept} kept)`).join("\n")}`;
       }
     } catch { /* drift report is best-effort */ }
     /* 🫀 engine uptime from the heartbeat history (#156): the context a

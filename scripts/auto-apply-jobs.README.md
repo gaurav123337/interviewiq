@@ -85,6 +85,18 @@ known age, ≥ cap). Unlike the feed's age filter, postings with an
 UNKNOWN age are always collected — a missing stamp must never reject.
 Restore "any age" by clearing the chip (NULL removes the key).
 
+**Board self-healing (no human edits):** when a board redesigns its list,
+the collector recovers by itself, in order: (1) learned + healed selectors
+read back from the site's registry rules lead the collect pass; (2) a
+widening retry adds the generic superset hints; (3) ONE AI list heal —
+the model names a representative posting anchor, the name is verified
+verbatim against a live re-scan, and the matching links must still pass
+the normal posting-vs-nav adjudicator before they count; (4) success
+persists the derived href pattern so later runs lead with it. Only if
+every path fails does the drift counter advance, and the digest line then
+honestly means "self-heal ran and could not recover" — not "you fix it".
+(Select-write path: `engine_set_job_site_rules` — no SQL change needed.)
+
 **Fail-closed:** any *required* question the engine can't answer confidently
 (work authorization, certificates, unseen essays…) leaves the form open and
 marks the job **needs-review** in the report. A wrong submission is worse than

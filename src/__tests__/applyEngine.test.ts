@@ -26,6 +26,56 @@ import {
   autoSubmitTrustVerdict, autoSubmitTrustPatch, AUTO_SUBMIT_NEVER_HOSTS,
 } from "../../scripts/apply-engine-lib.js";
 import { atsApiCollectPlan, ageStampFromTimestamp, parseGreenhouseJobs, parseLeverPostings } from "../../scripts/apply-engine-lib.js";
+import { postingHintFromUrl, collectHintsForSite } from "../../scripts/apply-engine-lib.js";
+
+/* ─────────────────── board self-healing: hint ladder (2026-10-18) ───────────────────
+   The learn→use loop closes here: the collector now READS the registry's
+   learned/healed selectors and a zero collect earns an AI list heal whose
+   links still pass the normal adjudicator. Pinned: hint derivation from
+   real posting URLs, the ladder order, and the selector-injection guard. */
+describe("postingHintFromUrl — posting URL → reusable href pattern", () => {
+  it("returns the canonical substring per known board family", () => {
+    expect(postingHintFromUrl("https://www.naukri.com/job-listings-front-end-developer-info-edge-1234567890")).toBe("job-listings");
+    expect(postingHintFromUrl("https://www.linkedin.com/jobs/view/4123456789")).toBe("/jobs/view/");
+    expect(postingHintFromUrl("https://boards.greenhouse.io/lyft/jobs/4567890")).toBe("/jobs/");
+    expect(postingHintFromUrl("https://app.careerpuck.com/job-board/lyft/job/8791500002?gh_jid=x")).toBe("/job/");
+    expect(postingHintFromUrl("https://www.instahyre.com/candidate/opportunities/1234567")).toBe("/candidate/opportunities/");
+    expect(postingHintFromUrl("https://www.workatastartup.com/jobs/65432-frontend-engineer")).toBe("/jobs/");
+    expect(postingHintFromUrl("https://builtin.com/job/node-developer/223344")).toBe("/job/");
+    expect(postingHintFromUrl("https://jobs.lever.co/fampay/2a358e61-99a3-4d87-b647-97090e90cb7b")).toBe("/fampay/");
+  });
+
+  it("list URLs, garbage input and bare hosts derive nothing", () => {
+    expect(postingHintFromUrl("https://www.instahyre.com/search-jobs/?search=react")).toBeNull();
+    expect(postingHintFromUrl("https://example.com/")).toBeNull();
+    expect(postingHintFromUrl("not-a-url")).toBeNull();
+    expect(postingHintFromUrl(null)).toBeNull();
+    expect(postingHintFromUrl("")).toBeNull();
+  });
+});
+
+describe("collectHintsForSite — learned/healed lead, builtin follows, injection-proof", () => {
+  it("orders healed → learned → builtin and dedupes", () => {
+    const hints = collectHintsForSite({
+      builtinHints: ["a[href*='/jobs/']"],
+      learnedRules: { listLinkPattern: "job-listings" },
+      healedPattern: "/jobs/view/",
+    });
+    expect(hints).toEqual(["a[href*='/jobs/view/']", "a[href*='job-listings']", "a[href*='/jobs/']"]);
+    expect(new Set(hints).size).toBe(hints.length);
+  });
+
+  it("exactly the builtin pack when nothing was learned/healed", () => {
+    expect(collectHintsForSite({ builtinHints: ["a[href*='/job-']"] })).toEqual(["a[href*='/job-']"]);
+    expect(collectHintsForSite(null)).toEqual([]);
+  });
+
+  it("rejects selector-injection payloads and garbage tokens", () => {
+    expect(collectHintsForSite({ learnedRules: { listLinkPattern: "a[href*='evil']" } })).toEqual([]);
+    expect(collectHintsForSite({ learnedRules: { listLinkPattern: "" } })).toEqual([]);
+    expect(collectHintsForSite({ healedPattern: "') , img" })).toEqual([]);
+  });
+});
 
 /* ─────────────────── ATS API-first collection (2026-10-18) ───────────────────
    Greenhouse/Lever publish the same postings via keyless JSON — the driver

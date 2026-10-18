@@ -580,3 +580,18 @@ export function parseLeverPostings(
 export function fetchAtsApiJobs(
   plan: AtsApiCollectPlan | null | undefined
 ): Promise<{ rows: AtsApiJobRow[]; error: string | null }>;
+
+/* ── board self-healing: collection hint ladder ────────────────────── */
+
+/** A re-usable href-contains substring for a posting URL, or null. */
+export function postingHintFromUrl(url: string | null | undefined): string | null;
+
+export interface CollectHintsInput {
+  builtinHints?: string[] | null;
+  learnedRules?: { listLinkPattern?: string | null } | null;
+  healedPattern?: string | null;
+  /** optional extra tails (widening retry callers merge standalone) */
+  genericHints?: string[] | null;
+}
+
+export function collectHintsForSite(input: CollectHintsInput | null | undefined): string[];

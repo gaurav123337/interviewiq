@@ -2282,3 +2282,84 @@ export async function fetchAtsApiJobs(plan) {
     return { rows: [], error: String(e?.message ?? e).slice(0, 120) };
   }
 }
+
+/* ─────────────────── board self-healing: collection hint ladder ─────────────────── */
+
+/* Buttons already heal (Tier 3: one dump → one AI call → re-scan verify →
+   verified persist). A board's LIST can drift too — the collector's selectors
+   were once the only human-input hole left: drift was recorded in the rules
+   blob and DIGEST-ed at the owner, learned link shapes (listLinkPattern) were
+   written but never read back, and every run after a redesign repeated the
+   same zero. This layer closes that: learned + healed hints are READ back and
+   lead the collect order, and a total-zero collect earns ONE AI list-heal
+   attempt whose links must still survive the SAME classifyJobLink
+   adjudicator every other link passes — an AI-picked chrome anchor
+   self-destructs there instead of becoming a junk row. */
+
+/* Characters legal inside an href-contains selector value (a shield for the
+    persisted pattern — quotes/brackets would inject selectors beyond the
+    intended `a[href*=…]` shape). */
+const HINT_TOKEN_RE = /^[a-z0-9._/-]{3,40}$/i;
+
+/** Derive a re-usable href-contains substring from ONE real posting URL.
+    Known board families get their canonical substring (the same shapes
+    classifyJobLink matches); an unknown board falls back to the one path
+    directory directly before the id-bearing segment — generic enough to
+    hit the site's NEXT posting too, and always validated by the parser
+    before it can become a selector. */
+export function postingHintFromUrl(url) {
+  let u = null;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const path = u.pathname;
+  if (/naukri\.com$/.test(host) && /job-listings/.test(path)) return "job-listings";
+  if (/linkedin\.com$/.test(host) && /\/jobs\/view\//.test(path)) return "/jobs/view/";
+  if (/instahyre\.com$/.test(host) && /\/candidate\/opportunities\//.test(path)) return "/candidate/opportunities/";
+  if (/builtin\.com$/.test(host) && /\/job\//.test(path)) return "/job/";
+  if (/workatastartup\.com$|ycombinator\.com$|wellfound\.com$|angel\.co$/.test(host) && /\/jobs\//.test(path)) return "/jobs/";
+  const segs = path.split("/").filter(Boolean);
+  /* "…/<dir>/<id>" — the directory directly before the bare-id segment */
+  const idIdx = segs.findIndex((sg) => /^\d{3,}$/.test(sg));
+  if (idIdx > 0) {
+    const tok = segs[idIdx - 1].toLowerCase().replace(/[^a-z0-9._/-]/g, "");
+    if (HINT_TOKEN_RE.test(tok) && !/^(app|www)$/.test(tok)) return `/${tok}/`;
+  }
+  /* "…/<slug-dir>/<slug>-<id>" — directory before the id-bearing slug */
+  const slugId = path.match(/\/([a-z0-9._-]{3,})\/[^/]{0,80}\d{3,}/i);
+  if (slugId && HINT_TOKEN_RE.test(slugId[1]) && !/^(app|www)$/.test(slugId[1])) return `/${slugId[1]}/`;
+  /* "/<marker-slug>-<id>" in ONE segment (naukri-style, unknown host) */
+  const one = segs.find((sg) => /\d{3,}$/.test(sg) && sg.includes("-"));
+  if (one) {
+    const tok = one.replace(/[-]?\d+$/, "").toLowerCase();
+    if (HINT_TOKEN_RE.test(tok)) return tok;
+  }
+  return null;
+}
+
+/** The hint ladder actually used by the collector, in priority order:
+    1. a PERSISTED list heal for this board (it was verified on a real collect)
+    2. the report-side learner's pattern (what previously WORKED here)
+    3. the board's builtin hints
+    Deduped. A bad/stale entry only wastes one scan pass — the adjudicator
+    + chrome filters own truth, so a wrong hint can never ADD junk rows.
+
+    Generic broad hints are deliberately NOT part of the primary pass: for
+    tight-scope boards (instahyre/naukri) adding `a[href*='job']` upfront
+    would re-create the fail-open unknown-kind noise Phase 1 killed, on
+    boards that never drifted. They belong to a widening RETRY (the driver
+    merges them onto the primary set only when the primary pass collected
+    zero) and to the AI list heal after that. */
+export function collectHintsForSite(input) {
+  const { builtinHints, learnedRules, healedPattern, genericHints } = (input && typeof input === "object") ? input : {};
+  const out = [];
+  const push = (sel) => { if (sel && !out.includes(sel)) out.push(sel); };
+  const tokOk = (t) => HINT_TOKEN_RE.test(String(t ?? ""));
+  /* healed pattern may carry "/" (path prefixes); strip quotes/brackets so
+     the stored string can only ever end up inside a[href*='…'] */
+  if (tokOk(String(healedPattern ?? "").replace(/\//g, "z"))) push(`a[href*='${healedPattern}']`);
+  const learnedTok = String(learnedRules?.listLinkPattern ?? "").trim();
+  if (tokOk(learnedTok)) push(`a[href*='${learnedTok}']`);
+  for (const h of builtinHints ?? []) push(h);
+  for (const h of genericHints ?? []) push(h);
+  return out;
+}
