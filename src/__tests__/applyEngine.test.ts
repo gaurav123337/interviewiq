@@ -26,7 +26,24 @@ import {
   autoSubmitTrustVerdict, autoSubmitTrustPatch, AUTO_SUBMIT_NEVER_HOSTS,
 } from "../../scripts/apply-engine-lib.js";
 import { atsApiCollectPlan, ageStampFromTimestamp, parseGreenhouseJobs, parseLeverPostings } from "../../scripts/apply-engine-lib.js";
-import { postingHintFromUrl, collectHintsForSite } from "../../scripts/apply-engine-lib.js";
+import { postingHintFromUrl, collectHintsForSite, isBoardGone404 } from "../../scripts/apply-engine-lib.js";
+
+describe("isBoardGone404 — dead board URL skips the recovery ladder", () => {
+  it("detects 404/403/410 titles and 'page not found' variants", () => {
+    expect(isBoardGone404("404 Not Found")).toBe(true);
+    expect(isBoardGone404("403 Forbidden")).toBe(true);
+    expect(isBoardGone404("410")).toBe(true);
+    expect(isBoardGone404("Page not found — Great Co")).toBe(true);
+    expect(isBoardGone404("404 — page unavailable")).toBe(true);
+  });
+
+  it("does not misclassify real listings whose title carries a number", () => {
+    expect(isBoardGone404("Senior Engineer 404 - Level 4 team")).toBe(false); // starts with words, not the code
+    expect(isBoardGone404("React jobs at Fintech — builtin")).toBe(false);
+    expect(isBoardGone404("")).toBe(false);
+    expect(isBoardGone404(null)).toBe(false);
+  });
+});
 
 /* ─────────────────── board self-healing: hint ladder (2026-10-18) ───────────────────
    The learn→use loop closes here: the collector now READS the registry's

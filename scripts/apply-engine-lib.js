@@ -418,6 +418,21 @@ export function isChallengePage(title, bodyText) {
   return /just a moment|attention required|security verification|checking your browser|verify you are (a )?human|performing security/i.test(t + " " + b.slice(0, 2000));
 }
 
+/** The board itself answered 404/410 — the URL (or the URL pattern) is gone.
+    Live-observed 2026-10-18: a moved/bot-walled builtin listing 404'd and the
+    widened generic hints STILL scraped 1 junk unknown-kind row off the error
+    template — and without this guard the engine would burn the widen retry
+    AND one AI list-heal call trying to "recover" a board that no longer has
+    the page at all. Honest skip instead: 404 page → no collect ladder at all
+    (the registry's drift counter is NOT incremented by the 404 itself; the
+    run's error line and the digest surface it). */
+export function isBoardGone404(title, url) {
+  const t = String(title || "").trim();
+  if (/^(404|403|410\b)/.test(t)) return true;
+  if (/\b(page\s+not\s+found|404\s+not\s+found|gone!?)/i.test(t)) return true;
+  return false;
+}
+
 /** Account-level blockers a board shows INSTEAD of the job list after login. */
 export function detectAccountProblem(bodyText) {
   const b = String(bodyText || "");

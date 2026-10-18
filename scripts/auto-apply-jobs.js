@@ -42,7 +42,7 @@ import {
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
   dumpButtonControls,  healPickVerifies, healLocatorsFor, healPersistAllowed, HEAL_RULE_KEYS, healTextMatchersFor,
   autoSubmitTrustPatch, atsApiCollectPlan, fetchAtsApiJobs,
-  postingHintFromUrl, collectHintsForSite,
+  postingHintFromUrl, collectHintsForSite, isBoardGone404,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
 import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton } from "./apply-kit-node.js";
@@ -1430,6 +1430,14 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays, learn
       await page.waitForTimeout(2000);
     }
   }
+  /* 404/410 fast-skip — a board whose URL pattern is GONE must not consume
+     the widen retry or an AI heal call (those exist for a redesigned board,
+     not a missing page; the live 2026-10-18 builtin probe showed even a
+     404 template's leftovers can yield junk unknown-kind rows without this). */
+  const earlyTitle = await page.title().catch(() => "");
+  if (isBoardGone404(earlyTitle, url)) {
+    throw new Error(`${rules.label}: 404 (${String(earlyTitle).trim().slice(0, 40)}) — the board URL is gone; honest skip, no heal attempt.`);
+  }
   const state = await waitForStableState(page, rules, url); // SPA render + challenge clear + redirect settle
   if (state.kind === "challenge") throw new Error(`${rules.label}: bot-check did not clear — re-run headed (no --headless).`);
   if (state.kind === "login") throw new Error(`${rules.label}: session expired — re-run with --login-only to sign in again.`);
@@ -1487,7 +1495,15 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays, learn
     const out = [];
     /* nav junk that looks like a link but is chrome, not a posting */
     const junk = /^(opportunities|jobs?|search jobs?|home|activity|inbox|profile|settings|logout|feed|my network|messaging|notifications|all jobs?|jobs? at .*|view all|see more|more)$/i;
-    /* posted-age stamp on a card ("3 hours ago", "30+ Days Ago", "Just posted"):
+    /* chromeRe arrives as a SOURCE STRING (RegExp sources serialize across
+       the evaluate boundary; RegExp objects also serialize on this
+       Playwright version but the source-string contract keeps it exact):
+       re-instantiate here. The live probe (freebuff-apply-reports/
+       verify-live-heal.tmp.mjs, builtin.com 2026-10-18) caught the
+       chromeRe.test crash this guard replaced — a pre-existing string
+       passed where a regex was called, found only in production-like
+       never unit-covered in-page code. */
+    const CHROME_RE = new RegExp(chromeRe, "i");    /* posted-age stamp on a card ("3 hours ago", "30+ Days Ago", "Just posted"):
        parsed AFTER evaluate into hours and used to order the collection —
        <24h postings are applied first because freshness beats fit at the
        margin (recruiters read a fresh applicant first). The regex is the
@@ -1505,7 +1521,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays, learn
       const t = art.querySelector("p[class*='title'], [class*='designation']");
       const c = art.querySelector("[class*='company']");
       const title = ((t?.textContent || art.innerText || "").trim().split("\n")[0] || "").slice(0, 140);
-      if (!title || title.length < 8 || junk.test(title) || chromeRe.test(title)) continue;
+      if (!title || title.length < 8 || junk.test(title) || CHROME_RE.test(title)) continue;
       seen.add(id);
       const company = (c?.textContent || "").trim().split("\n")[0].replace(/\s*[\d.]+\s*(Reviews?|stars?)\s*$/i, "").replace(/\s+\d+(\.\d+)?$/, "").slice(0, 80);        out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company, __ageText: ageOf(art), __cardText: (art.innerText || "").slice(0, 400) });
     }
@@ -1515,7 +1531,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays, learn
       if (!m || seen.has(m[1])) continue;
       const text = (a.innerText || "").trim();
       const title = (text.split("\n")[0] || "").replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 140);
-      if (!title || title.length < 8 || junk.test(title) || chromeRe.test(title)) continue;
+      if (!title || title.length < 8 || junk.test(title) || CHROME_RE.test(title)) continue;
       seen.add(m[1]);
       const lines = text.split("\n").map(s => s.trim()).filter(Boolean);
       /* company = first line that is not the title echo, social-proof noise
@@ -1533,7 +1549,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays, learn
         const abs = new URL(href, location.origin).toString();
         if (seen.has(abs)) continue;
         const text = (a.innerText || a.textContent || "").trim();
-        if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim()) || chromeRe.test(text.split("\n")[0].trim())) continue;
+        if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim()) || CHROME_RE.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
         out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a), __cardText: text.slice(0, 400) });
       }

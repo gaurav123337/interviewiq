@@ -595,3 +595,6 @@ export interface CollectHintsInput {
 }
 
 export function collectHintsForSite(input: CollectHintsInput | null | undefined): string[];
+
+/** The board answered 404/410 (gone URL pattern) — skip the recovery ladder. */
+export function isBoardGone404(title: string | null | undefined, url?: string): boolean;
