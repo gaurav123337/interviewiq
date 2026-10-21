@@ -84,12 +84,26 @@ export function cloneApplyProfileForSignin() {  try { const owner = JSON.parse(r
   return existsSync(path.join(SIGNIN_PROFILE_DIR, "Default", "Cookies"));
 }
 
+/* Chrome rebuilds every one of these from scratch (or never needs them for
+   a sign-in): the Oct 11 sign-in clone copied 25k files, and by 2026-10-20
+   the profile had doubled to 55k+ — each 🔑 window took 10+ min just to
+   appear. Skipping pure cache dirs makes the clone nearly cookies-only.
+   EXACT-name directory matches only, so Default/Network/Cookies and
+   prefs/local-state (the actual session state) are untouched. */
+const CLONE_CACHE_DIRS = new Set([
+  "Cache", "Cache_Data", "Code Cache", "GPUCache", "DawnCache",
+  "ShaderCache", "shader_cache", "GrShaderCache", "component_crx_cache",
+  "component_crx_cache_delayed", "Crashpad", "CrashpadMetrics", "GraphiteDawnCache",
+  "Service Worker", "Media Cache", "optimization_guide_model_store",
+]);
+
 function cpFilter(src, dest) {
   let entries;
   try { entries = readdirSync(src, { withFileTypes: true }); } catch { return; } // no profile yet — fresh clone
   for (const ent of entries) {
     if (ent.name === "freebuff-apply-signin-profile") continue; // paranoia: never copy the clone into itself
     if (isProfileLockEntry(ent.name)) continue;
+    if (ent.isDirectory() && CLONE_CACHE_DIRS.has(ent.name)) continue; // Chrome rebuilds these — 10+ min of the clone was never session state
     const s = path.join(src, ent.name);
     const d = path.join(dest, ent.name);
     try {

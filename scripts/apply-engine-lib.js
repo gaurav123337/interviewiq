@@ -296,6 +296,28 @@ const SLUG_POSTING_HOSTS = /(^|\.)(workatastartup|wellfound|angel)\.co$|(^|\.)yc
 /* Nav/category labels that LOOK like postings to a naive text filter. */
 const NAV_LABEL_RE = /^(all jobs?|jobs?|job search|search jobs?|startup jobs?|remote jobs?|find jobs?|browse jobs?|jobs? by (category|role|location)|engineering|design|design & ui\/ux|ui\/ux|recruiting( & hr)?|human resources|marketing|sales|finance|legal|operations|product|product management|data|data & analytics|customer service|administrative|healthcare services|accounting|arts and design|community and social services|consulting|education|entrepreneurship|information technology|business development|program and project management|retail|more jobs?|view all|see all|see more|show more|view more)$/i;
 
+/* NAV-CHROME TITLES crawled boards scrape AS postings — the live 7-day skip
+   audit (2026-10-17) found ~200 rows titled "Apply now" / "Sign in for My
+   Jobs" / "Register" / "Find Resumes" — anchor chrome that classifyJobLink
+   could not call nav on unknown boards (fail-open) and that burned the run
+   budget + the history. WHOLE-LINE matching only: real postings like
+   "Apply as a DevOps Engineer" start with the same verb but carry a full
+   phrase after it, so a whole-line test keeps them and still drops the
+   chrome (extraction takes the first line only — a chrome anchor's first
+   line is exactly the phrase). Optional trailing punctuation/space. */
+export const CHROME_TITLE_RE = /^(apply|apply now|sign in|sign up|log in|login|register|browse( latest)?( jobs?)?|find( resumes)?|create resume|create( an)? account|employers?( \/ )?(post( a| the)? job)?|for employers|for job seekers|post( a| the)? job|upload( your)?( cv|resume)?|create( a)?( job)? alert( for jobs?)?|verified listings?|sign in for my jobs|saved jobs?|help|contact( us)?|about( us)?|privacy|terms( & conditions)?|faqs?|sign out|log out|settings|profile|my profile)\s*[!|:–—-]?\s*$/i;
+
+/** TRUE = the extracted "title" is navigation chrome, not a posting.
+    Used at COLLECT time (never on stored titles): chrome that sneaks past
+    site-specific junk regexes on unknown boards never becomes a "job", so
+    it cannot consume a --max slot, an AI judge call, or a history row. */
+export function isChromeTitle(title) {
+  const t = String(title ?? "").trim();
+  if (!t) return true; // blank "title" from a broken extraction IS chrome
+  if (NAV_LABEL_RE.test(t)) return true;
+  return CHROME_TITLE_RE.test(t);
+}
+
 /**
  * Classify an anchor as a real posting link or site chrome.
  * @returns {{"kind":"posting"|"nav"|"unknown", "id": string|null, "routeKey": string|null}}
@@ -310,7 +332,11 @@ export function classifyJobLink({ href, text, host = "" } = {}) {
   const label = String(text || "").trim().split("\n")[0].trim();
   const h = String(host || (u && u.hostname !== "x.invalid" ? u.hostname : "")).replace(/^www\./, "");
 
-  if (NAV_LABEL_RE.test(label)) return { kind: "nav", id: null, routeKey: null };
+  /* label chrome check runs ONLY on a present label — a blank/absent label
+     is merely a missing extraction and must NOT devour an id-bearing href
+     (the LIVE bug this test caught: linkedin /jobs/view/<id> with no text
+     was scored nav). The id-bearing checks below then decide. */
+  if (label && (NAV_LABEL_RE.test(label) || isChromeTitle(label))) return { kind: "nav", id: null, routeKey: null };
   if (!raw) return { kind: "unknown", id: null, routeKey: null };
 
   const path = (u?.pathname || raw.split(/[?#]/)[0]);
@@ -390,6 +416,21 @@ export function isChallengePage(title, bodyText) {
   const t = String(title || "");
   const b = String(bodyText || "");
   return /just a moment|attention required|security verification|checking your browser|verify you are (a )?human|performing security/i.test(t + " " + b.slice(0, 2000));
+}
+
+/** The board itself answered 404/410 — the URL (or the URL pattern) is gone.
+    Live-observed 2026-10-18: a moved/bot-walled builtin listing 404'd and the
+    widened generic hints STILL scraped 1 junk unknown-kind row off the error
+    template — and without this guard the engine would burn the widen retry
+    AND one AI list-heal call trying to "recover" a board that no longer has
+    the page at all. Honest skip instead: 404 page → no collect ladder at all
+    (the registry's drift counter is NOT incremented by the 404 itself; the
+    run's error line and the digest surface it). */
+export function isBoardGone404(title, url) {
+  const t = String(title || "").trim();
+  if (/^(404|403|410\b)/.test(t)) return true;
+  if (/\b(page\s+not\s+found|404\s+not\s+found|gone!?)/i.test(t)) return true;
+  return false;
 }
 
 /** Account-level blockers a board shows INSTEAD of the job list after login. */
@@ -1050,9 +1091,12 @@ export function planFormAnswers(fields, profile, job, stored = {}) {
   return (fields ?? []).map((meta) => {
     const cls = classifyQuestion(meta.label, { tag: meta.tag, required: meta.required });
     const key = normalizeFieldKey(meta.label);
-    let answer = draftAnswer(cls.kind, profile, job);
-    if (!answer && key && typeof stored[key] === "string" && stored[key].trim()) answer = stored[key].trim();
-    return { cls, key, answer };
+    const drafted = draftAnswer(cls.kind, profile, job);
+    const answer = drafted ? drafted : (key && typeof stored[key] === "string" && stored[key].trim() ? stored[key].trim() : "");
+    /* fromMemory marks the REUSE path (not the profile draft): the fill loop
+       tallies these per form so the owner's UI can show how often the
+       answer memory is paying for itself (touchFormAnswers → 🧠 stats) */
+    return { cls, key, answer, fromMemory: !drafted && Boolean(answer) };
   });
 }
 
@@ -2122,4 +2166,215 @@ export function autoSubmitTrustPatch(verdict, host, currentRules = {}) {
   }
   if (ownerExplicitOff) return { autoSubmit: false, trusted: true, trustNote: "trust score reached — the owner's explicit off still wins" };
   return { autoSubmit: true, trusted: true, trustNote: verdict.reason };
+}
+
+/* ─────────────────── ATS keyless JSON APIs (API-first collection) ─────────────────── */
+
+/* Greenhouse and Lever publish the SAME postings the engine scrapes via
+   PUBLIC, keyless JSON endpoints (the jobs-fetch edge function already
+   reads them server-side). Collecting from the API instead of the listing
+   page is strictly better whenever it works: no anti-bot wall to trip, a
+   real posted timestamp instead of a parsed card stamp, and the company
+   name from the board itself. The API result feeds the UNCHANGED program:
+   rows enter sortByFreshness/maxAge/dedupe through __ageText stamps derived
+   from the API timestamps, then the normal loop opens each posting page.
+   Where it can't (bad token, transient 5xx) the driver scrapes exactly as
+   before — a collect-time failure must never become a failed run. */
+
+/** Derive the API collection plan for a jobs-list URL, or null when the
+    host is not an API-capable ATS board. Greenhouse boards may be registered
+    either on the boards host (path-qualified: /lyft) or the app host;
+    Lever boards are jobs.lever.co/<token>. Board tokens areURL segments —
+    no spaces, no query strings — which is also the guard against garbage
+    being sent to the API host. */
+export function atsApiCollectPlan(url) {
+  let u = null;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const segs = u.pathname.split("/").filter(Boolean);
+  const token = segs.length && /^[a-z0-9][a-z0-9_-]{1,60}$/i.test(segs[0]) ? segs[0].toLowerCase() : null;
+  if (/^(job-)?boards\.greenhouse\.io$/.test(host) || (host === "greenhouse.io" && token)) {
+    return token ? {
+      provider: "greenhouse",
+      board: token,
+      infoUrl: `https://boards-api.greenhouse.io/v1/boards/${token}`,
+      apiUrl: `https://boards-api.greenhouse.io/v1/boards/${token}/jobs`,
+    } : null;
+  }
+  if (/^(jobs\.)?lever\.co$/.test(host)) {
+    return token ? {
+      provider: "lever",
+      board: token,
+      infoUrl: null,
+      apiUrl: `https://api.lever.co/v0/postings/${token}?mode=json`,
+    } : null;
+  }
+  return null;
+}
+
+/** Turn an API timestamp (epoch ms or ISO) into the card-stamp text the
+    freshness pipeline already parses ("3 hours ago" → __ageText), so
+    API-collected rows pass through sortByFreshness/maxAgeDays unchanged.
+    Empty string = unknown age — the maxAge filter never rejects unknowns. */
+export function ageStampFromTimestamp(ts, now = Date.now()) {
+  const n = typeof ts === "number" ? ts : Date.parse(String(ts ?? ""));
+  if (!Number.isFinite(n) || n <= 0 || n > now + 60_000) return "";
+  const hours = Math.max(0, (now - n) / 3_600_000);
+  if (hours < 1) return "just posted";
+  if (hours < 48) return `${Math.floor(hours)} hours ago`;
+  return `${Math.floor(hours / 24)} days ago`;
+}
+
+/** Parse a Greenhouse boards-api /jobs payload into collect rows. Mirrors
+    the edge function's fetchGreenhouse mapping (external id, hosted URL,
+    location) but WITHOUT pulling content[] HTML — JSON payloads can be
+    10k chars per posting and the loop opens the posting's own page for
+    the JD anyway; the collect row only needs the entry signal. */
+export function parseGreenhouseJobs(payload, { company = null, now = Date.now() } = {}) {
+  const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+  const out = [];
+  for (const j of jobs) {
+    const title = String(j?.title ?? "").trim();
+    const url = String(j?.absolute_url ?? j?.absoluteUrl ?? "").trim();
+    if (!title || !url) continue; // a row with no title or no detail URL can't be opened later — skip, honest
+    out.push({
+      url: url.split("?")[0], // ?gh_jid=<id> query dedupes to the bare detail path
+      title: title.slice(0, 140),
+      company: (String(company ?? "") || String(j?.company ?? "") || "").slice(0, 80),
+      location: String(j?.location?.name ?? "").slice(0, 80),
+      __ageText: ageStampFromTimestamp(j?.updated_at, now),
+      __apiId: String(j?.id ?? ""),
+      __viaApi: true,
+    });
+  }
+  return out;
+}
+
+/** Parse a Lever v0 postings payload into collect rows (same contract as
+    parseGreenhouseJobs). Lever stamps createdAt in epoch milliseconds. */
+export function parseLeverPostings(payload, { company = null, now = Date.now() } = {}) {
+  const jobs = Array.isArray(payload) ? payload : [];
+  const out = [];
+  for (const j of jobs) {
+    const title = String(j?.text ?? j?.title ?? "").trim();
+    const url = String(j?.hostedUrl ?? j?.applyUrl ?? "").trim();
+    if (!title || !url) continue;
+    out.push({
+      url: url.split("?")[0],
+      title: title.slice(0, 140),
+      company: (String(company ?? "") || String(j?.company ?? "") || "").slice(0, 80),
+      location: String(j?.categories?.location ?? "").slice(0, 80),
+      __ageText: ageStampFromTimestamp(j?.createdAt, now),
+      __apiId: String(j?.id ?? ""),
+      __viaApi: true,
+    });
+  }
+  return out;
+}
+
+/** Fetch + parse one ATS board's postings over its public API. Returns
+    { rows } or { rows: [], error } — never throws (the caller falls back
+    to scraping). Node 22 global fetch; a 4xx/5xx or unparsable body is an
+    honest fallback, and the error string is trimmed for the run log. */
+export async function fetchAtsApiJobs(plan) {
+  if (!plan?.apiUrl) return { rows: [], error: "no plan" };
+  try {
+    const res = await fetch(plan.apiUrl, {
+      headers: { "User-Agent": "InterviewIQ-auto-apply (+local engine)" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return { rows: [], error: `HTTP ${res.status}` };
+    const body = await res.json();
+    const company = plan.infoUrl ? await fetch(plan.infoUrl, {
+      headers: { "User-Agent": "InterviewIQ-auto-apply (+local engine)" },
+      signal: AbortSignal.timeout(10_000),
+    }).then((r) => (r.ok ? r.json().then((b) => b?.name ?? null) : Promise.resolve(null))).catch(() => null) : null;
+    const rows = plan.provider === "lever"
+      ? parseLeverPostings(body, { company })
+      : parseGreenhouseJobs(body, { company });
+    return { rows, error: rows.length ? null : "payload carried 0 postings" };
+  } catch (e) {
+    return { rows: [], error: String(e?.message ?? e).slice(0, 120) };
+  }
+}
+
+/* ─────────────────── board self-healing: collection hint ladder ─────────────────── */
+
+/* Buttons already heal (Tier 3: one dump → one AI call → re-scan verify →
+   verified persist). A board's LIST can drift too — the collector's selectors
+   were once the only human-input hole left: drift was recorded in the rules
+   blob and DIGEST-ed at the owner, learned link shapes (listLinkPattern) were
+   written but never read back, and every run after a redesign repeated the
+   same zero. This layer closes that: learned + healed hints are READ back and
+   lead the collect order, and a total-zero collect earns ONE AI list-heal
+   attempt whose links must still survive the SAME classifyJobLink
+   adjudicator every other link passes — an AI-picked chrome anchor
+   self-destructs there instead of becoming a junk row. */
+
+/* Characters legal inside an href-contains selector value (a shield for the
+    persisted pattern — quotes/brackets would inject selectors beyond the
+    intended `a[href*=…]` shape). */
+const HINT_TOKEN_RE = /^[a-z0-9._/-]{3,40}$/i;
+
+/** Derive a re-usable href-contains substring from ONE real posting URL.
+    Known board families get their canonical substring (the same shapes
+    classifyJobLink matches); an unknown board falls back to the one path
+    directory directly before the id-bearing segment — generic enough to
+    hit the site's NEXT posting too, and always validated by the parser
+    before it can become a selector. */
+export function postingHintFromUrl(url) {
+  let u = null;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const path = u.pathname;
+  if (/naukri\.com$/.test(host) && /job-listings/.test(path)) return "job-listings";
+  if (/linkedin\.com$/.test(host) && /\/jobs\/view\//.test(path)) return "/jobs/view/";
+  if (/instahyre\.com$/.test(host) && /\/candidate\/opportunities\//.test(path)) return "/candidate/opportunities/";
+  if (/builtin\.com$/.test(host) && /\/job\//.test(path)) return "/job/";
+  if (/workatastartup\.com$|ycombinator\.com$|wellfound\.com$|angel\.co$/.test(host) && /\/jobs\//.test(path)) return "/jobs/";
+  const segs = path.split("/").filter(Boolean);
+  /* "…/<dir>/<id>" — the directory directly before the bare-id segment */
+  const idIdx = segs.findIndex((sg) => /^\d{3,}$/.test(sg));
+  if (idIdx > 0) {
+    const tok = segs[idIdx - 1].toLowerCase().replace(/[^a-z0-9._/-]/g, "");
+    if (HINT_TOKEN_RE.test(tok) && !/^(app|www)$/.test(tok)) return `/${tok}/`;
+  }
+  /* "…/<slug-dir>/<slug>-<id>" — directory before the id-bearing slug */
+  const slugId = path.match(/\/([a-z0-9._-]{3,})\/[^/]{0,80}\d{3,}/i);
+  if (slugId && HINT_TOKEN_RE.test(slugId[1]) && !/^(app|www)$/.test(slugId[1])) return `/${slugId[1]}/`;
+  /* "/<marker-slug>-<id>" in ONE segment (naukri-style, unknown host) */
+  const one = segs.find((sg) => /\d{3,}$/.test(sg) && sg.includes("-"));
+  if (one) {
+    const tok = one.replace(/[-]?\d+$/, "").toLowerCase();
+    if (HINT_TOKEN_RE.test(tok)) return tok;
+  }
+  return null;
+}
+
+/** The hint ladder actually used by the collector, in priority order:
+    1. a PERSISTED list heal for this board (it was verified on a real collect)
+    2. the report-side learner's pattern (what previously WORKED here)
+    3. the board's builtin hints
+    Deduped. A bad/stale entry only wastes one scan pass — the adjudicator
+    + chrome filters own truth, so a wrong hint can never ADD junk rows.
+
+    Generic broad hints are deliberately NOT part of the primary pass: for
+    tight-scope boards (instahyre/naukri) adding `a[href*='job']` upfront
+    would re-create the fail-open unknown-kind noise Phase 1 killed, on
+    boards that never drifted. They belong to a widening RETRY (the driver
+    merges them onto the primary set only when the primary pass collected
+    zero) and to the AI list heal after that. */
+export function collectHintsForSite(input) {
+  const { builtinHints, learnedRules, healedPattern, genericHints } = (input && typeof input === "object") ? input : {};
+  const out = [];
+  const push = (sel) => { if (sel && !out.includes(sel)) out.push(sel); };
+  const tokOk = (t) => HINT_TOKEN_RE.test(String(t ?? ""));
+  /* healed pattern may carry "/" (path prefixes); strip quotes/brackets so
+     the stored string can only ever end up inside a[href*='…'] */
+  if (tokOk(String(healedPattern ?? "").replace(/\//g, "z"))) push(`a[href*='${healedPattern}']`);
+  const learnedTok = String(learnedRules?.listLinkPattern ?? "").trim();
+  if (tokOk(learnedTok)) push(`a[href*='${learnedTok}']`);
+  for (const h of builtinHints ?? []) push(h);
+  for (const h of genericHints ?? []) push(h);
+  return out;
 }

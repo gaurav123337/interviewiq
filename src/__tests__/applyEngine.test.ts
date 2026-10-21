@@ -11,6 +11,7 @@ import {
   canonicalSkill, profileSkillSet, jdSkillMatch, postingRelevant, extraAnswerFor, fitScore, isExternalApplyButton,
   ATS_PACKS, detectAts, normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview,
   titleSkills, judgeMessages, parseJudgeReply, ownerExemplarFor, classifyJobLink,
+  isChromeTitle, CHROME_TITLE_RE,
   extractFeedbackSkills, strikesWithDecay, skillIsBuzzOnly,
   parsePostedAge, isFreshPosted, sortByFreshness, FRESH_MAX_HOURS,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
@@ -24,8 +25,210 @@ import {
   HEAL_PROMPT_SYSTEM, dumpButtonControls, buttonHealPrompt, parseHealReply, healLocatorsFor, healPickVerifies, healPersistAllowed, HEAL_MIN_CONFIDENCE, HEAL_RULE_KEYS, healTextMatchersFor,
   autoSubmitTrustVerdict, autoSubmitTrustPatch, AUTO_SUBMIT_NEVER_HOSTS,
 } from "../../scripts/apply-engine-lib.js";
+import { atsApiCollectPlan, ageStampFromTimestamp, parseGreenhouseJobs, parseLeverPostings } from "../../scripts/apply-engine-lib.js";
+import { postingHintFromUrl, collectHintsForSite, isBoardGone404 } from "../../scripts/apply-engine-lib.js";
+
+describe("isBoardGone404 — dead board URL skips the recovery ladder", () => {
+  it("detects 404/403/410 titles and 'page not found' variants", () => {
+    expect(isBoardGone404("404 Not Found")).toBe(true);
+    expect(isBoardGone404("403 Forbidden")).toBe(true);
+    expect(isBoardGone404("410")).toBe(true);
+    expect(isBoardGone404("Page not found — Great Co")).toBe(true);
+    expect(isBoardGone404("404 — page unavailable")).toBe(true);
+  });
+
+  it("does not misclassify real listings whose title carries a number", () => {
+    expect(isBoardGone404("Senior Engineer 404 - Level 4 team")).toBe(false); // starts with words, not the code
+    expect(isBoardGone404("React jobs at Fintech — builtin")).toBe(false);
+    expect(isBoardGone404("")).toBe(false);
+    expect(isBoardGone404(null)).toBe(false);
+  });
+});
+
+/* ─────────────────── board self-healing: hint ladder (2026-10-18) ───────────────────
+   The learn→use loop closes here: the collector now READS the registry's
+   learned/healed selectors and a zero collect earns an AI list heal whose
+   links still pass the normal adjudicator. Pinned: hint derivation from
+   real posting URLs, the ladder order, and the selector-injection guard. */
+describe("postingHintFromUrl — posting URL → reusable href pattern", () => {
+  it("returns the canonical substring per known board family", () => {
+    expect(postingHintFromUrl("https://www.naukri.com/job-listings-front-end-developer-info-edge-1234567890")).toBe("job-listings");
+    expect(postingHintFromUrl("https://www.linkedin.com/jobs/view/4123456789")).toBe("/jobs/view/");
+    expect(postingHintFromUrl("https://boards.greenhouse.io/lyft/jobs/4567890")).toBe("/jobs/");
+    expect(postingHintFromUrl("https://app.careerpuck.com/job-board/lyft/job/8791500002?gh_jid=x")).toBe("/job/");
+    expect(postingHintFromUrl("https://www.instahyre.com/candidate/opportunities/1234567")).toBe("/candidate/opportunities/");
+    expect(postingHintFromUrl("https://www.workatastartup.com/jobs/65432-frontend-engineer")).toBe("/jobs/");
+    expect(postingHintFromUrl("https://builtin.com/job/node-developer/223344")).toBe("/job/");
+    expect(postingHintFromUrl("https://jobs.lever.co/fampay/2a358e61-99a3-4d87-b647-97090e90cb7b")).toBe("/fampay/");
+  });
+
+  it("list URLs, garbage input and bare hosts derive nothing", () => {
+    expect(postingHintFromUrl("https://www.instahyre.com/search-jobs/?search=react")).toBeNull();
+    expect(postingHintFromUrl("https://example.com/")).toBeNull();
+    expect(postingHintFromUrl("not-a-url")).toBeNull();
+    expect(postingHintFromUrl(null)).toBeNull();
+    expect(postingHintFromUrl("")).toBeNull();
+  });
+});
+
+describe("collectHintsForSite — learned/healed lead, builtin follows, injection-proof", () => {
+  it("orders healed → learned → builtin and dedupes", () => {
+    const hints = collectHintsForSite({
+      builtinHints: ["a[href*='/jobs/']"],
+      learnedRules: { listLinkPattern: "job-listings" },
+      healedPattern: "/jobs/view/",
+    });
+    expect(hints).toEqual(["a[href*='/jobs/view/']", "a[href*='job-listings']", "a[href*='/jobs/']"]);
+    expect(new Set(hints).size).toBe(hints.length);
+  });
+
+  it("exactly the builtin pack when nothing was learned/healed", () => {
+    expect(collectHintsForSite({ builtinHints: ["a[href*='/job-']"] })).toEqual(["a[href*='/job-']"]);
+    expect(collectHintsForSite(null)).toEqual([]);
+  });
+
+  it("rejects selector-injection payloads and garbage tokens", () => {
+    expect(collectHintsForSite({ learnedRules: { listLinkPattern: "a[href*='evil']" } })).toEqual([]);
+    expect(collectHintsForSite({ learnedRules: { listLinkPattern: "" } })).toEqual([]);
+    expect(collectHintsForSite({ healedPattern: "') , img" })).toEqual([]);
+  });
+});
+
+/* ─────────────────── ATS API-first collection (2026-10-18) ───────────────────
+   Greenhouse/Lever publish the same postings via keyless JSON — the driver
+   collects from the API when it answers, scraping only on failure. The pure
+   layer (plan derivation + payload parsers + age stamps) is pinned here so
+   the LIVE payload shapes stay caught by CI, not just by the last manual run. */
+describe("atsApiCollectPlan — URL → keyless API endpoints", () => {
+  it("derives greenhouse endpoints from path-qualified and bare hosts", () => {
+    expect(atsApiCollectPlan("https://boards.greenhouse.io/lyft")).toEqual({
+      provider: "greenhouse",
+      board: "lyft",
+      infoUrl: "https://boards-api.greenhouse.io/v1/boards/lyft",
+      apiUrl: "https://boards-api.greenhouse.io/v1/boards/lyft/jobs",
+    });
+    expect(atsApiCollectPlan("https://job-boards.greenhouse.io/airbnb")?.apiUrl)
+      .toBe("https://boards-api.greenhouse.io/v1/boards/airbnb/jobs");
+    expect(atsApiCollectPlan("https://www.greenhouse.io/groww")?.board).toBe("groww");
+  });
+
+  it("derives lever endpoints from jobs.lever.co/<token>", () => {
+    expect(atsApiCollectPlan("https://jobs.lever.co/fampay")).toEqual({
+      provider: "lever",
+      board: "fampay",
+      infoUrl: null,
+      apiUrl: "https://api.lever.co/v0/postings/fampay?mode=json",
+    });
+  });
+
+  it("returns null for non-ATS URLs and garbage board segments", () => {
+    expect(atsApiCollectPlan("https://www.instahyre.com/search-jobs/?search=react")).toBeNull();
+    expect(atsApiCollectPlan("https://linkedin.com/jobs/")).toBeNull();
+    expect(atsApiCollectPlan("https://boards.greenhouse.io/")).toBeNull(); // no board token
+    expect(atsApiCollectPlan("https://boards.greenhouse.io/not a token")).toBeNull();
+    expect(atsApiCollectPlan("not a url")).toBeNull();
+    expect(atsApiCollectPlan("")).toBeNull();
+  });
+});
+
+describe("ageStampFromTimestamp — API timestamps → card-stamp text", () => {
+  const now = Date.parse("2026-10-18T12:00:00Z");
+  it("formats hours and days in the card-dialect the freshness pipeline parses", () => {
+    expect(ageStampFromTimestamp(now - 5 * 3600e3, now)).toBe("5 hours ago");
+    expect(ageStampFromTimestamp(now - 30 * 24 * 3600e3, now)).toBe("30 days ago");
+    expect(ageStampFromTimestamp(now - 800e3, now)).toBe("just posted");
+    expect(parsePostedAge(ageStampFromTimestamp(now - 5 * 3600e3, now), now)).toBe(5);
+    expect(isFreshPosted(parsePostedAge(ageStampFromTimestamp(now - 5 * 3600e3, now), now))).toBe(true);
+  });
+
+  it("returns '' for absent/invalid/future stamps (unknown age is never rejected)", () => {
+    expect(ageStampFromTimestamp(null, now)).toBe("");
+    expect(ageStampFromTimestamp("not-a-date", now)).toBe("");
+    expect(ageStampFromTimestamp(now + 24 * 3600e3, now)).toBe(""); // future = bad clock, not fresh
+    expect(ageStampFromTimestamp(0, now)).toBe("");
+  });
+});
+
+describe("parseGreenhouseJobs / parseLeverPostings — live-payload shape", () => {
+  it("maps a greenhouse boards-api payload (updated_at ISO stamps)", () => {
+    const now = Date.parse("2026-10-18T12:00:00Z");
+    const rows = parseGreenhouseJobs(
+      {
+        jobs: [
+          { id: 8791500002, title: "Software Engineer, Frontend", absolute_url: "https://boards.greenhouse.io/lyft/jobs/8791500002?gh_jid=8791500002", location: { name: "San Francisco, CA" }, updated_at: "2026-10-18T02:00:00-04:00" },
+          { id: 3, title: "", absolute_url: "" }, // no title / no url → skipped
+        ],
+      },
+      { company: "Lyft", now },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual({
+      url: "https://boards.greenhouse.io/lyft/jobs/8791500002", // ?gh_jid deduped away
+      title: "Software Engineer, Frontend",
+      company: "Lyft",
+      location: "San Francisco, CA",
+      __ageText: rows[0].__ageText, // shape only; value asserted below
+      __apiId: "8791500002",
+      __viaApi: true,
+    });
+    expect(isFreshPosted(parsePostedAge(rows[0].__ageText, now))).toBe(true); // fresh → collected first
+    expect(rows[0].__apiId).toBe("8791500002");
+  });
+
+  it("maps a lever postings payload (createdAt ms stamps, categories.location)", () => {
+    const now = Date.parse("2026-10-18T12:00:00Z");
+    const rows = parseLeverPostings(
+      [
+        { id: "abc-1", text: "Senior Frontend Engineer", hostedUrl: "https://jobs.lever.co/fampay/abc-1", categories: { location: "Bengaluru, India" }, createdAt: now - 50 * 3600e3 },
+        {}, // empty row → skipped
+      ],
+      { company: "Fampay", now },
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe("Senior Frontend Engineer");
+    expect(rows[0].company).toBe("Fampay");
+    expect(rows[0].location).toBe("Bengaluru, India");
+    expect(parsePostedAge(rows[0].__ageText, now)).toBe(48); // 50h minus the "just posted" floor → days
+    expect(rows[0].__viaApi).toBe(true);
+  });
+
+  it("handles hostile payloads without throwing", () => {
+    expect(parseGreenhouseJobs(null)).toEqual([]);
+    expect(parseGreenhouseJobs({ jobs: "nope" })).toEqual([]);
+    expect(parseLeverPostings({ notAnArray: true })).toEqual([]);
+    expect(parseLeverPostings(null)).toEqual([]);
+  });
+});
 
 describe("classifyJobLink — posting vs site chrome (Phase 1)", () => {
+  /* live-audit regression (2026-10-17): crawled boards scraped nav anchors as
+     postings — ~200 history rows titled "Apply now" / "Sign in for My Jobs".
+     isChromeTitle is the collect-time guard the audit exported. */
+  it("isChromeTitle drops the exact audit junk whole-line", () => {
+    for (const t of ["Apply now", "Register", "Sign in for My Jobs", "Browse latest jobs", "Find Resumes",
+      "Create Resume", "Employers / Post Job", "Create Alert", "Verified Listings",
+      "apply now!", "Sign in"])
+      expect(isChromeTitle(t)).toBe(true);
+  });
+
+  it("isChromeTitle keeps real postings that merely START with the same verb", () => {
+    for (const t of ["Apply as a DevOps Engineer", "Apply now — Senior Go Developer",
+      "Staff Backend Engineer", "Posting for a well-known product firm",
+      "Register-keeper for your team (weird but real)"])
+      expect(isChromeTitle(t)).toBe(false);
+  });
+
+  it("isChromeTitle treats blank extractions as chrome", () => {
+    expect(isChromeTitle("")).toBe(true);
+    expect(isChromeTitle("   ")).toBe(true);
+    expect(isChromeTitle(null)).toBe(true);
+  });
+
+  it("classifyJobLink calls nav-chrome labels nav even on unknown boards (was fail-open)", () => {
+    expect(classifyJobLink({ href: "https://bayt.com/x", text: "Apply now", host: "bayt.com" }).kind).toBe("nav");
+    expect(classifyJobLink({ href: "https://bayt.com/x", text: "Sign in for My Jobs", host: "bayt.com" }).kind).toBe("nav");
+  });
+
   it("keeps real posting detail links (id-bearing routes)", () => {
     expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).kind).toBe("posting");
     expect(classifyJobLink({ href: "https://www.linkedin.com/jobs/view/4471345244/", host: "linkedin.com" }).id).toBe("4471345244");
@@ -577,6 +780,17 @@ describe("form-answer memory — store and reuse what was filled", () => {
     expect(plan[1].answer).toBe("30 days");        // memory fills the gap
     expect(plan[1].key).toBe("notice period");
     expect(plan[2].answer).toBe("https://linkedin.com/in/me"); // memory-only field
+    /* the 🧠 reuse counter keys off this provenance pin — reuse touches
+       run ONLY on the memory-fallback path, never on a from-profile draft */
+    expect(plan[0].fromMemory).toBe(false);
+    expect(plan[1].fromMemory).toBe(true);
+    expect(plan[2].fromMemory).toBe(true);
+  });
+
+  it("fromMemory is false on blank plans too (no reuse of nothing)", () => {
+    const plan = planFormAnswers([{ label: "Expected CTC", tag: "input", required: true }], {}, {}, {});
+    expect(plan[0].answer).toBe("");
+    expect(plan[0].fromMemory).toBe(false);
   });
 
   it("still leaves blanks blank when neither profile nor memory has an answer", () => {
@@ -1587,5 +1801,21 @@ describe("Tier 4 — autoSubmitTrustVerdict / autoSubmitTrustPatch", () => {
     const v = autoSubmitTrustVerdict(clean(5));
     expect(autoSubmitTrustPatch(v, "linkedin.com", {}).autoSubmit).toBe(false);
     expect(autoSubmitTrustPatch(v, "linkedin.com", {}).trustNote).toContain("platform policy");
+  });
+
+  it("UI derivation contract: detail-text flags mirror the driver exactly (siteTrustState relies on this)", () => {
+    /* src/services/jobSites.ts#siteTrustState maps rows with the SAME two
+       regexes the driver uses before calling the verdict — pin them here so
+       a lib change for the driver cannot silently break the UI chips */
+    const rows = clean(3).concat([
+      { result: "needs_review", detail: "recovered via a HEALED control" },
+    ]);
+    const adapted = rows.map((r) => ({
+      result: String(r.result ?? "") as string,
+      unknownModeled: /healed/i.test(String(r.detail ?? "")),
+      submittedUnverified: /not detected/i.test(String(r.detail ?? "")),
+    }));
+    expect(adapted.slice(-1)[0].unknownModeled).toBe(true);
+    expect(adapted[0].unknownModeled).toBe(false);
   });
 });

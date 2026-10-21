@@ -34,17 +34,18 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, detectSubmissionSuccess, seniorityOf, isExternalApplyButton,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, detectSubmissionSuccess, seniorityOf, isExternalApplyButton, isChromeTitle, CHROME_TITLE_RE,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS, maxAgeDaysOf, olderThanMaxAge,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, POSTED_AGE_TEXT_RE, instaMatchFromCardText, linkedinMatchFromDetailText, naukriMatchFromCardText, boardMatchSkip, boardMatchOpt, judgeSavesDigestLines,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, boardSuspensionRule, suspensionDigestLines,
-  dumpButtonControls, healPickVerifies, healLocatorsFor, healPersistAllowed, HEAL_RULE_KEYS, healTextMatchersFor,
-  autoSubmitTrustPatch,
+  dumpButtonControls,  healPickVerifies, healLocatorsFor, healPersistAllowed, HEAL_RULE_KEYS, healTextMatchersFor,
+  autoSubmitTrustPatch, atsApiCollectPlan, fetchAtsApiJobs,
+  postingHintFromUrl, collectHintsForSite, isBoardGone404,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
-import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap } from "./apply-kit-node.js";
+import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton } from "./apply-kit-node.js";
 import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 import { sweepEngineProcesses } from "./engine-lifecycle.js";
 
@@ -573,13 +574,27 @@ async function telegramCommandLoop() {
      and launch a second Chromium on the same clone (ProcessSingleton). Held
      until the spawned login process exits; a dead holder's lock is reclaimed. */
   const FLOW_LOCK = path.join(REPORTS_DIR, "signin-flow.lock");
+  /* A dead holder's lock MUST be unlinkable. Before 2026-10-20 the
+     "holder died" branch only fell through to a flag:"wx" write, which FAILS
+     while the stale file still exists — so one listener crash (pid 9596,
+     2026-10-11) bricked every later 🔑 sign-in request with "already in
+     progress" (124 skips in listen.log); the app→desktop window handoff
+     never fired again for naukri or bayt. Liveness is `process.kill(pid, 0)`,
+     BUT Windows reuses pids over days — an age cap reclaims a ghost holder
+     too, so the flow can never brick again. A sign-in flow lives for
+     minutes, not hours. */
+  const FLOW_LOCK_MAX_AGE_MS = 2 * 60 * 60 * 1000;
   const acquireSigninFlow = () => {
     try {
-      const { pid } = JSON.parse(readFileSync(FLOW_LOCK, "utf8"));
-      try { process.kill(pid, 0); return false; } catch { /* holder died — reclaim */ }
-    } catch { /* no lock file */ }
+      const { pid, ts } = JSON.parse(readFileSync(FLOW_LOCK, "utf8"));
+      if (pid === process.pid) return false; // THIS listener holds the flow
+      let alive = false;
+      if (Number.isInteger(pid) && pid > 0) { try { process.kill(pid, 0); alive = true; } catch { /* holder died — reclaim */ } }
+      if (alive && Date.now() - Number(ts ?? 0) < FLOW_LOCK_MAX_AGE_MS) return false; // fresh, live holder
+    } catch { /* no/unreadable lock file — treat as stale */ }
+    try { unlinkSync(FLOW_LOCK); } catch { /* already gone */ }
     try { writeFileSync(FLOW_LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: "wx" }); return true; }
-    catch { return false; } // lost a creation race
+    catch { return false; } // lost a creation race — the next 30s poll re-evaluates
   };
   const releaseSigninFlow = () => { try { unlinkSync(FLOW_LOCK); } catch { /* gone */ } };
   /* ⚡ Run-now bridge (app → desktop): every ~30s poll, check whether the
@@ -642,9 +657,18 @@ async function telegramCommandLoop() {
          a failed fulfill, or the owner re-clicking 🔑): it WINS — bail before
          any killing, a second cycle must never murder the live window.
          TWO probes: the clone owner marker (covers the clone/launch phase,
-         before any chrome exists) AND running chrome on the clone dir. */
+         before any chrome exists) AND running chrome on the clone dir.
+         2026-10-20 leak: both early bails used to `return` WITHOUT
+         releasing the flow lock this cycle just took — after a sign-in run
+         exited between polls, the listener then self-deadlocked its OWN
+         flow (its own pid was the stale holder) and every later 🔑 request
+         died with "already in progress" until manual cleanup. Every bail
+         below holds the lock only while a live sign-in is protected. */
       if (signinCloneOwnedByLiveRun()) {
         console.log("sign-in already in progress (clone profile owned by a live run) — leaving it alone");
+        // the LIVE sign-in run holds its own flow lock — each bail here must
+        // NOT leave THIS listener's fresh lock behind it (2026-10-20 leak)
+        releaseSigninFlow();
         return;
       }
       try {
@@ -652,6 +676,7 @@ async function telegramCommandLoop() {
         const blocks0 = String(probe(`wmic process where "name='chrome.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 })).split(/\r?\n\r?\n/);
         if (blocks0.some((b) => /freebuff-apply-signin-profile/i.test(b))) {
           console.log(`sign-in window already open for ${req.host} — leaving it alone (a live sign-in wins over any new request)`);
+          releaseSigninFlow(); // same leak: bail out without trapping the flow
           return;
         }
       } catch { /* probe failed — continue with the normal flow */ }
@@ -886,6 +911,71 @@ async function recordCollectionDrift(host, info) {
     const prior = Number(rules.collectionDrift?.count ?? 0);
     await db.setSiteRules(host, { ...rules, collectionDrift: { count: prior + 1, scanned: info.scanned, kept: info.kept, at: new Date().toISOString() } });
   } catch { /* best-effort — a registry blip must never fail a collection */ }
+}
+
+/* BOARD SELF-HEAL (collect layer), mirroring dumpControlsForHeal → one AI
+   call → re-scan verification: the AI names ONE anchor by its accessible
+   text; the driver requires that name verbatim in a fresh dump; the
+   matching anchors are collected as __navCandidate rows so the NORMAL
+   adjudicator (classifyJobLink) decides posting-vs-nav — the pick cannot
+   insert chrome no matter what the model says. NOTHING is clicked here
+   (unlike the button heal) — collection only reads links. Cost: one AI
+   call, only on an actual zero collect, only when a provider is reachable. */
+async function healListCollection(page, { ai } = {}) {
+  if (!healEnabled() || !ai?.key) return null;
+  try {
+    const controls = await dumpControlsForHeal(page);
+    const pick = await aiHealButton(ai, controls, "open a real job posting from the list");
+    if (!pick) return null;
+    const rescan = await dumpControlsForHeal(page);
+    if (!healPickVerifies(pick, rescan)) {
+      console.log(dim("  🔧 list heal rejected (name not verbatim on re-scan or confidence < 0.8)"));
+      return null;
+    }
+    /* collect ONLY anchors whose normalized accessible text equals the
+       verified pick's name — siblings included, since the named anchor is
+       the representative of the board's new detail-link family */
+    const rows = await page.evaluate((pickName) => {
+      const norm = (s) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+      const want = norm(pickName);
+      const out = [];
+      const seen = new Set();
+      for (const a of document.querySelectorAll("a")) {
+        const text = (a.innerText || a.textContent || "").trim();
+        if (!text || norm(text.split("\n")[0]) !== want) continue;
+        const href = a.href || a.getAttribute("href") || "";
+        if (!href) continue;
+        const abs = new URL(href, location.origin).toString();
+        if (seen.has(abs)) continue;
+        seen.add(abs);
+        out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: (text.match(/\b(\d+\s*\+?\s*(minutes?|mins?|hours?|hrs?|days?|weeks?|months?)\s*ago|just posted|posted today)\b/i) || [""])[0], __cardText: text.slice(0, 400) });
+      }
+      return out.slice(0, 40);
+    }, pick.respondentName).catch(() => []);
+    if (!rows.length) {
+      console.log(dim("  🔧 list heal verified the pick but no matching anchors resolved from the page"));
+      return null;
+    }
+    console.log(dim(`  🔧 list heal: "${pick.respondentName}" matched ${rows.length} link(s) — adjudicator decides what's a real posting`));
+    return rows;
+  } catch { /* heal is an optimization — never a gate */ return null; }
+}
+
+/* Persist the healed pattern on the board's rules row so the NEXT run's
+   hint ladder leads with it (read-back half of the loop). Best-effort. */
+async function persistHealedListPattern(host, pattern) {
+  if (!host || host.startsWith("builtin")) return;
+  const db = await sitesDb();
+  if (!db?.listJobSites || !db?.setSiteRules) return;
+  try {
+    const row = (await db.listJobSites()).find((s) => s.host === host);
+    const rules = (row?.rules && typeof row.rules === "object") ? row.rules : {};
+    await db.setSiteRules(host, {
+      ...rules,
+      healedListPattern: pattern,
+      collectHeal: { count: Number(rules.collectHeal?.count ?? 0) + 1, at: new Date().toISOString(), pattern },
+    });
+  } catch { /* best-effort — persistence must never fail a collection */ }
 }
 
 /* Phase 2 — transient network failures. After a reboot (or a DNS blip)
@@ -1305,8 +1395,45 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
 
 /* ------------------------- job list collection ------------------------- */
 
-async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}) {
+/* Shared collection harness (API rows and scraped rows BOTH flow in):
+   discriminates posting-vs-nav, dedupes, extracts the board's own match
+   badge, then applies the freshness-first order, the per-board max-age
+   drop and the --max slice. Kept above collectJobs so the API-first path
+   and the scrape path can never drift apart. Host is the registry host
+   (url) for drift logging from the scrape path; the API path passes a
+   synthetic provider.board host and carries no __navCandidate rows, so
+   the discriminator's scrape-only branches stay inert for it. */
+async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays, learnedRules = null, ai = null } = {}) {
   const rules = SITE_RULES[site] ?? SITE_RULES.generic;
+  /* HINT LADDER read-back (the missing half of the learn→use loop): the
+     registry's learned (`listLinkPattern`, from every successful run's
+     report) and healed (`healedListPattern`, from a verified AI list heal)
+     selectors LEAD the collect order ahead of the builtin pack. Generic
+     broad hints belong ONLY to the widen retry + AI heal below — never
+     the primary pass (tight-scope boards must not see a[href*='job']
+     unless a widen was actually needed; fail-open unknown-kind rows
+     would otherwise come back). */
+  const hintSel = collectHintsForSite({
+    builtinHints: rules.listSelectorHints,
+    learnedRules,
+    healedPattern: learnedRules?.healedListPattern,
+  });
+  /* API-FIRST COLLECTION (greenhouse/lever): the board's own keyless JSON
+     API carries the same postings with a REAL timestamp and no anti-bot
+     wall — when it answers, the run never opens the listing page at all
+     (fewer bot-check trips, honest posted-age stamps) and falls through to
+     the DOM collector only when the API fails or is empty (fail-open, the
+     scrape stays the baseline). The rows enter the SAME harness below:
+     freshness sort, max-age drop, dedupe, --max slice. */
+  const apiPlan = atsApiCollectPlan(url);
+  if (apiPlan) {
+    const api = await fetchAtsApiJobs(apiPlan);
+    if (api.rows.length > 0) {
+      console.log(dim(`  🌐 ${api.rows.length} posting(s) collected via the ${apiPlan.provider} API (${apiPlan.board}) — no listing-page scrape needed`));
+      return finalizeCollected(api.rows, { max, maxAgeDays, boardMatch, site, host: apiPlan.provider + "." + apiPlan.board });
+    }
+    console.log(dim(`  ⚠ ${apiPlan.provider} API collect empty (${api.error}) — falling back to the page scrape`));
+  }
   /* OWNER OPT-IN from the site's registry rules (dot boardMatchd: true/on/"true"):
      generic boards get the same card-text capture + parse as instahyre;
      the builtin sites keep their parsers; boardMatch:false removes
@@ -1326,6 +1453,14 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
       await page.waitForTimeout(2000);
     }
+  }
+  /* 404/410 fast-skip — a board whose URL pattern is GONE must not consume
+     the widen retry or an AI heal call (those exist for a redesigned board,
+     not a missing page; the live 2026-10-18 builtin probe showed even a
+     404 template's leftovers can yield junk unknown-kind rows without this). */
+  const earlyTitle = await page.title().catch(() => "");
+  if (isBoardGone404(earlyTitle, url)) {
+    throw new Error(`${rules.label}: 404 (${String(earlyTitle).trim().slice(0, 40)}) — the board URL is gone; honest skip, no heal attempt.`);
   }
   const state = await waitForStableState(page, rules, url); // SPA render + challenge clear + redirect settle
   if (state.kind === "challenge") throw new Error(`${rules.label}: bot-check did not clear — re-run headed (no --headless).`);
@@ -1377,12 +1512,22 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
     await page.mouse.wheel(0, 2400);
     await page.waitForTimeout(900);
   }
-  const jobs = await page.evaluate(({ hints, ageRe }) => {
+  /* the in-page scan is declared ONCE and invoked per hint pass (primary
+     ladder, then the widened retry with generic superset on top) */
+  const scanJobCards = (pass) => page.evaluate(({ hints, ageRe, chromeRe }) => {
     const seen = new Set();
     const out = [];
     /* nav junk that looks like a link but is chrome, not a posting */
     const junk = /^(opportunities|jobs?|search jobs?|home|activity|inbox|profile|settings|logout|feed|my network|messaging|notifications|all jobs?|jobs? at .*|view all|see more|more)$/i;
-    /* posted-age stamp on a card ("3 hours ago", "30+ Days Ago", "Just posted"):
+    /* chromeRe arrives as a SOURCE STRING (RegExp sources serialize across
+       the evaluate boundary; RegExp objects also serialize on this
+       Playwright version but the source-string contract keeps it exact):
+       re-instantiate here. The live probe (freebuff-apply-reports/
+       verify-live-heal.tmp.mjs, builtin.com 2026-10-18) caught the
+       chromeRe.test crash this guard replaced — a pre-existing string
+       passed where a regex was called, found only in production-like
+       never unit-covered in-page code. */
+    const CHROME_RE = new RegExp(chromeRe, "i");    /* posted-age stamp on a card ("3 hours ago", "30+ Days Ago", "Just posted"):
        parsed AFTER evaluate into hours and used to order the collection —
        <24h postings are applied first because freshness beats fit at the
        margin (recruiters read a fresh applicant first). The regex is the
@@ -1400,7 +1545,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
       const t = art.querySelector("p[class*='title'], [class*='designation']");
       const c = art.querySelector("[class*='company']");
       const title = ((t?.textContent || art.innerText || "").trim().split("\n")[0] || "").slice(0, 140);
-      if (!title || title.length < 8 || junk.test(title)) continue;
+      if (!title || title.length < 8 || junk.test(title) || CHROME_RE.test(title)) continue;
       seen.add(id);
       const company = (c?.textContent || "").trim().split("\n")[0].replace(/\s*[\d.]+\s*(Reviews?|stars?)\s*$/i, "").replace(/\s+\d+(\.\d+)?$/, "").slice(0, 80);        out.push({ url: `https://www.naukri.com/job-listings-${id}`, title, company, __ageText: ageOf(art), __cardText: (art.innerText || "").slice(0, 400) });
     }
@@ -1410,7 +1555,7 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
       if (!m || seen.has(m[1])) continue;
       const text = (a.innerText || "").trim();
       const title = (text.split("\n")[0] || "").replace(/\s*\(Verified job\)\s*$/i, "").slice(0, 140);
-      if (!title || title.length < 8 || junk.test(title)) continue;
+      if (!title || title.length < 8 || junk.test(title) || CHROME_RE.test(title)) continue;
       seen.add(m[1]);
       const lines = text.split("\n").map(s => s.trim()).filter(Boolean);
       /* company = first line that is not the title echo, social-proof noise
@@ -1428,22 +1573,81 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
         const abs = new URL(href, location.origin).toString();
         if (seen.has(abs)) continue;
         const text = (a.innerText || a.textContent || "").trim();
-        if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim())) continue;
+        if (!text || text.length < 8 || junk.test(text.split("\n")[0].trim()) || CHROME_RE.test(text.split("\n")[0].trim())) continue;
         seen.add(abs);
         out.push({ url: abs, title: text.split("\n")[0].slice(0, 140), company: "", __navCandidate: true, __ageText: ageOf(a), __cardText: text.slice(0, 400) });
       }
     }
     return out;
-  }, { hints: rules.listSelectorHints, ageRe: POSTED_AGE_TEXT_RE.source });
+  }, pass);
+  const ageReSource = POSTED_AGE_TEXT_RE.source;
+  const chromeReSource = CHROME_TITLE_RE.source;
+  const jobs = await scanJobCards({ hints: hintSel, ageRe: ageReSource, chromeRe: chromeReSource });
+  const host = (() => { try { return normHost(url); } catch { return ""; } })();
+  const first = finalizeCollected(jobs, { max, maxAgeDays, boardMatch, site, host });
+  if (first.length > 0) return first;
+  /* WIDEN-ONLY RETRY: the learned/healed/builtin ladder collected zero and
+     even a board with intact builtin hints may simply be missing its new
+     markup shape — re-run the SAME scan with the generic superset added.
+     Generic pushes are not part of the primary pass by design (tight-scope
+     boards never see `a[href*='job']` unless a widen was actually needed). */
+  const widenedSet = [...new Set([...hintSel, ...SITE_RULES.generic.listSelectorHints])];
+  let widenedJobs = [];
+  if (widenedSet.length > hintSel.length) {
+    widenedJobs = await scanJobCards({ hints: widenedSet, ageRe: ageReSource, chromeRe: chromeReSource });
+    const widenedRows = finalizeCollected(widenedJobs, { max, maxAgeDays, boardMatch, site, host });
+    if (widenedRows.length > 0) return widenedRows; // recovered without AI
+  }
+  /* BOARD SELF-HEAL — the last human-input requirement at collect time:
+     a zero collect (no links at all, or every link adjudicated nav) gets
+     ONE AI list-heal attempt when a provider is reachable. The pick is
+     re-verified against a live re-scan, the matching anchors are collected,
+     and they must STILL survive the normal finalize adjudicator — an
+     AI-picked chrome anchor self-destructs there. Success persists the
+     derived href pattern so the NEXT run leads with it, no human no edits. */
+  const healedRows = await healListCollection(page, { ai });
+  if (healedRows && healedRows.length > 0) {
+    const out = finalizeCollected(healedRows, { max, maxAgeDays, boardMatch, site, host });
+    if (out.length > 0) {
+      const pattern = postingHintFromUrl(out[0].url);
+      if (pattern) await persistHealedListPattern(host, pattern);
+      console.log(dim(`  🔧 board self-healed — ${out.length} posting(s) via the AI-picked list ${pattern ? `(pattern: ${pattern})` : "(name-matched only)"}`));
+      return out;
+    }
+  }
+  /* drift persisted ONCE, after every recovery path above failed — the
+     digest line now reflects persistent drift (the heal was tried). */
+  if (Math.max(jobs.length, widenedJobs.length) > 0) {
+    try { recordCollectionDrift(host, { scanned: Math.max(jobs.length, widenedJobs.length), kept: 0 }); } catch { /* registry blip */ }
+  }
+  return first;
+}
+
+/* Shared collection harness (API rows and scraped rows BOTH flow in):
+   discriminates posting-vs-nav, dedupes, extracts the board's own match
+   badge, then applies the freshness-first order, the per-board max-age
+   drop and the --max slice. Kept as its own function so the API-first
+   path and the scrape path can never drift apart in behavior. Host is the
+   registry URL's host for drift logging from the scrape path; the API
+   path passes a synthetic provider.board host and carries no
+   __navCandidate rows, so the discriminator's scrape-only branches stay
+   inert for it. */
+function finalizeCollected(jobs, { max, maxAgeDays, boardMatch, site, host = "" }) {
+  const optIn = boardMatchOpt(boardMatch);
   /* POSTING-VS-NAV discriminator (Phase 1): the generic hint loop matches
      broad hrefs, so on YC/Built In it collected site chrome ("Startup Jobs",
      "Design & UI/UX") as postings — every row then skipped and the run was
      all noise. Keep the two EXPLICIT, id-bearing collectors (Naukri cards,
      LinkedIn currentJobId) unconditionally; for the generic loop, keep only
-     links classifyJobLink calls a real posting detail. */
-  const host = (() => { try { return normHost(url); } catch { return ""; } })();
+     links classifyJobLink calls a real posting detail. API rows carry
+     structured ids from the ATS itself and no __navCandidate flag, so
+     they pass unchanged. */
   const adjudicated = jobs.filter((j) => {
-    if (!j.__navCandidate) return true; // explicit id-bearing collectors
+    if (!j.__navCandidate) return true; // explicit id-bearing collectors + API rows
+    /* nav-chrome titles crawled boards extract as postings ("Apply now",
+       "Register") never reach the gate: no --max slot, no AI call, no
+       skip row flooding the history (audit root cause, 2026-10-17) */
+    if (isChromeTitle(j.title)) return false;
     const cls = classifyJobLink({ href: j.url, text: j.title, host });
     if (cls.kind === "posting") { if (cls.id) j.__jobId = cls.id; return true; }
     if (cls.kind === "nav") return false;
@@ -1459,11 +1663,11 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
     deduped.push(j);
   }
   /* If we saw links but they were ALL chrome, the collector is scraping nav
-     — surface it as selector drift (Phase 4 learns from this) instead of a
-     silent empty run. */
+     — surface it honestly instead of a silent empty run (the CALLER owns
+     registry persistence on total failure, after the heal ladder; this
+     function only logs). API rows can't drift (no markup involved). */
   if (dropped > 0 && deduped.length === 0 && jobs.length > 0) {
     console.log(yellow(`  ⚠ collection drift: ${dropped} link(s) scanned, 0 real postings — the board's list markup may have changed.`));
-    try { recordCollectionDrift(host, { scanned: jobs.length, kept: 0 }); } catch { /* best-effort */ }
   } else if (dropped > 0) {
     console.log(dim(`  (discriminator dropped ${dropped} nav/category link(s))`));
   }
@@ -1471,7 +1675,9 @@ async function collectJobs(page, url, site, max, { boardMatch, maxAgeDays } = {}
      head of the queue (freshest first) and the --max budget slices AFTER the
      sort, so a full budget spends its slots on postings recruiters are
      still reading instead of aging ones that merely appeared first on the
-     page. Older/unknown rows keep the board's own order. */
+     page. Older/unknown rows keep the board's own order. API rows carry
+     __ageText stamps derived from the ATS's own timestamps, so they sort
+     through the exact same parsePostedAge pipeline. */
   /* POST-EVALUATE at the node boundary (functions can't cross into
      page.evaluate): extract each site's OWN match badge from the card text
      now carried for every explicit collector. Fail-safe by construction:
@@ -1880,7 +2086,23 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
       }
     } catch { /* field-specific failure — count as unfilled if required */ if (meta.required) unfilledRequired.push(meta.label || cls.kind); }
   }
-  if (!dryRun) await storeFormAnswers(siteHost ?? "", plan, fields);
+  if (!dryRun) {
+    await storeFormAnswers(siteHost ?? "", plan, fields);
+    /* 🧠 answer-memory savings: count every field this fill REUSED from the
+       memory (rather than answering from the profile / AI) — the report's
+       🧠 strip sums these per site, so the owner can see the memory paying
+       rent. Best-effort: a registry blip never gates a form fill. */
+    const reusedKeys = plan
+      .filter((p) => p?.fromMemory && String(p.answer ?? "").trim())
+      .map((p) => p.key)
+      .filter(Boolean);
+    if (reusedKeys.length) {
+      /* touched via try/catch, not just .catch — a borrowed machine with no
+         SUPA creds makes loadLocalCreds throw SYNCHRONOUSLY, and an uncaught
+         sync throw here would kill the whole form fill, not just the stat */
+      try { (await sitesDb())?.touchFormAnswers?.(siteHost ?? "", reusedKeys)?.catch(() => {}); } catch { /* best-effort stat */ }
+    }
+  }
   return { filled, unfilledRequired, fields, plan };
 }
 
@@ -1955,14 +2177,26 @@ async function dumpControlsForHeal(page) {
   return dumpButtonControls(raw);
 }
 
-/** Build a Playwright locator from one heal spec (role + name). Exact
-    first, normalized prefix second — both inside the same visible+enabled
-    button/a shoulder textButtonLocator enforces (nav/disabled can't match). */
-function healLocator(page, spec) {
+/** Locators for one heal spec, in preference order. ROLE-BASED FIRST
+    (Playwright web-first best practice): getByRole matches the ARIA role +
+    accessible name the way assistive tech reads the page — resilient to
+    the exact markup churn that triggers healing, and immune to CSS-
+    shoulder renames. The legacy CSS+hasText path stays SECOND for controls
+    whose accessible name diverges from their innerText (the dump captures
+    innerText; an aria-label override changes only the role name). Both
+    keep the visible+enabled shoulders textButtonLocator enforces, so nav
+    links and disabled widgets are never healable. */
+function healLocatorsForSpec(page, spec) {
+  const roleOpts = spec.exact ? { name: spec.name, exact: true } : { name: spec.name };
+  const roleLoc = page.getByRole(spec.role, roleOpts)
+    .and(page.locator(":not([disabled]):visible"))
+    .first();
   const roleSel = spec.role === "link" ? "a" : spec.role === "textbox" ? "input" : spec.role;
   const base = page.locator(`${roleSel}:visible:not([disabled])`);
-  if (spec.exact) return base.filter({ hasText: new RegExp(`^\\s*${escapeRe(spec.name)}\\s*$`, "i") }).first();
-  return base.filter({ hasText: new RegExp(escapeRe(spec.name), "i") }).first();
+  const legacy = spec.exact
+    ? base.filter({ hasText: new RegExp(`^\\s*${escapeRe(spec.name)}\\s*$`, "i") }).first()
+    : base.filter({ hasText: new RegExp(escapeRe(spec.name), "i") }).first();
+  return [roleLoc, legacy];
 }
 
 const escapeRe = (s) => String(s ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1983,10 +2217,11 @@ async function healControl(page, intent, ai) {
       return null;
     }
     for (const spec of healLocatorsFor(pick)) {
-      const loc = healLocator(page, spec);
-      if ((await loc.count()) > 0) {
-        console.log(dim(`  🔧 healed ${intent}: ${pick.role} "${pick.respondentName}" (conf ${pick.confidence})`));
-        return loc;
+      for (const loc of healLocatorsForSpec(page, spec)) {
+        if ((await loc.count()) > 0) {
+          console.log(dim(`  🔧 healed ${intent}: ${pick.role} "${pick.respondentName}" (conf ${pick.confidence})`));
+          return loc;
+        }
       }
     }
     return null;
@@ -2051,8 +2286,11 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
      substituting for it → one bounded AI heal (respondent-name verified
      against a live re-scan before any click; a verified submit-control
      heal persists to the host's rules so future runs need no AI call). */
-  if ((await btn.count()) === 0 && ai && healEnabled()) {
-    const healed = await healControl(target, "submit this job application", ai);
+  /* ctx.ai, not a bare `ai` — trySubmit runs inside runSingle where the AI
+     provider only exists on the ctx (LIVE bug the pilot surfaced: bare `ai`
+     here threw "ai is not defined" out of the whole submission) */
+  if ((await btn.count()) === 0 && ctx.ai && healEnabled()) {
+    const healed = await healControl(target, "submit this job application", ctx.ai);
     if (healed) btn = healed; // persist happens at the test-direct wrapper below, after real behavior proves out
   }
   if ((await btn.count()) === 0 && site === "linkedin") {
@@ -2151,8 +2389,8 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
     /* TIER 3 submit-side heal END: the flow never surfaced a submit control
        the rules could match — same bounded AI heal as the entry path
        above, but pointed at a page that has REACHED the end of its flow. */
-    if (ai && healEnabled()) {
-      const healed = await healControl(target, "submit this job application", ai);
+    if (ctx.ai && healEnabled()) {
+      const healed = await healControl(target, "submit this job application", ctx.ai);
       if (healed) {
         await clickButton(target, healed, null).catch(() => {});
         await page.waitForTimeout(4000);
@@ -2374,13 +2612,13 @@ async function runSingle(args, { existingCtx = null } = {}) {
       return;
     }
 
-    let jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays });
+    let jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays, learnedRules: rules, ai });
     console.log(dim(`collected ${jobs.length} posting(s)`));
     if (!jobs.length) {
       /* LinkedIn wall flakiness: guest access alternates wall/pass between
          navigations — one more collect attempt before declaring defeat */
       await page.waitForTimeout(3000);
-      jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays });
+      jobs = await collectJobs(page, args.url, site, args.max, { boardMatch: rules.boardMatch, maxAgeDays: rules.maxAgeDays, learnedRules: rules, ai });
       console.log(dim(`collected (retry) ${jobs.length} posting(s)`));
     }
     if (!jobs.length) {
@@ -3302,7 +3540,7 @@ async function main() {
       const sites = (await db?.listJobSites?.().catch(() => [])) ?? [];
       const drifted = sites.filter((s) => Number(s?.rules?.collectionDrift?.count ?? 0) >= 3 && s.status !== "pending");
       if (drifted.length) {
-        driftLines = `\n⚠️ collection drift (board markup likely moved — re-run --login-only / check selectors):\n${drifted.map((s) => `• ${s.host} ×${s.rules.collectionDrift.count} (last: ${s.rules.collectionDrift.scanned} scanned, ${s.rules.collectionDrift.kept} kept)`).join("\n")}`;
+        driftLines = `\n⚠️ collection drift (markup moved — self-heal ran and could NOT recover these; AI heal + fallbacks exhausted):\n${drifted.map((s) => `• ${s.host} ×${s.rules.collectionDrift.count} (last: ${s.rules.collectionDrift.scanned} scanned, ${s.rules.collectionDrift.kept} kept)`).join("\n")}`;
       }
     } catch { /* drift report is best-effort */ }
     /* 🫀 engine uptime from the heartbeat history (#156): the context a

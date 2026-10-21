@@ -37,6 +37,14 @@ export interface JobLinkClass {
 /** Discriminate a posting detail link from site chrome (nav/category tiles). */
 export function classifyJobLink(opts: { href?: string; text?: string; host?: string }): JobLinkClass;
 
+/** TRUE when the extracted first-line "title" is navigation chrome that a
+    crawled board scraped as a posting — matched whole-line only, so real
+    postings beginning with the same verb ("Apply as a DevOps Engineer")
+    survive. Blind titles (empty/whitespace) count as chrome too. */
+export const CHROME_TITLE_RE: RegExp;
+
+export function isChromeTitle(title: string | null | undefined): boolean;
+
 export function titleFieldMismatch(jobTitle: string | null | undefined, profileHeadline: string | null | undefined): boolean;
 
 export function titleRelevant(title: string | null | undefined, profile: { headline?: string; skills?: string[] } | null | undefined): boolean;
@@ -301,6 +309,10 @@ export interface PlannedAnswer {
   cls: QuestionClass;
   key: string;
   answer: string;
+  /** true when the answer came from the form-answer memory (a previous
+      owner-confirmed reuse candidate) rather than the profile draft —
+      drives the 🧠 reuse counter in the applications report. */
+  fromMemory: boolean;
 }
 
 export function planFormAnswers(
@@ -531,3 +543,58 @@ export function boardSuspensionRule(
 export function suspensionDigestLines(
   suspensions: (SuspensionRow & { reason: string })[] | null | undefined
 ): string;
+
+/* ── ATS keyless JSON APIs (API-first collect) ────────────────────── */
+
+export interface AtsApiCollectPlan {
+  provider: "greenhouse" | "lever";
+  board: string;
+  infoUrl: string | null;
+  apiUrl: string;
+}
+
+export function atsApiCollectPlan(url: string | null | undefined): AtsApiCollectPlan | null;
+
+export function ageStampFromTimestamp(ts: unknown, now?: number): string;
+
+export interface AtsApiJobRow {
+  url: string;
+  title: string;
+  company: string;
+  location: string;
+  __ageText: string;
+  __apiId: string;
+  __viaApi: boolean;
+}
+
+export function parseGreenhouseJobs(
+  payload: unknown,
+  opts?: { company?: string | null; now?: number }
+): AtsApiJobRow[];
+
+export function parseLeverPostings(
+  payload: unknown,
+  opts?: { company?: string | null; now?: number }
+): AtsApiJobRow[];
+
+export function fetchAtsApiJobs(
+  plan: AtsApiCollectPlan | null | undefined
+): Promise<{ rows: AtsApiJobRow[]; error: string | null }>;
+
+/* ── board self-healing: collection hint ladder ────────────────────── */
+
+/** A re-usable href-contains substring for a posting URL, or null. */
+export function postingHintFromUrl(url: string | null | undefined): string | null;
+
+export interface CollectHintsInput {
+  builtinHints?: string[] | null;
+  learnedRules?: { listLinkPattern?: string | null } | null;
+  healedPattern?: string | null;
+  /** optional extra tails (widening retry callers merge standalone) */
+  genericHints?: string[] | null;
+}
+
+export function collectHintsForSite(input: CollectHintsInput | null | undefined): string[];
+
+/** The board answered 404/410 (gone URL pattern) — skip the recovery ladder. */
+export function isBoardGone404(title: string | null | undefined, url?: string): boolean;
