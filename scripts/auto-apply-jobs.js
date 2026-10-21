@@ -574,13 +574,27 @@ async function telegramCommandLoop() {
      and launch a second Chromium on the same clone (ProcessSingleton). Held
      until the spawned login process exits; a dead holder's lock is reclaimed. */
   const FLOW_LOCK = path.join(REPORTS_DIR, "signin-flow.lock");
+  /* A dead holder's lock MUST be unlinkable. Before 2026-10-20 the
+     "holder died" branch only fell through to a flag:"wx" write, which FAILS
+     while the stale file still exists — so one listener crash (pid 9596,
+     2026-10-11) bricked every later 🔑 sign-in request with "already in
+     progress" (124 skips in listen.log); the app→desktop window handoff
+     never fired again for naukri or bayt. Liveness is `process.kill(pid, 0)`,
+     BUT Windows reuses pids over days — an age cap reclaims a ghost holder
+     too, so the flow can never brick again. A sign-in flow lives for
+     minutes, not hours. */
+  const FLOW_LOCK_MAX_AGE_MS = 2 * 60 * 60 * 1000;
   const acquireSigninFlow = () => {
     try {
-      const { pid } = JSON.parse(readFileSync(FLOW_LOCK, "utf8"));
-      try { process.kill(pid, 0); return false; } catch { /* holder died — reclaim */ }
-    } catch { /* no lock file */ }
+      const { pid, ts } = JSON.parse(readFileSync(FLOW_LOCK, "utf8"));
+      if (pid === process.pid) return false; // THIS listener holds the flow
+      let alive = false;
+      if (Number.isInteger(pid) && pid > 0) { try { process.kill(pid, 0); alive = true; } catch { /* holder died — reclaim */ } }
+      if (alive && Date.now() - Number(ts ?? 0) < FLOW_LOCK_MAX_AGE_MS) return false; // fresh, live holder
+    } catch { /* no/unreadable lock file — treat as stale */ }
+    try { unlinkSync(FLOW_LOCK); } catch { /* already gone */ }
     try { writeFileSync(FLOW_LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: "wx" }); return true; }
-    catch { return false; } // lost a creation race
+    catch { return false; } // lost a creation race — the next 30s poll re-evaluates
   };
   const releaseSigninFlow = () => { try { unlinkSync(FLOW_LOCK); } catch { /* gone */ } };
   /* ⚡ Run-now bridge (app → desktop): every ~30s poll, check whether the
@@ -643,9 +657,18 @@ async function telegramCommandLoop() {
          a failed fulfill, or the owner re-clicking 🔑): it WINS — bail before
          any killing, a second cycle must never murder the live window.
          TWO probes: the clone owner marker (covers the clone/launch phase,
-         before any chrome exists) AND running chrome on the clone dir. */
+         before any chrome exists) AND running chrome on the clone dir.
+         2026-10-20 leak: both early bails used to `return` WITHOUT
+         releasing the flow lock this cycle just took — after a sign-in run
+         exited between polls, the listener then self-deadlocked its OWN
+         flow (its own pid was the stale holder) and every later 🔑 request
+         died with "already in progress" until manual cleanup. Every bail
+         below holds the lock only while a live sign-in is protected. */
       if (signinCloneOwnedByLiveRun()) {
         console.log("sign-in already in progress (clone profile owned by a live run) — leaving it alone");
+        // the LIVE sign-in run holds its own flow lock — each bail here must
+        // NOT leave THIS listener's fresh lock behind it (2026-10-20 leak)
+        releaseSigninFlow();
         return;
       }
       try {
@@ -653,6 +676,7 @@ async function telegramCommandLoop() {
         const blocks0 = String(probe(`wmic process where "name='chrome.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 })).split(/\r?\n\r?\n/);
         if (blocks0.some((b) => /freebuff-apply-signin-profile/i.test(b))) {
           console.log(`sign-in window already open for ${req.host} — leaving it alone (a live sign-in wins over any new request)`);
+          releaseSigninFlow(); // same leak: bail out without trapping the flow
           return;
         }
       } catch { /* probe failed — continue with the normal flow */ }
