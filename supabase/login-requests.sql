@@ -36,13 +36,14 @@ end $$;
    type change → drop + recreate (same approach as admin_list_job_sites in
    #163; coalesce keeps legacy rows without kind reading as 'signin'). */
 drop function if exists public.engine_pending_login_request();
-create or replace function public.engine_pending_login_request()
+create or replace function public.engine_pending_login_request(p_kind text default 'signin')
 returns table (host text, jobs_url text, kind text)
 language sql security definer set search_path = public as $$
-  select r.host, s.jobs_url, coalesce(r.kind, 'signin') as kind
+  select r.host, s.jobs_url, coalesce(r.kind, p_kind) as kind
   from public.login_requests r
   left join public.job_sites s on s.host = r.host
   where r.fulfilled_at is null and r.requested_at > now() - interval '1 hour'
+    and (p_kind = 'signin' or r.kind = p_kind or r.kind is null)
   order by r.requested_at
   limit 1;
 $$;

@@ -659,7 +659,7 @@ async function telegramCommandLoop() {
       const req = await db.pendingLoginRequest?.();
       if (!req?.host) return;
       if (!acquireSigninFlow()) { console.log("sign-in flow already in progress — skipping this cycle"); return; }
-      const loginUrl = req.jobs_url || `https://${req.host}/`;
+      const loginUrl = `https://${req.host}/`;
       /* an INDEPENDENT sign-in window may already be open (duplicate request,
          a failed fulfill, or the owner re-clicking 🔑): it WINS — bail before
          any killing, a second cycle must never murder the live window.
