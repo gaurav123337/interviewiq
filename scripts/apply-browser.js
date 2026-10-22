@@ -66,6 +66,11 @@ function isProfileLockEntry(name) {
 export function cloneApplyProfileForSignin() {  try { const owner = JSON.parse(readFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), "utf8"));
     try { process.kill(owner.pid, 0); throw new Error(`sign-in already in progress — the clone profile is owned by a live run (pid ${owner.pid}); refusing to wipe it`); } catch (e) { if (e.code !== "ESRCH" && String(e.message).includes("refusing")) throw e; }
   } catch (e) { if (String(e.message).includes("refusing")) throw e; }
+  /* session-presence check: BOTH cookie locations — modern Chromium keeps the
+     cookie DB at Default/Network/Cookies (pre-120 layout was Default/Cookies);
+     checking only the old path said "fresh — no saved sessions even when a
+     week-gold li_at lay under Network/ — an owner-facing lie in every 🔑 👁 log. */
+  const cookiesPresent = () => existsSync(path.join(SIGNIN_PROFILE_DIR, "Default", "Cookies")) || existsSync(path.join(SIGNIN_PROFILE_DIR, "Default", "Network", "Cookies"));
   /* Windows keeps a directory handle alive for a few seconds AFTER the
      sign-in Chrome dies — the first rmSync can fail with EPERM/EBUSY and a
      hard failure here killed the whole self-heal recovery (#160 live fire).
@@ -81,7 +86,7 @@ export function cloneApplyProfileForSignin() {  try { const owner = JSON.parse(r
   cpFilter(PROFILE_DIR, SIGNIN_PROFILE_DIR);
   sanitizeCloneForLaunch(); // clean-exit prefs in place BEFORE Chrome reads them (#162 restore-bubble)
   try { writeFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), JSON.stringify({ pid: process.pid, ts: Date.now() })); } catch { /* best-effort claim */ }
-  return existsSync(path.join(SIGNIN_PROFILE_DIR, "Default", "Cookies"));
+  return cookiesPresent();
 }
 
 /* Chrome rebuilds every one of these from scratch (or never needs them for
