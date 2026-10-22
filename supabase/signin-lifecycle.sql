@@ -15,6 +15,10 @@ alter table public.login_requests
    crashed:   the login-only run died before producing a window or mid-flow
    verified:  session cookie confirmed present after the window closed
    failed:    window closed without a completed sign-in (missed / closed early)
+   closed:    👁 proof-view window closed normally (owner saw the logged-in page)
+   A 🔑 'closed' here means the owner shut the window mid-sign-in — the flow
+   treats it as failed via the early-close verdict, but the lifecycle row
+   keeps them distinct: a view run 'closing' is SUCCESS (nothing was owed).
    The host is upserted so a report for an expired/purged row still lands. */
 create or replace function public.engine_report_login_status(p_host text, p_status text, p_detail text)
 returns void language plpgsql security definer set search_path = public as $$
@@ -23,7 +27,7 @@ begin
   values (
     lower(trim(p_host)), lower(trim(p_status)), left(p_detail, 400),
     case when lower(trim(p_status)) = 'opened' then now() end,
-    case when lower(trim(p_status)) in ('verified','failed','crashed') then now() end
+    case when lower(trim(p_status)) in ('verified','failed','crashed','closed') then now() end
   )
   on conflict (host) do update set
     status = excluded.status,

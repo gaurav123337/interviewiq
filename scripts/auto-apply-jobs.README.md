@@ -114,6 +114,12 @@ The session persists for weeks; no passwords are stored or typed by the script.
 # one-time per site (opens the window; log in; done)
 node scripts/auto-apply-jobs.js --url "https://www.linkedin.com/jobs/" --login-only
 
+# 👁 proof view — open the site LOGGED IN in the engine's own profile window
+# (the visible proof behind the "session verified" site-row badge; the view
+# runs on a clone of the profile, waits for you to close it, then folds fresh
+# cookies back into the real profile)
+node scripts/auto-apply-jobs.js --url "https://www.linkedin.com/jobs/" --view-only
+
 # apply run (auto-logs-in if the session is still valid)
 node scripts/auto-apply-jobs.js \
   --url "https://www.instahyre.com/candidate/opportunities/?matching=true" \
