@@ -22,6 +22,12 @@
  * Usage:
  *   node scripts/auto-apply-jobs.js --url "https://www.instahyre.com/candidate/opportunities/?matching=true" \
  *     [--max 8] [--profile apply-profile.json] [--dry-run] [--headless] [--login-only]
+ *   node scripts/auto-apply-jobs.js --url "https://<site>/jobs" --view-only
+ *     (👁 proof view: opens the site in the engine's own SIGNED-IN profile
+ *     so the owner can see the logged-in page a \"session verified\" badge
+ *     claims — that verdict is an engine-profile probe the owner's normal
+ *     browser shares no cookies with, so only a window from the profile
+ *     itself is real proof; leaves on the owner closing it)
  *
  * Files: freebuff-apply-profile/ (browser session, gitignored) and
  * freebuff-apply-reports/ (JSON + md run reports, gitignored).
@@ -56,7 +62,7 @@ const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
 /* ----------------------------- CLI args ----------------------------- */
 
 function parseArgs(argv) {
-  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false, digest: false, listen: false, sessions: false, outcomes: false };
+  const args = { max: 8, profile: "apply-profile.json", "dry-run": false, headless: false, "login-only": false, "view-only": false, url: "", confirm: false, all: false, watch: false, discover: false, everyHours: 0, unattended: false, status: false, digest: false, listen: false, sessions: false, outcomes: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--url") args.url = argv[++i] ?? "";
@@ -65,6 +71,7 @@ function parseArgs(argv) {
     else if (a === "--dry-run") args["dry-run"] = true;
     else if (a === "--headless") args.headless = true;
     else if (a === "--login-only") args["login-only"] = true;
+    else if (a === "--view-only") args["view-only"] = true; // 👁 proof view: show the logged-in page over real profile cookies
     else if (a === "--sessions") args.sessions = true;
     else if (a === "--outcomes") args.outcomes = true; // weekly outcome scrape: views/replies per board → fit-band learning
     else if (a === "--yes") args.confirm = true;
@@ -680,6 +687,30 @@ async function telegramCommandLoop() {
           return;
         }
       } catch { /* probe failed — continue with the normal flow */ }
+      if (req.kind === "view") {
+        /* 👁 ⏩ proof view: SHORT-CIRCUIT before the stale-process sweep —
+           this request never needs the profile (the view opens on the
+           SIGN-IN CLONE, so a live watcher cycle is untouched) and the
+           sweep would murder the very window we are about to open. No
+           signin-active.lock either: the watcher is safe to respawn. Same
+           early-guard protection applies as for sign-ins: a live view (or
+           sign-in) run owns the clone marker / chrome-on-clone, and the
+           guards above already bail for it. */
+        console.log(`👁 app requested a logged-in proof view for ${req.host} — opening the engine browser`);
+        await api("sendMessage", { chat_id: cfg.chat_id, text: `👁 Opening ${req.host} in the engine's browser — you'll see the signed-in page right there (the real proof behind “session verified”). Close the window whenever.` }).catch(() => {});
+        const { spawn: spawnView } = await import("node:child_process");
+        const vlog = path.join(REPORTS_DIR, `view-${req.host.replace(/[^a-z0-9.-]/gi, "_")}.log`);
+        const vfd = openSync(vlog, "a");
+        const v = spawnView(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--view-only"], { stdio: ["ignore", vfd, vfd], cwd: path.join(ROOT, "..") });
+        v.unref(); closeSync(vfd);
+        await db.fulfillLoginRequest?.(req.host).catch(() => {});
+        db.reportLoginStatus?.(req.host, "opened", "proof window open on the desktop — showing the site over the engine's signed-in session").catch(() => {});
+        releaseSigninFlow(); // this cycle's flow lock — the view keeps its own guard coverage (marker + chrome probes in engine-lifecycle)
+        v.once("exit", (code) => {
+          db.reportLoginStatus?.(req.host, code ? "failed" : "closed", code ? `proof view crashed (exit ${code}) — see freebuff-apply-reports/${path.basename(vlog)}` : "proof window closed — the logged-in page was shown").catch(() => {});
+        });
+        return;
+      }
       console.log(`🔑 app requested sign-in for ${req.host} — opening the engine login window`);
       await api("sendMessage", { chat_id: cfg.chat_id, text: `🔑 Opening the engine's sign-in window for ${req.host} — complete Google/OTP there; the session persists for every future run.` }).catch(() => {});
       /* free OUR OWN stale engine browsers first — "Opening in existing
@@ -706,7 +737,7 @@ async function telegramCommandLoop() {
         const nodeBlocks = String(execSync(`wmic process where "name='node.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 }))
           .split(/\r?\n\r?\n/);
         for (const b of nodeBlocks) {
-          if (/--login-only/.test(b)) continue; // never kill the sign-in window's own run
+          if (/--(login|view)-only/.test(b)) continue; // never kill the sign-in or proof-view window's own run
           if (!/auto-apply-jobs\.js (--all|--url|--watch)/.test(b)) continue; // never the listener itself (--listen is skipped by this pattern)
           const pid = /ProcessId=(\d+)/.exec(b)?.[1];
           if (pid && String(pid) !== String(process.pid)) { try { execSync(`taskkill /F /T /PID ${pid}`, { timeout: 10000 }); freed++; } catch { /* already gone */ } }
@@ -2436,6 +2467,37 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
 
 /* ------------------------------- main ------------------------------- */
 
+/* 👁 --view-only: open the site in the engine's own SIGNED-IN browser so the
+   owner SEES the logged-in page. "Session verified" on a site row is a probe
+   verdict over freebuff-apply-profile — which shares no cookies with the
+   owner's normal browser — so until now the claim was unprovable; this window
+   IS the proof. Runs on the throwaway SIGN-IN CLONE (never the real profile —
+   a watcher cycle may legitimately hold it), headed + maximized, waits
+   patiently for the owner to close it, then folds the refreshed cookies back
+   into the real profile and deletes the clone (same hygiene as --login-only). */
+async function runViewOnly(args) {
+  if (!args.url) { console.error("Usage: node scripts/auto-apply-jobs.js --url \"<site url>\" --view-only"); process.exit(1); }
+  const site = siteFromUrl(args.url);
+  console.log(`👁 proof view → ${SITE_RULES[site]?.label ?? site} · ${args.url}`);
+  let cleanup = null;
+  try {
+    const acquired = await acquireApplyContext({ headless: args.headless, endpoint: "", signIn: true, extraArgs: [] });
+    cleanup = acquired.cleanup; // never ctx.close() directly — remote semantics live in cleanup()
+    const ctx = acquired.ctx;
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
+    await page.goto(args.url, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch((e) => console.error(dim(`  (goto: ${String(e?.message ?? e).slice(0, 80)} — the window is still up; browse on from there)`)));
+    console.log("  🌐 window OPEN on the engine's signed-in profile — user closes it whenever");
+    await new Promise((resolve) => ctx.once("close", resolve)); // browser death (owner close OR crash) resolves either way
+    console.log("  👁 window closed.");
+    cleanup = null; // the context close IS the teardown — a double close only throws
+  } finally {
+    if (cleanup) await cleanup().catch(() => {});
+    releaseSigninCloneOwnership(); // our pid owns the clone marker — hand the clone back so nothing wedges
+  }
+  const merged = mergeSigninProfileBack();
+  if (merged > 0) console.log(dim(`  🔐 merged ${merged} refreshed file(s) back into freebuff-apply-profile`));
+}
+
 async function runSingle(args, { existingCtx = null } = {}) {
   if (!args.url) {
     console.error(`Usage: node scripts/auto-apply-jobs.js --url "<jobs list URL>" [--max N] [--dry-run] [--login-only] [--headless] [--profile file]`);
@@ -2498,7 +2560,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
   /* sign-in-only runs skip the AI provider load entirely — no kits are
      built, and this network fetch used to stall the flow BEFORE the window
      opened (the app already showed "window OPEN" while nothing was up). */
-  const ai = args["login-only"] ? null : await loadAi({ token, projectRef });
+  const ai = args["login-only"] || args["view-only"] ? null : await loadAi({ token, projectRef });
   console.log(`apply-engine → ${rules.label} · ${args.url} · max ${args.max}${ai ? ` · AI: ${ai.model}` : args["login-only"] ? " · sign-in only" : " · AI: OFF (templates)"}`);
   /* owner kill switch: a manual single run fails open when the config is
      unreadable (the owner is running it on purpose), but honors off/cloud */
@@ -3475,6 +3537,7 @@ async function main() {
     const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });
     process.exit(res.status ?? 1);
   }
+  if (args["view-only"]) { await runViewOnly(args); return; }
   if (args.watch) { teeWatchLog(); await runWatch(args); return; }
   if (args.sessions) { await runSessions(); return; }
   if (args.outcomes) { await runOutcomes(); return; }

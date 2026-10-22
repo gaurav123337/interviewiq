@@ -321,22 +321,34 @@ export async function addJobSiteUrl(jobsUrl: string, label?: string): Promise<st
   return String(data ?? "");
 }
 
-/* 🔑 Sign in from the app: queues a login request the desktop listener
-   picks up within ~30s and opens the engine's own sign-in window (the
-   only safe way to use Google OAuth — the human types it, once). */
-export async function requestSiteLogin(host: string): Promise<string> {
+/* 🔑 Sign in (or 👁 proof-view) from the app: queues a login request the
+   desktop listener picks up within ~30s. kind 'signin' opens the engine's
+   sign-in window (the only safe way to use Google OAuth — the human types
+   it, once); kind 'view' opens the site LOGGED IN over the engine's saved
+   session — visible proof behind a "session verified" badge, because that
+   verdict is an engine-profile probe sharing no cookies with this app's
+   browser. Requires the p_kind SQL overload; until it is applied the RPC
+   errors honestly instead of pretending. */
+export async function requestSiteLogin(host: string, kind: "signin" | "view" = "signin"): Promise<string> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_request_login", { p_host: host });
+  if (kind === "signin") {
+    const { data, error } = await client.rpc("admin_request_login", { p_host: host });
+    if (error) throw error;
+    return String(data ?? "");
+  }
+  const { data, error } = await client.rpc("admin_request_login", { p_host: host, p_kind: "view" });
   if (error) throw error;
   return String(data ?? "");
 }
 
-export type LoginLifecycle = "requested" | "opened" | "crashed" | "verified" | "failed";
+export type LoginLifecycle = "requested" | "opened" | "crashed" | "verified" | "failed" | "closed";
 
 /* The engine reports every sign-in transition here; the 🔑 row polls this
    so the owner sees "window open — act now" / "crashed" / "verified" /
-   "failed" in the app instead of the flow going dark after the click. */
+   "failed" in the app instead of the flow going dark after the click.
+   'closed' is the 👁 proof-view terminal (owner closed the window after
+   seeing the logged-in page) — success for a view, not for a sign-in. */
 export async function fetchLoginStatus(host: string): Promise<LoginLifecycle | null> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");

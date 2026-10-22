@@ -20,6 +20,20 @@ const SIGNIN_STATUS_TEXT: Record<LoginLifecycle, { text: string; cls: string }> 
   crashed: { text: "✗ The sign-in run crashed — see the engine report; click 🔑 Sign in to try again.", cls: "bg-red-500/10 text-red-300" },
   verified: { text: "✅ Session verified — this site's future runs are signed-in.", cls: "bg-emerald-500/15 text-emerald-300" },
   failed: { text: "⚠️ The sign-in window closed without a completed sign-in — click 🔑 Sign in to retry.", cls: "bg-amber-500/10 text-amber-300" },
+  closed: { text: "✓ Window closed. If you had completed the sign-in, the session is saved.", cls: "bg-emerald-500/15 text-emerald-300" },
+};
+
+/* 👁 proof-view lifecycle (same bridge, kind 'view'): statuses the engine
+   reports for the "open site logged in" window. 'closed' is SUCCESS here —
+   the owner closed the window after seeing the signed-in page — while for
+   a sign-in a closure without a completed login is a retry prompt. */
+const VIEW_STATUS_TEXT: Record<LoginLifecycle, { text: string; cls: string }> = {
+  requested: { text: "👁 Proof requested — the logged-in window opens on the desktop within ~30s (the engine must be running).", cls: "bg-zinc-800/60 text-zinc-300" },
+  opened: { text: "🟢 Proof window is OPEN on your desktop NOW — that page IS the signed-in session. Close it whenever.", cls: "bg-emerald-500/10 text-emerald-300" },
+  closed: { text: "✓ Proof shown — window closed. Any refresh you did there refreshed the saved session.", cls: "bg-emerald-500/15 text-emerald-300" },
+  crashed: { text: "✗ The proof view crashed — see the engine report; click 👁 Open site to retry.", cls: "bg-red-500/10 text-red-300" },
+  verified: { text: "✅ Session verified — click 👁 Open site to see it for yourself.", cls: "bg-emerald-500/15 text-emerald-300" },
+  failed: { text: "⚠️ The proof window crashed while open — click 👁 Open site to retry.", cls: "bg-amber-500/10 text-amber-300" },
 };
 
 
@@ -97,6 +111,37 @@ export default function JobSitesPanel() {
     } catch (e) {
       setSigninStatus(null);
       setUrlNote(`✗ ${(e as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /* 👁 proof view (sites whose session_state is 'verified'): queues a 'view'
+     login request — the engine opens THE SITE LOGGED IN in a headed window
+     over its own saved profile. This is the only real proof of the badge:
+     the probe that produced "verified" runs over freebuff-apply-profile,
+     which shares no cookies with this app's browser. Polling mirrors the
+     sign-in flow; the 2h window cap beats the sign-in's 30min (a proof
+     window is meant to be stared at, not a short transaction). */
+  const [proofStatus, setProofStatus] = useState<{ host: string; status: LoginLifecycle } | null>(null);
+  const openProof = async (s: JobSite) => {
+    setBusy(s.id);
+    setProofStatus({ host: s.host, status: "requested" });
+    try {
+      await requestSiteLogin(s.host, "view");
+      const deadline = Date.now() + 120 * 60_000; // proof windows open like sign-ins but live much longer — poll 2h
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        if (Date.now() > deadline) { setProofStatus({ host: s.host, status: "closed" }); return; }
+        const st = await fetchLoginStatus(s.host).catch(() => null);
+        if (!st || st === "requested") continue; // listener hasn't picked it up yet
+        setProofStatus({ host: s.host, status: st });
+        if (st === "opened") continue; // window open — keep watching until the owner closes it
+        return; // closed / crashed / failed = terminal
+      }
+    } catch (e) {
+      setProofStatus(null);
+      setUrlNote(`✗ 👁 ${(e as Error).message}`);
     } finally {
       setBusy(null);
     }
@@ -234,9 +279,18 @@ export default function JobSitesPanel() {
                 {(() => {
                   const st = sessionStateOf(s);
                   return (
-                    <span title={st.title} className={`rounded px-1 py-0.5 text-[10px] font-bold ${st.cls}`}>
-                      {st.key === "verified" ? "✓" : st.key === "expired" ? "✗" : "?"} {st.label}
-                    </span>
+                    <>
+                      <span title={st.title} className={`rounded px-1 py-0.5 text-[10px] font-bold ${st.cls}`}>
+                        {st.key === "verified" ? "✓" : st.key === "expired" ? "✗" : "?"} {st.label}
+                      </span>
+                      {st.key === "verified" && (
+                        <button type="button" onClick={() => void openProof(s)}
+                          title="Open this site in the engine's browser — logged in. The verified verdict comes from the engine's own profile, which shares no cookies with this app's browser; this window shows the real signed-in page."
+                          className="rounded bg-sky-600/80 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-sky-500">
+                          👁 open site
+                        </button>
+                      )}
+                    </>
                   );
                 })()}
                 {(() => {
@@ -306,6 +360,13 @@ export default function JobSitesPanel() {
                 {signinStatus.status === "requested" && engineOff
                   ? "🔑 Sign-in requested — WAITING: the engine is Off, so the window opens only after you switch Apply mode to 🖥 My machine."
                   : SIGNIN_STATUS_TEXT[signinStatus.status].text}
+              </div>
+            )}
+            {proofStatus?.host === s.host && (
+              <div className={`w-full rounded px-2 py-1 text-[11px] ${VIEW_STATUS_TEXT[proofStatus.status].cls}`}>
+                {proofStatus.status === "requested" && engineOff
+                  ? "👁 Proof requested — WAITING: the engine is Off, so the window opens only after you switch Apply mode to 🖥 My machine."
+                  : VIEW_STATUS_TEXT[proofStatus.status].text}
               </div>
             )}
           </div>
