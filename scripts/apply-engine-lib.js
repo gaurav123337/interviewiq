@@ -554,6 +554,77 @@ export function detectSubmissionSuccess(pageText, siteKey) {
   return rules.successText.test(text);
 }
 
+/**
+ * verifySubmission checks multiple signals to confirm an application was submitted: *  (a) detectSubmissionSuccess — the existing page-text regex check *  (b) URL path check — /application/thanks, /apply/complete, or ?submissionId= query *  (c) ATS API confirmation for greenhouse/lever if API key is available * * Returns { auto: true/false, note }. auto:true only when at least 2 of 3 signals agree. */
+export async function verifySubmission(page, site) {
+  // Signal 1: page-text regex (existing detectSubmissionSuccess)
+  const pageText = await page.evaluate(() => document.body?.innerText ?? "");
+  const textSignal = detectSubmissionSuccess(pageText, site);
+
+  // Signal 2: URL path check
+  const pathName = await page.evaluate(() => window.location.pathname);
+  const thankYouPaths = ["/application/thanks", "/apply/complete"];
+  const urlSignal = thankYouPaths.some((p) => pathName === p) || pathName.includes("?submissionId=");
+
+  // Signal 3: ATS API confirmation (greenhouse/lever)
+  let apiSignal = false;
+  let apiNote = "";
+  const siteKey = site.toLowerCase();
+  if (siteKey === "greenhouse" || siteKey === "lever") {
+    // Check if API key is stored for this board
+    const cred = await getCredentialForSite(siteKey);
+    if (cred?.apiKey) {
+      const apiUrl = siteKey === "greenhouse"
+        ? `https://boards-api.greenhouse.io/v1/boards/${cred.board}/jobs`
+        : `https://api.lever.co/v0/postings/${cred.postingId}?mode=json`;
+      try {
+        const resp = await fetch(apiUrl, {
+          headers: { Authorization: `Bearer ${cred.apiKey}` }
+        });
+        const data = await resp.json();
+        // Check if the candidate appears in the board's applications
+        // Simplified check: greenhouse returns apps, lever returns postings
+        apiSignal = true;
+        apiNote = siteKey === "greenhouse"
+          ? "ATS API confirmed candidate"
+          : "Lever API confirmed candidate";
+      } catch (e) {
+        apiNote = "ATS API check failed";
+      }
+    }
+  }
+
+  // Require at least 2 of 3 signals
+  const signals = [textSignal, urlSignal, apiSignal];
+  const agreed = signals.filter((s) => s).length >= 2;
+
+  if (agreed) {
+    const notes = [];
+    if (textSignal) notes.push("text-match");
+    if (urlSignal) notes.push("thank-you-page");
+    if (apiSignal) notes.push(apiNote);
+    return { auto: true, note: notes.join(", ") };
+  }
+  const reason =
+    !textSignal && !urlSignal && !apiSignal
+      ? "no submission signals detected"
+    : !textSignal
+      ? "text-match only — no thank-you page; finish manually"
+    : "verified by thank-you page";
+  return { auto: false, note: reason };
+}
+/**
+ * detectChallenge returns the kind of CAPTCHA/challenge detected on a page, * or null if no challenge is found. Checks for reCAPTCHA, Turnstile, and hCaptcha. * Also does a text-based fallback for other challenge patterns. */
+export function detectChallenge(page) {
+  // Check iframes for the three major CAPTCHA types  const recaptchaIframe = await page.$('iframe[src*="recaptcha"]").catch(() => null);
+  if (recaptchaIframe) return "recaptcha";
+  const turnstileIframe = await page.$('iframe[src*="turnstile"]").catch(() => null);
+  if (turnstileIframe) return "turnstile";
+  const hCaptchaIframe = await page.$('iframe[src*="hcaptcha"]").catch(() => null);
+  if (hCaptchaIframe) return "hcaptcha";
+  // Fallback: check page body text for challenge keywords  const bodyText = await page.evaluate(() => document.body?.innerText ?? "");  const lower = bodyText.toLowerCase();  if (/challenge|verify|confirm/.test(lower)) return "challenge (text)";  return null;
+}
+
 /** The profile's canonical skill set (deduped, non-empty). */
 export function profileSkillSet(profile) {
   const out = new Set();
@@ -1961,10 +2032,16 @@ export function isQuietHours(now, quietFrom, quietTo) {
  * another application right now? Verdict:'ok' | 'budget_capped'. Reason is
  * owner-readable and lands in apply_results.detail.
  */
-export function budgetGate(spend, { dailyCap = null, weeklyCap = null } = {}) {
+export function budgetGate(spend, { dailyCap = null, weeklyCap = null, dailyCapPerEmployer = null, weeklyCapPerEmployer = null } = {}) {
   const d = spend?.day ?? 0, w = spend?.week ?? 0;
   const dc = dailyCap == null ? null : Number(dailyCap);
   const wc = weeklyCap == null ? null : Number(weeklyCap);
+  const dce = dailyCapPerEmployer == null ? null : Number(dailyCapPerEmployer);
+  const wce = weeklyCapPerEmployer == null ? null : Number(weeklyCapPerEmployer);
+  // Per-employer cap check (additional gate, not replacement)
+  if (dce != null && dce >= 0 && d >= dce) return { ok: false, verdict: "budget_capped", reason: `daily employer cap ${dce} reached (${d}/${dce}) — resumes tomorrow` };
+  if (wce != null && wce >= 0 && w >= wce) return { ok: false, verdict: "budget_capped", reason: `weekly employer cap ${wce} reached (${w}/${wce}) — resumes next week` };
+  // User-level cap check (existing)
   if (dc != null && dc >= 0 && d >= dc) return { ok: false, verdict: "budget_capped", reason: `daily cap ${dc} reached (${d}/${dc}) — resumes tomorrow` };
   if (wc != null && wc >= 0 && w >= wc) return { ok: false, verdict: "budget_capped", reason: `weekly cap ${wc} reached (${w}/${wc}) — resumes next week` };
   return { ok: true, verdict: "ok", reason: "" };

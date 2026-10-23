@@ -32,6 +32,8 @@
 alter table public.apply_config
   add column if not exists policy_daily_cap int,
   add column if not exists policy_weekly_cap int,
+  add column if not exists policy_daily_cap_per_employer int DEFAULT NULL,
+  add column if not exists policy_weekly_cap_per_employer int DEFAULT NULL,
   add column if not exists policy_quiet_from text,
   add column if not exists policy_quiet_to text,
   add column if not exists policy_filters jsonb;
@@ -42,7 +44,9 @@ alter table public.apply_config
    an owner may later NULL a column to mean "no cap" and that must stay
    representable. Quiet hours default OFF (null from/to = never quiet). */
 update public.apply_config
-  set policy_daily_cap = 20, policy_weekly_cap = 80
+  set policy_daily_cap = 20, policy_weekly_cap = 80,
+    policy_daily_cap_per_employer = NULL,
+    policy_weekly_cap_per_employer = NULL
   where id = 'global' and policy_daily_cap is null and policy_weekly_cap is null;
 
 /* ── 2. apply_results: the two new honest states ───────────────────────── */
@@ -106,6 +110,7 @@ returns table (
   )
   select c.mode, c.cloud_provider, c.cloud_endpoint,
     c.policy_daily_cap, c.policy_weekly_cap,
+    c.policy_daily_cap_per_employer, c.policy_weekly_cap_per_employer,
     c.policy_quiet_from, c.policy_quiet_to, c.policy_filters,
     s.day, s.week
   from cfg c cross join spend s;

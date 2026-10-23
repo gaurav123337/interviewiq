@@ -9,6 +9,7 @@ create table if not exists public.site_credentials (
   id uuid primary key default gen_random_uuid(),
   label text not null,
   kind text not null default 'password' check (kind in ('password','oauth','otp','totp','manual')),
+  last_verified_at timestamptz null
   username text,
   secret text,
   notes text,
@@ -92,6 +93,20 @@ language sql security definer set search_path = public as $$
   join public.site_credentials c on c.id = s.credential_id
   where s.host = lower(replace(trim(p_host), '^www\.', ''))
   limit 1;
+$$;
+
+create or replace function public.engine_update_credential_last_verified(p_host text)
+returns void language sql security definer set search_path = public as $$
+begin
+  update public.site_credentials
+  set last_verified_at = now()
+  where id = (
+    select s.credential_id
+    from public.job_sites s
+    where s.host = lower(replace(trim(p_host), '^www\.', ''))
+    limit 1
+  );
+end;
 $$;
 
 /* ── add a job URL from the app: manual additions are DELIBERATE (not

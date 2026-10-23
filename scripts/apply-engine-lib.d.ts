@@ -184,6 +184,15 @@ export function isExternalApplyButton(text: string | null | undefined): boolean;
 
 export function detectSubmissionSuccess(pageText: string | null | undefined, siteKey: string): boolean;
 
+export function detectChallenge(page: import('playwright').Page): string | null;
+
+export interface VerifySubmissionResult {
+  auto: boolean;
+  note: string;
+}
+
+export async function verifySubmission(page: import('playwright').Page, site: string): Promise<VerifySubmissionResult>;
+
 export function fitScore(
   matched: string[] | null | undefined,
   missing: string[] | null | undefined,
@@ -500,7 +509,7 @@ export interface BudgetGateResult {
 
 export function budgetGate(
   spend: { day: number; week: number } | null | undefined,
-  caps?: { dailyCap?: number | null; weeklyCap?: number | null }
+  caps?: { dailyCap?: number | null; weeklyCap?: number | null; dailyCapPerEmployer?: number | null; weeklyCapPerEmployer?: number | null }
 ): BudgetGateResult;
 
 export const SENIORITY_LADDER: string[];

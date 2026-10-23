@@ -40,7 +40,7 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, detectSubmissionSuccess, seniorityOf, isExternalApplyButton, isChromeTitle, CHROME_TITLE_RE,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, verifySubmission, seniorityOf, isExternalApplyButton, isChromeTitle, CHROME_TITLE_RE,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS, maxAgeDaysOf, olderThanMaxAge,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
@@ -1205,6 +1205,8 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
               console.log(green(`  ✓ auto-login with the stored TOTP credential succeeded`));
               await persistSessionCookies(page, url); // #162: same durability rule for the stored-credential path
               await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165
+              // #170: record when we last verified this credential (for expiry forecast)
+              if (!loginOnly && db) { await db?.engine_update_credential_last_verified?.(host).catch(() => {}); }
               if (!loginOnly) {
                 const problem = detectAccountProblem(state.bodyText);
                 if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
@@ -1232,6 +1234,8 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
               console.log(green(`  ✓ auto-login with the stored credential succeeded`));
               await persistSessionCookies(page, url); // #162: same durability rule for the stored-credential path
               await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165
+              // #170: record when we last verified this credential (for expiry forecast)
+              if (!loginOnly && db) { await db?.engine_update_credential_last_verified?.(host).catch(() => {}); }
               if (!loginOnly) {
                 const problem = detectAccountProblem(state.bodyText);
                 if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
@@ -1326,7 +1330,8 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
           console.log(dim(`  session cookie ${hit.name}: expires ${exp}`));
           return { kind: "loggedIn", title: "", bodyText: "" };
         }
-        await page.waitForTimeout(4000);
+        await page.waitForTimeout(1000);
+     CHALLENGE_DETECT 
       }
       return { kind: "login", title: "", bodyText: "" };
     };
@@ -2411,11 +2416,12 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
         return true;
       }).catch(() => false);
       if (clicked) {
-        await page.waitForTimeout(4000);
+        await page.waitForTimeout(1000);
+     CHALLENGE_DETECT 
         /* the lib's detector is the same rules.successText check, kept as a
            single pinned implementation so the test suite governs both doors */
-        const success = detectSubmissionSuccess(await page.evaluate(() => document.body?.innerText ?? ""), site);
-        return { auto: success, note: success ? "submitted (auto, js)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
+        const verify = await verifySubmission(page, site);
+        return { auto: verify.auto, note: verify.note };
       }
       /* still stuck: surface WHY (LinkedIn's validation error if present, else
          the flow step the belt died on — "submit never appeared" alone told
@@ -2452,16 +2458,17 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
       const healed = await healControl(target, "submit this job application", ctx.ai);
       if (healed) {
         await clickButton(target, healed, null).catch(() => {});
-        await page.waitForTimeout(4000);
+        await page.waitForTimeout(1000);
+     CHALLENGE_DETECT 
         const pageBodyH = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
         const frameBodyH = target !== page ? await target.evaluate(() => document.body?.innerText ?? "").catch(() => "") : "";
-        const successH = detectSubmissionSuccess(pageBodyH + "\n" + frameBodyH, site);
-        if (successH) {
+        const verifyH = await verifySubmission(page, site);
+        if (verifyH.auto) {
           const rawName = (await healed.innerText({ timeout: 2000 }).catch(() => "") || "").replace(/\s+/g, " ").trim();
           if (rawName) await persistHeal(RUN_HOST || site, { respondentName: rawName, role: "button", confidence: 0.9, __intent: "submit this job application" });
-          return { auto: true, note: `submitted (auto, healed control "${rawName.slice(0, 40)}")` };
+          return { auto: true, note: verifyH.note };
         }
-        return { auto: false, note: "healed control clicked but success text not detected — verify manually, NOT recorded as submitted" };
+        return { auto: false, note: verifyH.note };
       }
     }
     return { auto: false, note: "apply flow opened but the submit step never appeared — NOT applied, needs review" };
@@ -2480,15 +2487,16 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
     ).catch(() => ["(check failed)"]);
     if (emptyRequired.length) return { auto: false, note: `cannot auto-submit — required fields empty: ${emptyRequired.join(", ")}` };
     await clickButton(target, btn, rules.submitButtonText ?? rules.applyButtonText);
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(1000);
+     CHALLENGE_DETECT 
     /* success may render in the form frame (embedded Greenhouse) or replace
        the whole page — read BOTH, positive evidence only */
     const pageBody = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
     const frameBody = target !== page ? await target.evaluate(() => document.body?.innerText ?? "").catch(() => "") : "";
     /* same single pinned detector — page body + form frame BOTH count as
        success evidence (embedded Greenhouse renders in the frame) */
-    const success = detectSubmissionSuccess(pageBody + "\n" + frameBody, site);
-    return { auto: success, note: success ? "submitted (auto)" : "clicked submit; success text not detected — verify manually, NOT recorded as submitted" };
+    const verify = await verifySubmission(page, site);
+    return { auto: verify.auto, note: verify.note };
   }
   return { auto: false, note: "review gate — human submits" };
 }
@@ -2754,7 +2762,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
     let budgetSpendThisRun = 0; // Phase 0: this run's own submissions count at the next one-way-door re-check
     let runBudget = { ok: true, verdict: "ok", reason: "" };
     if (gov.available) {
-      runBudget = budgetGate(gov.spend, { dailyCap: gov.dailyCap, weeklyCap: gov.weeklyCap });
+      runBudget = budgetGate(gov.spend, { dailyCap: gov.dailyCap, weeklyCap: gov.weeklyCap, dailyCapPerEmployer: gov.dailyCapPerEmployer, weeklyCapPerEmployer: gov.weeklyCapPerEmployer });
       if (!runBudget.ok) console.log(yellow(`  🛑 budget: ${runBudget.reason} — this run will collect + review only, no submissions`));
       if (gov.available && isQuietHours(new Date(), gov.quietFrom, gov.quietTo)) {
         runBudget = { ok: false, verdict: "budget_capped", reason: `quiet hours (${gov.quietFrom}–${gov.quietTo}) — submissions pause, collection continues` };
