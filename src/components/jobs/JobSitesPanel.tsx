@@ -283,13 +283,6 @@ export default function JobSitesPanel() {
                       <span title={st.title} className={`rounded px-1 py-0.5 text-[10px] font-bold ${st.cls}`}>
                         {st.key === "verified" ? "✓" : st.key === "expired" ? "✗" : "?"} {st.label}
                       </span>
-                      {st.key === "verified" && (
-                        <button type="button" 
-                          title="Open this site in the engine's browser — logged in. The verified verdict comes from the engine's own profile, which shares no cookies with this app's browser; this window shows the real signed-in page."
-                          className="rounded bg-sky-600/80 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-sky-500">
-                          onClick={() => void openProof(s)}
-                          
-                      )}
                     </>
                   );
                 })()}
@@ -342,10 +335,10 @@ export default function JobSitesPanel() {
                   );
                 })()}
                 <button type="button" onClick={() => void openProof(s)}
-                          title="Open this site in the engine's browser — logged in. The verified verdict comes from the engine's own profile, which shares no cookies with this app's browser; this window shows the real signed-in page."
-                          className="rounded bg-sky-600/80 w-full px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-sky-500 block">
-                          👁 open site
-                        </button>
+                  title="Open this site in the engine's browser — logged in. The verified verdict comes from the engine's own profile, which shares no cookies with this app's browser; this window shows the real signed-in page."
+                  className="rounded bg-sky-600/80 w-full px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-sky-500 block">
+                  👁 open site
+                </button>
                   <button onClick={() => void signIn(s)} title="Open the engine's sign-in window for this site — complete Google/OTP there once; the session persists for every future run"
                     className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-500">🔑 Sign in</button>
             {s.status === "pending" ? (
