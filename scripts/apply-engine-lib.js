@@ -616,13 +616,19 @@ export async function verifySubmission(page, site) {
 /**
  * detectChallenge returns the kind of CAPTCHA/challenge detected on a page, * or null if no challenge is found. Checks for reCAPTCHA, Turnstile, and hCaptcha. * Also does a text-based fallback for other challenge patterns. */
 export function detectChallenge(page) {
-  // Check iframes for the three major CAPTCHA types  const recaptchaIframe = await page.$('iframe[src*="recaptcha"]").catch(() => null);
-  if (recaptchaIframe) return "recaptcha";
-  const turnstileIframe = await page.$('iframe[src*="turnstile"]").catch(() => null);
-  if (turnstileIframe) return "turnstile";
-  const hCaptchaIframe = await page.$('iframe[src*="hcaptcha"]").catch(() => null);
-  if (hCaptchaIframe) return "hcaptcha";
-  // Fallback: check page body text for challenge keywords  const bodyText = await page.evaluate(() => document.body?.innerText ?? "");  const lower = bodyText.toLowerCase();  if (/challenge|verify|confirm/.test(lower)) return "challenge (text)";  return null;
+  // Check iframes for the three major CAPTCHA types (synchronous check)
+  const allIframes = page.$('iframe')
+  for (const iframe of allIframes) {
+    const src = iframe.getAttribute('src') || ''
+    if (src.includes('recaptcha')) return 'recaptcha'
+    if (src.includes('turnstile')) return 'turnstile'
+    if (src.includes('hcaptcha')) return 'hcaptcha'
+  }
+  // Fallback: check page body text for challenge keywords (synchronous)
+  const bodyText = page.evaluateSync(() => document.body?.innerText ?? '')
+  const lower = bodyText.toLowerCase()
+  if (/challenge|verify|confirm/.test(lower)) return 'challenge (text)'
+  return null
 }
 
 /** The profile's canonical skill set (deduped, non-empty). */
