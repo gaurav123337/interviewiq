@@ -8,7 +8,7 @@
 create table if not exists public.site_credentials (
   id uuid primary key default gen_random_uuid(),
   label text not null,
-  kind text not null default 'password' check (kind in ('password','oauth','otp','manual')),
+  kind text not null default 'password' check (kind in ('password','oauth','otp','totp','manual')),
   username text,
   secret text,
   notes text,

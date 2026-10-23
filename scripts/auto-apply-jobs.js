@@ -1187,7 +1187,35 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
       const db = await sitesDb();
       const host = new URL(url).hostname.replace(/^www\./, "");
       const cred = await db?.credentialForSite?.(host).catch(() => null);
-      if (cred?.kind === "password" && cred.username && cred.secret) {
+      if (cred?.kind === "totp" && cred.secret) {
+        console.log(dim(`  🔑 stored TOTP credential "${cred.label}" bound to ${host} — attempting auto-login`));
+        const code = totp(cred.secret);
+        const userSel = "input[type='email'], input[name*='user' i], input[name*='email' i], input[name*='login' i], input[name*='phone' i]";
+        const passSel = "input[type='password']";
+        const userField = page.locator(userSel).first();
+        const passField = page.locator(passSel).first();
+        if (await userField.isVisible({ timeout: 5000 }).catch(() => false)) {
+          await userField.fill(cred.username ?? "").catch(() => {});
+          if (await passField.isVisible({ timeout: 4000 }).catch(() => false)) {
+            await passField.fill(code).catch(() => {});
+            await page.keyboard.press("Enter");
+            await page.waitForTimeout(6000);
+            state = await waitForStableState(page, rules, url, { settleMs: 0 });
+            if (state.kind === "loggedIn") {
+              console.log(green(`  ✓ auto-login with the stored TOTP credential succeeded`));
+              await persistSessionCookies(page, url); // #162: same durability rule for the stored-credential path
+              await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165
+              if (!loginOnly) {
+                const problem = detectAccountProblem(state.bodyText);
+                if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
+                return true;
+              }
+            } else {
+              console.log(yellow("  ⏸ auto-login did not land on a signed-in state (captcha/OTP/change-wall?) — falling back to the human flow"));
+            }
+          }
+        }
+      } else if (cred?.kind === "password" && cred.username && cred.secret) {
         console.log(dim(`  🔑 stored credential "${cred.label}" bound to ${host} — attempting auto-login`));
         const userSel = "input[type='email'], input[name*='user' i], input[name*='email' i], input[name*='login' i], input[name*='phone' i]";
         const passSel = "input[type='password']";

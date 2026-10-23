@@ -794,6 +794,23 @@ export function normalizeFieldKey(label) {
 const NON_REUSABLE_KINDS = new Set(["coverLetter", "longText", "unknown", "workAuth", "certificate"]);
 export function canStoreAnswer(kind) { return !NON_REUSABLE_KINDS.has(String(kind || "unknown")); }
 
+/** RFC-6238 TOTP: 6-digit code, 30s step, ±1 window.
+ * speakeasy is not a dependency; this is a minimal native impl using crypto.createHmac.
+ *   secret: base32-encoded seed string
+ *   step: time step in seconds (default 30)
+ *   returning a zero-padded 6-digit string */
+export function totp(secret, step) {
+  step = step || 30;
+  const time = Math.floor(Date.now() / 1000 / step);
+  const key = crypto.createSecretKey(Buffer.from(secret, "base64"));
+  const hmac = crypto.createHmac("sha1", key);
+  hmac.update(Buffer.from([time >>> 24, time >>> 16, time >>> 8, time & 0xff]));
+  const digest = hmac.digest();
+  const offset = digest[digest.length - 1] & 0xf;
+  const code = ((digest[offset] & 0x7f) << 24 | (digest[offset + 1] & 0xff) << 16 | (digest[offset + 2] & 0xff) << 8 | (digest[offset + 3] & 0xff)) & 0x7fffffff;
+  return String(code % 1000000).padStart(6, "0");
+}
+
 /* ─────────────────── LLM field mapping (Tier 2) ─────────────────── */
 /* Regex classification stops at `unknown` the moment a board phrases a
    recurring question differently ("CTC details", "Preferred interview
