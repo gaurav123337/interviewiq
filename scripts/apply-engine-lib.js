@@ -555,65 +555,33 @@ export function detectSubmissionSuccess(pageText, siteKey) {
 }
 
 /**
- * verifySubmission checks multiple signals to confirm an application was submitted: *  (a) detectSubmissionSuccess — the existing page-text regex check *  (b) URL path check — /application/thanks, /apply/complete, or ?submissionId= query *  (c) ATS API confirmation for greenhouse/lever if API key is available * * Returns { auto: true/false, note }. auto:true only when at least 2 of 3 signals agree. */
-export async function verifySubmission(page, site) {
-  // Signal 1: page-text regex (existing detectSubmissionSuccess)
-  const pageText = await page.evaluate(() => document.body?.innerText ?? "");
-  const textSignal = detectSubmissionSuccess(pageText, site);
+ * verifySubmission checks for POSITIVE evidence that an application actually
+ * left the building:
+ *  (a) detectSubmissionSuccess — the site's pinned successText regex
+ *  (b) URL check — /application/thanks, /apply/complete, ?submissionId=
+ *
+ * Success text may render in the top page OR in the embedded form frame
+ * (Greenhouse inside a company site), so callers pass that frame. There is no
+ * candidate-facing API that confirms an application: the old "ATS API
+ * confirmed" branch invented a third signal and called a helper that does not
+ * exist here, so a missing signal now stays missing and the row goes to the
+ * review queue (fail-closed).
+ */
+export async function verifySubmission(page, site, frame = page) {
+  const pageText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
+  const frameText = frame && frame !== page
+    ? await frame.evaluate(() => document.body?.innerText ?? "").catch(() => "")
+    : "";
+  const textSignal = detectSubmissionSuccess(pageText + "\n" + frameText, site);
+  const url = await page.evaluate(() => window.location.pathname + window.location.search).catch(() => "");
+  const urlSignal = ["/application/thanks", "/apply/complete"].includes(url) || String(url).includes("submissionId=");
 
-  // Signal 2: URL path check
-  const pathName = await page.evaluate(() => window.location.pathname);
-  const thankYouPaths = ["/application/thanks", "/apply/complete"];
-  const urlSignal = thankYouPaths.some((p) => pathName === p) || pathName.includes("?submissionId=");
-
-  // Signal 3: ATS API confirmation (greenhouse/lever)
-  let apiSignal = false;
-  let apiNote = "";
-  const siteKey = site.toLowerCase();
-  if (siteKey === "greenhouse" || siteKey === "lever") {
-    // Check if API key is stored for this board
-    const cred = await getCredentialForSite(siteKey);
-    if (cred?.apiKey) {
-      const apiUrl = siteKey === "greenhouse"
-        ? `https://boards-api.greenhouse.io/v1/boards/${cred.board}/jobs`
-        : `https://api.lever.co/v0/postings/${cred.postingId}?mode=json`;
-      try {
-        const resp = await fetch(apiUrl, {
-          headers: { Authorization: `Bearer ${cred.apiKey}` }
-        });
-        const data = await resp.json();
-        // Check if the candidate appears in the board's applications
-        // Simplified check: greenhouse returns apps, lever returns postings
-        apiSignal = true;
-        apiNote = siteKey === "greenhouse"
-          ? "ATS API confirmed candidate"
-          : "Lever API confirmed candidate";
-      } catch (e) {
-        apiNote = "ATS API check failed";
-      }
-    }
-  }
-
-  // Require at least 2 of 3 signals
-  const signals = [textSignal, urlSignal, apiSignal];
-  const agreed = signals.filter((s) => s).length >= 2;
-
-  if (agreed) {
-    const notes = [];
-    if (textSignal) notes.push("text-match");
-    if (urlSignal) notes.push("thank-you-page");
-    if (apiSignal) notes.push(apiNote);
-    return { auto: true, note: notes.join(", ") };
-  }
-  const reason =
-    !textSignal && !urlSignal && !apiSignal
-      ? "no submission signals detected"
-    : !textSignal
-      ? "text-match only — no thank-you page; finish manually"
-    : "verified by thank-you page";
-  return { auto: false, note: reason };
+  if (textSignal) return { auto: true, note: urlSignal ? "text-match, thank-you-page" : "text-match" };
+  if (urlSignal) return { auto: true, note: "thank-you-page" };
+  return { auto: false, note: "no submission signals detected" };
 }
-/**
+
+/**
  * detectChallenge returns the kind of CAPTCHA/challenge detected on a page, * or null if no challenge is found. Checks for reCAPTCHA, Turnstile, and hCaptcha. * Also does a text-based fallback for other challenge patterns. */
 export function detectChallenge(page) {
   // Check iframes for the three major CAPTCHA types (synchronous check)
@@ -871,20 +839,42 @@ export function normalizeFieldKey(label) {
 const NON_REUSABLE_KINDS = new Set(["coverLetter", "longText", "unknown", "workAuth", "certificate"]);
 export function canStoreAnswer(kind) { return !NON_REUSABLE_KINDS.has(String(kind || "unknown")); }
 
-/** RFC-6238 TOTP: 6-digit code, 30s step, ±1 window.
- * speakeasy is not a dependency; this is a minimal native impl using crypto.createHmac.
- *   secret: base32-encoded seed string
- *   step: time step in seconds (default 30)
- *   returning a zero-padded 6-digit string */
-export function totp(secret, step) {
-  step = step || 30;
-  const time = Math.floor(Date.now() / 1000 / step);
-  const key = crypto.createSecretKey(Buffer.from(secret, "base64"));
-  const hmac = crypto.createHmac("sha1", key);
-  hmac.update(Buffer.from([time >>> 24, time >>> 16, time >>> 8, time & 0xff]));
-  const digest = hmac.digest();
+/** RFC-6238 TOTP: 6-digit code from a BASE32 seed (what Google
+ * Authenticator, 1Password and Authy export), 30s step.
+ * Node-only helper: the app bundle imports this module for a few pure
+ * helpers, so the builtin is resolved lazily — a static `node:crypto`
+ * import would break the Vite client build. */
+const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function decodeBase32Secret(input) {
+  const s = String(input ?? "").toUpperCase().replace(/[\s-]/g, "").replace(/=+$/, "");
+  let bits = 0, value = 0;
+  const out = [];
+  for (const ch of s) {
+    const idx = BASE32_ALPHABET.indexOf(ch);
+    if (idx < 0) throw new Error("invalid base32 TOTP secret");
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((value >>> bits) & 0xff);
+      value &= (1 << bits) - 1;
+    }
+  }
+  if (!out.length) throw new Error("empty TOTP secret");
+  return Buffer.from(out);
+}
+
+export function totp(secret, step = 30) {
+  const nodeCrypto = globalThis.process?.getBuiltinModule?.("node:crypto");
+  if (!nodeCrypto) throw new Error("totp() needs Node's crypto builtin");
+  const counter = Buffer.alloc(8);
+  counter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 1000 / step)));
+  const digest = nodeCrypto.createHmac("sha1", decodeBase32Secret(secret)).update(counter).digest();
   const offset = digest[digest.length - 1] & 0xf;
-  const code = ((digest[offset] & 0x7f) << 24 | (digest[offset + 1] & 0xff) << 16 | (digest[offset + 2] & 0xff) << 8 | (digest[offset + 3] & 0xff)) & 0x7fffffff;
+  const code = (((digest[offset] & 0x7f) << 24) |
+    (digest[offset + 1] << 16) |
+    (digest[offset + 2] << 8) |
+    digest[offset + 3]) >>> 0;
   return String(code % 1000000).padStart(6, "0");
 }
 

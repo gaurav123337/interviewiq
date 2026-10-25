@@ -256,6 +256,11 @@ export async function credentialForSite(host) {
   return rows?.[0] ?? null;
 }
 
+/** #170 — stamp the credential's last successful sign-in (expiry forecast). */
+export async function engineUpdateCredentialLastVerified(host) {
+  return rpc(loadLocalCreds(), "engine_update_credential_last_verified", { p_host: host });
+}
+
 /** App → desktop bridge: the listener's pending 🔑 Sign-in request (if any). */
 export async function pendingLoginRequest() {
   const rows = await rpc(loadLocalCreds(), "engine_pending_login_request", {});

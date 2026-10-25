@@ -103,15 +103,16 @@ export default function CredentialsPanel() {
           <input value={label} onChange={e => setLabel(e.target.value)} placeholder="label (e.g. My Google account)"
             className="w-44 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
           <select value={kind} onChange={e => setKind(e.target.value as SiteCredential["kind"])}
-            className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" title="password = email+password, oauth = Google/SSO email link, otp = one-time codes">
+            className="rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" title="password = email+password, oauth = Google/SSO email link, otp = one-time codes, totp = authenticator seed (base32)">
             <option value="password">password</option>
             <option value="oauth">oauth (Google/SSO)</option>
             <option value="otp">otp</option>
+            <option value="totp">totp (authenticator code)</option>
             <option value="manual">manual</option>
           </select>
           <input value={username} onChange={e => setUsername(e.target.value)} placeholder="username / email"
             className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
-          <input value={secret} onChange={e => setSecret(e.target.value)} placeholder="secret (password / recovery code)" type="password"
+          <input value={secret} onChange={e => setSecret(e.target.value)} placeholder="secret (password / recovery code / base32 seed)" type="password"
             className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
           <button onClick={() => void addCred()} disabled={busy === "new"} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50">Save</button>
         </div>

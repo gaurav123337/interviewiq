@@ -183,6 +183,7 @@ export function extraAnswerFor(profile: ApplyProfileLike | null | undefined, kin
 export function isExternalApplyButton(text: string | null | undefined): boolean;
 
 export function detectSubmissionSuccess(pageText: string | null | undefined, siteKey: string): boolean;
+export function totp(secret: string, step?: number): string;
 
 export function detectChallenge(page: import('playwright').Page): string | null;
 
@@ -191,7 +192,7 @@ export interface VerifySubmissionResult {
   note: string;
 }
 
-export async function verifySubmission(page: import('playwright').Page, site: string): Promise<VerifySubmissionResult>;
+export async function verifySubmission(page: import('playwright').Page, site: string, frame?: import('playwright').Page | import('playwright').Frame): Promise<VerifySubmissionResult>;
 
 export function fitScore(
   matched: string[] | null | undefined,

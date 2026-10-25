@@ -40,7 +40,7 @@ import path from "node:path";
 import {
   siteFromUrl, classifyQuestion, draftAnswer, valueMatchesList,
   newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql, SITE_RULES, ATS_PACKS, detectAts,
-  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, verifySubmission, seniorityOf, isExternalApplyButton, isChromeTitle, CHROME_TITLE_RE,
+  isChallengePage, detectAccountProblem, looksLoggedIn, titleRelevant, looksLikeRefusal, postingRelevant, fitScore, instaSkip, verifySubmission, totp, seniorityOf, isExternalApplyButton, isChromeTitle, CHROME_TITLE_RE,
   normalizeFieldKey, canStoreAnswer, planFormAnswers, formFieldsPreview, ownerExemplarFor,
   classifyJobLink, sortByFreshness, parsePostedAge, isFreshPosted, FRESH_MAX_HOURS, maxAgeDaysOf, olderThanMaxAge,
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
@@ -1206,7 +1206,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
               await persistSessionCookies(page, url); // #162: same durability rule for the stored-credential path
               await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165
               // #170: record when we last verified this credential (for expiry forecast)
-              if (!loginOnly && db) { await db?.engine_update_credential_last_verified?.(host).catch(() => {}); }
+              if (!loginOnly && db) { await db?.engineUpdateCredentialLastVerified?.(host).catch(() => {}); }
               if (!loginOnly) {
                 const problem = detectAccountProblem(state.bodyText);
                 if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
@@ -1235,7 +1235,7 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
               await persistSessionCookies(page, url); // #162: same durability rule for the stored-credential path
               await storeSessionSidecar(page, url, rules.sessionCookieNames ?? []); // #165
               // #170: record when we last verified this credential (for expiry forecast)
-              if (!loginOnly && db) { await db?.engine_update_credential_last_verified?.(host).catch(() => {}); }
+              if (!loginOnly && db) { await db?.engineUpdateCredentialLastVerified?.(host).catch(() => {}); }
               if (!loginOnly) {
                 const problem = detectAccountProblem(state.bodyText);
                 if (problem) { console.error(red(`✗ ${rules.label}: ${problem} — nothing to apply to.`)); return false; }
@@ -1331,7 +1331,6 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
           return { kind: "loggedIn", title: "", bodyText: "" };
         }
         await page.waitForTimeout(1000);
-     CHALLENGE_DETECT 
       }
       return { kind: "login", title: "", bodyText: "" };
     };
@@ -2417,10 +2416,9 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
       }).catch(() => false);
       if (clicked) {
         await page.waitForTimeout(1000);
-     CHALLENGE_DETECT 
         /* the lib's detector is the same rules.successText check, kept as a
            single pinned implementation so the test suite governs both doors */
-        const verify = await verifySubmission(page, site);
+        const verify = await verifySubmission(page, site, target);
         return { auto: verify.auto, note: verify.note };
       }
       /* still stuck: surface WHY (LinkedIn's validation error if present, else
@@ -2459,10 +2457,7 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
       if (healed) {
         await clickButton(target, healed, null).catch(() => {});
         await page.waitForTimeout(1000);
-     CHALLENGE_DETECT 
-        const pageBodyH = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-        const frameBodyH = target !== page ? await target.evaluate(() => document.body?.innerText ?? "").catch(() => "") : "";
-        const verifyH = await verifySubmission(page, site);
+        const verifyH = await verifySubmission(page, site, target);
         if (verifyH.auto) {
           const rawName = (await healed.innerText({ timeout: 2000 }).catch(() => "") || "").replace(/\s+/g, " ").trim();
           if (rawName) await persistHeal(RUN_HOST || site, { respondentName: rawName, role: "button", confidence: 0.9, __intent: "submit this job application" });
@@ -2488,14 +2483,9 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
     if (emptyRequired.length) return { auto: false, note: `cannot auto-submit — required fields empty: ${emptyRequired.join(", ")}` };
     await clickButton(target, btn, rules.submitButtonText ?? rules.applyButtonText);
     await page.waitForTimeout(1000);
-     CHALLENGE_DETECT 
     /* success may render in the form frame (embedded Greenhouse) or replace
-       the whole page — read BOTH, positive evidence only */
-    const pageBody = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "");
-    const frameBody = target !== page ? await target.evaluate(() => document.body?.innerText ?? "").catch(() => "") : "";
-    /* same single pinned detector — page body + form frame BOTH count as
-       success evidence (embedded Greenhouse renders in the frame) */
-    const verify = await verifySubmission(page, site);
+       the whole page — the detector reads BOTH and needs positive evidence */
+    const verify = await verifySubmission(page, site, target);
     return { auto: verify.auto, note: verify.note };
   }
   return { auto: false, note: "review gate — human submits" };

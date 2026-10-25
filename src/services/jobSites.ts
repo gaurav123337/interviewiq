@@ -276,7 +276,7 @@ export async function getUserActivity(userId: string): Promise<UserActivity> {
 export interface SiteCredential {
   id: string;
   label: string;
-  kind: "password" | "oauth" | "otp" | "manual";
+  kind: "password" | "oauth" | "otp" | "totp" | "manual";
   username: string | null;
   secret_prefix: string | null;
   bound_sites: string;

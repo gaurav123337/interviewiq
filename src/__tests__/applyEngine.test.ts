@@ -3,7 +3,7 @@
    The Playwright driver (auto-apply-jobs.mjs) is local-only and untestable in
    CI; everything safety-critical (submit gates, fail-closed classification,
    never-invent-answers) lives in the pure lib and is pinned here. */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   SITE_RULES, siteFromUrl, classifyQuestion, draftAnswer,
   valueMatchesList, newReport, recordResult, reportLine, buildReportMarkdown, buildApplyReportSql,
@@ -17,7 +17,7 @@ import {
   classifyOutcome, outcomePrior, outcomeRowShouldRecord, trackerRowLinkRe, outcomeDigestLines,
   matchSiteRow, cardAgeText, POSTED_AGE_TEXT_RE,
   spendCount, budgetGate, isQuietHours, jobPassesFilters, parseSalary, seniorityOf,
-  extractJdSkills, detectSubmissionSuccess,
+  extractJdSkills, detectSubmissionSuccess, totp,
   boardSuspensionRule, suspensionDigestLines, SENIORITY_LADDER, DEFAULT_DAILY_CAP, DEFAULT_WEEKLY_CAP,
   instaSkip, instaMatchFromCardText, boardMatchSkip, boardMatchOpt, linkedinMatchFromDetailText, naukriMatchFromCardText, BOARD_MATCH_SITES, judgeSavesDigestLines,
   maxAgeDaysOf, olderThanMaxAge, postedAgeChip, passesAgeFilter, cleanPostingTitle,
@@ -1817,5 +1817,30 @@ describe("Tier 4 — autoSubmitTrustVerdict / autoSubmitTrustPatch", () => {
     }));
     expect(adapted.slice(-1)[0].unknownModeled).toBe(true);
     expect(adapted[0].unknownModeled).toBe(false);
+  });
+});
+
+
+describe("totp — RFC 6238 codes from a stored base32 credential", () => {
+  it("matches the RFC vector (T=59s → 287082)", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(59_000);
+    try {
+      expect(totp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")).toBe("287082");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("accepts the lowercase/spaced/padded seeds password managers export", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(59_000);
+    try {
+      expect(totp("gezd gnbv gy3t qojq gezd gnbv gy3t qojq====")).toBe("287082");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("fails loudly instead of emitting a code for a non-base32 seed", () => {
+    expect(() => totp("not a base32 secret!!")).toThrow(/invalid base32 TOTP secret/);
   });
 });

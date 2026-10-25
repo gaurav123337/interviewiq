@@ -9,13 +9,20 @@ create table if not exists public.site_credentials (
   id uuid primary key default gen_random_uuid(),
   label text not null,
   kind text not null default 'password' check (kind in ('password','oauth','otp','totp','manual')),
-  last_verified_at timestamptz null
+  last_verified_at timestamptz null,
   username text,
   secret text,
   notes text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+/* existing installs predate both additions — create table if not exists is a
+   no-op there, and the inline check below only covers fresh databases */
+alter table public.site_credentials add column if not exists last_verified_at timestamptz;
+alter table public.site_credentials drop constraint if exists site_credentials_kind_check;
+alter table public.site_credentials add constraint site_credentials_kind_check
+  check (kind in ('password','oauth','otp','totp','manual'));
 
 alter table public.site_credentials enable row level security;
 
@@ -51,7 +58,7 @@ create or replace function public.admin_put_credential(
 declare v_id uuid;
 begin
   if not public.is_admin() then raise exception 'forbidden'; end if;
-  if p_kind not in ('password','oauth','otp','manual') then raise exception 'bad kind'; end if;
+  if p_kind not in ('password','oauth','otp','totp','manual') then raise exception 'bad kind'; end if;
   if p_id is null then
     insert into public.site_credentials (label, kind, username, secret)
     values (left(trim(p_label), 80), p_kind, nullif(trim(coalesce(p_username,'')), ''), p_secret)
@@ -91,22 +98,20 @@ language sql security definer set search_path = public as $$
   select c.label, c.kind, c.username, c.secret
   from public.job_sites s
   join public.site_credentials c on c.id = s.credential_id
-  where s.host = lower(replace(trim(p_host), '^www\.', ''))
+    where s.host = regexp_replace(lower(trim(p_host)), '^www\.', '')
   limit 1;
 $$;
 
 create or replace function public.engine_update_credential_last_verified(p_host text)
 returns void language sql security definer set search_path = public as $$
-begin
   update public.site_credentials
   set last_verified_at = now()
   where id = (
     select s.credential_id
     from public.job_sites s
-    where s.host = lower(replace(trim(p_host), '^www\.', ''))
+    where s.host = regexp_replace(lower(trim(p_host)), '^www\.', '')
     limit 1
   );
-end;
 $$;
 
 /* ── add a job URL from the app: manual additions are DELIBERATE (not
@@ -118,7 +123,7 @@ begin
   if not public.is_admin() then raise exception 'forbidden'; end if;
   v_host := lower(substring(p_jobs_url from '^https?://([^/]+)'));
   if v_host is null or v_host = '' then raise exception 'invalid URL'; end if;
-  v_host := replace(v_host, '^www\.', '');
+  v_host := regexp_replace(v_host, '^www\.', '');
   select status into v_existing from public.job_sites where host = v_host;
   if v_existing is not null then
     if v_existing = 'disabled' or v_existing = 'dead' then
@@ -144,3 +149,5 @@ grant execute on function public.admin_delete_credential(uuid) to authenticated;
 grant execute on function public.admin_bind_credential(text, uuid) to authenticated;
 grant execute on function public.admin_add_job_site(text, text) to authenticated;
 grant execute on function public.engine_credential_for_site(text) to service_role;
+revoke execute on function public.engine_update_credential_last_verified(text) from anon, public, authenticated;
+grant execute on function public.engine_update_credential_last_verified(text) to service_role;
