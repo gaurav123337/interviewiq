@@ -1,0 +1,38 @@
+[general]
+host = "::"
+port = 8080
+# Wasmer Edge mounts the Staticfile root here; keep /public even though the
+# local build output is dist/ (Staticfile: root: dist).
+root = "/public"
+log-level = "error"
+cache-control-headers = true
+compression = true
+page404 = "./404.html"
+# The app routes with window.location.hash, so deep links already hit
+# index.html; this keeps unknown paths from 404ing the PWA shell anyway.
+page-fallback = "./index.html"
+directory-listing = false
+redirect-trailing-slash = true
+compression-static = true
+threads-multiplier = 1
+grace-period = 0
+log-remote-address = false
+
+[advanced]
+# Vite emits content-hashed files under /assets, safe to cache forever.
+# index.html and the service worker must revalidate so a deploy is picked up
+# without waiting for the old shell to expire.
+[[advanced.headers]]
+source = "/assets/**"
+[advanced.headers.headers]
+Cache-Control = "public, max-age=31536000, immutable"
+
+[[advanced.headers]]
+source = "/index.html"
+[advanced.headers.headers]
+Cache-Control = "no-cache"
+
+[[advanced.headers]]
+source = "/sw.js"
+[advanced.headers.headers]
+Cache-Control = "no-cache"

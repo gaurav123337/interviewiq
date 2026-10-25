@@ -43,3 +43,8 @@ Thumbs.db
 apply-profile.json
 provider-base-push.mjs
 freebuff-apply-state.json
+
+# Wasmer CLI + downloaded release artifacts (local deploy tooling)
+.wasmer/
+.wasmer-download/
+.wasmer-token
