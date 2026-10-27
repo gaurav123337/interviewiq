@@ -130,8 +130,21 @@ describe("redeem grant code", () => {
     expect(getTier()).toBe("pro");
   });
 
-  it("maps server errors to friendly messages", async () => {
+  it("keeps the generic fallback when the validator returns no message", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: { message: "invalid_code" } });
+    rpc.mockResolvedValueOnce({ data: [{ code: "FF", discount_pct: 0, valid: false, message: null }], error: null });
+    const { redeemGrant } = await import("../services/entitlement");
+    const r = await redeemGrant("ff");
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("doesn't exist");
+    expect(r.error).not.toContain("expired");
+    expect(r.error).not.toContain("fully used");
+    expect(rpc).toHaveBeenLastCalledWith("validate_coupon", { p_code: "FF" });
+  });
+
+  it("keeps the generic fallback when the validator call fails", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "invalid_code" } });
+    vi.spyOn(await import("../services/billing/coupons"), "validateCoupon").mockRejectedValueOnce(new Error("validate_coupon is offline"));
     const { redeemGrant } = await import("../services/entitlement");
     const r = await redeemGrant("IQGRANT-NOPE");
     expect(r.ok).toBe(false);
@@ -146,8 +159,31 @@ describe("redeem grant code", () => {
     const { redeemGrant } = await import("../services/entitlement");
     const r = await redeemGrant("ff");
     expect(r.ok).toBe(false);
-    expect(r.error).toContain("Upgrade");
     expect(r.error).toContain("100");
+    expect(r.error).toContain("Apply");
+    expect(r.error).toContain("Upgrade");
+    expect(rpc).toHaveBeenLastCalledWith("validate_coupon", { p_code: "FF" });
+  });
+
+  it("passes an expired coupon's message through", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "invalid_code" } });
+    rpc.mockResolvedValueOnce({ data: [{ code: "FF", discount_pct: 0, valid: false, message: "Code expired" }], error: null });
+    const { redeemGrant } = await import("../services/entitlement");
+    const r = await redeemGrant("ff");
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("expired");
+    expect(r.error).not.toContain("doesn't exist");
+    expect(rpc).toHaveBeenLastCalledWith("validate_coupon", { p_code: "FF" });
+  });
+
+  it("passes a fully-used coupon's message through", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "invalid_code" } });
+    rpc.mockResolvedValueOnce({ data: [{ code: "FF", discount_pct: 0, valid: false, message: "Code fully used" }], error: null });
+    const { redeemGrant } = await import("../services/entitlement");
+    const r = await redeemGrant("ff");
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("fully used");
+    expect(r.error).not.toContain("doesn't exist");
     expect(rpc).toHaveBeenLastCalledWith("validate_coupon", { p_code: "FF" });
   });
 

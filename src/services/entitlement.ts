@@ -160,8 +160,12 @@ export async function redeemGrant(code: string): Promise<{ ok: boolean; error?: 
       if (coupon?.valid) {
         return {
           ok: false,
-          error: `That's a checkout coupon (−${coupon.discountPct}% at checkout), not a Pro code — apply it with Apply in the Upgrade dialog.`
+          error: `That's a checkout coupon (−${coupon.discountPct}% off with the Apply button in the Upgrade dialog), not a Pro code — redeem it at checkout.`
         };
+      }
+      if (coupon?.message) {
+        const fm = coupon.message.endsWith(".") ? coupon.message : coupon.message + ".";
+        return { ok: false, error: fm };
       }
     }
     const friendly = msg.includes("already_used") ? "That code was already used." : msg.includes("invalid_code") ? "That code doesn't exist — double-check it." : msg.includes("expired") ? "That code has expired." : error.message;
