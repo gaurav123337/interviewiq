@@ -1,0 +1,30 @@
+/* Public build fingerprint — set at build time and surfaced in the app's
+   Settings and Account screens so users and admins can tell at a glance
+   whether production and staging are running the same release. */
+
+export type BuildFingerprint = Readonly<{
+  version: string;
+  shortCommit?: string;
+  buildDate?: string;
+  environment?: string;
+}>;
+
+export const BUILD: BuildFingerprint = (() => {
+  const fromEnv = (key: keyof BuildFingerprint): string | undefined => {
+    if (typeof import.meta === "undefined" || typeof import.meta.env === "undefined") return undefined;
+    // vite.config.ts injects these under import.meta.env so both the built
+    // app and the dev server can read them from the same shape.
+    const raw = (import.meta.env as unknown as Record<string, unknown>)[`__APP_${key.toUpperCase()}`];
+    return raw != null && typeof raw === "string" ? raw : undefined;
+  };
+
+  return {
+    version: fromEnv("version") ?? "dev",
+    shortCommit: fromEnv("shortCommit") ?? "dev",
+    buildDate: fromEnv("buildDate") ?? new Date().toISOString(),
+    environment: fromEnv("environment") ?? "production",
+    stagingKey: fromEnv("stagingKey") ?? "",
+    stagingUrl: fromEnv("stagingUrl") ?? "",
+    staging: fromEnv("staging") ?? "",
+  };
+})();

@@ -1,0 +1,17 @@
+/* Build-time globals injected by vite.config.ts `define` into
+   `import.meta.env` and read in src/services/build.ts.
+   These are present in the built app; dev and tests should still
+   resolve them through Vite so typing is accurate even locally. */
+
+interface ImportMetaEnv {
+  readonly __APP_VERSION?: string;
+  readonly __APP_SHORT_COMMIT?: string;
+  readonly __APP_BUILD_DATE?: string;
+  readonly __APP_ENVIRONMENT?: string;
+  readonly __APP_STAGING_KEY?: string;
+  readonly __APP_STAGING_URL?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

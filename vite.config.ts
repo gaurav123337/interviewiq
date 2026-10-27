@@ -75,5 +75,24 @@ export default defineConfig({
        test) — vitest must not try to collect them */
     exclude: ["**/node_modules/**", "**/dist/**", "**/supabase/**"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"]
-  }
+  },
+  define: (
+    () => {
+      // capture at module init so we pin the version and commit for this build
+      const { execSync } = require("child_process");
+      const path = require("path");
+      const pkg = require(path.resolve(__dirname, "package.json"));
+      const shortCommit = execSync("git rev-parse --short HEAD", { cwd: __dirname }).toString().trim();
+      const version = `${pkg.version}+${shortCommit}`;
+      return {
+        "import.meta.env.__APP_VERSION": JSON.stringify(version),
+        "import.meta.env.__APP_SHORT_COMMIT": JSON.stringify(shortCommit),
+        "import.meta.env.__APP_BUILD_DATE": JSON.stringify(new Date().toISOString()),
+        "import.meta.env.__APP_ENVIRONMENT": JSON.stringify("production"),
+        "import.meta.env.__APP_STAGING_KEY": JSON.stringify(""),
+        "import.meta.env.__APP_STAGING_URL": JSON.stringify(""),
+        "import.meta.env.__APP_STAGING": JSON.stringify("")
+      };
+    }
+  )(),
 });

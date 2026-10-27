@@ -37,14 +37,80 @@ editorial-buckets.json
 drafts-editorial-plan.mjs
 editorial-plan.md
 
-# OS noise
-.DS_Store
-Thumbs.db
-apply-profile.json
-provider-base-push.mjs
-freebuff-apply-state.json
+# temporary file backlog used during interrupted tool-result sessions
+Claude-plan.txt
+UI_IMPROVEMENTS.md
+deno.lock
+docs/contrast-check.html
+freebuff-apply-answers.json
+local-toggle-verify.mjs
+scripts/create-test-admin.mjs
+src/__tests__/schemaCoverage.test.ts
+src/services/build-env.d.ts.1dbab2f7
+src/services/build-env.d.ts.stashed
+src/services/build.spec.ts.stashed
+src/services/build.ts.1dbab2f7
+src/services/build.ts.stashed
+.vite/
+.rehearsal.txt
+.gitignore.1dbab2f7
+.gitignore.87dcaeb2
+.gitignore.head
+.github/workflows/deploy.yml.1dbab2f7
+.github/workflows/deploy.yml.87dcaeb2
+.github/workflows/deploy.yml.checkout
+.github/workflows/deploy.yml.head
+package.json.1dbab2f7
+package.json.87dcaeb2
+package.json.head
+vite.config.ts.1dbab2f7
+vite.config.ts.87dcaeb2
+vite.config.ts.head
+src/__tests__/schemaCoverage.test.ts
+supabase/.temp/
+freebuff-apply-answers.json
+freebuff-apply-relay-profile/
+rehearsal-runner.sh
+"updated plan.txt"
 
-# Wasmer CLI + downloaded release artifacts (local deploy tooling)
-.wasmer/
-.wasmer-download/
-.wasmer-token
+# Freebuff Sites deploy build artifacts
+freebuff-sites-build/
+
+# Vite dev instrumentation snapshot (tool-result checkpoint artifact)
+.vite/instrumented-snapshot.txt
+
+# temporary file backlog used during interrupted tool-result sessions
+Claude-plan.txt
+UI_IMPROVEMENTS.md
+deno.lock
+docs/contrast-check.html
+freebuff-apply-answers.json
+local-toggle-verify.mjs
+scripts/create-test-admin.mjs
+src/__tests__/schemaCoverage.test.ts
+src/services/build-env.d.ts.1dbab2f7
+src/services/build-env.d.ts.stashed
+src/services/build.spec.ts.stashed
+src/services/build.ts.1dbab2f7
+src/services/build.ts.stashed
+.vite/
+.rehearsal.txt
+.gitignore.1dbab2f7
+.gitignore.87dcaeb2
+.gitignore.head
+.github/workflows/deploy.yml.1dbab2f7
+.github/workflows/deploy.yml.87dcaeb2
+.github/workflows/deploy.yml.checkout
+.github/workflows/deploy.yml.head
+package.json.1dbab2f7
+package.json.87dcaeb2
+package.json.head
+vite.config.ts.1dbab2f7
+vite.config.ts.87dcaeb2
+vite.config.ts.head
+src/__tests__/schemaCoverage.test.ts
+supabase/.temp/
+freebuff-apply-answers.json
+freebuff-apply-relay-profile/
+rehearsal-runner.sh
+"updated plan.txt"
