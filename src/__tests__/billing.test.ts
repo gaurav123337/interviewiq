@@ -138,6 +138,19 @@ describe("redeem grant code", () => {
     expect(r.error).toContain("doesn't exist");
   });
 
+  it("points a coupon at checkout instead of claiming the code doesn't exist", async () => {
+    /* a coupon is the same shape as a grant code, so the grant path's answer
+       ("invalid_code") is misleading — the validator knows what it really is */
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "invalid_code" } });
+    rpc.mockResolvedValueOnce({ data: [{ code: "FF", discount_pct: 100, valid: true, message: "ok" }], error: null });
+    const { redeemGrant } = await import("../services/entitlement");
+    const r = await redeemGrant("ff");
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("Upgrade");
+    expect(r.error).toContain("100");
+    expect(rpc).toHaveBeenLastCalledWith("validate_coupon", { p_code: "FF" });
+  });
+
   it("requires a signed-in account", async () => {
     signedIn.mockReturnValueOnce({ user: null, configured: true, syncing: false, error: null, oauth: [] });
     const { redeemGrant } = await import("../services/entitlement");

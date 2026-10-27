@@ -5,6 +5,7 @@
    test-mode fallback (see CONFIG.features.testLicensing). */
 
 import { getCloudState, getSupabaseClient } from "./cloud";
+import { validateCoupon } from "./billing/coupons";
 import { adminUnlockedActive, getTier, setTier, type Tier } from "./entitlements";
 import { STORAGE_KEYS, storageGet } from "./storage";
 import { CONFIG } from "../config";
@@ -144,9 +145,25 @@ export async function redeemGrant(code: string): Promise<{ ok: boolean; error?: 
   if (!client || !getCloudState().user) {
     return { ok: false, error: "Sign in to your cloud account first — codes are tied to your account." };
   }
-  const { data, error } = await client.rpc("redeem_grant", { p_code: code.trim().toUpperCase() });
+  const normalized = code.trim().toUpperCase();
+  const { data, error } = await client.rpc("redeem_grant", { p_code: normalized });
   if (error) {
     const msg = (error.message ?? "").toLowerCase();
+    /* A checkout coupon and a grant code are the same shape (short uppercase
+       string), so pasting a coupon into this box is the mistake to expect —
+       and `redeem_grant` can only answer "unknown code", because coupons live
+       in a different table (supabase/billing3.sql) and lexically look identical
+       here. Ask the coupon validator — read-only, security definer, callable by
+       any signed-in user — before telling someone their code doesn't exist. */
+    if (msg.includes("invalid_code")) {
+      const coupon = await validateCoupon(normalized).catch(() => null);
+      if (coupon?.valid) {
+        return {
+          ok: false,
+          error: `That's a checkout coupon (−${coupon.discountPct}% at checkout), not a Pro code — apply it with Apply in the Upgrade dialog.`
+        };
+      }
+    }
     const friendly = msg.includes("already_used") ? "That code was already used." : msg.includes("invalid_code") ? "That code doesn't exist — double-check it." : msg.includes("expired") ? "That code has expired." : error.message;
     return { ok: false, error: friendly };
   }
