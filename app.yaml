@@ -1,0 +1,11 @@
+# Wasmer Edge app spec — the deployment target for the InterviewIQ frontend.
+# `wasmer deploy` in this directory publishes wasmer.toml's package and makes the
+# result the app's active version. Owner/name must match the existing app so the
+# interviewassist.wasmer.app alias keeps pointing at it.
+kind: wasmer.io/App.v0
+owner: gaurav123337
+name: interviewiq
+# `.` = the local wasmer.toml package gets published and deployed (the CLI's
+# current behaviour; naming the same package here is deprecated).
+package: .
+app_id: da_KwGIWtMUZQko

@@ -23,6 +23,15 @@
 
 const API = "https://api.supabase.com/v1";
 const APP_URL = "https://gaurav123337.github.io/interviewiq";
+/* Every origin the PWA is served from, and the one GoTrue should fall back to.
+   An origin missing here is not a recoverable browser error: Supabase ignores
+   the `redirect_to` the app asks for and sends the OAuth callback to site_url
+   instead. That is how a user who completes Google sign-in lands on
+   http://localhost:3000 — the GoTrue default for site_url, where nothing is
+   listening. The Wasmer Edge alias is the live production origin. */
+const SITE_URL = "https://interviewassist.wasmer.app";
+const APP_ORIGINS = [APP_URL, SITE_URL];
+const REDIRECT_URLS = [...APP_ORIGINS, "http://127.0.0.1:8137"].map((o) => `${o}/**`);
 const REGION = process.env.SUPABASE_REGION || "us-east-1";
 
 const token = process.env.SUPABASE_ACCESS_TOKEN;
@@ -112,16 +121,24 @@ async function main() {
   await req(`/projects/${ref}/database/query`, { method: "POST", body: JSON.stringify({ query: sql }) });
   console.log(`${green("✓")} Ran supabase/schema.sql (user_sync + RLS).`);
 
-  /* allow the app's URLs as auth redirect targets (PATCH + comma-separated string per the API) */
+  /* allow the app's URLs as auth redirect targets (PATCH + comma-separated string per the API).
+     site_url is set too: it is the fallback used when a redirect_to is not
+     allow-listed, so leaving it at the GoTrue default strands users on
+     localhost:3000. */
   try {
     await req(`/projects/${ref}/config/auth`, {
       method: "PATCH",
-      body: JSON.stringify({ uri_allow_list: `${APP_URL}/**,http://127.0.0.1:8137/**` })
+      body: JSON.stringify({
+        site_url: SITE_URL,
+        uri_allow_list: REDIRECT_URLS.join(",")
+      })
     });
-    console.log(`${green("✓")} Auth redirect allow-list set (${APP_URL}/**).`);
+    console.log(`${green("✓")} Auth URL config set — site_url ${SITE_URL}, redirects ${REDIRECT_URLS.join(", ")}.`);
   } catch (e) {
-    console.warn(yellow(`⚠ Could not set redirect allow-list via API (${e.message.slice(0, 120)}).`));
-    console.warn(yellow(`   Set it manually: Dashboard → Authentication → URL Configuration → add ${APP_URL}/**`));
+    console.warn(yellow(`⚠ Could not set the auth URL config via API (${e.message.slice(0, 120)}).`));
+    console.warn(yellow(`   Set it manually: Dashboard → Authentication → URL Configuration`));
+    console.warn(yellow(`   Site URL: ${SITE_URL}`));
+    console.warn(yellow(`   Redirect URLs: ${REDIRECT_URLS.join(", ")}`));
   }
 
   console.log(`\n${green("Done!")} Paste this into src/config.ts:\n`);

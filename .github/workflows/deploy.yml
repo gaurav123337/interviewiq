@@ -67,78 +67,156 @@ jobs:
           # Preserve files that aren't in dist/ (CNAME, etc.)
           keep_files: false
 
+      # ── Deploy the same dist/ to Wasmer Edge (optional) ────────────────
+      # This runs on the SAME built dist/ that gh-pages just received, so the
+      # two targets cannot drift onto different bundles. It is additive: the
+      # Pages deploy above is untouched and still publishes every push.
+      #
+      # Skipped, with a visible notice, when WASMER_TOKEN is absent. The check
+      # lives in the script on purpose: neither `secrets` nor a step's own `env`
+      # is available to that step's `if`, so `if:` would silently never match.
+      #
+      # wasmer.toml packages dist/ behind Static Web Server, using the cache
+      # rules in settings/config.toml; app.yaml pins the app id so the
+      # interviewassist.wasmer.app alias keeps pointing at the same app.
+      - name: Deploy to Wasmer Edge
+        timeout-minutes: 10
+        env:
+          WASMER_TOKEN: ${{ secrets.WASMER_TOKEN }}
+        run: |
+          if [ -z "$WASMER_TOKEN" ]; then
+            echo "::notice title=Wasmer Edge::WASMER_TOKEN is not set - skipping the Wasmer deploy"
+            exit 0
+          fi
+          # Pinned Edge CLI, unpacked from the tagged release asset, instead of
+          # `curl https://get.wasmer.io | sh`: that installer re-resolves
+          # $RELEASES_URL/latest every run, so CI drove a production deploy with
+          # whatever CLI happened to be newest that morning, and it piped a
+          # remote script into sh with the deploy token sitting in the env.
+          # WASMER_VERSION is what the installer would have picked today and is
+          # the version the interviewassist app was last deployed with — bump it
+          # deliberately.
+          #
+          # The digest pins the artifact, not its provenance: Wasmer publishes no
+          # checksum file for v7.5.0, so this is the SHA-256 of the asset as
+          # fetched on the pin date. If GitHub ever regenerates the asset, the
+          # digest check fails the deploy instead of silently swapping the binary.
+          WASMER_VERSION=v7.5.0
+          WASMER_SHA256=23f99818deaad93859f8bb8292af81f0c39f25aea19eaccfb72fc7c9e8a3fae9
+          curl -sSfL -o "$RUNNER_TEMP/wasmer.tar.gz" \
+            "https://github.com/wasmerio/wasmer/releases/download/${WASMER_VERSION}/wasmer-linux-amd64.tar.gz"
+          echo "${WASMER_SHA256}  $RUNNER_TEMP/wasmer.tar.gz" | sha256sum -c -
+          # the installer unpacks the whole archive and puts bin/ on PATH; keep
+          # the same layout so the CLI still finds its sibling lib/ if it needs it
+          mkdir -p "$RUNNER_TEMP/wasmer"
+          tar -xzf "$RUNNER_TEMP/wasmer.tar.gz" -C "$RUNNER_TEMP/wasmer"
+          export PATH="$RUNNER_TEMP/wasmer/bin:$PATH"
+          # fails the step loudly if the unpacked binary cannot run, before
+          # anything reaches the deploy command below
+          wasmer --version
+          # --bump publishes a new package version. The CLI confirms the publish
+          # on stdin, and CI has no TTY, so answer yes. The command then waits
+          # for the new version to become reachable, which is the check that the
+          # deploy actually took effect.
+          # pipefail is turned off for this line only: once the CLI exits, `yes`
+          # dies of SIGPIPE, and under pipefail that would fail an otherwise
+          # successful deploy.
+          set +o pipefail
+          yes | wasmer deploy --owner gaurav123337 --app-name interviewiq --bump
+
       # ── Deploy Supabase edge functions (optional) ──────────────────────
+      # Skipped, with a visible notice, when SUPABASE_ACCESS_TOKEN is absent.
+      #
+      # The gate is in the script, NOT `if: env.SUPABASE_ACCESS_TOKEN != ''` as
+      # it used to be: a step's own `env` is not set when its `if` is evaluated,
+      # so that condition was always false and CI never deployed a single one of
+      # these ~20 functions — they only ever shipped by hand, which is exactly
+      # the silent drift this list exists to prevent. (Same reason the Wasmer
+      # step above gates in its script.)
       - name: Deploy edge functions (Supabase)
-        if: env.SUPABASE_ACCESS_TOKEN != ''
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          npx supabase functions deploy import-job \
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::notice title=Supabase edge functions::SUPABASE_ACCESS_TOKEN is not set - skipping the function deploy"
+            exit 0
+          fi
+          # The CLI is a pinned devDependency (supabase 2.122.0 in
+          # package.json), so this runs the exact version recorded in
+          # package-lock.json rather than whatever `npx` would have fetched that
+          # day. It survives `npm ci --ignore-scripts`: the platform binary
+          # ships as an optionalDependency tarball, not an install script.
+          # Resolving through PATH — not `npx` — means a missing dependency
+          # fails loudly here instead of silently pulling a newer CLI in the
+          # middle of a deploy.
+          export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
+          supabase --version
+          supabase functions deploy import-job \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy jobs-fetch \
+          supabase functions deploy jobs-fetch \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy send-recommendations-digest \
+          supabase functions deploy send-recommendations-digest \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy send-apply-digest \
+          supabase functions deploy send-apply-digest \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy send-rag-digest \
+          supabase functions deploy send-rag-digest \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy submit-resource \
+          supabase functions deploy submit-resource \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy revalidate-resources \
+          supabase functions deploy revalidate-resources \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy trends-refresh \
+          supabase functions deploy trends-refresh \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy send-security-digest \
+          supabase functions deploy send-security-digest \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy mfa-recovery \
+          supabase functions deploy mfa-recovery \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy recovery-backup \
+          supabase functions deploy recovery-backup \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy secret-status \
+          supabase functions deploy secret-status \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy test-email \
+          supabase functions deploy test-email \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
-          npx supabase functions deploy pay-tip \
+          supabase functions deploy pay-tip \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
           # embed — server-side embeddings proxy for keyless RAG queries.
           # --no-verify-jwt so the gateway forwards the request and the function
           # verifies the caller itself (callerFrom → real getUser).
-          npx supabase functions deploy embed \
+          supabase functions deploy embed \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
           # article-fetch — SSRF-guarded fetch of a user-pasted article URL.
           # --no-verify-jwt so the gateway forwards the request and the function
           # verifies the signed-in caller itself (requireUser → real getUser).
-          npx supabase functions deploy article-fetch \
+          supabase functions deploy article-fetch \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
           # content-index — admin bulk-indexer for KB content items. Was missing
           # from this list (deployed by hand), so it could drift silently; register
           # it here so it ships every deploy. requireAdmin-gated; --no-verify-jwt so
           # the function verifies the caller itself.
-          npx supabase functions deploy content-index \
+          supabase functions deploy content-index \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
           # seed-rag — admin one-click seed of the RAG starter corpus using the
           # shared, server-configured embeddings provider (no service-role key in a
           # shell). requireAdmin-gated; --no-verify-jwt so the function verifies the
           # caller itself.
-          npx supabase functions deploy seed-rag \
+          supabase functions deploy seed-rag \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
           # ai-chat — the cloud AI proxy (chat + GET /models + the admin-gated
@@ -147,6 +225,6 @@ jobs:
           # so it ships every deploy. --no-verify-jwt: the function authenticates
           # callers itself (Bearer != anon) and requireAdmin-gates the config
           # actions.
-          npx supabase functions deploy ai-chat \
+          supabase functions deploy ai-chat \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt

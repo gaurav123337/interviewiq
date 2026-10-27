@@ -103,7 +103,7 @@ SUPABASE_ACCESS_TOKEN=sb_secret_... SUPABASE_ORG_ID=<org-id> node scripts/setup-
 
 Dated migrations under `supabase/migrations/` (e.g. tip payments, article normalizer) apply on top.
 
-**One-command alternative — `scripts/setup-live.js`.** Once the base project + `admin.sql` are in place (via `setup-supabase.js` then `setup-admin.js`), one command applies the remaining feature schema (`jobs.sql`, `jobs-fetch-reports.sql`, etc. — all idempotent), generates the Edge-Function secrets, and schedules the pg_cron refresh jobs. Every placeholder — project URL, anon key, and shared secrets — is substituted automatically, so no cron SQL needs hand-editing:
+**One-command alternative — `scripts/setup-live.js`.** Once the base project + `admin.sql` are in place (via `setup-supabase.js` then `setup-admin.js`), one command applies the full feature schema (every feature `.sql` plus the dated migrations, in dependency order — all idempotent, so re-running is safe), generates the Edge-Function secrets, and schedules the pg_cron refresh jobs. Every placeholder — project URL, anon key, and shared secrets — is substituted automatically, so no cron SQL needs hand-editing:
 
 ```bash
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<ref> node scripts/setup-live.js
@@ -154,6 +154,19 @@ npm run eval:rag   # RAG retrieval golden-set regression gate
 CI (`.github/workflows/deploy.yml`, on push to `main`) is a hard gate: production `npm audit`, `npm run eval:rag`, `npm run typecheck` (app **and** tests), `npm run build`, the **full `npm test` suite (blocking)**, and `deno test supabase/functions/_shared/` for the edge shared code — then deploys `dist/` to **GitHub Pages** and (if `SUPABASE_ACCESS_TOKEN` is set) the Edge Functions. The `pre-push` hook mirrors these gates locally.
 
 To enable Pages deployment: repo Settings → Pages → Source → **GitHub Actions**. `vite.config.ts` uses a relative base (`./`), so `dist/` also serves from any subpath (Netlify, Vercel, Cloudflare Pages, S3…).
+
+### Deploy the frontend to Wasmer Edge
+
+The same build is published as a Wasmer Edge static site: [app.yaml](app.yaml) targets the `gaurav123337/interviewiq` app and [wasmer.toml](wasmer.toml) packages `dist/` behind Static Web Server, using the cache rules in [settings/config.toml](settings/config.toml) (content-hashed assets are `immutable`; `index.html` and `sw.js` are `no-cache` so a deploy is picked up without waiting for the old shell to expire). Only the frontend goes to Wasmer — the backend stays on Supabase and nothing in `supabase/` is part of that package.
+
+```bash
+npm run build
+wasmer deploy --owner gaurav123337 --app-name interviewiq --bump
+```
+
+The CLI keeps its login in `~/.wasmer`; `--bump` publishes a new package version, and `app.yaml` records the app id so owner/name cannot drift onto a different app.
+
+CI does the same on every push to `main`: the `Deploy to Wasmer Edge` step in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) ships the `dist/` that gh-pages just published, authenticating with the `WASMER_TOKEN` repository secret. Without that secret the step logs a notice and skips — the GitHub Pages deploy is unaffected either way.
 
 ## Project structure
 

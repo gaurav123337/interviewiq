@@ -1,0 +1,32 @@
+# Wasmer Edge package manifest for the InterviewIQ frontend.
+#
+# The app is the Vite build output only — the API is Supabase (Postgres, Auth and
+# the Edge Functions in supabase/functions), which is deployed separately and is
+# never part of this package. `wasmer deploy` builds this manifest from the local
+# tree and publishes it, so the released package contains exactly what
+# `npm run build` produced.
+#
+# dist/ mounts at /public inside the WASM filesystem. settings/config.toml sets
+# `root = "/public"` to match — the same mapping the official static-website
+# template uses (Staticfile keeps `root: dist` for local runs).
+[package]
+# Separate package from the dashboard's anybuild package of the same app: that one
+# is private, and Wasmer refuses to publish a public release under a private
+# package name. The app still deploys as gaurav123337/interviewiq.
+name = "gaurav123337/interviewiq-web"
+version = "0.1.0"
+description = "InterviewIQ — offline-first AI interview coach (React + Vite PWA)"
+
+[dependencies]
+# Static Web Server: reads Staticfile + settings/config.toml, serves dist/.
+"wasmer/static-web-server" = "1"
+
+# `[fs]` is a guest-path → host-path map. dist/ must mount at /public because
+# settings/config.toml sets root = "/public"; Staticfile and settings/ have to be
+# listed explicitly or they are left out of the package and Static Web Server
+# falls back to its defaults (max-age=86400 on index.html, max-age=31536000 on
+# sw.js — the stale-shell bug the config exists to prevent).
+[fs]
+public = "dist"
+Staticfile = "Staticfile"
+settings = "settings"
