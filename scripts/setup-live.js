@@ -34,14 +34,11 @@ const dim = (s) => `\x1b[90m${s}\x1b[0m`;
 
 const gen = () => globalThis.crypto.getRandomValues(new Uint8Array(32)).reduce((s, b) => s + b.toString(16).padStart(2, "0"), "");
 
-/* PREREQUISITE: admin.sql must already be applied (setup-supabase.js then
-   setup-admin.js) before this runs — it defines public.is_admin(), which the
-   RLS policies in security.sql, trends.sql, jobs.sql and jobs-fetch-reports.sql
-   all reference at CREATE POLICY time. admin.sql is intentionally NOT in this
-   list: its CREATE POLICY statements are unguarded, so re-applying it would
-   throw 42710 and break this script's re-run safety. jobs.sql +
-   jobs-fetch-reports.sql ARE idempotent (every policy has a drop-if-exists),
-   and are listed so the jobs tables exist before the cron is scheduled. */
+/* PREREQUISITE: apply schema.sql and admin.sql first (setup-supabase.js then
+   setup-admin.js); admin.sql defines public.is_admin(), referenced by several
+   policies below. The batch is intentionally limited to the feature schemas
+   required by the live setup flow; other supabase/*.sql files are standalone
+   SQL-editor operations or migrations, not part of this automated activation. */
 const SCHEMA_FILES = ["security.sql", "resources.sql", "trends.sql", "recovery-codes.sql", "jobs.sql", "jobs-fetch-reports.sql"];
 
 /* function slug → { secretName, value }  (value resolved below) */
