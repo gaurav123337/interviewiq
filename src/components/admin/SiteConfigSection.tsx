@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import {
   loadSiteConfig,
   saveSiteConfig,
-  resetSiteConfigCache,
   type SiteConfig,
 } from "../../services/siteConfig";
 import { toast } from "../../toast";
@@ -29,7 +28,6 @@ export function SiteConfigSection() {
     const ok = await saveSiteConfig(config);
     setSaving(false);
     if (ok) {
-      resetSiteConfigCache();
       toast("Site config saved ✓");
     } else {
       toast("Failed to save — check Supabase connection");

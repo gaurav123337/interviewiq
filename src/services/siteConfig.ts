@@ -118,6 +118,17 @@ const DEFAULT_CONFIG: SiteConfig = {
 
 let cachedConfig: SiteConfig | null = null;
 let configPromise: Promise<SiteConfig> | null = null;
+const listeners = new Set<(config: SiteConfig) => void>();
+
+export function subscribeSiteConfig(listener: (config: SiteConfig) => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function publishSiteConfig(config: SiteConfig): void {
+  cachedConfig = config;
+  for (const listener of listeners) listener(config);
+}
 
 /**
  * Load site config from Supabase (app_config table, key = 'site_config')
@@ -131,7 +142,10 @@ export async function loadSiteConfig(): Promise<SiteConfig> {
   try {
     const { getSupabaseClient } = await import("./cloud");
     const client = await getSupabaseClient();
-    if (!client) return DEFAULT_CONFIG;
+    if (!client) {
+      publishSiteConfig(DEFAULT_CONFIG);
+      return DEFAULT_CONFIG;
+    }
     
     const { data } = await client
       .from("app_config")
@@ -141,12 +155,14 @@ export async function loadSiteConfig(): Promise<SiteConfig> {
     
     if (data?.value) {
       const remote = typeof data.value === "string" ? JSON.parse(data.value) : data.value;
-      cachedConfig = { ...DEFAULT_CONFIG, ...remote };
-      return cachedConfig!;
+      const config = mergeSiteConfig(remote);
+      publishSiteConfig(config);
+      return config;
     }
   } catch {
     // Supabase not configured or table doesn't exist
   }
+  publishSiteConfig(DEFAULT_CONFIG);
   return DEFAULT_CONFIG;
 })();
   }
@@ -157,6 +173,19 @@ export async function loadSiteConfig(): Promise<SiteConfig> {
 /**
  * Save site config to Supabase (upsert)
  */
+function mergeSiteConfig(remote: Partial<SiteConfig>): SiteConfig {
+  return {
+    ...DEFAULT_CONFIG,
+    ...remote,
+    logo: { ...DEFAULT_CONFIG.logo, ...remote.logo },
+    header: { ...DEFAULT_CONFIG.header, ...remote.header },
+    footer: { ...DEFAULT_CONFIG.footer, ...remote.footer },
+    menus: { ...DEFAULT_CONFIG.menus, ...remote.menus },
+    hero: { ...DEFAULT_CONFIG.hero, ...remote.hero },
+    meta: { ...DEFAULT_CONFIG.meta, ...remote.meta },
+  };
+}
+
 export async function saveSiteConfig(config: SiteConfig): Promise<boolean> {
   try {
     const { getSupabaseClient } = await import("./cloud");
@@ -169,7 +198,9 @@ export async function saveSiteConfig(config: SiteConfig): Promise<boolean> {
     
     if (error) throw error;
     
-    cachedConfig = config;
+    const savedConfig = mergeSiteConfig(config);
+    publishSiteConfig(savedConfig);
+    configPromise = Promise.resolve(savedConfig);
     return true;
   } catch {
     return false;

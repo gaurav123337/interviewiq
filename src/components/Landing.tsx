@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { useWebVitals, PerfOverlay } from "./PerformanceMonitor";
 import { useApp } from "../store";
+import { DEFAULT_CONFIG, loadSiteConfig, subscribeSiteConfig, type SiteConfig } from "../services/siteConfig";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
 import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners, PopupBanners } from "./Testimonials";
@@ -34,6 +35,12 @@ export function Landing() {
   const { nav } = useApp();
   const vitals = useWebVitals();
   const [upgrade, setUpgrade] = useState(false);
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_CONFIG);
+  useEffect(() => {
+    const unsubscribe = subscribeSiteConfig(setSiteConfig);
+    void loadSiteConfig();
+    return unsubscribe;
+  }, []);
   /* admin-published pricing (app_config → pricing) — shows INR when
      published, falls back to the baked-in USD catalog */
   const [remotePrice, setRemotePrice] = useState<number | null>(null);
@@ -65,17 +72,17 @@ export function Landing() {
       {/* hero */}
       <section className="pt-10 pb-14 text-center sm:pt-16">
         <span className="mx-auto inline-flex items-center gap-2 rounded-full border border-acc1/40 bg-acc1/10 px-4 py-1.5 text-[12.5px] font-bold text-acctxt">
-          {t("landing.badge")}
+          {siteConfig.hero.badge || t("landing.badge")}
         </span>
         <h1 className="mx-auto mt-5 max-w-[820px] text-[clamp(32px,6vw,58px)] font-extrabold leading-[1.05] tracking-tight">
-          <Trans i18nKey="landing.heroTitle" components={{ 1: <span className="grad-text" />, 3: <span className="grad-text" /> }} />
+          {siteConfig.hero.title || <Trans i18nKey="landing.heroTitle" components={{ 1: <span className="grad-text" />, 3: <span className="grad-text" /> }} />}
         </h1>
         <p className="mx-auto mt-5 max-w-[640px] text-[15.5px] leading-relaxed text-mut">
-          {t("landing.heroDesc")}
+          {siteConfig.hero.description || t("landing.heroDesc")}
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <button className={btnPrimary + " px-8 py-3.5 text-[15.5px]"} onClick={() => nav("onboard")}>
-            {t("landing.startFree")}
+            {siteConfig.hero.ctaText || t("landing.startFree")}
           </button>
           <button className={btnGhost + " px-6 py-3.5 text-[15px]"} onClick={() => scrollTo("pricing")}>
             {t("landing.seePricing")}

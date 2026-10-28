@@ -17,6 +17,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Chip } from "./ui";
 import { initExtensionGuard } from "../services/extensionGuard";
+import { DEFAULT_CONFIG, loadSiteConfig, subscribeSiteConfig, type SiteConfig } from "../services/siteConfig";
 
 /* ------------------------------------------------------------------ */
 /* Lazy-loaded page components — split into separate chunks so the     */
@@ -97,6 +98,7 @@ export function App() {
   const [cloud, setCloud] = useState(getCloudState());
   const [sharePayload] = useState<string | null>(() => new URLSearchParams(window.location.search).get("share"));
   const [swUpdateReady, setSwUpdateReady] = useState(false);
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_CONFIG);
 
   /* listen for service worker updates — auto-reload after a short delay
      so the user always sees the latest version without manual action */
@@ -121,6 +123,12 @@ export function App() {
 
   /* detect browser extensions that hijack module imports */
   useEffect(() => { initExtensionGuard(); }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeSiteConfig(setSiteConfig);
+    void loadSiteConfig();
+    return unsubscribe;
+  }, []);
 
   /* keep the header avatar in sync with sign-in state */
   useEffect(() => subscribeCloud(setCloud), []);
@@ -258,8 +266,10 @@ export function App() {
       <header className="no-print sticky top-0 z-50 border-b border-line/10 bg-night/85 backdrop-blur-xl">
         <div className="mx-auto flex h-[60px] max-w-[1200px] items-center gap-3 px-4">
           <button className="flex items-center gap-2.5" onClick={() => nav("landing")}>
-            <span className="grid h-9 w-9 place-items-center rounded-xl grad-bg text-[18px] shadow-[0_6px_18px_rgba(99,102,241,.45)]">🎙️</span>
-            <span className="text-[17px] font-extrabold tracking-tight">Interview<span className="grad-text">IQ</span></span>
+            <span className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl grad-bg text-[18px] shadow-[0_6px_18px_rgba(99,102,241,.45)]">
+              {siteConfig.logo.icon.startsWith("http") ? <img src={siteConfig.logo.icon} alt="" className="h-full w-full object-cover" /> : siteConfig.logo.icon}
+            </span>
+            <span className="text-[17px] font-extrabold tracking-tight">{siteConfig.logo.text}</span>
           </button>
           <nav className="ml-4 hidden items-center gap-1 md:flex">
             {primaryTabs.map(t => (
@@ -356,7 +366,7 @@ export function App() {
       {view !== "landing" && (
         <footer className="no-print border-t border-line/10 px-4 pb-24 pt-6 md:pb-8">
           <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-3 text-[12px] text-mut sm:flex-row sm:justify-between">
-            <span className="font-extrabold">Interview<span className="grad-text">IQ</span> — AI Interview Coach</span>
+            <span className="font-extrabold">{siteConfig.footer.brand || `${siteConfig.logo.text} — ${siteConfig.logo.tagline}`}</span>
             <span className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("terms")}>Terms</button>
               <button className="transition-colors hover:text-ink" onClick={() => openPolicy("privacy")}>Privacy</button>
