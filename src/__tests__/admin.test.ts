@@ -38,6 +38,17 @@ describe("remote config", () => {
     expect(aiEnabled()).toBe(false);
   });
 
+  it("merges remote configuration updates without clearing unrelated sections", () => {
+    setRemoteConfig({ menuVisibility: { jobs: false }, features: { roadmap: false } });
+    setRemoteConfig({ menuVisibility: { jobs: true } });
+
+    expect(featureOn("roadmap")).toBe(false);
+    expect(featureOn("playground")).toBe(true);
+    expect(getLimits()).toEqual(BASE_LIMITS);
+    expect(storageGet<{ menuVisibility?: Record<string, boolean> }>(STORAGE_KEYS.remoteConfig, {}).menuVisibility)
+      .toEqual({ jobs: true });
+  });
+
   it("can switch the paywall off remotely", () => {
     setRemoteConfig({ features: { paywall: false } });
     expect(paywallOn()).toBe(false);

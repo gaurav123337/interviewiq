@@ -3,6 +3,8 @@ import { useApp } from "../store";
 import { POLICY_META, type PolicyId } from "../data/policies";
 import { getPolicyDoc } from "../services/policies";
 import { cardCls, Chip } from "./ui";
+import { CONFIG } from "../config";
+import { DEFAULT_CONFIG, loadSiteConfig, subscribeSiteConfig, type SiteConfig } from "../services/siteConfig";
 
 /* Tiny markdown-ish renderer for the policy bodies:
    "## " headings, "- " bullet blocks, **bold** inline, paragraphs. */
@@ -33,8 +35,15 @@ function inline(text: string): React.ReactNode {
 
 export function Legal() {
   const { nav } = useApp();
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_CONFIG);
+  useEffect(() => {
+    const unsubscribe = subscribeSiteConfig(setSiteConfig);
+    void loadSiteConfig();
+    return unsubscribe;
+  }, []);
   const fromHash = (): PolicyId => {
-    const h = window.location.hash.replace("#", "") as PolicyId;
+    const parts = window.location.hash.replace(/^#\/?/, "").split(/[/?#]/);
+    const h = (parts[0] === "legal" ? parts[1] : parts[0]) as PolicyId;
     return POLICY_META.some(m => m.id === h) ? h : "terms";
   };
   const [docId, setDocId] = useState<PolicyId>(fromHash);
@@ -96,7 +105,7 @@ export function Legal() {
         {blocks.map((b, i) => <div key={i}>{renderBlock(b)}</div>)}
         <div className="mt-8 border-t border-line/10 pt-4 text-[11.5px] text-mut">
           <Chip tone="ok">EFFECTIVE {meta.updatedAt}</Chip>
-          <span className="ml-2">© {new Date().getFullYear()} InterviewIQ. Questions? <span className="font-bold text-ink">gaurav.123337@gmail.com</span></span>
+          <span className="ml-2">© {new Date().getFullYear()} {siteConfig.logo.text || CONFIG.productName}. Questions? <span className="font-bold text-ink">{CONFIG.supportEmail}</span></span>
         </div>
       </div>
     </div>

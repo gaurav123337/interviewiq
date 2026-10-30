@@ -108,9 +108,18 @@ export function resumeBrandFor(company: string): { accent?: string; fontFamily?:
 
 export const REMOTE_CONFIG_DEFAULTS: RemoteConfig = { features: {}, ai: {}, limits: {}, companyFreq: {}, rag: {} };
 
+const remoteConfigListeners = new Set<() => void>();
+
+export function subscribeRemoteConfig(listener: () => void): () => void {
+  remoteConfigListeners.add(listener);
+  return () => remoteConfigListeners.delete(listener);
+}
+
 export function getRemoteConfig(): RemoteConfig {
   const c = storageGet<RemoteConfig>(STORAGE_KEYS.remoteConfig, REMOTE_CONFIG_DEFAULTS);
   return {
+    ...REMOTE_CONFIG_DEFAULTS,
+    ...c,
     features: { ...REMOTE_CONFIG_DEFAULTS.features, ...(c?.features ?? {}) },
     menuVisibility: c?.menuVisibility,
     ai: { ...REMOTE_CONFIG_DEFAULTS.ai, ...(c?.ai ?? {}) },
@@ -124,10 +133,39 @@ export function getRemoteConfig(): RemoteConfig {
   };
 }
 
-export function setRemoteConfig(c: Partial<RemoteConfig>): void {
-  storageSet(STORAGE_KEYS.remoteConfig, c);
+function publishRemoteConfig(config: RemoteConfig): void {
+  storageSet(STORAGE_KEYS.remoteConfig, config);
+  for (const listener of remoteConfigListeners) {
+    try { listener(); } catch { /* One UI subscriber must not block the others. */ }
+  }
   /* keep the offline tutor's vocabulary in sync with whatever was published */
-  applyCoachVocab(c.coachVocab);
+  applyCoachVocab(config.coachVocab);
+}
+
+export function replaceRemoteConfig(config: RemoteConfig): void {
+  publishRemoteConfig(config);
+}
+
+export function setRemoteConfig(c: Partial<RemoteConfig>): void {
+  const current = storageGet<RemoteConfig>(STORAGE_KEYS.remoteConfig, REMOTE_CONFIG_DEFAULTS);
+  const merged: RemoteConfig = {
+    ...current,
+    ...c,
+    features: { ...current.features, ...c.features },
+    menuVisibility: Object.prototype.hasOwnProperty.call(c, "menuVisibility")
+      ? c.menuVisibility
+      : current.menuVisibility,
+    ai: { ...current.ai, ...c.ai },
+    limits: { ...current.limits, ...c.limits },
+    companyFreq: { ...current.companyFreq, ...c.companyFreq },
+    rag: Object.prototype.hasOwnProperty.call(c, "rag") ? (c.rag ? { ...c.rag } : {}) : { ...current.rag },
+    policies: c.policies ? { ...current.policies, ...c.policies } : current.policies,
+    jobs: c.jobs ? { ...current.jobs, ...c.jobs } : current.jobs,
+    resumeBranding: Object.prototype.hasOwnProperty.call(c, "resumeBranding")
+      ? (c.resumeBranding ? { ...c.resumeBranding } : {})
+      : { ...current.resumeBranding },
+  };
+  publishRemoteConfig(merged);
 }
 
 /** Feature on unless the admin explicitly turned it off. */

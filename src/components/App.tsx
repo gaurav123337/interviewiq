@@ -10,14 +10,14 @@ import { checkReminder, checkWeeklyDigest } from "../services/notifications";
 import { getTheme, setTheme, type Theme } from "../services/theme";
 import { getAdminState, refreshAdminData, subscribeAdmin, type AdminState } from "../services/admin";
 import { setAdminUnlocked } from "../services/entitlements";
-import { featureOn, menuVisible, markAnnouncementSeen, nextUnseenAnnouncement, type Announcement } from "../services/remoteConfig";
+import { featureOn, menuVisible, markAnnouncementSeen, nextUnseenAnnouncement, subscribeRemoteConfig, type Announcement } from "../services/remoteConfig";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
 import { refreshEntitlement } from "../services/entitlement";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Chip } from "./ui";
 import { initExtensionGuard } from "../services/extensionGuard";
-import { DEFAULT_CONFIG, loadSiteConfig, subscribeSiteConfig, type SiteConfig } from "../services/siteConfig";
+import { DEFAULT_CONFIG, loadSiteConfig, subscribeSiteConfig, SITE_CONFIG_LINK_ROUTES, SITE_CONFIG_ROUTES, type SiteConfig } from "../services/siteConfig";
 
 /* ------------------------------------------------------------------ */
 /* Lazy-loaded page components — split into separate chunks so the     */
@@ -49,29 +49,6 @@ const Legal            = lazy(() => import("./Legal").then(m => ({ default: m.Le
 const SourcesPage      = lazy(() => import("./SourcesPage").then(m => ({ default: m.SourcesPage })));
 const ShareView        = lazy(() => import("./ShareView").then(m => ({ default: m.ShareView })));
 
-const PRIMARY_TABS: { id: View; label: string; icon: string }[] = [
-  { id: "onboard", label: "Practice", icon: "🎯" },
-  { id: "planner", label: "Planner", icon: "🗓️" },
-  { id: "roadmap", label: "Roadmap", icon: "🧭" },
-  { id: "systemDesign", label: "System Design", icon: "🏗️" },
-  { id: "playground", label: "Code", icon: "💻" }
-];
-
-/* secondary destinations live behind the ☰ menu so the nav stays to 5 core tabs (Practice, Planner, Roadmap, System Design, Code) */
-const MORE_TABS: { id: View; label: string; icon: string }[] = [
-  { id: "drill", label: "Drill", icon: "🎴" },
-  { id: "bank", label: "Bank", icon: "📚" },
-  { id: "jobs", label: "Jobs", icon: "💼" },
-  { id: "learn", label: "Learn a Skill", icon: "🔍" },
-  { id: "counselor", label: "Skill Counselor", icon: "🧑‍🏫" },
-  { id: "articles", label: "Articles", icon: "📰" },
-  { id: "resources", label: "Resources", icon: "🔗" },
-  { id: "progress", label: "Progress", icon: "📈" },
-  { id: "history", label: "History", icon: "🗂️" },
-  { id: "settings", label: "Settings", icon: "⚙️" },
-  { id: "account", label: "Account", icon: "👤" }
-];
-
 /** Suspense fallback shown while a route chunk loads. */
 function RouteSpinner() {
   return (
@@ -99,6 +76,7 @@ export function App() {
   const [sharePayload] = useState<string | null>(() => new URLSearchParams(window.location.search).get("share"));
   const [swUpdateReady, setSwUpdateReady] = useState(false);
   const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_CONFIG);
+  const [remoteConfigRevision, setRemoteConfigRevision] = useState(0);
 
   /* listen for service worker updates — auto-reload after a short delay
      so the user always sees the latest version without manual action */
@@ -129,6 +107,52 @@ export function App() {
     void loadSiteConfig();
     return unsubscribe;
   }, []);
+
+  useEffect(() => subscribeRemoteConfig(() => setRemoteConfigRevision(revision => revision + 1)), []);
+
+  useEffect(() => {
+    const { title, description, canonical, ogImage } = siteConfig.meta;
+    document.title = title;
+    const setMeta = (selector: string, attribute: "name" | "property", key: string, content: string) => {
+      let element = document.head.querySelector<HTMLMetaElement>(selector);
+      if (!element) {
+        element = document.createElement("meta");
+        element.setAttribute(attribute, key);
+        document.head.append(element);
+      }
+      element.content = content;
+    };
+    setMeta('meta[name="description"]', "name", "description", description);
+    setMeta('meta[property="og:title"]', "property", "og:title", title);
+    setMeta('meta[property="og:description"]', "property", "og:description", description);
+    setMeta('meta[name="twitter:title"]', "name", "twitter:title", title);
+    setMeta('meta[name="twitter:description"]', "name", "twitter:description", description);
+    setMeta('meta[name="twitter:site"]', "name", "twitter:site", siteConfig.meta.twitterHandle);
+    try {
+      const imageUrl = new URL(ogImage || "icons/icon-512.png", window.location.href).href;
+      const canonicalUrl = new URL(canonical, window.location.href).href;
+      setMeta('meta[property="og:url"]', "property", "og:url", canonicalUrl);
+      setMeta('meta[property="og:image"]', "property", "og:image", imageUrl);
+      setMeta('meta[name="twitter:image"]', "name", "twitter:image", imageUrl);
+      let canonicalLink = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+      if (!canonicalLink) {
+        canonicalLink = document.createElement("link");
+        canonicalLink.rel = "canonical";
+        document.head.append(canonicalLink);
+      }
+      canonicalLink.href = canonicalUrl;
+    } catch { /* Invalid optional URL metadata does not break app rendering. */ }
+    const logoImage = siteConfig.logo.icon.startsWith("http") ? siteConfig.logo.icon : "";
+    const faviconUrl = siteConfig.logo.favicon || logoImage || "icons/favicon.ico";
+    let iconLink = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!iconLink) {
+      iconLink = document.createElement("link");
+      iconLink.rel = "icon";
+      document.head.append(iconLink);
+    }
+    iconLink.href = new URL(faviconUrl, window.location.href).href;
+    iconLink.type = faviconUrl.toLowerCase().endsWith(".svg") ? "image/svg+xml" : faviconUrl.toLowerCase().endsWith(".png") ? "image/png" : "image/x-icon";
+  }, [siteConfig]);
 
   /* keep the header avatar in sync with sign-in state */
   useEffect(() => subscribeCloud(setCloud), []);
@@ -199,6 +223,7 @@ export function App() {
     const PATH_TO_VIEW: Record<string, View> = {
       "": "landing", practice: "onboard", interview: "interview", results: "results",
       drill: "drill", bank: "bank", history: "history", settings: "settings",
+      terms: "legal", privacy: "legal", refunds: "legal", shipping: "legal",
       planner: "planner", roadmap: "roadmap", playground: "playground", admin: "admin",
       progress: "progress", team: "team", account: "account", legal: "legal",
       jobs: "jobs", articles: "articles", resources: "resources", counselor: "counselor",
@@ -206,7 +231,8 @@ export function App() {
     };
     const onHashChange = () => {
       const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
-      const targetView = PATH_TO_VIEW[hash];
+      const route = hash.split("/")[0];
+      const targetView = PATH_TO_VIEW[hash] ?? PATH_TO_VIEW[route] ?? SITE_CONFIG_LINK_ROUTES[hash] ?? SITE_CONFIG_LINK_ROUTES[route];
       if (targetView && targetView !== state.view) {
         nav(targetView);
       }
@@ -220,6 +246,26 @@ export function App() {
   const go = (id: View) => { setMenuOpen(false); nav(id); };
   /* legal pages open in the shared "legal" view; the hash picks the document */
   const openPolicy = (id: string) => { window.location.hash = id; nav("legal"); };
+  const openConfiguredLink = (href: string, hash?: string) => {
+    if (hash && href === "#/legal") return openPolicy(hash);
+    try {
+      const url = new URL(href, window.location.href);
+      if (url.origin === window.location.origin && url.hash) {
+        const [route, ...parts] = url.hash.replace(/^#\/?/, "").split(/[/?#]/);
+        const view = SITE_CONFIG_LINK_ROUTES[route];
+        if (view) {
+          window.location.hash = route === "legal" ? parts[0] ?? "terms" : `/${route}`;
+          nav(view);
+          return;
+        }
+      } else if (["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) {
+        window.location.assign(url.href);
+        return;
+      }
+    } catch { /* Invalid links fall through to the safe practice route. */ }
+    window.location.hash = "/practice";
+    nav("onboard");
+  };
 
   /* share view overrides all other content */
   if (sharePayload) {
@@ -236,27 +282,31 @@ export function App() {
   /* feature flags + admin role shape the nav */
   const flagForTab = (id: string): "roadmap" | "playground" | null =>
     id === "roadmap" ? "roadmap" : id === "playground" ? "playground" : null;
-  const primaryTabs = PRIMARY_TABS.filter(t => {
-    if (!menuVisible(t.id)) return false;
-    const f = flagForTab(t.id);
-    return f ? featureOn(f) : true;
-  });
+  const routeById = new Map<string, View>(SITE_CONFIG_ROUTES.map(({ id }) => [id, id as View]));
+  const primaryTabs = siteConfig.header.primaryTabs
+    .filter(t => routeById.has(t.id) && menuVisible(t.id))
+    .filter(t => {
+      const f = flagForTab(t.id);
+      return f ? featureOn(f) : true;
+    })
+    .map(t => ({ ...t, id: routeById.get(t.id)! }));
+  const primaryIds = new Set(primaryTabs.map(t => t.id));
   const moreTabs = [
-    ...MORE_TABS.filter(t => menuVisible(t.id) && (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs"))),
-    ...(isCloudConfigured() ? [{ id: "team" as View, label: "Team", icon: "🏢" }] : []),
-    ...(admin.isAdmin ? [{ id: "admin" as View, label: "Admin", icon: "🛡️" }] : [])
+    ...siteConfig.menus.moreMenu
+      .filter(t => routeById.has(t.id) && menuVisible(t.id) && !primaryIds.has(routeById.get(t.id)!))
+      .filter(t => (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs")))
+      .map(t => ({ ...t, id: routeById.get(t.id)! })),
+    ...(isCloudConfigured() && menuVisible("team") ? [{ id: "team" as View, label: "Team", icon: "🏢" }] : []),
+    ...(admin.isAdmin && menuVisible("admin") ? [{ id: "admin" as View, label: "Admin", icon: "🛡️" }] : [])
   ];
   const moreActive = moreTabs.some(t => t.id === view);
 
-  /* mobile bottom nav — India-first journey: practice → match → learn → more.
-     The three most-used destinations (Practice, the Jobs match feed, and the
-     Skill Counselor) live on the bar; everything else is one tap away. */
-  const mobileTabs = [
-    { id: "onboard" as View, label: "Practice", icon: "🎯" },
-    ...(featureOn("jobs") ? [{ id: "jobs" as View, label: "Jobs", icon: "💼" }] : []),
-    { id: "counselor" as View, label: "Counselor", icon: "🧑‍🏫" },
-    { id: "systemDesign" as View, label: "Sys Design", icon: "🏗️" }
-  ];
+  const mobileTabs = siteConfig.menus.mobileTabs
+    .filter(t => routeById.has(t.id) && menuVisible(t.id))
+    .filter(t => (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs")))
+    .map(t => ({ ...t, id: routeById.get(t.id)! }));
+  const visibleMobileTabs = mobileTabs;
+  void remoteConfigRevision;
 
   useEffect(() => subscribeAdmin(s => { setAdmin(s); setBanner(nextUnseenAnnouncement()); setAdminUnlocked(s.isAdmin); }), []);
 
@@ -267,7 +317,7 @@ export function App() {
         <div className="mx-auto flex h-[60px] max-w-[1200px] items-center gap-3 px-4">
           <button className="flex items-center gap-2.5" onClick={() => nav("landing")}>
             <span className="grid h-9 w-9 place-items-center overflow-hidden rounded-xl grad-bg text-[18px] shadow-[0_6px_18px_rgba(99,102,241,.45)]">
-              {siteConfig.logo.icon.startsWith("http") ? <img src={siteConfig.logo.icon} alt="" className="h-full w-full object-cover" /> : siteConfig.logo.icon}
+              {siteConfig.logo.icon.startsWith("http") ? <img src={siteConfig.logo.icon} alt="" className="h-full w-full object-cover" /> : siteConfig.logo.icon || "🎙️"}
             </span>
             <span className="text-[17px] font-extrabold tracking-tight">{siteConfig.logo.text}</span>
           </button>
@@ -276,8 +326,9 @@ export function App() {
               <TabBtn key={t.id} icon={t.icon} label={t.label} active={view === t.id} onClick={() => go(t.id)} />
             ))}
           </nav>
-          {/* secondary tabs in a hamburger (desktop) */}
-          <div className="relative hidden md:block">
+          {/* secondary tabs in a hamburger (desktop) — an emptied More menu
+              means no button at all, not an empty popover */}
+          {moreTabs.length > 0 && <div className="relative hidden md:block">
             <button
               onClick={() => setMenuOpen(o => !o)}
               aria-label="More"
@@ -290,10 +341,10 @@ export function App() {
             <div className={`absolute right-0 top-full z-50 mt-2 w-56 rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.45)] backdrop-blur-xl transition-all duration-200 ease-out ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible -translate-y-2 opacity-0"}`}>
               <MoreMenu current={view} tabs={moreTabs} onPick={go} />
             </div>
-          </div>
+          </div>}
           <span className="flex-1" />
           {!online && <span className="hidden rounded-full border border-warn/40 bg-warn/10 px-3 py-1 text-[11.5px] font-bold text-warn sm:inline">Offline — cached</span>}
-          <button
+          {menuVisible("account") && <button
             onClick={() => go("account")}
             title={cloud.user ? `Account — ${cloud.user.email}` : "Sign in / Sign up"}
             aria-label="Account"
@@ -308,17 +359,17 @@ export function App() {
             </span>
             <span className="hidden sm:inline">{cloud.user ? (cloud.user.email ?? "Account").split("@")[0] : "Sign in"}</span>
             {cloud.user && <span className="absolute right-1 top-1 h-2 w-2 rounded-full border border-deep bg-ok" />}
-          </button>
-          <LanguageSwitcher />
-          <button
+          </button>}
+          {menuVisible("language") && <LanguageSwitcher />}
+          {siteConfig.header.showThemeToggle && <button
             onClick={toggleTheme}
             title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
             className="grid h-10 w-10 place-items-center rounded-xl border border-line/15 bg-wht/10 text-[16px] transition-all hover:bg-wht/20 active:scale-95"
           >
             {theme === "light" ? "🌙" : "☀️"}
-          </button>
-          <span className="hidden sm:inline-flex"><FeedbackButton /></span>
-          {installEvt && (
+          </button>}
+          {siteConfig.header.showFeedbackButton && <span className="hidden sm:inline-flex"><FeedbackButton /></span>}
+          {siteConfig.header.showInstallButton && installEvt && (
             <button
               onClick={install}
               className="hidden rounded-xl border border-acc1/50 bg-acc1/15 px-3.5 py-1.5 text-[13px] font-bold text-acctxt transition-all hover:bg-acc1/30 sm:inline-flex"
@@ -366,13 +417,17 @@ export function App() {
       {view !== "landing" && (
         <footer className="no-print border-t border-line/10 px-4 pb-24 pt-6 md:pb-8">
           <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-3 text-[12px] text-mut sm:flex-row sm:justify-between">
-            <span className="font-extrabold">{siteConfig.footer.brand || `${siteConfig.logo.text} — ${siteConfig.logo.tagline}`}</span>
+            <div className="text-center sm:text-left">
+              <span className="font-extrabold">{siteConfig.footer.brand || `${siteConfig.logo.text} — ${siteConfig.logo.tagline}`}</span>
+              <p>{siteConfig.footer.copyright || `© ${new Date().getFullYear()} ${siteConfig.logo.text}. All rights reserved.`}</p>
+            </div>
             <span className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("terms")}>Terms</button>
-              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("privacy")}>Privacy</button>
-              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("refunds")}>Refunds</button>
-              <button className="transition-colors hover:text-ink" onClick={() => openPolicy("shipping")}>Shipping</button>
-              <button className="transition-colors hover:text-ink" onClick={() => { window.location.hash = "sources"; nav("sources"); }}>Sources</button>
+              {siteConfig.footer.links.map((link, index) => <a key={`${link.href}-${link.hash ?? ""}-${index}`} className="transition-colors hover:text-ink" href={link.href} onClick={event => {
+            if (link.href.startsWith("#/")) {
+              event.preventDefault();
+              openConfiguredLink(link.href, link.hash);
+            }
+          }}>{link.label}</a>)}
             </span>
           </div>
         </footer>
@@ -429,15 +484,15 @@ export function App() {
         aria-hidden
       />
 
-      {/* bottom nav (mobile) — 4 core tabs + ☰ for the rest */}
-      <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
+      {/* bottom nav (mobile) — configured tabs + ☰ for secondary destinations */}
+      {(visibleMobileTabs.length > 0 || moreTabs.length > 0) && <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
         <div className={`absolute inset-x-0 bottom-full mb-2 px-3 transition-all duration-200 ease-out ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible translate-y-3 opacity-0"}`}>
           <div className="rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.5)]">
             <MoreMenu current={view} tabs={moreTabs} onPick={go} />
           </div>
         </div>
         <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-1 pb-[env(safe-area-inset-bottom)]">
-          {mobileTabs.map(t => (
+          {visibleMobileTabs.map(t => (
             <button
               key={t.id}
               onClick={() => go(t.id)}
@@ -447,7 +502,7 @@ export function App() {
               <span className="leading-none">{t.label}</span>
             </button>
           ))}
-          <button
+          {moreTabs.length > 0 && <button
             onClick={() => setMenuOpen(o => !o)}
             aria-label="More"
             aria-expanded={menuOpen}
@@ -455,9 +510,9 @@ export function App() {
           >
             <span className={`grid h-9 w-9 place-items-center rounded-xl text-[20px] ${menuOpen || moreActive ? "bg-acc1/20" : ""}`}>{menuOpen ? "✕" : "☰"}</span>
             <span className="leading-none">More</span>
-          </button>
+          </button>}
         </div>
-      </nav>
+      </nav>}
 
       <ToastHost />
 

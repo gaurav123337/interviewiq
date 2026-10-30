@@ -6,7 +6,7 @@ import { CONFIG } from "../../config";
 import { getCloudState, getSupabaseClient } from "../cloud";
 import { applyCoachVocab } from "../../coach/concepts";
 import {
-  getRemoteConfig, setAnnouncements, setPublishedQuestions, setRemoteConfig, type PublishedQuestion, type RemoteConfig
+  getRemoteConfig, replaceRemoteConfig, setAnnouncements, setPublishedQuestions, type PublishedQuestion, type RemoteConfig
 } from "../remoteConfig";
 import { flushEvents, queueEvent, updateProfile } from "../events";
 
@@ -60,13 +60,20 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
       if (row.key === "features" && row.value) merged.features = { ...merged.features, ...(row.value as object) };
       if (row.key === "ai" && row.value) merged.ai = { ...merged.ai, ...(row.value as object) };
       if (row.key === "limits" && row.value) merged.limits = { ...merged.limits, ...(row.value as object) };
-      if (row.key === "company_freq" && row.value) merged.companyFreq = { ...merged.companyFreq, ...(row.value as object) };
-      if (row.key === "coach_vocab" && row.value) merged.coachVocab = row.value as RemoteConfig["coachVocab"];
+      if ((row.key === "companyFreq" || row.key === "company_freq") && row.value) merged.companyFreq = { ...merged.companyFreq, ...(row.value as object) };
+      if (row.key === "coachVocab" || row.key === "coach_vocab") merged.coachVocab = row.value as RemoteConfig["coachVocab"];
       if (row.key === "rag" && row.value) merged.rag = { ...merged.rag, ...(row.value as object) };
       if (row.key === "policies" && row.value) merged.policies = { ...(merged.policies ?? {}), ...(row.value as object) };
-      if (row.key === "menuVisibility" && row.value) merged.menuVisibility = row.value as Record<string, boolean>;
+      if (row.key === "menuVisibility") merged.menuVisibility = row.value as Record<string, boolean>;
+      if (row.key === "jobs") merged.jobs = row.value as RemoteConfig["jobs"];
+      if (row.key === "resumeBranding") merged.resumeBranding = row.value as RemoteConfig["resumeBranding"];
     }
-    setRemoteConfig(merged);
+    replaceRemoteConfig(merged);
+    const siteConfigRow = (cfg as { key: string; value: unknown }[]).find(row => row.key === "site_config");
+    if (siteConfigRow) {
+      const { publishRemoteSiteConfig } = await import("../siteConfig");
+      publishRemoteSiteConfig(siteConfigRow.value);
+    }
   }
   if (ann) {
     setAnnouncements((ann as unknown as { id: number; title: string; body: string; badge: string | null; published: boolean; created_at: string }[])

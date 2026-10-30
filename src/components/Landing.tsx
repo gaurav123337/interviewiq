@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { useWebVitals, PerfOverlay } from "./PerformanceMonitor";
 import { useApp } from "../store";
-import { DEFAULT_CONFIG, loadSiteConfig, subscribeSiteConfig, type SiteConfig } from "../services/siteConfig";
+import { DEFAULT_CONFIG, loadSiteConfig, SITE_CONFIG_LINK_ROUTES, subscribeSiteConfig, type SiteConfig } from "../services/siteConfig";
+import type { View } from "../types";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
 import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners, PopupBanners } from "./Testimonials";
@@ -29,6 +30,39 @@ const FAQS = [
   { qKey: "landing.faqs.q4", aKey: "landing.faqs.a4" },
   { qKey: "landing.faqs.q5", aKey: "landing.faqs.a5" }
 ];
+
+function safeSiteLink(href: string): string {
+  try {
+    const url = new URL(href, window.location.href);
+    if (["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return href;
+    if (href.startsWith("#")) {
+      const [route, ...parts] = url.hash.replace(/^#\/?/, "").split(/[/?#]/);
+      if (SITE_CONFIG_LINK_ROUTES[route]) {
+        return route === "legal" ? `#/legal/${parts[0] ?? "terms"}` : `#/${route}`;
+      }
+    }
+    return "#/practice";
+  } catch {
+    return "#/practice";
+  }
+}
+
+function followSiteLink(href: string, nav: (view: View) => void): void {
+  const safeHref = safeSiteLink(href);
+  if (safeHref.startsWith("#")) {
+    const [route, ...parts] = safeHref.replace(/^#\/?/, "").split(/[/?#]/);
+    const target = SITE_CONFIG_LINK_ROUTES[route];
+    if (target) {
+      window.location.hash = route === "legal" ? parts[0] ?? "terms" : `/${route}`;
+      nav(target);
+    } else {
+      window.location.hash = "/practice";
+      nav("onboard");
+    }
+    return;
+  }
+  window.location.assign(safeHref);
+}
 
 export function Landing() {
   const { t } = useTranslation();
@@ -81,9 +115,9 @@ export function Landing() {
           {siteConfig.hero.description || t("landing.heroDesc")}
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <button className={btnPrimary + " px-8 py-3.5 text-[15.5px]"} onClick={() => nav("onboard")}>
+          <a className={btnPrimary + " px-8 py-3.5 text-[15.5px]"} href={safeSiteLink(siteConfig.hero.ctaLink)} onClick={e => { if (safeSiteLink(siteConfig.hero.ctaLink).startsWith("#/")) { e.preventDefault(); followSiteLink(siteConfig.hero.ctaLink, nav); } }}>
             {siteConfig.hero.ctaText || t("landing.startFree")}
-          </button>
+          </a>
           <button className={btnGhost + " px-6 py-3.5 text-[15px]"} onClick={() => scrollTo("pricing")}>
             {t("landing.seePricing")}
           </button>
@@ -154,7 +188,7 @@ export function Landing() {
                 <li key={i} className="before:content-['✓'] before:mr-2 before:text-ok">{f}</li>
               ))}
             </ul>
-            <button className={btnGhost + " mt-6 w-full py-3"} onClick={() => nav("onboard")}>{t("landing.startFreeBtn")}</button>
+            <a className={btnGhost + " mt-6 block w-full py-3 text-center"} href={safeSiteLink(siteConfig.hero.ctaLink)} onClick={e => { e.preventDefault(); followSiteLink(siteConfig.hero.ctaLink, nav); }}>{siteConfig.hero.ctaText || t("landing.startFreeBtn")}</a>
           </div>
           <div className="grad-bg-soft relative w-full overflow-hidden rounded-2xl border border-acc1/40 p-6 shadow-[0_18px_50px_rgba(99,102,241,.25)] sm:w-[calc(50%-8px)]">
             <span className="absolute right-4 top-4"><Chip tone="co">{t("landing.popular")}</Chip></span>
@@ -203,23 +237,25 @@ export function Landing() {
         <div className={`${cardCls} grad-bg-soft p-8 sm:p-10`}>
           <h2 className="text-[clamp(22px,3.6vw,32px)] font-extrabold tracking-tight"><Trans i18nKey="landing.ctaTitle" components={{ 1: <span className="grad-text" /> }} /></h2>
           <p className="mx-auto mt-2 max-w-[440px] text-[14px] text-mut">{t("landing.ctaDesc")}</p>
-          <button className={btnPrimary + " mt-6 px-8 py-3.5 text-[15.5px]"} onClick={() => nav("onboard")}>
-            {t("landing.startFree")}
-          </button>
+          <a className={btnPrimary + " mt-6 px-8 py-3.5 text-[15.5px]"} href={safeSiteLink(siteConfig.hero.ctaLink)} onClick={e => { if (safeSiteLink(siteConfig.hero.ctaLink).startsWith("#/")) { e.preventDefault(); followSiteLink(siteConfig.hero.ctaLink, nav); } }}>
+            {siteConfig.hero.ctaText || t("landing.startFree")}
+          </a>
         </div>
       </section>
 
       {/* footer */}
       <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-line/10 py-6 text-[12.5px] text-mut">
-        <span className="font-extrabold">{t("landing.footer.brand")}</span>
+        <div>
+          <span className="font-extrabold">{siteConfig.footer.brand || `${siteConfig.logo.text} — ${siteConfig.logo.tagline}`}</span>
+          <p>{siteConfig.footer.copyright || `© ${new Date().getFullYear()} ${siteConfig.logo.text}. All rights reserved.`}</p>
+        </div>
         <span className="flex flex-wrap gap-4">
-          <button className="hover:text-ink" onClick={() => nav("onboard")}>{t("landing.footer.practice")}</button>
-          <button className="hover:text-ink" onClick={() => scrollTo("pricing")}>{t("landing.footer.pricing")}</button>
-          <button className="hover:text-ink" onClick={() => scrollTo("faq")}>{t("landing.footer.faq")}</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "terms"; nav("legal"); }}>{t("landing.footer.terms")}</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "privacy"; nav("legal"); }}>{t("landing.footer.privacy")}</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "refunds"; nav("legal"); }}>{t("landing.footer.refunds")}</button>
-          <button className="hover:text-ink" onClick={() => { window.location.hash = "shipping"; nav("legal"); }}>{t("landing.footer.shipping")}</button>
+          {siteConfig.footer.links.map((link, index) => <a key={`${link.href}-${link.hash ?? ""}-${index}`} className="hover:text-ink" href={safeSiteLink(link.href)} onClick={e => {
+            if (safeSiteLink(link.href).startsWith("#")) {
+              e.preventDefault();
+              followSiteLink(link.hash && link.href.startsWith("#/legal") ? `#/legal/${link.hash}` : link.href, nav);
+            }
+          }}>{link.label}</a>)}
         </span>
       </footer>
 

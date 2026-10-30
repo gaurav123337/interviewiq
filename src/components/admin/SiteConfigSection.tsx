@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   loadSiteConfig,
   saveSiteConfig,
+  SITE_CONFIG_ROUTES,
   type SiteConfig,
 } from "../../services/siteConfig";
 import { toast } from "../../toast";
+import { getRemoteConfig, setRemoteConfig, subscribeRemoteConfig } from "../../services/remoteConfig";
 import { btnPrimary, btnGhost, cardCls } from "../ui";
 
 export function SiteConfigSection() {
@@ -14,7 +16,9 @@ export function SiteConfigSection() {
   const [activeTab, setActiveTab] = useState<"branding" | "visibility" | "header" | "footer" | "menus" | "hero" | "meta">("branding");
 
   useEffect(() => {
-    void loadSiteConfig().then(setConfig);
+    let mounted = true;
+    void loadSiteConfig().then(value => { if (mounted) setConfig(value); });
+    return () => { mounted = false; };
   }, []);
 
   const update = (patch: Partial<SiteConfig>) => {
@@ -25,12 +29,16 @@ export function SiteConfigSection() {
   const save = async () => {
     if (!config) return;
     setSaving(true);
-    const ok = await saveSiteConfig(config);
-    setSaving(false);
-    if (ok) {
-      toast("Site config saved ✓");
-    } else {
-      toast("Failed to save — check Supabase connection");
+    try {
+      const ok = await saveSiteConfig(config);
+      if (ok) {
+        setConfig(await loadSiteConfig());
+        toast("Site config saved ✓");
+      } else {
+        toast("Failed to save — check Supabase connection");
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -81,6 +89,7 @@ export function SiteConfigSection() {
       {activeTab === "branding" && (
         <div className={`${cardCls} space-y-4 p-5`}>
           <h3 className="text-[14px] font-extrabold">Logo & Brand</h3>
+          <Field label="Favicon/svg path" value={config.logo.favicon} onChange={v => update({ logo: { ...config.logo, favicon: v } })} />
           <Field label="Logo Icon (emoji or URL)" value={config.logo.icon} onChange={v => update({ logo: { ...config.logo, icon: v } })} />
           <Field label="Brand Text" value={config.logo.text} onChange={v => update({ logo: { ...config.logo, text: v } })} />
           <Field label="Tagline" value={config.logo.tagline} onChange={v => update({ logo: { ...config.logo, tagline: v } })} />
@@ -91,31 +100,44 @@ export function SiteConfigSection() {
       {activeTab === "header" && (
         <div className={`${cardCls} space-y-4 p-5`}>
           <h3 className="text-[14px] font-extrabold">Header Navigation</h3>
-          <p className="text-[12px] text-mut">Primary tabs shown in the header. Drag to reorder (coming soon).</p>
+          <p className="text-[12px] text-mut">Choose each tab’s destination and order, or remove it from the header.</p>
           {config.header.primaryTabs.map((tab, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Field label="" value={tab.icon} onChange={v => {
+            <div key={i} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[80px_1fr_1fr_auto_auto_auto]">
+              <Field label="Icon" value={tab.icon} onChange={v => {
                 const tabs = [...config.header.primaryTabs];
                 tabs[i] = { ...tabs[i], icon: v };
                 update({ header: { ...config.header, primaryTabs: tabs } });
               }} small />
-              <Field label="" value={tab.label} onChange={v => {
+              <Field label="Label" value={tab.label} onChange={v => {
                 const tabs = [...config.header.primaryTabs];
                 tabs[i] = { ...tabs[i], label: v };
                 update({ header: { ...config.header, primaryTabs: tabs } });
               }} />
+              <RouteField value={tab.id} onChange={id => {
+                const tabs = [...config.header.primaryTabs];
+                tabs[i] = { ...tabs[i], id };
+                update({ header: { ...config.header, primaryTabs: tabs } });
+              }} />
+              <button disabled={i === 0} onClick={() => update({ header: { ...config.header, primaryTabs: moveItem(config.header.primaryTabs, i, -1) } })} aria-label="Move tab up" className="text-mut disabled:opacity-40">↑</button>
+              <button disabled={i === config.header.primaryTabs.length - 1} onClick={() => update({ header: { ...config.header, primaryTabs: moveItem(config.header.primaryTabs, i, 1) } })} aria-label="Move tab down" className="text-mut disabled:opacity-40">↓</button>
               <button
                 onClick={() => {
                   const tabs = config.header.primaryTabs.filter((_, j) => j !== i);
                   update({ header: { ...config.header, primaryTabs: tabs } });
                 }}
+                aria-label="Remove tab"
                 className="text-[14px] text-red-400 hover:text-red-300"
               >✕</button>
             </div>
           ))}
           <button
-            onClick={() => update({ header: { ...config.header, primaryTabs: [...config.header.primaryTabs, { id: "new", label: "New Tab", icon: "🆕" }] } })}
-            className="text-[13px] font-bold text-acctxt hover:underline"
+            onClick={() => {
+              const used = new Set(config.header.primaryTabs.map(tab => tab.id));
+              const next = SITE_CONFIG_ROUTES.find(route => !used.has(route.id));
+              if (next) update({ header: { ...config.header, primaryTabs: [...config.header.primaryTabs, { id: next.id, label: next.label, icon: "🆕" }] } });
+            }}
+            disabled={config.header.primaryTabs.length >= SITE_CONFIG_ROUTES.length}
+            className="text-[13px] font-bold text-acctxt hover:underline disabled:opacity-50"
           >+ Add tab</button>
           <div className="flex gap-4">
             <Toggle label="Theme toggle" checked={config.header.showThemeToggle} onChange={v => update({ header: { ...config.header, showThemeToggle: v } })} />
@@ -133,19 +155,26 @@ export function SiteConfigSection() {
           <Field label="Copyright" value={config.footer.copyright} onChange={v => update({ footer: { ...config.footer, copyright: v } })} />
           <p className="text-[12px] font-bold text-mut">Links:</p>
           {config.footer.links.map((link, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <Field label="" value={link.label} onChange={v => {
+            <div key={i} className="grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]">
+              <Field label="Label" value={link.label} onChange={v => {
                 const links = [...config.footer.links];
                 links[i] = { ...links[i], label: v };
                 update({ footer: { ...config.footer, links } });
               }} />
-              <Field label="" value={link.href} onChange={v => {
+              <Field label="URL or route" value={link.href} onChange={v => {
                 const links = [...config.footer.links];
                 links[i] = { ...links[i], href: v };
                 update({ footer: { ...config.footer, links } });
               }} />
+              <Field label="Policy hash" value={link.hash ?? ""} onChange={v => {
+                const links = [...config.footer.links];
+                links[i] = { ...links[i], hash: v || undefined };
+                update({ footer: { ...config.footer, links } });
+              }} />
+              <button onClick={() => update({ footer: { ...config.footer, links: config.footer.links.filter((_, j) => j !== i) } })} aria-label="Remove footer link" className="text-red-400">✕</button>
             </div>
           ))}
+          <button className="text-[12px] font-bold text-acctxt" onClick={() => update({ footer: { ...config.footer, links: [...config.footer.links, { label: "New link", href: "#/legal" }] } })}>+ Add footer link</button>
         </div>
       )}
 
@@ -159,19 +188,61 @@ export function SiteConfigSection() {
               <p className="mb-2 text-[12px] font-bold">☰ More Menu</p>
               {config.menus.moreMenu.map((item, i) => (
                 <div key={i} className="flex items-center gap-1 text-[12px]">
-                  <span>{item.icon}</span>
-                  <span className="text-fnt">{item.label}</span>
+                  <Field label="Icon" value={item.icon} onChange={v => {
+                    const items = [...config.menus.moreMenu];
+                    items[i] = { ...items[i], icon: v };
+                    update({ menus: { ...config.menus, moreMenu: items } });
+                  }} small />
+                  <Field label="Label" value={item.label} onChange={v => {
+                    const items = [...config.menus.moreMenu];
+                    items[i] = { ...items[i], label: v };
+                    update({ menus: { ...config.menus, moreMenu: items } });
+                  }} />
+                  <RouteField value={item.id} onChange={id => {
+                    const items = [...config.menus.moreMenu];
+                    items[i] = { ...items[i], id };
+                    update({ menus: { ...config.menus, moreMenu: items } });
+                  }} />
+                  <button disabled={i === 0} onClick={() => update({ menus: { ...config.menus, moreMenu: moveItem(config.menus.moreMenu, i, -1) } })} aria-label="Move menu item up" className="text-mut disabled:opacity-40">↑</button>
+                  <button disabled={i === config.menus.moreMenu.length - 1} onClick={() => update({ menus: { ...config.menus, moreMenu: moveItem(config.menus.moreMenu, i, 1) } })} aria-label="Move menu item down" className="text-mut disabled:opacity-40">↓</button>
+                  <button onClick={() => update({ menus: { ...config.menus, moreMenu: config.menus.moreMenu.filter((_, j) => j !== i) } })} aria-label="Remove menu item" className="text-red-400">✕</button>
                 </div>
               ))}
+              <button className="text-[12px] font-bold text-acctxt" disabled={config.menus.moreMenu.length >= SITE_CONFIG_ROUTES.length} onClick={() => {
+                const used = new Set(config.menus.moreMenu.map(item => item.id));
+                const next = SITE_CONFIG_ROUTES.find(route => !used.has(route.id));
+                if (next) update({ menus: { ...config.menus, moreMenu: [...config.menus.moreMenu, { id: next.id, label: next.label, icon: "✨" }] } });
+              }}>+ Add item</button>
             </div>
             <div>
               <p className="mb-2 text-[12px] font-bold">📱 Mobile Bottom Nav</p>
               {config.menus.mobileTabs.map((item, i) => (
                 <div key={i} className="flex items-center gap-1 text-[12px]">
-                  <span>{item.icon}</span>
-                  <span className="text-fnt">{item.label}</span>
+                  <Field label="Icon" value={item.icon} onChange={v => {
+                    const items = [...config.menus.mobileTabs];
+                    items[i] = { ...items[i], icon: v };
+                    update({ menus: { ...config.menus, mobileTabs: items } });
+                  }} small />
+                  <Field label="Label" value={item.label} onChange={v => {
+                    const items = [...config.menus.mobileTabs];
+                    items[i] = { ...items[i], label: v };
+                    update({ menus: { ...config.menus, mobileTabs: items } });
+                  }} />
+                  <RouteField value={item.id} onChange={id => {
+                    const items = [...config.menus.mobileTabs];
+                    items[i] = { ...items[i], id };
+                    update({ menus: { ...config.menus, mobileTabs: items } });
+                  }} />
+                  <button disabled={i === 0} onClick={() => update({ menus: { ...config.menus, mobileTabs: moveItem(config.menus.mobileTabs, i, -1) } })} aria-label="Move mobile tab up" className="text-mut disabled:opacity-40">↑</button>
+                  <button disabled={i === config.menus.mobileTabs.length - 1} onClick={() => update({ menus: { ...config.menus, mobileTabs: moveItem(config.menus.mobileTabs, i, 1) } })} aria-label="Move mobile tab down" className="text-mut disabled:opacity-40">↓</button>
+                  <button onClick={() => update({ menus: { ...config.menus, mobileTabs: config.menus.mobileTabs.filter((_, j) => j !== i) } })} aria-label="Remove mobile tab" className="text-red-400">✕</button>
                 </div>
               ))}
+              <button className="text-[12px] font-bold text-acctxt" disabled={config.menus.mobileTabs.length >= SITE_CONFIG_ROUTES.length} onClick={() => {
+                const used = new Set(config.menus.mobileTabs.map(item => item.id));
+                const next = SITE_CONFIG_ROUTES.find(route => !used.has(route.id));
+                if (next) update({ menus: { ...config.menus, mobileTabs: [...config.menus.mobileTabs, { id: next.id, label: next.label, icon: "✨" }] } });
+              }}>+ Add item</button>
             </div>
           </div>
         </div>
@@ -186,6 +257,7 @@ export function SiteConfigSection() {
           <Field label="Description" value={config.hero.description} onChange={v => update({ hero: { ...config.hero, description: v } })} textarea />
           <Field label="CTA button text" value={config.hero.ctaText} onChange={v => update({ hero: { ...config.hero, ctaText: v } })} />
           <Field label="CTA link" value={config.hero.ctaLink} onChange={v => update({ hero: { ...config.hero, ctaLink: v } })} />
+          <p className="text-[12px] text-mut">Internal links should use a supported route hash such as #/practice or #/jobs.</p>
         </div>
       )}
 
@@ -193,9 +265,11 @@ export function SiteConfigSection() {
       {activeTab === "meta" && (
         <div className={`${cardCls} space-y-4 p-5`}>
           <h3 className="text-[14px] font-extrabold">SEO & Meta Tags</h3>
+          <p className="text-[12px] text-mut">These values update browser metadata for visitors; social crawlers may continue to use the static HTML metadata until the next build.</p>
           <Field label="Page title" value={config.meta.title} onChange={v => update({ meta: { ...config.meta, title: v } })} textarea />
           <Field label="Meta description" value={config.meta.description} onChange={v => update({ meta: { ...config.meta, description: v } })} textarea />
           <Field label="OG Image path" value={config.meta.ogImage} onChange={v => update({ meta: { ...config.meta, ogImage: v } })} />
+          <Field label="Twitter handle" value={config.meta.twitterHandle} onChange={v => update({ meta: { ...config.meta, twitterHandle: v } })} />
           <Field label="Canonical URL" value={config.meta.canonical} onChange={v => update({ meta: { ...config.meta, canonical: v } })} />
         </div>
       )}
@@ -212,6 +286,25 @@ export function SiteConfigSection() {
 }
 
 /* ── Helpers ───────────────────────────────────────────────────────── */
+
+function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction;
+  if (target < 0 || target >= items.length) return items;
+  const moved = [...items];
+  [moved[index], moved[target]] = [moved[target], moved[index]];
+  return moved;
+}
+
+function RouteField({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[12px] font-bold text-mut">Destination</span>
+      <select className="w-full rounded-xl border border-line/15 bg-wht/5 px-3 py-2 text-[13px] text-ink focus:border-acc1/50 focus:outline-none" value={value} onChange={e => onChange(e.target.value)}>
+        {SITE_CONFIG_ROUTES.map(route => <option key={route.id} value={route.id}>{route.label}</option>)}
+      </select>
+    </label>
+  );
+}
 
 function Field({ label, value, onChange, textarea, small }: {
   label: string; value: string; onChange: (v: string) => void; textarea?: boolean; small?: boolean;
@@ -257,36 +350,56 @@ const ALL_MENU_ITEMS = [
   { id: "history", label: "History", icon: "🗂️", section: "More Menu" },
   { id: "settings", label: "Settings", icon: "⚙️", section: "More Menu" },
   { id: "account", label: "Account", icon: "👤", section: "More Menu" },
+  { id: "language", label: "Language selector", icon: "🌐", section: "Header" },
+  { id: "team", label: "Team", icon: "🏢", section: "More Menu" },
+  { id: "admin", label: "Admin", icon: "🛡️", section: "More Menu" },
 ];
+
+/** Saved visibility map, or {} when nothing has been published yet (all visible). */
+function readVisibility(): Record<string, boolean> {
+  const remote = getRemoteConfig().menuVisibility;
+  if (remote) return remote;
+  try {
+    const stored = localStorage.getItem("iq.menuVisibility");
+    return stored ? JSON.parse(stored) as Record<string, boolean> : {};
+  } catch { return {}; }
+}
 
 function MenuVisibilityTab() {
   useTranslation();
-  const [visibility, setVisibility] = useState<Record<string, boolean>>(() => {
-    try {
-      const stored = localStorage.getItem("iq.menuVisibility");
-      return stored ? JSON.parse(stored) : {};
-    } catch { return {}; }
-  });
+  const [visibility, setVisibility] = useState<Record<string, boolean>>(readVisibility);
   const [saving, setSaving] = useState(false);
+  /* Remote config can land after this tab mounts (the admin bootstrap refreshes
+     in the background). Re-reading it keeps the switches truthful, but never
+     overwrite edits the admin has already made but not yet saved. */
+  const dirty = useRef(false);
+
+  useEffect(() => {
+    const sync = () => { if (!dirty.current) setVisibility(readVisibility()); };
+    sync();
+    return subscribeRemoteConfig(sync);
+  }, []);
 
   const toggle = (id: string, visible: boolean) => {
+    dirty.current = true;
     setVisibility(prev => ({ ...prev, [id]: visible }));
   };
 
   const save = async () => {
     setSaving(true);
-    // Save to localStorage (works offline, always succeeds)
-    localStorage.setItem("iq.menuVisibility", JSON.stringify(visibility));
-    // Save to Supabase via the same saveRemoteConfig that Product Config uses
     try {
       const { saveRemoteConfig } = await import("../../services/admin");
       await saveRemoteConfig({ menuVisibility: visibility });
-      toast("Menu visibility saved ✓ (local + database)");
-    } catch (e: any) {
-      console.error("Supabase menuVisibility error:", e);
-      toast("Saved locally. DB: " + (e?.message ?? "unknown error"));
+      setRemoteConfig({ menuVisibility: visibility });
+      dirty.current = false;
+      setVisibility(getRemoteConfig().menuVisibility ?? visibility);
+      try { localStorage.setItem("iq.menuVisibility", JSON.stringify(visibility)); } catch { /* local cache is optional */ }
+      toast("Menu visibility saved ✓");
+    } catch (e: unknown) {
+      toast("Failed to save visibility: " + (e instanceof Error ? e.message : "unavailable"));
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const sections = [...new Set(ALL_MENU_ITEMS.map(m => m.section))];
@@ -295,7 +408,7 @@ function MenuVisibilityTab() {
     <div className={`${cardCls} space-y-4 p-5`}>
       <h3 className="text-[14px] font-extrabold">👁️ Menu Visibility</h3>
       <p className="text-[12px] text-mut">
-        Enable or disable menu items for all users. Hidden items won't appear in the navigation.
+        Enable or disable navigation items for all users. Hidden items won't appear in the navigation.
         Changes apply immediately after saving.
       </p>
       {sections.map(section => (
@@ -312,6 +425,10 @@ function MenuVisibilityTab() {
                   <span className="flex-1 text-[13px] font-bold text-ink">{item.label}</span>
                   <span className="text-[11px] text-mut">{item.id}</span>
                   <button
+                    type="button"
+                    role="switch"
+                    aria-checked={visible}
+                    aria-label={`${item.label} visibility`}
                     onClick={() => toggle(item.id, !visible)}
                     className={`relative h-6 w-11 rounded-full transition-colors ${
                       visible ? "bg-ok" : "bg-wht/20"

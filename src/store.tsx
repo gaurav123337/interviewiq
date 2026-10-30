@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 import type { ReactNode } from "react";
 import type { Answer, Config, LevelId, QA, SavedSession, Session, View } from "./types";
+import { SITE_CONFIG_LINK_ROUTES } from "./services/siteConfig";
 import { buildFeedback, composeRelevantSession } from "./engine";
 import {
   buildInterviewSession, buildJdSession, buildPracticeSession, buildReplaySession,
@@ -53,7 +54,7 @@ const VIEW_TO_HASH: Record<string, string> = {
   planner: "planner", roadmap: "roadmap", playground: "playground", admin: "admin",
   progress: "progress", team: "team", account: "account", legal: "legal",
   jobs: "jobs", articles: "articles", resources: "resources", counselor: "counselor",
-  systemDesign: "system-design", learn: "learn", "learn-detail": "learn",
+  systemDesign: "system-design", learn: "learn", "learn-detail": "learn", sources: "sources",
 };
 const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
   Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
@@ -65,7 +66,9 @@ const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
 function viewFromHash(): string | null {
   // 1. Hash (primary): #/planner → "planner"
   const hash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
+  const route = hash.split("/")[0];
   if (hash && HASH_TO_VIEW[hash]) return HASH_TO_VIEW[hash];
+  if (route && SITE_CONFIG_LINK_ROUTES[route]) return SITE_CONFIG_LINK_ROUTES[route];
   // 2. Clean URL fallback: /interviewiq/planner → "planner"
   const pathname = window.location.pathname.replace(/^\/interviewiq\/?/, "").replace(/^\//, "");
   if (pathname && HASH_TO_VIEW[pathname]) return HASH_TO_VIEW[pathname];
@@ -78,9 +81,12 @@ function viewFromHash(): string | null {
 function pushViewToHash(view: string) {
   const path = VIEW_TO_HASH[view];
   if (path === undefined) return;
+  const currentHash = window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "");
+  /* Legal policies share one view but keep the selected document in the hash. */
+  if (view === "legal" && ["terms", "privacy", "refunds", "shipping"].includes(currentHash)) return;
   const nextHash = path ? "/" + path : "";
   // Avoid triggering a redundant hashchange when the hash is already correct
-  if (window.location.hash.replace(/^#\//, "").replace(/\?.*$/, "") !== path) {
+  if (currentHash !== path) {
     window.location.hash = nextHash;
   }
 }
