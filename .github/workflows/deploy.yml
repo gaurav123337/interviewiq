@@ -80,6 +80,11 @@ jobs:
       # rules in settings/config.toml; app.yaml pins the app id so the
       # interviewassist.wasmer.app alias keeps pointing at the same app.
       - name: Deploy to Wasmer Edge
+        # Optional additive mirror. A stale WASMER_TOKEN used to fail here and
+        # take the Supabase function deploy below down with it, so this step can
+        # never fail the run — the access mismatch is reported as a warning in
+        # the script, and any other Wasmer error still shows up in the logs.
+        continue-on-error: true
         timeout-minutes: 10
         env:
           WASMER_TOKEN: ${{ secrets.WASMER_TOKEN }}
@@ -118,11 +123,29 @@ jobs:
           # on stdin, and CI has no TTY, so answer yes. The command then waits
           # for the new version to become reachable, which is the check that the
           # deploy actually took effect.
-          # pipefail is turned off for this line only: once the CLI exits, `yes`
-          # dies of SIGPIPE, and under pipefail that would fail an otherwise
-          # successful deploy.
+          # pipefail is turned off for this command only: once the CLI exits,
+          # `yes` dies of SIGPIPE, and under pipefail that would fail an
+          # otherwise successful deploy.
+          # `set -e` is on in the runner shell, so a failing command substitution
+          # would abort before STATUS is read; disable it around the capture.
           set +o pipefail
-          yes | wasmer deploy --owner gaurav123337 --app-name interviewiq --bump
+          set +e
+          OUTPUT=$(yes | wasmer deploy --owner gaurav123337 --app-name interviewiq --bump 2>&1)
+          STATUS=$?
+          set -e
+          set -o pipefail
+          echo "$OUTPUT"
+          if [ "$STATUS" -ne 0 ]; then
+            # A token belonging to a different Wasmer account cannot publish
+            # under this owner ("It seems you don't have access to ..."). That is
+            # a credentials problem with the optional mirror, not a build
+            # regression — log it as a warning instead of a red step.
+            if printf '%s' "$OUTPUT" | grep -q "don't have access to"; then
+              echo "::warning title=Wasmer Edge::WASMER_TOKEN has no access to gaurav123337 - skipping the mirror deploy"
+              exit 0
+            fi
+            exit "$STATUS"
+          fi
 
       # ── Deploy Supabase edge functions (optional) ──────────────────────
       # Skipped, with a visible notice, when SUPABASE_ACCESS_TOKEN is absent.
