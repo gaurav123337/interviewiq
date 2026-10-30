@@ -164,6 +164,18 @@ jobs:
             echo "::notice title=Supabase edge functions::SUPABASE_ACCESS_TOKEN is not set - skipping the function deploy"
             exit 0
           fi
+          # An unusable token (wrong secret, revoked, or a service-role key pasted
+          # by mistake) can never deploy functions — the CLI answers "Invalid
+          # access token format. Must be like `sbp_0102...1920`". Warn, don't fail:
+          # a client-only change must not go red over a credential the build
+          # cannot fix, and the annotation keeps the stale token visible.
+          case "$SUPABASE_ACCESS_TOKEN" in
+            sbp_*) ;;
+            *)
+              echo "::warning title=Supabase edge functions::SUPABASE_ACCESS_TOKEN is not an sbp_ personal access token - skipping the function deploy; rotate the secret to ship functions"
+              exit 0
+              ;;
+          esac
           # The CLI is a pinned devDependency (supabase 2.122.0 in
           # package.json), so this runs the exact version recorded in
           # package-lock.json rather than whatever `npx` would have fetched that
