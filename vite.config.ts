@@ -82,7 +82,13 @@ export default defineConfig({
       const { execSync } = require("child_process");
       const path = require("path");
       const pkg = require(path.resolve(__dirname, "package.json"));
-      const shortCommit = execSync("git rev-parse --short HEAD", { cwd: __dirname }).toString().trim();
+      let shortCommit = "unknown";
+      try {
+        shortCommit = execSync("git rev-parse --short HEAD", { cwd: __dirname }).toString().trim();
+      } catch (e) {
+        // Fallback for isolated deployment layers missing the .git directory
+        shortCommit = process.env.WASMER_BUILD_COMMIT || "production";
+      }
       const version = `${pkg.version}+${shortCommit}`;
       return {
         "import.meta.env.__APP_VERSION": JSON.stringify(version),
