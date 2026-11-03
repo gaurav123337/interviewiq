@@ -5,12 +5,17 @@
  * Supabase-saved provider the cron scripts use), because the browser chat()
  * ladder (BYOK → ai-chat edge fn) isn't reachable from a plain node script.
  *
+ * Also hosts the Tier-4 VLM shim (screenshot → field metadata), mirroring the
+ * mapUnknownFields / aiHealButton shim pattern — prompt → send → parse only;
+ * verification and fill decisions live in the driver + pure lib.
+ *
  * Fallback contract (same as the app): any AI failure or too-short output →
  * the deterministic template. The engine NEVER blocks on AI.
  */
 
 import { loadAiProviderConfig } from "./ai-config.js";
 import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity, aiFieldPrompt, parseFieldMapping, applyFieldMapping, buttonHealPrompt, parseHealReply } from "./apply-engine-lib.js";
+import { vlmFieldsPrompt, parseVlmFields } from "./vlm-form-lib.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -355,6 +360,32 @@ export async function mapUnknownFields(ai, fields, plan, { profile, job, now } =
     return { plan2, cache, mapped };
   } catch (e) {
     return { plan2: plan, cache: {}, mapped: 0, note: e?.message?.slice(0, 100) ?? "map failed" };
+  }
+}
+
+/* --- Tier 4: VLM field extraction from a SCREENSHOT (metadata only) ---
+
+   For forms the DOM extractors simply cannot see (shadow-DOM widgets, canvas
+   UIs), one vision call reads the screenshot and returns field LABELS/types —
+   metadata, never values. The driver then runs the SAME planFormAnswers on
+   the verified profile and locates each control by its label. Fail-open:
+   any error (a non-vision model refusing the image part included) → null →
+   the driver behaves exactly as if the tier were unavailable. Vision refusal
+   errors are marked on `ai.__unhealthy` like every other provider blip. */
+export async function vlmExtractFields(ai, screenshotB64, { pageTitle = "" } = {}) {
+  if (!ai?.key || !screenshotB64) return null;
+  const prompt = vlmFieldsPrompt(pageTitle);
+  const parts = [
+    { type: "text", text: prompt.user },
+    { type: "image_url", image_url: { url: `data:image/png;base64,${screenshotB64}` } },
+  ];
+  try {
+    const raw = await chatOnce(ai, [{ role: "system", content: prompt.system }, { role: "user", content: parts }], 700);
+    const parsed = parseVlmFields(raw);
+    return parsed.fields.length ? parsed : { fields: [], skipped: parsed.skipped, note: "vision reply had no usable fields" };
+  } catch (e) {
+    if (ai && !ai.__unhealthy) ai.__unhealthy = String(e?.message ?? "").slice(0, 80);
+    return { fields: [], skipped: 0, note: String(e?.message ?? "").slice(0, 100) };
   }
 }
 

@@ -11,8 +11,20 @@
 import { memo, useState, useEffect, useCallback } from "react";
 import { cardCls } from "./ui";
 import { toast } from "../toast";
-import { fetchTestimonials, fetchResources, fetchBannersForPosition, trackClick, trackImpression, getVisitorVariant, fetchTips } from "../services/contentService";
+import { fetchTestimonials, fetchResources, fetchBannersForPosition, fetchAdsForPosition, trackClick, trackImpression, getVisitorVariant, fetchTips } from "../services/contentService";
+import type { Ad } from "../services/contentService";
 import type { TipConfig } from "../services/content/types";
+
+/* CMS links come from free-text admin inputs. Without a scheme, the browser
+   treats "www.x.ai/?ref=..." as a SAME-PAGE relative URL (seen live: the app
+   URL + the sponsor path). Scheme-less dot-hosts are external — upgrade them
+   to https. In-page anchors/routes keep their original meaning. */
+function externalUrl(href: string): string {
+  const h = href.trim();
+  if (!h) return h;
+  if (/^(https?:|mailto:|tel:)/i.test(h) || h.startsWith("#") || h.startsWith("/")) return h;
+  return "https://" + h;
+}
 
 /* ------------------------------------------------------------------ */
 /* Testimonials                                                        */
@@ -275,7 +287,7 @@ export function RecommendedResources() {
         {resources.map((r, i) => (
           <a
             key={r.title + i}
-            href={r.affiliateUrl}
+            href={externalUrl(r.affiliateUrl)}
             target="_blank"
             rel="noopener noreferrer nofollow"
             onClick={() => { void trackClick("resource", String(i)); }}
@@ -505,7 +517,7 @@ export function AutoRotatingBanners({ position }: { position: "hero" | "midpage"
           <h3 className="text-[clamp(18px,3vw,24px)] font-extrabold">{banner.title}</h3>
           {banner.subtitle && <p className="mt-2 text-[13px] opacity-80">{banner.subtitle}</p>}
           {banner.cta_text && banner.cta_url && (
-            <a href={banner.cta_url} target="_blank" rel="noopener noreferrer" onClick={() => void trackClick("banner", banner.id)} className="mt-3 inline-block rounded-xl bg-white/20 px-5 py-2 text-[13px] font-bold backdrop-blur-sm transition-all hover:bg-white/30">
+            <a href={externalUrl(banner.cta_url)} target="_blank" rel="noopener noreferrer" onClick={() => void trackClick("banner", banner.id)} className="mt-3 inline-block rounded-xl bg-white/20 px-5 py-2 text-[13px] font-bold backdrop-blur-sm transition-all hover:bg-white/30">
               {banner.cta_text}
             </a>
           )}
@@ -523,6 +535,81 @@ export function AutoRotatingBanners({ position }: { position: "hero" | "midpage"
 }
 
 /* ------------------------------------------------------------------ */
+/* Landing Ads — CMS advertisements for their slot. fetchAdsForPosition()
+   previously had no caller anywhere, so an ad could be published in the
+   admin but would never render publicly: the landing page simply had no
+   ads code. Style mirrors AutoRotatingBanners so the two card types read
+   as one design family. */
+export function LandingAds({ adPosition }: { adPosition: Ad["position"] }) {
+  const [ads, setAds] = useState<Ad[]>([]);
+  const [idx, setIdx] = useState(0);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const items = await fetchAdsForPosition(adPosition);
+        if (items.length > 0) setAds(items);
+      } catch { /* silent — offline/supabase down keeps the page clean */ }
+    })();
+  }, [adPosition]);
+
+  // Impressions follow the currently shown card, same as banners.
+  useEffect(() => {
+    if (ads.length > 0 && ads[idx]) {
+      void trackImpression("ad", ads[idx].id);
+    }
+  }, [idx, ads]);
+
+  // Per-ad auto-rotation; interval bounded so a typo'd interval can't strobe.
+  const current = ads[idx];
+  useEffect(() => {
+    if (!current?.auto_rotate || ads.length <= 1) return;
+    const seconds = Math.min(60, Math.max(2, current.rotate_interval || 5));
+    const timer = setInterval(() => setIdx(prev => (prev + 1) % ads.length), seconds * 1000);
+    return () => clearInterval(timer);
+  }, [current, ads.length]);
+
+  if (ads.length === 0 || !current) return null;
+
+  return (
+    <div className="mb-6">
+      <div
+        className="relative overflow-hidden rounded-2xl p-6 text-center"
+        style={{ background: current.bg_color || "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)", color: current.text_color || "#fff" }}
+      >
+        {current.image_url && (
+          <div className="absolute inset-0 z-0">
+            <img src={current.image_url} alt="" className="h-full w-full object-cover opacity-20" />
+          </div>
+        )}
+        <div className="relative z-10">
+          <div className="mb-2 flex justify-center"><SponsoredBadge sponsor={current.sponsor || "Partner"} /></div>
+          <h3 className="text-[clamp(18px,3vw,24px)] font-extrabold">{current.title}</h3>
+          {current.description && <p className="mt-2 text-[13px] opacity-80">{current.description}</p>}
+          {current.link_url && (
+            <a
+              href={externalUrl(current.link_url)}
+              target="_blank"
+              rel="noopener noreferrer sponsored"
+              onClick={() => void trackClick("ad", current.id)}
+              className="mt-3 inline-block rounded-xl bg-white/20 px-5 py-2 text-[13px] font-bold backdrop-blur-sm transition-all hover:bg-white/30"
+            >
+              Learn more →
+            </a>
+          )}
+          {ads.length > 1 && (
+            <div className="mt-3 flex justify-center gap-1.5">
+              {ads.map((_, i) => (
+                <button key={i} onClick={() => setIdx(i)} className={`h-1.5 rounded-full transition-all ${i === idx ? "w-4 bg-white" : "w-1.5 bg-white/40"}`} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* Popup Banner — modal overlay with auto-dismiss                      */
 /* ------------------------------------------------------------------ */
 
@@ -594,7 +681,7 @@ export function PopupBanners() {
           {banner.subtitle && <p className="mt-3 text-[14px] opacity-80">{banner.subtitle}</p>}
           {banner.cta_text && banner.cta_url && (
             <a
-              href={banner.cta_url}
+              href={externalUrl(banner.cta_url)}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => void trackClick("banner", banner.id)}

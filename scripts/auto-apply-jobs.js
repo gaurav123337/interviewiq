@@ -51,7 +51,8 @@ import {
   postingHintFromUrl, collectHintsForSite, isBoardGone404,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
-import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton } from "./apply-kit-node.js";
+import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton, vlmExtractFields } from "./apply-kit-node.js";
+import { vlmFillEligible, MAX_VLM_FILLS_PER_ATTEMPT } from "./vlm-form-lib.js";
 import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 import { sweepEngineProcesses } from "./engine-lifecycle.js";
 
@@ -1991,6 +1992,83 @@ async function openJob(page, job, { boardMatch } = {}) {
 
 /* --------------------------- form filling --------------------------- */
 
+/* Tier-4 VLM fill: the model returned FIELD METADATA (labels/types) from a
+   screenshot of a form the DOM extractors could not see. Answering runs the
+   SAME machinery as the DOM path — planFormAnswers on the verified profile
+   (+ the tier-2 mapper for novel labels) — so the model never supplies a
+   value and hallucinated answers stay structurally impossible. Each control
+   is located by its VERBATIM label; a painted/fake label that matches no
+   real control resolves nothing and goes unfilled like any unanswerable
+   field. Required+unanswered keeps the exact fail-closed semantics of the
+   DOM path (needs review, form left open, submit gates untouched). */
+async function vlmFillBlindForm(target, { fields: vlmFields, profile, job, storedAnswers, dryRun, siteHost, ai }) {
+  const domainFields = vlmFields.map((f) => {
+    if (f.kind === "textarea") return { tag: "textarea", type: "", label: f.label, required: f.required };
+    if (f.kind === "select") return { tag: "select", type: "", label: f.label, required: f.required, options: f.options ?? [] };
+    if (f.kind === "checkbox") return { tag: "input", type: "checkbox", label: f.label, required: f.required };
+    if (["email", "tel", "url", "number", "date"].includes(f.kind)) return { tag: "input", type: f.kind, label: f.label, required: f.required };
+    if (f.kind === "radio" || f.kind === "file" || f.kind === "other") return { tag: "input", type: "other", label: f.label, required: f.required };
+    return { tag: "input", type: "text", label: f.label, required: f.required };
+  });
+  let plan = planFormAnswers(domainFields, profile, job, storedAnswers ?? {});
+  /* tier-2 for the labels planFormAnswers could not classify — identical
+     behavior + week-cache persistence to the DOM path */
+  const hasEmptyUnknown = plan.some((p) => p.cls?.kind === "unknown" && !String(p.answer ?? "").trim());
+  if (ai && hasEmptyUnknown) {
+    try {
+      const { plan2, cache, mapped } = await mapUnknownFields(ai, domainFields, plan, { profile, job });
+      if (mapped > 0) { plan = plan2; if (dryRun !== true) await storeMappedAnswers(siteHost ?? "", cache); }
+    } catch { /* tier-2 is an optimization — never a gate */ }
+  }
+  const unfilledRequired = [];
+  let filled = 0;
+  const cap = Math.min(vlmFields.length, MAX_VLM_FILLS_PER_ATTEMPT);
+  for (let i = 0; i < cap; i++) {
+    const f = vlmFields[i];
+    const p = plan[i] ?? {};
+    const answer = String(p.answer ?? "");
+    if (!f.fillable) { if (f.required) unfilledRequired.push(`${f.label} — vlm: unsupported kind (${f.kind})`); continue; }
+    let loc = null;
+    try { loc = target.getByLabel(f.label, { exact: true }); if (!(await loc.count())) loc = null; } catch { loc = null; }
+    if (!loc) { try { loc = target.getByLabel(f.label); if (!(await loc.count())) loc = null; } catch { loc = null; } }
+    if (!loc) { if (f.required) unfilledRequired.push(`${f.label} — vlm: no control found`); continue; }
+    try {
+      if (f.kind === "select") {
+        const pick = (f.options ?? []).find((o) => valueMatchesList(answer, o));
+        if (!pick) { if (f.required) unfilledRequired.push(f.label); continue; }
+        if (!dryRun) { try { await loc.selectOption({ label: pick, timeout: 5000 }); } catch { await loc.evaluate((el, v) => { el.value = v; el.dispatchEvent(new Event("change", { bubbles: true })); }, pick).catch(() => {}); } }
+        filled++;
+      } else if (f.kind === "checkbox") {
+        /* same rule as the DOM path: only a REQUIRED checkbox gets checked
+           (submission consent), optional ones are never marketing opt-ins */
+        const checked = await loc.evaluate((el) => el.checked).catch(() => true);
+        if (f.required && !checked) {
+          if (!dryRun) { try { await loc.check({ timeout: 3000 }); } catch { await loc.evaluate((el) => el.click()).catch(() => {}); } }
+          filled++;
+        }
+      } else {
+        if (!answer.trim()) { if (f.required) unfilledRequired.push(f.label); continue; }
+        if (!dryRun) {
+          try { await loc.fill(answer, { timeout: 5000 }); filled++; }
+          catch {
+            const ok = await loc.evaluate((el, v) => {
+              const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+              const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+              if (setter) setter.call(el, v); else el.value = v;
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            }, answer).then(() => true).catch(() => false);
+            if (ok) filled++;
+            else if (f.required) unfilledRequired.push(f.label);
+          }
+        } else filled++;
+      }
+    } catch { /* field failure — honest unfilled when required */ if (f.required) unfilledRequired.push(f.label); }
+  }
+  if (!dryRun) { try { await storeFormAnswers(siteHost ?? "", plan, domainFields); } catch { /* best-effort memory */ } }
+  return { filled, unfilledRequired, fields: domainFields, plan };
+}
+
 /* Greenhouse boards embed the application form in an IFRAME
    (boards.greenhouse.io/embed/job_form inside the posting page) — the
    main-frame evaluate/locator sees NOTHING there, so a first-class board
@@ -2038,6 +2116,25 @@ async function fillApplicationForm(page, { profile, job, resumePath, dryRun, sit
       return { tag: el.tagName.toLowerCase(), type: el.getAttribute("type") ?? "", label, required: el.required || !!el.closest("[aria-required=true]"), options: el.tagName === "SELECT" ? [...el.options].map(o => o.textContent.trim()) : undefined };
     });
   }, scopedSelector);
+  /* Tier-4 fallback: NO fields visible to any DOM extractor (shadow-DOM/
+     canvas widgets) — one screenshot, one vision call for FIELD METADATA
+     only; answers still come from the profile via planFormAnswers. Any
+     failure falls through to the identical pre-VLM behavior. */
+  if (fields.length === 0) {
+    const gate = vlmFillEligible({ fieldsCount: fields.length, hasAi: !!ai });
+    if (gate.ok) {
+      if (dryRun !== true) console.log(dim("  👁 no DOM fields — Tier-4 VLM fallback: reading the form from a screenshot (metadata only, answers stay profile-drafted)"));
+      let shotB64 = null;
+      try { shotB64 = (await target.screenshot()).toString("base64"); } catch { /* screenshot is the tier's whole input */ }
+      const parsed = shotB64 ? await vlmExtractFields(ai, shotB64, { pageTitle: await target.title().catch(() => "") }) : { fields: [], note: "screenshot failed" };
+      if (parsed.fields.length) {
+        const res = await vlmFillBlindForm(target, { fields: parsed.fields, profile, job, storedAnswers, dryRun, siteHost, ai });
+        if (dryRun !== true) console.log(dim(`  👁 vlm: ${parsed.fields.length} field(s) read, ${res.filled} filled${res.unfilledRequired.length ? `, ${res.unfilledRequired.length} unanswerable` : ""}`));
+        return { filled: res.filled, unfilledRequired: res.unfilledRequired, fields: res.fields, plan: res.plan, vlm: true };
+      }
+      if (parsed.note) console.log(dim(`  👁 vlm fallback unavailable: ${parsed.note}`));
+    } else if (dryRun !== true) console.log(dim(`  👁 vlm fallback skipped: ${gate.reason}`));
+  }
   const controls = await target.$$(scopedSelector);
   /* one plan per form: draft from the profile, then fall back to the
      remembered answer for the same field label (form-answer memory).

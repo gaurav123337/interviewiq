@@ -6,7 +6,7 @@ import { DEFAULT_CONFIG, loadSiteConfig, SITE_CONFIG_LINK_ROUTES, subscribeSiteC
 import type { View } from "../types";
 import { UpgradeModal } from "./Upgrade";
 import { btnGhost, btnPrimary, cardCls, Chip } from "./ui";
-import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners, PopupBanners } from "./Testimonials";
+import { TestimonialsSection, RecommendedResources, SupportSection, AutoRotatingBanners, PopupBanners, LandingAds } from "./Testimonials";
 
 const FEATURES = [
   { icon: "🎯", titleKey: "landing.features.tailored.title", bodyKey: "landing.features.tailored.body" },
@@ -102,6 +102,8 @@ export function Landing() {
 
       {/* hero banner */}
       <AutoRotatingBanners position="hero" />
+      {/* hero advertisement (CMS) */}
+      <LandingAds adPosition="landing-hero" />
 
       {/* hero */}
       <section className="pt-10 pb-14 text-center sm:pt-16">
@@ -165,6 +167,8 @@ export function Landing() {
 
       {/* midpage banner */}
       <AutoRotatingBanners position="midpage" />
+      {/* pricing advertisement (CMS) — positioning mirrors banners so edits land where expected */}
+      <LandingAds adPosition="landing-pricing" />
 
       {/* testimonials */}
       <TestimonialsSection />
@@ -210,6 +214,8 @@ export function Landing() {
 
       {/* footer banner */}
       <AutoRotatingBanners position="footer" />
+      {/* footer advertisement (CMS) */}
+      <LandingAds adPosition="landing-footer" />
 
       {/* FAQ */}
       <section id="faq" className="pb-14">
