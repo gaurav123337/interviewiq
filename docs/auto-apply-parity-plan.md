@@ -105,6 +105,20 @@ script integration + one SQL file.
 
 ### Phase 2 — Human-in-the-loop tailoring parity (weeks 3–4)
 
+> Status (this branch): **gate + preview logic + store/UI loop landed** — pure lib
+> `scripts/apply-kit-lib.js` (+`.d.ts`, pinned by `applyKitTailor.test.ts`):
+> `tailorSubmitGate` (fail-closed: an AI-authored kit cannot auto-submit
+> without `"autoTailor": true` in the apply profile or per-variant
+> approval), `previewTailoredResume` (per-section LCS diff vs the master
+> with JD-keyword justification read ONLY from added lines),
+> `splitResumeSections` (UPPERCASE template + markdown headings),
+> `appendResumeVariant` (content-deduped version history, capped).
+> Driver wiring: `auto-apply-jobs.js` closes the gate per JOB via a
+> `jobRules` copy — template kits never lose auto-submit.
+> Still open in this phase: editing a variant before re-push (v1 is
+> approve/reject only; edit lands with the applications table in Phase 1's
+> review-queue rework), and autoTailor for per-posting overrides.
+
 Goal: "tailored as per JD, and I can see/edit it" trust loop.
 
 - Per-application **tailoring preview**: generated resume/render + cover
@@ -142,6 +156,22 @@ profile-map decision function (pure lib, no browser needed).
 
 ### Phase 4 — Cloud execution, scoped to compliant channels (weeks 9–12)
 
+> Status (this branch): **Workday feed landed in the verified-pipeline set** —
+> the jobs-fetch edge function (the existing compliant cloud collector for
+> greenhouse/ashby/lever/rss, with its registry/probation handshake and
+> per-source reports) now supports provider `workday`: board value
+> `tenant/site` (or `tenant.wdN/site`), ref-parsed CXS POST endpoint, host
+> allowlist `*.myworkdayjobs.com`, slim honest descriptions (the list payload
+> carries no full JD), prose `postedOn` → estimated `posted_at` (older, never
+> fresher), posted rows land in `jobs` with `onConflict source,external_id`.
+> Pure logic in `_shared/workdayFeed.ts` (pinned: `workdayFeed.test.ts`, 6
+> tests; full `_shared` suite 85 passing). First default source is the
+> verified-live `mastercard/CorporateCareers` board (200). Registration into
+> `job_sites` stays greenhouse/ashby-only — a Workday registry row needs the
+> exact wdN host the ref genuinely carries, so the LOCAL engine's
+> `atsApiCollectPlan` remains the Workday apply path (already shipped in
+> Phase 5).
+
 Goal: always-on freshness without the user's PC; respect the anti-bot line.
 
 - **Cloud-safe set**: Greenhouse/Lever/Ashby public API collectors + Workday
@@ -162,6 +192,19 @@ Goal: always-on freshness without the user's PC; respect the anti-bot line.
   storage.
 
 ### Phase 5 — Workday & the majors (ongoing)
+
+> Status (this branch): **Workday pack first slice landed** — `SITE_RULES.workday`
+> (review-gated, fail-closed until rehearsed on a live tenant) + `ATS_PACKS.workday`
+> (data-automation-id field hints; zero-field extraction hands off to the Tier-4
+> VLM fallback), `atsApiCollectPlan` derives the CXS POST endpoint from a
+> `tenant.wdN.myworkdayjobs.com/<locale>/<site>` careers URL (original casing
+> preserved, null without a site segment), `parseWorkdayJobs` reuses each
+> posting's own `externalPath` for detail URLs and prose `postedOn` → age
+> stamps, `classifyJobLink` reads `/job/<slug>_<id>` as a posting while the
+> `/job/` discriminator keeps section routes out. Pinned by
+> `src/__tests__/workdayPack.test.ts`. Feed wired automatically: collectors
+> already consume `atsApiCollectPlan` plans. Still open in this phase: Indeed
+> flows and company-careers tokens.
 
 Workday (TalentDox-ecosystem `myworkdayjobs.com`), Indeed, and company-careers
 categories each become site-rule packs: parser + frame shapes + success text

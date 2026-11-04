@@ -51,7 +51,8 @@ import {
   postingHintFromUrl, collectHintsForSite, isBoardGone404,
 } from "./apply-engine-lib.js";
 import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
-import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton, vlmExtractFields } from "./apply-kit-node.js";
+import { tailorSubmitGate, previewTailoredResume, stableVariantId } from "./apply-kit-lib.js"; // Phase 2: LLM-authored kits cannot auto-submit unapproved
+import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton, vlmExtractFields, templateResume } from "./apply-kit-node.js";
 import { vlmFillEligible, MAX_VLM_FILLS_PER_ATTEMPT } from "./vlm-form-lib.js";
 import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
 import { sweepEngineProcesses } from "./engine-lifecycle.js";
@@ -3011,6 +3012,38 @@ async function runSingle(args, { existingCtx = null } = {}) {
         job.__coverLetter = kit.coverLetter;
         console.log(dim(`  kit: resume+cover ${kit.ai ? "(AI-tailored)" : "(template)"} ${kit.notes.join("; ")}`));
 
+        /* Phase 2 tailoring-approval gate (fail-closed, pure lib pinned in
+           applyKitTailor.test.ts): an LLM-AUTHORED resume may not auto-submit
+           unless the profile pre-consents (`"autoTailor": true`) or the owner
+           approved the variant (apply_resume_variants row in the UI). The
+           tailored kit is PUSHED here first so the owner can review it in
+           the app; changed content gets a fresh variant_id and starts
+           unapproved — tailoring drift never inherits trust. Template/master
+           kits wrote nothing new and need no approval. Every DB step
+           degrades honestly (no creds / unapplied SQL → approved stays
+           false → the review gate holds, never flips blind). Gate closes
+           THIS JOB only — a per-job copy of rules, never the shared one. */
+        if (kit.ai) {
+          const db2wait = await sitesDb();
+          if (db2wait?.putResumeVariant) {
+            try {
+              const masterText = templateResume(profile, job);
+              await db2wait.putResumeVariant({
+                jobUrl: job.url, siteHost: site, title: job.title, company: job.company,
+                masterText, variantText: kit.resume,
+                diffSummary: previewTailoredResume(masterText, kit.resume, { jdKeywords: (job.skills ?? []).slice(0, 10) }),
+                variantId: stableVariantId(kit.resume),
+              });
+            } catch (e) { console.log(dim(`  (variant not pushed: ${String(e?.message ?? e).slice(0, 60)})`)); }
+            try {
+              job.__variantApproved = (await db2wait.latestResumeVariant(job.url))?.approved === true;
+            } catch { /* unapplied SQL / no creds — stays unapproved */ }
+          }
+        }
+        const tailorGate = tailorSubmitGate({ llmAuthored: Boolean(kit.ai), autoTailor: profile?.autoTailor === true, approved: job.__variantApproved === true });
+        const jobRules = tailorGate.canSubmit ? rules : { ...rules, autoSubmit: false };
+        if (!tailorGate.canSubmit) console.log(yellow(`  ✂ ${tailorGate.reason}`));
+
         /* save the resume to a temp file for file-upload inputs */
         const resumePath = path.join(REPORTS_DIR, `resume-${Date.now()}.txt`);
         writeFileSync(resumePath, kit.resume);
@@ -3140,8 +3173,8 @@ async function runSingle(args, { existingCtx = null } = {}) {
           await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null });
           /* ASYNC REVIEW: take a screenshot for the UI, close the tab, move on.
              Attended manual runs still get the pause for immediate human finish. */
-          if (!rules.autoSubmit && args.unattended) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
-          if (!rules.autoSubmit && !appTriggered) { try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.pause(); } // attended MANUAL runs: let the human finish here
+          if (!jobRules.autoSubmit && args.unattended) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
+          if (!jobRules.autoSubmit && !appTriggered) { try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.pause(); } // attended MANUAL runs: let the human finish here
           continue;
         }
         if (args["dry-run"]) { recordResultBoth(report, job, "skipped", "dry-run — filled only"); console.log(dim("  dry-run: form filled, not submitted")); continue; }
@@ -3161,7 +3194,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           await page.close().catch(() => {});
           continue;
         }
-        const sub = await trySubmit(page, site, rules, { profile, job, resumePath, dryRun: args["dry-run"], storedAnswers: mem, ai }); // merged registry rules — the owner's autoSubmit decision
+        const sub = await trySubmit(page, site, jobRules, { profile, job, resumePath, dryRun: args["dry-run"], storedAnswers: mem, ai }); // merged registry rules + Phase 2 tailoring gate for THIS job
         if (sub.auto) {
           recordResultBoth(report, job, "submitted", sub.note);
           budgetSpendThisRun++; // Phase 0: this run's own submissions count against the cap the NEXT re-check sees

@@ -15,6 +15,7 @@ import ApplyResultsPanel from "./ApplyResultsPanel";
 import AppliedByUserPanel from "./AppliedByUserPanel";
 import ReviewQueuePanel from "./ReviewQueuePanel";
 import ExemplarsPanel from "./ExemplarsPanel";
+import ResumeVariantsPanel from "./ResumeVariantsPanel";
 
 export function AutoApplyCard({ locked, onUpgrade, platinum }: {
   locked: boolean;
@@ -178,6 +179,9 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
 
           {/* resolved history (✓ applied / ✕ / 🚫) — parallel panel, not a hidden queue sub-section */}
           <AppliedByUserPanel />
+
+          {/* Phase 2: AI-tailored kits, diffs + the approval that unlocks auto-submit */}
+          <ResumeVariantsPanel />
 
           <JobSitesPanel />
 

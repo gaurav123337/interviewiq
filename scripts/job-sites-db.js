@@ -173,6 +173,26 @@ export async function applyWeeklyDigest() {
 
 /** One scraped milestone for a submitted application (first view / first
     response win; freshest fit wins). Fire-and-forget — never breaks a run. */
+/* ── Phase 2: tailored-resume variants (see supabase/apply-resume-variants.sql) ── */
+
+/** Push one tailored kit (master + variant + justified diff). Best-effort by
+ *  convention — callers catch; until the SQL is applied the RPC rejects and
+ *  the approval gate simply stays closed (fail-closed, honest skip). */
+export async function putResumeVariant({ jobUrl, siteHost, title, company, masterText, variantText, diffSummary, variantId }) {
+  return rpc(loadLocalCreds(), "engine_put_resume_variant", {
+    p_job_url: jobUrl, p_site_host: siteHost ?? null, p_title: title ?? null, p_company: company ?? null,
+    p_master: masterText ?? null, p_variant: variantText ?? null, p_diff: diffSummary ?? null, p_variant_id: variantId,
+  });
+}
+
+/** The NEWEST variant row for a job (any content) + the owner's approval.
+ *  null when the SQL isn't applied or no variant exists — the caller keeps
+ *  approved=false and the review gate holds (never flips trust blind). */
+export async function latestResumeVariant(jobUrl) {
+  const rows = await rpc(loadLocalCreds(), "engine_latest_resume_variant", { p_job_url: jobUrl });
+  return rows?.[0] ?? null;
+}
+
 export async function recordApplyOutcome({ siteHost, jobUrl, fit, viewed, responseKind, detail }) {
   return rpc(loadLocalCreds(), "engine_record_apply_outcome", {
     p_site_host: siteHost, p_job_url: jobUrl, p_fit: fit ?? null,

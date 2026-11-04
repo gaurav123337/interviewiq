@@ -25,6 +25,7 @@ import { safeFetch, readBodyText, SafeFetchError } from "../_shared/safeFetch.ts
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
 import { callerFrom } from "../_shared/auth.ts";
 import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
+import { parseWorkdayRef, parseWorkdayPostings } from "../_shared/workdayFeed.ts"; // Phase 4: Workday CXS cloud collector
 
 /* ATS provider → exact API hosts (defense-in-depth: a tampered board value
    can only ever hit these hosts). RSS/RemoteOK are public-host validated by
@@ -33,18 +34,36 @@ const PROVIDER_HOSTS: Record<string, string[]> = {
   greenhouse: ["boards-api.greenhouse.io"],
   ashby: ["api.ashbyhq.com"],
   lever: ["api.lever.co"],
-  remoteok: ["remoteok.com"]
+  remoteok: ["remoteok.com"],
+  /* Workday tenants multiply per employer ({base}.wdN.myworkdayjobs.com) —
+     the allowlist is the documented host SUFFIX, still exact (a wrong wdN
+     would 404 rather than hit a foreign API) */
+  workday: ["*.myworkdayjobs.com"]
 };
 
-async function fetchJson<T = unknown>(provider: string, url: string, headers?: Record<string, string>): Promise<T> {
+const HOST_ALLOWED_RE = /^\*\.([a-z0-9.-]+)$/; // "*.suffix" pin
+
+function assertHostAllowed(provider: string, url: string): void {
   const allowed = PROVIDER_HOSTS[provider];
-  if (allowed) {
-    const host = new URL(url).hostname.toLowerCase();
-    if (!allowed.includes(host)) throw new Error(`host ${host} not allowed for provider ${provider}`);
-  }
-  const res = await safeFetch(url, { headers });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return (await res.json().catch(() => { throw new Error("invalid JSON from source"); })) as T;
+  if (!allowed) return;
+  const host = new URL(url).hostname.toLowerCase();
+  const ok = allowed.some((h) => {
+    const wc = HOST_ALLOWED_RE.test(h);
+    return wc ? host.endsWith(h.slice(1)) : h === host;
+  });
+  if (!ok) throw new Error(`host ${host} not allowed for provider ${provider}`);
+}
+
+function fetchJsonWith<T = unknown>(provider: string, url: string, init: { headers?: Record<string, string>; method?: string; body?: string }): Promise<T> {
+  assertHostAllowed(provider, url);
+  return safeFetch(url, init).then(async (res) => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return (await res.json().catch(() => { throw new Error("invalid JSON from source"); })) as T;
+  });
+}
+
+async function fetchJson<T = unknown>(provider: string, url: string, headers?: Record<string, string>): Promise<T> {
+  return fetchJsonWith<T>(provider, url, { headers });
 }
 
 async function fetchText(url: string, headers?: Record<string, string>): Promise<{ ok: boolean; status: number; text: string }> {
@@ -63,6 +82,7 @@ const DEFAULT_SOURCES = [
   { provider: "greenhouse", board: "lyft" },
   { provider: "greenhouse", board: "airbnb" },
   { provider: "greenhouse", board: "dropbox" },
+  { provider: "workday", board: "mastercard/CorporateCareers" }, // verified live CXS feed (200, 2026-11)
   { provider: "ashby", board: "linear" },
   { provider: "ashby", board: "notion" },
   { provider: "lever", board: "fampay" },
@@ -338,6 +358,39 @@ function simpleHash(s: string): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
+/* Phase 4 — Workday CXS collector: board value is "tenant/site" (optionally
+   "tenant.wdN/site"); the POST endpoint comes from the REF itself, and NO
+   full JD ships in the list payload — description stays title+location,
+   honestly slim (the app's importPage re-reads the posting when needed). */
+function fetchWorkday(ref: string): Promise<{ company: string; jobs: unknown[] }> {
+  const plan = parseWorkdayRef(ref);
+  if (!plan) return Promise.reject(new Error(`bad workday board ref "${ref}" (expect tenant/site)`));
+  return fetchJsonWith<{ jobPostings?: Record<string, unknown>[] }>("workday", plan.apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body: JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0 }),
+  }).then((payload) => {
+    const base = ref.split("/")[0].replace(/\.wd[1-5]$/i, "");
+    return {
+      company: base,
+      jobs: parseWorkdayPostings(payload).map((p) => ({
+        externalId: `${plan.tenant}/${plan.site}/${p.externalId}`, // per-site unique like the engine's own dedupe
+        title: p.title,
+        company: base,
+        location: p.location,
+        remote: p.remote,
+        description: `${p.title}\n${p.location ?? ""}`.trim(),
+        url: p.url,
+        postedAt: p.postedAt,
+        skills: extractSkills(p.title, `${p.title}\n${p.location ?? ""}`),
+        level: guessLevel(p.title),
+        salary: null,
+        companySize: null,
+      })),
+    };
+  });
+}
+
 async function fetchLever(org: string): Promise<{ company: string; jobs: unknown[] }> {
   const data = await fetchJson<{
     id: string; text?: string; hostedUrl?: string; categories?: { location?: string; commitment?: string }; createdAt?: number; descriptionPlain?: string
@@ -427,8 +480,10 @@ async function refreshAll(supabase: ReturnType<typeof createClient>, sources: { 
       const { rows, addedHere } = await withRetry(label, async () => {
         const fetched = src.provider === "lever"
           ? await fetchLever(src.board)
-          : src.provider === "ashby"
-            ? await fetchAshby(src.board)
+          : src.provider === "workday"
+            ? await fetchWorkday(src.board)
+            : src.provider === "ashby"
+              ? await fetchAshby(src.board)
             : src.provider === "rss"
               ? await fetchRss(src.board)
               : src.provider === "remoteok"

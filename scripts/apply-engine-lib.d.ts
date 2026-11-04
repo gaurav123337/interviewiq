@@ -557,10 +557,13 @@ export function suspensionDigestLines(
 /* ── ATS keyless JSON APIs (API-first collect) ────────────────────── */
 
 export interface AtsApiCollectPlan {
-  provider: "greenhouse" | "lever";
+  provider: "greenhouse" | "lever" | "workday";
   board: string;
   infoUrl: string | null;
   apiUrl: string;
+  /** workday only: host + locale + site re-joined so detail URLs can be
+      built from each posting's own externalPath (never invented). */
+  workday?: { detailBase: string };
 }
 
 export function atsApiCollectPlan(url: string | null | undefined): AtsApiCollectPlan | null;
@@ -585,6 +588,11 @@ export function parseGreenhouseJobs(
 export function parseLeverPostings(
   payload: unknown,
   opts?: { company?: string | null; now?: number }
+): AtsApiJobRow[];
+
+export function parseWorkdayJobs(
+  payload: unknown,
+  opts?: { company?: string | null; detailBase?: string; now?: number }
 ): AtsApiJobRow[];
 
 export function fetchAtsApiJobs(

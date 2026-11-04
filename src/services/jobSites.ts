@@ -180,6 +180,47 @@ export async function unresolveJobReview(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/* ── Phase 2: tailored-resume variants (apply_resume_variants) ───────── */
+
+export interface ResumeVariantRow {
+  id: string;
+  site_host: string | null;
+  job_url: string;
+  title: string | null;
+  company: string | null;
+  master_text: string | null;
+  variant_text: string | null;
+  diff_summary: {
+    sections?: Array<{ heading: string; status: "unchanged" | "changed"; matchedKeywords?: string[] }>;
+    changedCount?: number;
+    matchedKeywords?: string[];
+  } | null;
+  variant_id: string;
+  approved: boolean;
+  created_at: string;
+  approved_at: string | null;
+}
+
+/** Needs `admin_list_resume_variants` from apply-resume-variants.sql — until
+    it is applied the RPC errors and the panel shows the failure honestly. */
+export async function listResumeVariants(limit = 50): Promise<ResumeVariantRow[]> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("admin_list_resume_variants", { p_limit: limit });
+  if (error) throw error;
+  return (data ?? []) as ResumeVariantRow[];
+}
+
+/** Approve / revert ONE variant row — a later tailoring (different content)
+    is a new row and asks again. The engine's next run for that posting
+    reads the approval and unlocks auto-submit for the gate. */
+export async function approveResumeVariant(id: string, approved: boolean): Promise<void> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { error } = await client.rpc("admin_approve_resume_variant", { p_id: id, p_approved: approved });
+  if (error) throw error;
+}
+
 export async function resolveJobReview(id: string, status: "done" | "dismissed" | "closed"): Promise<void> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");

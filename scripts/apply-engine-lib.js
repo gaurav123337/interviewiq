@@ -154,6 +154,26 @@ export const SITE_RULES = {
     listSelectorHints: ["a[href*='jobs.lever.co/']"],
     minIntervalMs: 2500,
   },
+  workday: {
+    label: "Workday",
+    jobsUrlHosts: ["myworkdayjobs.com"],
+    loginPathHints: [],
+    loggedInHint: "",
+    applyButtonText: /^apply( now)?$/i,
+    steps: ["apply"],
+    /* FAIL-CLOSED like lever until rehearsed on a live tenant: Workday's
+       application form is a deeply shadow-DOM'd widget tree — DOM
+       extraction can find ZERO fields there, which is exactly the trigger
+       for the Tier-4 VLM fallback (metadata-only read from a screenshot;
+       answers stay profile-drafted; required-unanswered stays needs-review).
+       Submit never happens automatically for this pack; success text is
+       pinned by ANALOGY and only consulted after the human submits. */
+    autoSubmit: false,
+    submitButtonText: /submit application|confirm and submit|^apply$/i,
+    successText: /application (was|has been) (received|submitted)|thank you for applying/i,
+    listSelectorHints: ["a[href*='/job/']"],
+    minIntervalMs: 2500,
+  },
   wellfound: {
     label: "Wellfound",
     jobsUrlHosts: ["wellfound.com", "angel.co"],
@@ -356,6 +376,18 @@ export function classifyJobLink({ href, text, host = "" } = {}) {
   /* LinkedIn /jobs/view/<id> */
   const li = path.match(/\/jobs\/view\/(\d{5,})/);
   if (li) return { kind: "posting", id: li[1], routeKey: null };
+
+  /* Workday detail paths — hosts *.myworkdayjobs.com, externalPath is
+     /job/<title-slug>_<externalId>[-N]. The /job/ discriminator already
+     drops the /en-US/<site>/ section routes; without it the site's own
+     “About this site” / category tiles would have cited as postings. */
+  if (/myworkdayjobs\.com$/.test(h)) {
+    const wd = path.match(/\/job\/(?:([^/?#]+))/);
+    if (wd) {
+      const idm = wd[1].match(/_([A-Za-z0-9-]+)$/);
+      return { kind: "posting", id: idm ? idm[1] : wd[1], routeKey: null };
+    }
+  }
 
   /* Naukri /job-listings-<slug>-<id> (id trails the slug) and /job-detail */
   const nk = path.match(/\/job-listings?-([^/?#]+)/i);
@@ -795,6 +827,21 @@ export const ATS_PACKS = {
     fieldSelectorHints: ["form input:not([type=hidden]):not([disabled])", "form textarea", "form select"],
     submitButtonText: /submit\s*application/i,
     successText: /application (was|has been) (received|submitted)|thanks for applying/i,
+  },
+  workday: {
+    label: "Workday",
+    hostHints: ["myworkdayjobs.com"],
+    /* Workday's form is a shadow-DOM widget tree — data-automation-id hints
+       close SOME gaps, but honestly nothing here is stable across tenants.
+       When extraction still finds ZERO fields, the Tier-4 VLM fallback
+       (metadata only, profile-drafted answers) takes the form over. */
+    fieldSelectorHints: [
+      "input[data-automation-id*='textInput']:not([type=hidden])",
+      "textarea[data-automation-id*='richTextEditor']",
+      "form input:not([type=hidden]):not([disabled])", "form textarea", "form select",
+    ],
+    submitButtonText: /submit application|confirm and submit|^apply$/i,
+    successText: /application (was|has been) (received|submitted)|thank you for (your )?(applying|application)/i,
   },
   workable: {
     label: "Workable",
@@ -2299,6 +2346,31 @@ export function atsApiCollectPlan(url) {
       apiUrl: `https://api.lever.co/v0/postings/${token}?mode=json`,
     } : null;
   }
+  /* Workday tenants: <tenant>.wd<N>.myworkdayjobs.com — the human careers
+     URL carries /<locale>/<site> (e.g. /en-US/External or /en-US/Careers),
+     and site is the ONLY usable board key (tenant alone cannot fetch a
+     listing). The POST-body CXS feed endpoint is derived from those two;
+     detailBase re-joins host+locale+site for parseWorkdayJobs to build
+     detail URLs from each posting's externalPath. No /<locale>/<site> in
+     the path → the plan honestly stays null and the caller scrapes. */
+  if (/(^|\.)myworkdayjobs\.com$/.test(host)) {
+    const tenant = host.split(".")[0];
+    const localeM = (u.pathname.match(/\/([a-z]{2}-[A-Z]{2})(?=\/)/) || [])[1] || "en-US";
+    const siteSegs = segs.filter((s) => !/^[A-Za-z]{2}-[A-Z]{2}$/.test(s));
+    /* keep the segment's ORIGINAL casing — CXS endpoints are case-sensitive
+       and tenants name sites "External", "Careers", "Jobs"… */
+    const site = siteSegs.length ? siteSegs[siteSegs.length - 1] : null;
+    if (site && /^[a-z0-9][a-z0-9_-]{1,60}$/i.test(site) && site !== tenant) {
+      return {
+        provider: "workday",
+        board: site,
+        infoUrl: null,
+        apiUrl: `https://${host}/wday/cxs/${tenant}/${site}/jobs`,
+        workday: { detailBase: `https://${host}/${localeM}/${site}` },
+      };
+    }
+    return null;
+  }
   return null;
 }
 
@@ -2362,6 +2434,38 @@ export function parseLeverPostings(payload, { company = null, now = Date.now() }
   return out;
 }
 
+/** Parse a Workday CXS /jobs POST payload into collect rows (same contract
+    as parseGreenhouseJobs). Workday stamps postedOn as prose ("Posted 3
+    Days Ago"); the "Posted" prefix is stripped straight into the stamp the
+    freshness pipeline already parses. Detail URLs are built from the
+    plan's detailBase + the posting's own externalPath (no invention: what
+    Workday published IS the canonical human-visible path). */
+export function parseWorkdayJobs(payload, { company = null, detailBase = "", now = Date.now() } = {}) {
+  const jobs = Array.isArray(payload?.jobPostings) ? payload.jobPostings : [];
+  const base = String(detailBase || "").replace(/\/+$/, "");
+  const out = [];
+  for (const j of jobs) {
+    const title = String(j?.title ?? "").trim();
+    const extPath = String(j?.externalPath ?? "").trim();
+    if (!title || !extPath || !base) continue; // no detail URL → can't be opened later — skip, honest
+    const posted = String(j?.postedOn ?? "")
+      .replace(/^\s*posted\s+/i, "")
+      .replace(/^today\s*$/i, "just posted")
+      .toLowerCase()
+      .trim();
+    out.push({
+      url: `${base}${extPath.startsWith("/") ? "" : "/"}${extPath}`,
+      title: title.slice(0, 140),
+      company: (String(company ?? "") || "").slice(0, 80),
+      location: String(j?.locationsText ?? "").slice(0, 80),
+      __ageText: posted,
+      __apiId: String(j?.externalId ?? extPath ?? ""),
+      __viaApi: true,
+    });
+  }
+  return out;
+}
+
 /** Fetch + parse one ATS board's postings over its public API. Returns
     { rows } or { rows: [], error } — never throws (the caller falls back
     to scraping). Node 22 global fetch; a 4xx/5xx or unparsable body is an
@@ -2369,6 +2473,20 @@ export function parseLeverPostings(payload, { company = null, now = Date.now() }
 export async function fetchAtsApiJobs(plan) {
   if (!plan?.apiUrl) return { rows: [], error: "no plan" };
   try {
+    /* Workday's CXS feed is a POST (body shape its own UI uses); the other
+       providers are GETs. A non-OK status stays an honest scrape fallback. */
+    if (plan.provider === "workday") {
+      const res = await fetch(plan.apiUrl, {
+        method: "POST",
+        headers: { "User-Agent": "InterviewIQ-auto-apply (+local engine)", "Content-Type": "application/json", "Accept": "application/json" },
+        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset: 0 }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return { rows: [], error: `HTTP ${res.status}` };
+      const body = await res.json();
+      const rows = parseWorkdayJobs(body, { detailBase: plan.workday?.detailBase ?? "" });
+      return { rows, error: rows.length ? null : "payload carried 0 postings" };
+    }
     const res = await fetch(plan.apiUrl, {
       headers: { "User-Agent": "InterviewIQ-auto-apply (+local engine)" },
       signal: AbortSignal.timeout(15_000),

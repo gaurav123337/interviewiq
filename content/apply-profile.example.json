@@ -9,6 +9,7 @@
   "salaryExpectation": "",
   "openToRelocate": true,
   "openToRemote": true,
+  "autoTailor": false,
   "portfolio": "https://github.com/you",
   "linkedin": "https://linkedin.com/in/you",
   "reasonLeaving": "",
