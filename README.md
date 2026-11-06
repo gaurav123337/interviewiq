@@ -151,22 +151,22 @@ npm run typecheck  # tsc over the WHOLE project, including tests
 npm run eval:rag   # RAG retrieval golden-set regression gate
 ```
 
-CI (`.github/workflows/deploy.yml`, on push to `main`) is a hard gate: production `npm audit`, `npm run eval:rag`, `npm run typecheck` (app **and** tests), `npm run build`, the **full `npm test` suite (blocking)**, and `deno test supabase/functions/_shared/` for the edge shared code — then deploys `dist/` to **GitHub Pages** and (if `SUPABASE_ACCESS_TOKEN` is set) the Edge Functions. The `pre-push` hook mirrors these gates locally.
+CI (`.github/workflows/deploy.yml`, on push to `main`) is a hard gate: production `npm audit`, `npm run eval:rag`, `npm run typecheck` (app **and** tests), `npm run build`, the **full `npm test` suite (blocking)**, and `deno test supabase/functions/_shared/` for the edge shared code — then deploys the same `dist/` to **GitHub Pages** and **Wasmer Edge**. The `pre-push` hook mirrors these gates locally. Supabase Edge Functions deploy only when a manual workflow run explicitly enables `deploy_supabase` and `SUPABASE_ACCESS_TOKEN` is usable; ordinary pushes leave the backend unchanged.
 
-To enable Pages deployment: repo Settings → Pages → Source → **GitHub Actions**. `vite.config.ts` uses a relative base (`./`), so `dist/` also serves from any subpath (Netlify, Vercel, Cloudflare Pages, S3…).
+To enable Pages deployment: repo Settings → Pages → Source → **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**. The repository name and public URL remain `interviewiq` and https://gaurav123337.github.io/interviewiq/. `vite.config.ts` uses a relative base (`./`), so `dist/` also serves from any subpath (Netlify, Vercel, Cloudflare Pages, S3…).
 
 ### Deploy the frontend to Wasmer Edge
 
-The same build is published as a Wasmer Edge static site: [app.yaml](app.yaml) targets the `gaurav123337/interviewiq` app and [wasmer.toml](wasmer.toml) packages `dist/` behind Static Web Server, using the cache rules in [settings/config.toml](settings/config.toml) (content-hashed assets are `immutable`; `index.html` and `sw.js` are `no-cache` so a deploy is picked up without waiting for the old shell to expire). Only the frontend goes to Wasmer — the backend stays on Supabase and nothing in `supabase/` is part of that package.
+The same build is published as a Wasmer Edge static site: [app.yaml](app.yaml) targets the `gaurav123337/jobassist` app at https://job-assist.wasmer.app/, and [wasmer.toml](wasmer.toml) packages `dist/` behind Static Web Server, using the cache rules in [settings/config.toml](settings/config.toml) (content-hashed assets are `immutable`; `index.html` and `sw.js` are `no-cache` so a deploy is picked up without waiting for the old shell to expire). `jobassist` is the Wasmer app name only; it does not rename the GitHub repository or Pages path. Only the frontend goes to Wasmer — the backend stays on Supabase and nothing in `supabase/` is part of that package.
 
 ```bash
 npm run build
-wasmer deploy --owner gaurav123337 --app-name interviewiq --bump
+wasmer deploy --owner gaurav123337 --app-name jobassist --bump
 ```
 
 The CLI keeps its login in `~/.wasmer`; `--bump` publishes a new package version, and `app.yaml` records the app id so owner/name cannot drift onto a different app.
 
-CI does the same on every push to `main`: the `Deploy to Wasmer Edge` step in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) ships the `dist/` that gh-pages just published, authenticating with the `WASMER_TOKEN` repository secret. Without that secret the step logs a notice and skips — the GitHub Pages deploy is unaffected either way.
+CI does the same on every push to `main`: the `Deploy to Wasmer Edge` step in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) ships the `dist/` that gh-pages just published, authenticating with the `WASMER_TOKEN` repository secret. A missing token or failed Wasmer deployment fails the run; check both deployment steps before treating a release as synchronized. The final frontend check waits for publication, then compares both public sites' HTML, service worker, and referenced bundles against the build using SHA-256. Publication is sequential, so Pages may already be updated if Wasmer fails. Sync is one-way from GitHub to both sites: dashboard edits and browser-local data are not copied back into the repository.
 
 ## Project structure
 

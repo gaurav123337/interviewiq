@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_supabase:
+        description: 'Also deploy Supabase edge functions (frontend releases leave the backend unchanged)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -67,40 +73,27 @@ jobs:
           # Preserve files that aren't in dist/ (CNAME, etc.)
           keep_files: false
 
-      # ── Deploy the same dist/ to Wasmer Edge (optional) ────────────────
-      # This runs on the SAME built dist/ that gh-pages just received, so the
-      # two targets cannot drift onto different bundles. It is additive: the
-      # Pages deploy above is untouched and still publishes every push.
-      #
-      # Skipped, with a visible notice, when WASMER_TOKEN is absent. The check
-      # lives in the script on purpose: neither `secrets` nor a step's own `env`
-      # is available to that step's `if`, so `if:` would silently never match.
-      #
-      # wasmer.toml packages dist/ behind Static Web Server, using the cache
-      # rules in settings/config.toml; app.yaml pins the app id so the
-      # interviewassist.wasmer.app alias keeps pointing at the same app.
+      # ── Deploy the same dist/ to Wasmer Edge ───────────────────────────
+      # GitHub remains the source of truth: both sites receive the SAME build.
+      # A Wasmer failure must fail this release, even if Pages already published,
+      # so a green run cannot hide drift between the two public sites.
+      # wasmer.toml packages dist/ behind Static Web Server; app.yaml pins
+      # gaurav123337/jobassist and its job-assist.wasmer.app public alias.
       - name: Deploy to Wasmer Edge
-        # Optional additive mirror. A stale WASMER_TOKEN used to fail here and
-        # take the Supabase function deploy below down with it, so this step can
-        # never fail the run — the access mismatch is reported as a warning in
-        # the script, and any other Wasmer error still shows up in the logs.
-        continue-on-error: true
         timeout-minutes: 10
         env:
           WASMER_TOKEN: ${{ secrets.WASMER_TOKEN }}
         run: |
           if [ -z "$WASMER_TOKEN" ]; then
-            echo "::notice title=Wasmer Edge::WASMER_TOKEN is not set - skipping the Wasmer deploy"
-            exit 0
+            echo "::error title=Wasmer Edge::WASMER_TOKEN is not set - cannot synchronize both frontend sites"
+            exit 1
           fi
           # Pinned Edge CLI, unpacked from the tagged release asset, instead of
           # `curl https://get.wasmer.io | sh`: that installer re-resolves
           # $RELEASES_URL/latest every run, so CI drove a production deploy with
           # whatever CLI happened to be newest that morning, and it piped a
           # remote script into sh with the deploy token sitting in the env.
-          # WASMER_VERSION is what the installer would have picked today and is
-          # the version the interviewassist app was last deployed with — bump it
-          # deliberately.
+          # WASMER_VERSION is the reviewed Edge CLI release — bump it deliberately.
           #
           # The digest pins the artifact, not its provenance: Wasmer publishes no
           # checksum file for v7.5.0, so this is the SHA-256 of the asset as
@@ -130,33 +123,75 @@ jobs:
           # would abort before STATUS is read; disable it around the capture.
           set +o pipefail
           set +e
-          OUTPUT=$(yes | wasmer deploy --owner gaurav123337 --app-name interviewiq --bump 2>&1)
+          # Keep the name aligned with app.yaml's pinned jobassist app ID;
+          # overriding it with interviewiq deploys the separate, wrong app.
+          OUTPUT=$(yes | wasmer deploy --owner gaurav123337 --app-name jobassist --bump 2>&1)
           STATUS=$?
           set -e
           set -o pipefail
           echo "$OUTPUT"
           if [ "$STATUS" -ne 0 ]; then
-            # A token belonging to a different Wasmer account cannot publish
-            # under this owner ("It seems you don't have access to ..."). That is
-            # a credentials problem with the optional mirror, not a build
-            # regression — log it as a warning instead of a red step.
-            if printf '%s' "$OUTPUT" | grep -q "don't have access to"; then
-              echo "::warning title=Wasmer Edge::WASMER_TOKEN has no access to gaurav123337 - skipping the mirror deploy"
-              exit 0
-            fi
+            echo "::error title=Wasmer Edge::jobassist deployment failed - the frontend sites are not confirmed synchronized"
             exit "$STATUS"
           fi
 
-      # ── Deploy Supabase edge functions (optional) ──────────────────────
-      # Skipped, with a visible notice, when SUPABASE_ACCESS_TOKEN is absent.
-      #
-      # The gate is in the script, NOT `if: env.SUPABASE_ACCESS_TOKEN != ''` as
-      # it used to be: a step's own `env` is not set when its `if` is evaluated,
-      # so that condition was always false and CI never deployed a single one of
-      # these ~20 functions — they only ever shipped by hand, which is exactly
-      # the silent drift this list exists to prevent. (Same reason the Wasmer
-      # step above gates in its script.)
+      # Verify the public responses, not just the platform's deploy status. Pages
+      # publishes asynchronously after the gh-pages push; allow propagation, then
+      # compare the shell, service worker, and its referenced bundles byte-for-byte.
+      - name: Verify synchronized frontend sites
+        timeout-minutes: 10
+        run: |
+          python -I - "$GITHUB_WORKSPACE/dist" \
+            https://gaurav123337.github.io/interviewiq/ \
+            https://job-assist.wasmer.app/ <<'PY'
+          import hashlib
+          import os
+          import re
+          import sys
+          import time
+          from concurrent.futures import ThreadPoolExecutor
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          dist = Path(sys.argv[1])
+          html = (dist / "index.html").read_bytes()
+          assets = sorted(set(re.findall(r'(?:src|href)="\./(assets/[A-Za-z0-9_.-]+)"', html.decode("utf-8"))))
+          if not assets:
+              raise SystemExit("No built assets found in index.html")
+          files = ["index.html", "sw.js", *assets]
+          expected = {name: hashlib.sha256((dist / name).read_bytes()).hexdigest() for name in files}
+          revision = os.environ["GITHUB_SHA"]
+
+          def verify(base, name):
+              request = Request(base + name + "?release=" + revision, headers={"Cache-Control": "no-cache"})
+              with urlopen(request, timeout=15) as response:
+                  actual = hashlib.sha256(response.read()).hexdigest()
+              if actual != expected[name]:
+                  raise RuntimeError(f"{base}{name} does not match this release")
+
+          for base in sys.argv[2:]:
+              for attempt in range(8):
+                  try:
+                      verify(base, "index.html")
+                      break
+                  except Exception as error:
+                      if attempt == 7:
+                          raise
+                      print(f"Waiting for {base}: {error}", flush=True)
+                      time.sleep(15)
+              with ThreadPoolExecutor(max_workers=6) as pool:
+                  list(pool.map(lambda name: verify(base, name), files))
+              message = f"Verified {base}: {len(files)} files match commit {revision} (SHA-256)"
+              print(message, flush=True)
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write(message + "\n\n")
+          PY
+
+      # ── Deploy Supabase edge functions (explicit manual opt-in only) ───
+      # A frontend push must not change backend functions. Request them through
+      # workflow_dispatch with deploy_supabase=true; credentials stay in secrets.
       - name: Deploy edge functions (Supabase)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_supabase }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |

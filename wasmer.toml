@@ -12,7 +12,8 @@
 [package]
 # Separate package from the dashboard's anybuild package of the same app: that one
 # is private, and Wasmer refuses to publish a public release under a private
-# package name. The app still deploys as gaurav123337/interviewiq.
+# package name. The app deploys as gaurav123337/jobassist; this package name
+# and the GitHub repository name stay unchanged.
 name = "gaurav123337/interviewiq-web"
 version = "0.1.0"
 description = "InterviewIQ — offline-first AI interview coach (React + Vite PWA)"
