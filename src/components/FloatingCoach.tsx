@@ -355,13 +355,14 @@ export function FloatingCoach() {
     <>
       <button onClick={() => setOpen(o => !o)}
         className={`no-print fixed bottom-20 right-4 z-[110] grid h-14 w-14 place-items-center rounded-full shadow-[0_8px_30px_rgba(99,102,241,.45)] transition-all hover:scale-110 md:bottom-8 ${open ? "bg-deep border-2 border-acc1/50" : "grad-bg"}`}
-        title="AI Coach (Ctrl+/)" aria-label="Open AI Coach">
+        title="AI Coach (Ctrl+/)" aria-label="Open AI Coach" aria-expanded={open} aria-controls="floating-ai-coach-panel">
         <span className="text-[22px]">{open ? "✕" : "🤖"}</span>
       </button>
 
       {open && (
-        <div className={`no-print fixed bottom-[90px] z-[109] w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 ease-[cubic-bezier(.4,0,.2,1)] md:bottom-[80px] ${topic.drawerOpen ? "left-4" : "right-4"}`}>
-          <div className={`${cardCls} overflow-hidden shadow-[0_18px_50px_rgba(0,0,0,.55)]`}>
+        <div id="floating-ai-coach-panel" className={`no-print fixed bottom-[152px] z-[109] w-[380px] max-w-[calc(100vw-2rem)] transition-all duration-300 ease-[cubic-bezier(.4,0,.2,1)] md:bottom-[104px] ${topic.drawerOpen ? "left-4" : "right-4"}`}>
+          {/* Keep the composer above the toggle and scroll inside short viewports. */}
+          <div className={`${cardCls} flex max-h-[calc(100dvh-224px)] flex-col overflow-y-auto shadow-[0_18px_50px_rgba(0,0,0,.55)] md:max-h-[calc(100dvh-176px)]`}>
 
             {/* Coach type tabs */}
             <div className="flex border-b border-line/10">
@@ -424,7 +425,7 @@ export function FloatingCoach() {
             )}
 
             {/* Messages */}
-            <div ref={boxRef} className="h-[300px] space-y-2 overflow-y-auto px-4 py-3 pr-2">
+            <div ref={boxRef} className="min-h-[72px] max-h-[300px] flex-1 basis-[300px] space-y-2 overflow-y-auto px-4 py-3 pr-2">
               {msgs.map((m, i) => (
                 <div key={i} className="flex flex-col">
                   {m.role === "user" && <div className="mb-0.5 text-right text-[10px] font-bold text-mut">You asked:</div>}

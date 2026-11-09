@@ -48,6 +48,29 @@ afterEach(() => {
 });
 
 describe("discount pricing", () => {
+  it("prices the add-on without adding it to subscription or grant plans", async () => {
+    const { PLANS, resolvePlanPrice } = await import("../services/entitlement");
+    const { PLAN_CATALOG } = await import("../../supabase/functions/_shared/payment");
+    expect(PLANS.map(plan => plan.id)).toEqual(["monthly", "yearly", "lifetime", "platinum"]);
+    for (const id of [...PLANS.map(plan => plan.id), "auto_apply"]) {
+      expect(resolvePlanPrice(id)).toBe(PLAN_CATALOG[id].amountMinor / 100);
+    }
+  });
+
+  it("uses valid remote prices, including zero, with per-product fallbacks", async () => {
+    const { resolvePlanPrice } = await import("../services/entitlement");
+    expect(resolvePlanPrice("auto_apply", { monthly: 12 })).toBe(199);
+    expect(resolvePlanPrice("auto_apply", { auto_apply: 149 })).toBe(149);
+    expect(resolvePlanPrice("auto_apply", { auto_apply: 0 })).toBe(0);
+    expect(resolvePlanPrice("monthly", { monthly: 12 })).toBe(12);
+    for (const value of [null, undefined, -1, NaN, Infinity, "149", {}]) {
+      expect(resolvePlanPrice("auto_apply", { auto_apply: value })).toBe(199);
+    }
+    for (const id of ["unknown", "currency", "constructor", "__proto__"]) {
+      expect(() => resolvePlanPrice(id)).toThrow("Unknown pricing product");
+    }
+  });
+
   it("applies a percent discount and clamps it", async () => {
     const { discountedPrice, fmtMoney } = await import("../services/entitlement");
     expect(discountedPrice(9, 30)).toBe(6.3);

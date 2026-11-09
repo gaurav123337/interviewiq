@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { CONFIG } from "../config";
 import { getTier, setTier } from "../services/entitlements";
 import {
-  PLANS, discountedPrice, discountLive, fmtMoney, getCachedEntitlement, refreshEntitlement, tierSource
+  PLANS, resolvePlanPrice, discountedPrice, discountLive, fmtMoney, getCachedEntitlement, refreshEntitlement, tierSource
 } from "../services/entitlement";
 import { createCheckout, createStandardOrder, getRemotePricing, paymentProviderName, validateCoupon, verifyPayment, type CouponCheck, type RemotePricing } from "../services/billing";
 import { getCloudState, isCloudConfigured } from "../services/cloud";
@@ -66,7 +66,7 @@ export function UpgradeModal({ onClose, reason }: { onClose: () => void; reason:
   /* the better of the per-user discount and a validated coupon code wins */
   const effDiscount = Math.max(discount, couponCheck?.valid ? couponCheck.discountPct : 0);
   /* admin-published price wins over the baked-in catalog (dollars) */
-  const planPrice = (id: string) => (remote && remote[id as keyof RemotePricing] != null ? remote[id as keyof RemotePricing] as number : PLANS.find(p => p.id === id)!.price);
+  const planPrice = (id: string) => resolvePlanPrice(id, remote);
   /* currency-aware label — follows the admin-published pricing row (₹ for
      INR, symbol for USD, code otherwise); falls back to the baked-in $ */
   const money = (n: number) => {

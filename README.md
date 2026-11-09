@@ -145,6 +145,8 @@ Create a GitHub **OAuth App** and/or a Google **OAuth client (Web)**, set the ca
 
 ## Tests & CI
 
+The **[virtual browser tester](docs/testing/virtual-tester.md)** exercises real desktop/mobile browser journeys with isolated synthetic integrations and captures reports, screenshots, and failure traces. Start with Node 22, `node node_modules/@playwright/test/cli.js install chromium`, then `npm run test:virtual`. Use `npm run test:e2e:report` to inspect results. Cloud/provider simulation is labeled explicitly; real backend integration needs a dedicated sandbox. No recurring checks are enabled.
+
 ```bash
 npm test           # vitest: engine/data integrity + full UI flow (jsdom)
 npm run typecheck  # tsc over the WHOLE project, including tests

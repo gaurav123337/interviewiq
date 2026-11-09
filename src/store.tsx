@@ -56,9 +56,12 @@ const VIEW_TO_HASH: Record<string, string> = {
   jobs: "jobs", articles: "articles", resources: "resources", counselor: "counselor",
   systemDesign: "system-design", learn: "learn", "learn-detail": "learn", sources: "sources",
 };
-const HASH_TO_VIEW: Record<string, string> = Object.fromEntries(
-  Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])
-);
+const HASH_TO_VIEW: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(VIEW_TO_HASH).map(([v, h]) => [h, v])),
+  /* The detail view shares this hash but needs a selected skill; fresh links
+     always enter through the explorer. */
+  learn: "learn"
+};
 
 /** Read the initial view from the URL hash (#/planner → "planner").
     Also falls back to clean URL paths (/interviewiq/planner) for backward

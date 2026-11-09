@@ -46,8 +46,16 @@ export function SkillDetail() {
   const [showAllResources, setShowAllResources] = useState(false);
 
   useEffect(() => {
-    if (!slug) return;
-    void getRoadmapBySlug(slug).then(r => { setRoadmap(r); setLoading(false); });
+    let active = true;
+    setRoadmap(null);
+    setLoading(Boolean(slug));
+    if (slug) {
+      void getRoadmapBySlug(slug)
+        .then(r => { if (active) setRoadmap(r); })
+        .catch(() => { if (active) setRoadmap(null); })
+        .finally(() => { if (active) setLoading(false); });
+    }
+    return () => { active = false; };
   }, [slug]);
 
   const resolved = useMemo(() => {

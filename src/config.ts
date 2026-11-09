@@ -1,4 +1,5 @@
 /* Central, easily-editable app configuration. */
+import { resolveCloudConfig } from "./services/cloudConfig";
 
 export const CONFIG = {
   productName: "InterviewIQ",
@@ -31,10 +32,10 @@ export const CONFIG = {
         Flip to true only for local testing of the legacy key path. */
     testLicensing: false
   },
-  /** Optional cross-device sync. Create a free Supabase project, run the SQL in
-      the README, and paste the project URL + anon key here. Empty = cloud sync off. */
-  supabase: {
+  /** Defaults keep existing deployments unchanged. Explicit environment values
+      select an isolated project; both empty values disable cloud without fallback. */
+  supabase: resolveCloudConfig({
     url: "https://ndrusywvceojsoirhkhl.supabase.co",
     anonKey: "sb_publishable_KL1mXNkhOnu8gYqCgMpf7A_3ue6dabe"
-  }
+  }, import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY)
 } as const;

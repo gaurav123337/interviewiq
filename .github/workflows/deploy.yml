@@ -61,6 +61,23 @@ jobs:
       - name: Report offline-shell check
         run: node scripts/report-offline.mjs
 
+      # Browser journeys use reserved fixture endpoints and their own build
+      # directories. The production dist/ above is not rebuilt or replaced.
+      - name: Install Chromium for the virtual tester
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Virtual tester safety and browser gate
+        run: npm run test:e2e:check && npm run test:e2e
+      - name: Upload isolated browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: virtual-tester-isolated-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: warn
+
       # ── Deploy to GitHub Pages via gh-pages branch ──────────────────────
       # Upload the built dist/ to a gh-pages branch so GitHub Pages can
       # serve the production bundle (not the source index.html).
@@ -186,6 +203,20 @@ jobs:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
                   summary.write(message + "\n\n")
           PY
+
+      - name: Verify anonymous deployed browser journeys
+        id: live_browser
+        run: npm run test:e2e:live
+      - name: Upload live browser evidence
+        if: ${{ always() && steps.live_browser.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: virtual-tester-live-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: warn
 
       # ── Deploy Supabase edge functions (explicit manual opt-in only) ───
       # A frontend push must not change backend functions. Request them through

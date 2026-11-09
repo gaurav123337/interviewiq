@@ -1,0 +1,58 @@
+name: Virtual browser tester
+
+# No schedule and no production secrets. PR code is never run with a write token.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      live_smoke:
+        description: Also check the two anonymous public frontends (read-only)
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: virtual-tester-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - run: npm run test:virtual
+      - name: Upload isolated browser report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: virtual-tester-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Optional read-only public smoke
+        id: live_browser
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_smoke }}
+        run: npm run test:e2e:live
+      - name: Upload live smoke report
+        if: ${{ always() && steps.live_browser.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: virtual-tester-live-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: warn

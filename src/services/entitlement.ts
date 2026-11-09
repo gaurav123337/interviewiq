@@ -51,6 +51,17 @@ export const PLANS = [
   { id: "platinum", label: "Platinum", price: 349, per: " once" }
 ] as const;
 
+type PricedProduct = (typeof PLANS)[number]["id"] | "auto_apply";
+
+/** The add-on is priced separately, never offered as a subscription/grant plan.
+    Keep its fallback aligned with the server's PLAN_CATALOG (19900 minor units). */
+export function resolvePlanPrice(id: string, remote: Partial<Record<PricedProduct, unknown>> | null = null): number {
+  const fallback = id === "auto_apply" ? 199 : PLANS.find(plan => plan.id === id)?.price;
+  if (fallback === undefined) throw new Error("Unknown pricing product");
+  const override = remote?.[id as PricedProduct];
+  return typeof override === "number" && Number.isFinite(override) && override >= 0 ? override : fallback;
+}
+
 let cached: ServerEntitlement | null = null;
 
 export function getCachedEntitlement(): ServerEntitlement | null {

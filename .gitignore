@@ -4,6 +4,12 @@ node_modules/
 # build output
 dist/
 
+# isolated virtual tester builds, synthetic sessions, and evidence
+.virtual-tester/
+playwright-report/
+test-results/
+playwright/.auth/
+
 # local app / tool state (Freebuff desktop database — never commit)
 .freebuff/
 

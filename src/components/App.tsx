@@ -306,6 +306,15 @@ export function App() {
     .filter(t => (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs")))
     .map(t => ({ ...t, id: routeById.get(t.id)! }));
   const visibleMobileTabs = mobileTabs;
+  /* Desktop-only primary destinations still need a home on mobile. Exclude
+     actual mobile tabs, not desktop tabs, and keep each destination once. */
+  const mobilePrimaryIds = new Set(visibleMobileTabs.map(t => t.id));
+  const mobileMoreTabs = [...primaryTabs, ...moreTabs]
+    .filter(t => (t.id !== "drill" || featureOn("drill")) && (t.id !== "jobs" || featureOn("jobs")))
+    .filter((tab, index, tabs) =>
+      !mobilePrimaryIds.has(tab.id) && tabs.findIndex(other => other.id === tab.id) === index
+    );
+  const mobileMoreActive = mobileMoreTabs.some(t => t.id === view);
   void remoteConfigRevision;
 
   useEffect(() => subscribeAdmin(s => { setAdmin(s); setBanner(nextUnseenAnnouncement()); setAdminUnlocked(s.isAdmin); }), []);
@@ -485,10 +494,10 @@ export function App() {
       />
 
       {/* bottom nav (mobile) — configured tabs + ☰ for secondary destinations */}
-      {(visibleMobileTabs.length > 0 || moreTabs.length > 0) && <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
+      {(visibleMobileTabs.length > 0 || mobileMoreTabs.length > 0) && <nav className="no-print fixed inset-x-0 bottom-0 z-50 border-t border-line/10 bg-deep/95 backdrop-blur-xl md:hidden">
         <div className={`absolute inset-x-0 bottom-full mb-2 px-3 transition-all duration-200 ease-out ${menuOpen ? "translate-y-0 opacity-100" : "pointer-events-none invisible translate-y-3 opacity-0"}`}>
-          <div className="rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.5)]">
-            <MoreMenu current={view} tabs={moreTabs} onPick={go} />
+          <div className="max-h-[calc(100dvh-160px)] overflow-y-auto rounded-2xl border border-line/10 bg-deep/95 p-2 shadow-[0_18px_50px_rgba(0,0,0,.5)]">
+            <MoreMenu current={view} tabs={mobileMoreTabs} onPick={go} />
           </div>
         </div>
         <div className="mx-auto flex max-w-[1200px] items-stretch justify-around px-1 pb-[env(safe-area-inset-bottom)]">
@@ -502,13 +511,13 @@ export function App() {
               <span className="leading-none">{t.label}</span>
             </button>
           ))}
-          {moreTabs.length > 0 && <button
+          {mobileMoreTabs.length > 0 && <button
             onClick={() => setMenuOpen(o => !o)}
             aria-label="More"
             aria-expanded={menuOpen}
-            className={`flex min-h-[52px] flex-1 flex-col items-center justify-center gap-1 py-2 text-[11px] font-bold ${menuOpen || moreActive ? "text-acc3" : "text-fnt"}`}
+            className={`flex min-h-[52px] flex-1 flex-col items-center justify-center gap-1 py-2 text-[11px] font-bold ${menuOpen || mobileMoreActive ? "text-acc3" : "text-fnt"}`}
           >
-            <span className={`grid h-9 w-9 place-items-center rounded-xl text-[20px] ${menuOpen || moreActive ? "bg-acc1/20" : ""}`}>{menuOpen ? "✕" : "☰"}</span>
+            <span className={`grid h-9 w-9 place-items-center rounded-xl text-[20px] ${menuOpen || mobileMoreActive ? "bg-acc1/20" : ""}`}>{menuOpen ? "✕" : "☰"}</span>
             <span className="leading-none">More</span>
           </button>}
         </div>
