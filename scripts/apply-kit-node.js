@@ -13,11 +13,14 @@
  * the deterministic template. The engine NEVER blocks on AI.
  */
 
-import { loadAiProviderConfig } from "./ai-config.js";
+import { getApplyAgentRuntimeContext } from "./apply-agent-runtime.js";
 import { judgeMessages, parseJudgeReply, ownerExemplarFor, auditAuthenticity, aiFieldPrompt, parseFieldMapping, applyFieldMapping, buttonHealPrompt, parseHealReply } from "./apply-engine-lib.js";
 import { vlmFieldsPrompt, parseVlmFields } from "./vlm-form-lib.js";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+
+const AGENT_CONTEXT = getApplyAgentRuntimeContext();
+const PAIRED = AGENT_CONTEXT.mode === "paired";
 
 /** AI JUDGE — reads the real JD and renders apply/skip with JSON reason.
     Fail-open: any error/absent provider returns { verdict: "unknown" } and
@@ -25,7 +28,7 @@ import path from "node:path";
     prompt, small max_tokens) made ONCE per candidate posting, BEFORE kit
     generation — a skip here saves two AI calls plus form-filling. */
 export async function judgeFit(ai, job, profile, exemplars = null, outcomePriorText = "") {
-  if (!ai?.key) return { verdict: "unknown", reason: "no AI provider" };
+  if (PAIRED || !ai?.key) return { verdict: "unknown", reason: "no AI provider" };
   /* the owner already 👍-ed this posting: their verdict outranks any judge
      reasoning (that override IS the learn-from-the-owner loop) */
   const ownerHit = ownerExemplarFor(job, exemplars);
@@ -68,7 +71,7 @@ export function templateResume(profile, job) {
       "",
     ]).flat(),
     ...(p.projects ?? []).length ? ["PROJECTS"] : [],
-    ...p.projects.map(pr => `• ${pr.name ?? ""}${pr.description ? " — " + pr.description : ""}`),
+    ...(p.projects ?? []).map(pr => `• ${pr.name ?? ""}${pr.description ? " — " + pr.description : ""}`),
     "",
     "EDUCATION",
     p.education ?? "—",
@@ -103,6 +106,7 @@ const TIMEOUT_MS = 45_000;
 const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 
 async function chatAttempt(ai, messages, maxTokens) {
+  if (PAIRED) throw new Error("AI unavailable in paired mode (templates only)");
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
@@ -150,7 +154,7 @@ async function chatOnce(ai, messages, maxTokens) {
 /** Rewrite the template resume for this JD. Fallback: template (never throws). */
 export async function tailorResume(ai, profile, job) {
   const template = templateResume(profile, job);
-  if (!ai?.key) return { text: template, ai: false, note: "no AI provider configured" };
+  if (PAIRED || !ai?.key) return { text: template, ai: false, note: PAIRED ? "paired mode — templates only" : "no AI provider configured" };
   const sys = "You are an expert resume writer for tech roles. Rewrite the given resume to be sharper, more concrete, and tailored to the target job. Emphasize the candidate's real skills that transfer to this role (even adjacent ones — a frontend engineer applying to backend roles DOES have API, data-modeling and systems experience worth highlighting). Keep the same sections and facts — never invent experience, companies, titles, or credentials. The input may lack employment history or other data: that is EXPECTED — work with what is provided, never refuse or comment on missing data. Only if the role is in a genuinely unrelated field where NO honest mapping exists, reply with exactly: SKIP. Use action verbs and quantify impact where the facts allow. Under ~320 words. Output ONLY the resume text.";
   const usr = `Target job: ${job.title} at ${job.company}.\nKey requirements: ${(job.skills ?? []).join(", ") || "general engineering"}.\n\nCurrent resume:\n${template}\n\nRewrite it tailored to this job.`;
   try {
@@ -171,7 +175,7 @@ export async function tailorResume(ai, profile, job) {
 /** Rewrite the template cover letter for this JD. Fallback: template. */
 export async function tailorCoverLetter(ai, profile, job) {
   const template = templateCoverLetter(profile, job);
-  if (!ai?.key) return { text: template, ai: false, note: "no AI provider configured" };
+  if (PAIRED || !ai?.key) return { text: template, ai: false, note: PAIRED ? "paired mode — templates only" : "no AI provider configured" };
   const sys = "You are an expert cover-letter writer for tech roles. Rewrite the given cover letter to be warmer, more specific, and clearly tailored to the target job and company. Never invent facts, companies, or credentials. The input may lack some data: that is EXPECTED — work with what is provided, never refuse or comment on missing data. Only if the role is in a genuinely unrelated field where NO honest mapping exists, reply with exactly: SKIP. Under ~220 words. Output ONLY the letter text.";
   const usr = `Target job: ${job.title} at ${job.company}.\nKey requirements: ${(job.skills ?? []).join(", ") || "general engineering"}.\n\nTemplate letter:\n${template}\n\nRewrite it for this application.`;
   try {
@@ -239,16 +243,19 @@ export function classifyArchetype(job) {
 /**
  * Resume library entry: { slot, fitScore, text, jobTitle, company, at }
  */
-function libraryPath() {
-  return path.join(process.cwd(), 'freebuff-resume-library.json');
+export function resumeLibraryPath() {
+  return PAIRED ? path.join(AGENT_CONTEXT.stateRoot, "resume-library.json") : path.join(process.cwd(), 'freebuff-resume-library.json');
 }
 
 function loadLibrary() {
-  try { return JSON.parse(readFileSync(libraryPath(), 'utf8')); } catch { return []; }
+  try { return JSON.parse(readFileSync(resumeLibraryPath(), 'utf8')); } catch { return []; }
 }
 
 function saveLibrary(lib) {
-  try { writeFileSync(libraryPath(), JSON.stringify(lib, null, 2)); } catch { /* best effort */ }
+  try {
+    if (PAIRED) mkdirSync(AGENT_CONTEXT.stateRoot, { recursive: true });
+    writeFileSync(resumeLibraryPath(), JSON.stringify(lib, null, 2));
+  } catch { /* best effort */ }
 }
 
 /**
@@ -309,8 +316,10 @@ export async function buildKit(ai, profile, job) {
 export { weekKeyForMap } from "./apply-engine-lib.js";
 
 /** Loads the admin-configured provider; exits cleanly when none is set. */
-export async function loadAi({ token, projectRef }) {
+export async function loadAi({ token, projectRef } = {}) {
+  if (PAIRED) return null; // no global provider/config import, including on authorization failure
   try {
+    const { loadAiProviderConfig } = await import("./ai-config.js");
     const cfg = await loadAiProviderConfig({ token, projectRef });
     if (cfg?.key && cfg?.base && cfg?.model) return cfg;
   } catch { /* fall through */ }
@@ -338,7 +347,7 @@ function mapCacheKey(label, wp) { return `${label} · ${wp}`; }
     { plan2, cache: Record<label,answer> } for the driver to persist.
     Everything falls back to the unmodified plan when AI is off or wrong. */
 export async function mapUnknownFields(ai, fields, plan, { profile, job, now } = {}) {
-  if (!ai?.key || !plan?.length) return { plan2: plan, cache: {}, mapped: 0 };
+  if (PAIRED || !ai?.key || !plan?.length) return { plan2: plan, cache: {}, mapped: 0 };
   const prompt = aiFieldPrompt(fields, plan, { profile, job });
   if (!prompt) return { plan2: plan, cache: {}, mapped: 0 };
   try {
@@ -373,7 +382,7 @@ export async function mapUnknownFields(ai, fields, plan, { profile, job, now } =
    the driver behaves exactly as if the tier were unavailable. Vision refusal
    errors are marked on `ai.__unhealthy` like every other provider blip. */
 export async function vlmExtractFields(ai, screenshotB64, { pageTitle = "" } = {}) {
-  if (!ai?.key || !screenshotB64) return null;
+  if (PAIRED || !ai?.key || !screenshotB64) return null;
   const prompt = vlmFieldsPrompt(pageTitle);
   const parts = [
     { type: "text", text: prompt.user },
@@ -397,7 +406,7 @@ export async function vlmExtractFields(ai, screenshotB64, { pageTitle = "" } = {
    VERIFICATION and locator resolution live in the pure lib / driver —
    this shim is only prompt→send→parse, mirroring mapUnknownFields. */
 export async function aiHealButton(ai, controls, intent = "submit this job application") {
-  if (!ai?.key) return null;
+  if (PAIRED || !ai?.key) return null;
   const prompt = buttonHealPrompt(controls, intent);
   if (!prompt) return null;
   try {

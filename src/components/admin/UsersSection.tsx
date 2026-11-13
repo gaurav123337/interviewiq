@@ -176,9 +176,7 @@ export function UsersSection({ users, admins, busy, setBusy, onChanged }: {
   );
 }
 
-/* Per-user activity drawer — usage timeline, the shared engine's recent
-   decisions (apply_results carry no user_id: the local engine runs as the
-   owner) and this user's Telegram binding. */
+/* Support gets counts only; application text and credentials stay private. */
 function UserActivityDrawer({ userId, email, onClose }: { userId: string; email: string; onClose: () => void }) {
   const [state, setState] = useState<UserActivity | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -187,75 +185,25 @@ function UserActivityDrawer({ userId, email, onClose }: { userId: string; email:
     let alive = true;
     getUserActivity(userId)
       .then(a => { if (alive) setState(a); })
-      .catch(e => { if (alive) { setErr((e as Error).message); setState({ usage: [], applyRows: [], reviewRows: [], notify: null }); } });
+      .catch(e => { if (alive) setErr((e as Error).message); });
     return () => { alive = false; };
   }, [userId]);
 
-  const counts = state ? {
-    events: state.usage.length,
-    engine: state.applyRows.length,
-    queue: state.reviewRows.length,
-  } : null;
-
   return (
-    <Modal onClose={onClose} title={`📊 Activity — ${email}`} desc="Usage timeline, the apply engine's recent decisions and this account's Telegram binding.">
-      {err && <div className="rounded bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{err}</div>}
-      {!state ? (
-        <p className="py-6 text-center text-mut">Loading activity…</p>
+    <Modal onClose={onClose} title={`📊 Activity — ${email}`} desc="Account activity summary. Private application content is not available to support.">
+      {err ? <p className="rounded bg-red-500/10 px-3 py-2 text-[12px] text-red-400">{err}</p> : !state ? (
+        <p className="py-6 text-center text-mut">Loading summary…</p>
+      ) : !state.available ? (
+        <p className="text-[12.5px] text-fnt">User-scoped activity is unavailable until the tenant migration is applied.</p>
       ) : (
-        <div className="space-y-4">
-          <div className="flex flex-wrap gap-2 text-[12px]">
-            <Chip tone="lvl">{counts?.events ?? 0} usage events</Chip>
-            <Chip tone="lvl">engine: {counts?.engine ?? 0} recent rows</Chip>
-            <Chip tone="lvl">queue: {counts?.queue ?? 0} rows</Chip>
-            <Chip tone={state.notify ? "ok" : "default"}>{state.notify ? `🔔 bound · chat ${state.notify.chat_id}` : "🔔 not bound"}</Chip>
+        <div className="space-y-3 text-[12.5px]">
+          <div className="flex flex-wrap gap-2">
+            <Chip tone="lvl">{state.result_count} application decisions</Chip>
+            <Chip tone="lvl">{state.review_count} review rows</Chip>
+            <Chip tone="lvl">{state.variant_count} resume variants</Chip>
           </div>
-
-          <div>
-            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Usage timeline (newest first)</div>
-            {state.usage.length === 0 ? <p className="text-[12.5px] text-fnt">No usage events yet.</p> : (
-              <div className="max-h-[180px] space-y-1 overflow-y-auto">
-                {state.usage.map((e, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
-                    <Chip>{e.kind}</Chip>
-                    {e.meta && Object.keys(e.meta).length > 0 && <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-fnt">{JSON.stringify(e.meta).slice(0, 90)}</span>}
-                    <span className="ml-auto shrink-0 text-[10.5px] text-fnt">{new Date(e.created_at).toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Apply engine — recent decisions (shared, runs on the owner's machine)</div>
-            {state.applyRows.length === 0 ? <p className="text-[12.5px] text-fnt">No engine runs recorded yet.</p> : (
-              <div className="max-h-[200px] space-y-1 overflow-y-auto">
-                {state.applyRows.map((r, i) => (
-                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
-                    <Chip tone={r.result === "submitted" ? "ok" : r.result === "error" ? "bad" : r.result === "needs_review" ? "warn" : "default"}>{r.result}</Chip>
-                    <span className="min-w-0 flex-1 truncate">{r.title || r.job_url}{r.company ? ` — ${r.company}` : ""}</span>
-                    {r.fit != null && <Chip tone="lvl" title="Keyword overlap between the JD and the resume's skills — not an overall match">fit {r.fit}</Chip>}
-                    <span className="ml-auto shrink-0 text-[10.5px] text-fnt">{r.site_host} · {new Date(r.created_at).toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-mut">Review queue (all rows)</div>
-            {state.reviewRows.length === 0 ? <p className="text-[12.5px] text-fnt">Queue is empty.</p> : (
-              <div className="max-h-[160px] space-y-1 overflow-y-auto">
-                {state.reviewRows.map((r, i) => (
-                  <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg border border-line/10 bg-deep/40 px-2.5 py-1.5 text-[12px]">
-                    <Chip tone={r.status === "pending" ? "warn" : r.status === "done" ? "ok" : "default"}>{r.status}</Chip>
-                    <span className="min-w-0 flex-1 truncate">{r.title || r.job_url}</span>
-                    <span className="ml-auto shrink-0 text-[10.5px] text-fnt">{new Date(r.created_at).toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <p className="text-fnt">Last activity: {state.last_activity ? new Date(state.last_activity).toLocaleString() : "none yet"}</p>
+          <p className="text-mut">Job titles, URLs, resumes, answers, and notification credentials remain visible only to their owner.</p>
         </div>
       )}
     </Modal>
@@ -288,7 +236,7 @@ export function NotifyBindingsCard() {
       <div className="flex flex-wrap items-center gap-3 border-b border-line/10 p-5">
         <div className="flex-1">
           <h2 className="text-[16px] font-extrabold">🔔 Telegram bindings ({rows?.length ?? 0})</h2>
-          <p className="text-[12.5px] text-mut">Per-user pings are Platinum/auto-apply-gated; the engine pings the newest entitled binding. Clearing removes the row.</p>
+          <p className="text-[12.5px] text-mut">Notification health only. Each paired agent uses its owner's binding; chat IDs and tokens stay private.</p>
         </div>
         <button className={btnGhost + btnSm} onClick={refresh}>↻ refresh</button>
       </div>
@@ -299,8 +247,7 @@ export function NotifyBindingsCard() {
         {rows?.map(r => (
           <div key={r.user_id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
             <span className="font-bold">{r.email || "(no profile)"}</span>
-            <Chip>chat {r.chat_id ?? "—"}</Chip>
-            <Chip tone="lvl">token {r.token_prefix ?? "—"}…</Chip>
+            <Chip tone={r.bound ? "ok" : "default"}>{r.bound ? "bound" : "not configured"}</Chip>
             <span className="ml-auto text-[11px] text-fnt">{r.updated_at ? new Date(r.updated_at).toLocaleString() : "—"}</span>
             {busy === r.user_id ? <span className="text-[11px] text-mut">…</span> : (
               <button className={btnDanger + btnSm} onClick={() => void clear(r.user_id, r.email)} title="Delete this binding — the user can re-bind from their review queue">Clear</button>

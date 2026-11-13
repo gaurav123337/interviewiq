@@ -1,13 +1,24 @@
 /* Tests for the job-sites registry service (UI half of the discovery engine). */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-/* Mock the cloud module: clientFn.value controls what getSupabaseClient resolves to. */
-const clientFn = { value: null as unknown };
+const cloud = vi.hoisted(() => ({
+  client: null as unknown,
+  user: { id: "user-test" } as { id: string } | null,
+  getSupabaseClient: vi.fn(),
+}));
 vi.mock("../services/cloud", () => ({
-  getSupabaseClient: vi.fn(() => Promise.resolve(clientFn.value)),
+  getSupabaseClient: cloud.getSupabaseClient,
+  getCloudState: vi.fn(() => ({ user: cloud.user })),
 }));
 
-import { listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding, getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars, deleteJudgeExemplar, testNotifyConfig, probationAutoActivateAt, discoveredStamp } from "../services/jobSites";
+import {
+  listJobSites, setJobSiteStatus, summarizeSite, listJobReviews, listResolvedJobReviews,
+  resolveJobReview, unresolveJobReview, listResumeVariants, approveResumeVariant,
+  getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding,
+  getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, listFormAnswerStats,
+  sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars,
+  deleteJudgeExemplar, testNotifyConfig, probationAutoActivateAt, discoveredStamp,
+} from "../services/jobSites";
 
 const rpc = vi.fn();
 const invoke = vi.fn();
@@ -15,8 +26,12 @@ const client = { rpc, functions: { invoke } };
 
 beforeEach(() => {
   rpc.mockReset();
-  clientFn.value = client;
+  invoke.mockReset();
+  cloud.client = client;
+  cloud.user = { id: "user-test" };
+  cloud.getSupabaseClient.mockReset().mockImplementation(async () => cloud.client);
 });
+afterEach(() => vi.useRealTimers());
 
 describe("listJobSites", () => {
   it("returns the admin_list_job_sites rows", async () => {
@@ -35,9 +50,8 @@ describe("listJobSites", () => {
   });
 
   it("throws when cloud is not configured", async () => {
-    clientFn.value = null;
+    cloud.client = null;
     await expect(listJobSites()).rejects.toThrow(/cloud not configured/);
-    clientFn.value = client;
   });
 });
 
@@ -63,7 +77,7 @@ describe("summarizeSite", () => {
 });
 
 describe("review queue", () => {
-  it("returns pending review items via admin_list_job_reviews", async () => {
+  it("returns pending review items via reviews.list", async () => {
     rpc.mockResolvedValueOnce({
       data: [
         { id: "r1", site_host: "linkedin.com", job_url: "https://x/job", title: "Frontend Engineer", company: "Acme", form_url: "https://x/form", reason: "review gate", created_at: "2026-09-27T09:00:00Z" },
@@ -71,28 +85,30 @@ describe("review queue", () => {
       error: null,
     });
     const rows = await listJobReviews();
-    expect(rpc).toHaveBeenCalledWith("admin_list_job_reviews");
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "reviews.list", p_args: {} });
     expect(rows).toHaveLength(1);
     expect(rows[0].site_host).toBe("linkedin.com");
     expect(rows[0].form_url).toBe("https://x/form");
   });
 
   it("throws when cloud is not configured", async () => {
-    clientFn.value = null;
+    cloud.client = null;
     await expect(listJobReviews()).rejects.toThrow(/cloud not configured/);
-    clientFn.value = client;
   });
 
-  it("resolves an item with admin_resolve_job_review", async () => {
+  it("resolves an item with reviews.resolve", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await resolveJobReview("r1", "done");
-    expect(rpc).toHaveBeenCalledWith("admin_resolve_job_review", { p_id: "r1", p_status: "done" });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "reviews.resolve", p_args: { id: "r1", status: "done" } });
   });
 
   it("putJudgeExemplar writes the owner verdict with posting id when known", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await putJudgeExemplar("positive", "Senior Frontend Developer at Acme (4471345244): owner-confirmed relevant", "guest view", "https://www.linkedin.com/jobs/view/4471345244/");
-    expect(rpc).toHaveBeenCalledWith("admin_put_judge_exemplar", { p_kind: "positive", p_summary: "Senior Frontend Developer at Acme (4471345244): owner-confirmed relevant", p_reason: "guest view", p_source_url: "https://www.linkedin.com/jobs/view/4471345244/" });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", {
+      p_action: "exemplars.put",
+      p_args: { kind: "positive", summary: "Senior Frontend Developer at Acme (4471345244): owner-confirmed relevant", reason: "guest view", sourceUrl: "https://www.linkedin.com/jobs/view/4471345244/" },
+    });
   });
 
   it("propagates resolve errors", async () => {
@@ -103,12 +119,12 @@ describe("review queue", () => {
   it("passes the closed status through (posting no longer accepting)", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await resolveJobReview("r2", "closed");
-    expect(rpc).toHaveBeenCalledWith("admin_resolve_job_review", { p_id: "r2", p_status: "closed" });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "reviews.resolve", p_args: { id: "r2", status: "closed" } });
   });
 });
 
 describe("judge exemplar management", () => {
-  it("lists every taught exemplar with ids via admin_list_judge_exemplars", async () => {
+  it("lists every own taught exemplar with ids via exemplars.list", async () => {
     rpc.mockResolvedValueOnce({
       data: [
         { id: "e1", kind: "positive", summary: "Senior Frontend Developer at Acme (4471345244): owner-confirmed relevant", reason: "owner applied", source_url: "https://x/j", created_at: "2026-09-29T16:22:00Z" },
@@ -117,16 +133,16 @@ describe("judge exemplar management", () => {
       error: null,
     });
     const rows = await listJudgeExemplars();
-    expect(rpc).toHaveBeenCalledWith("admin_list_judge_exemplars");
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "exemplars.list", p_args: { limit: 200 } });
     expect(rows).toHaveLength(2);
     expect(rows[0].kind).toBe("positive");
     expect(rows[0].source_url).toBe("https://x/j");
   });
 
-  it("deletes one lesson via admin_delete_judge_exemplar", async () => {
+  it("deletes one lesson via exemplars.delete", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await deleteJudgeExemplar("e2");
-    expect(rpc).toHaveBeenCalledWith("admin_delete_judge_exemplar", { p_id: "e2" });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "exemplars.delete", p_args: { id: "e2" } });
   });
 
   it("propagates exemplar list errors", async () => {
@@ -187,7 +203,7 @@ describe("apply mode config (off/local/cloud)", () => {
 });
 
 describe("applications report", () => {
-  it("lists per-job decisions via admin_list_apply_results", async () => {
+  it("lists own per-job decisions via results.list", async () => {
     rpc.mockResolvedValueOnce({
       data: [
         { id: "a1", site_host: "naukri.com", job_url: "https://x/1", title: "FE Eng", company: "Acme", result: "submitted", detail: "ok", fit: 90, created_at: "2026-09-28T06:00:00Z" },
@@ -196,54 +212,55 @@ describe("applications report", () => {
       error: null,
     });
     const rows = await listApplyResults(50);
-    expect(rpc).toHaveBeenCalledWith("admin_list_apply_results", { p_limit: 50 });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "results.list", p_args: { limit: 50 } });
     expect(rows).toHaveLength(2);
     expect(rows[0].result).toBe("submitted");
   });
 
   it("throws when cloud is not configured", async () => {
-    clientFn.value = null;
+    cloud.client = null;
     await expect(listApplyResults()).rejects.toThrow(/cloud not configured/);
-    clientFn.value = client;
   });
 
-  it("tallies the four result kinds (and ignores unknowns)", () => {
+  it("tallies all six result kinds (and ignores unknowns)", () => {
     const rows = [
       { result: "submitted" }, { result: "submitted" },
       { result: "needs_review" },
       { result: "skipped" }, { result: "skipped" }, { result: "skipped" },
       { result: "error" },
+      { result: "budget_capped" }, { result: "budget_capped" },
+      { result: "filtered" },
       { result: "something-else" },
     ] as never;
-    const c = applyResultCounts(rows);
-    expect(c).toEqual({ submitted: 2, needs_review: 1, skipped: 3, error: 1 });
+    expect(applyResultCounts(rows)).toEqual({ submitted: 2, needs_review: 1, skipped: 3, error: 1, budget_capped: 2, filtered: 1 });
+    expect(applyResultCounts([])).toEqual({ submitted: 0, needs_review: 0, skipped: 0, error: 0, budget_capped: 0, filtered: 0 });
   });
 });
 
-describe("feedback learning loop (👍/👎 → learned strikes)", () => {
-  it("👎 sends the verdict + missing-core skills and returns strike counts", async () => {
+describe("feedback learning loop (owner verdicts → learned strikes)", () => {
+  it("bad feedback sends the verdict + missing-core skills and returns strike counts", async () => {
     rpc.mockResolvedValueOnce({ data: [{ skill: "python", strikes: 1 }], error: null });
     const out = await sendApplyFeedback("row-1", "bad", ["python"]);
-    expect(rpc).toHaveBeenCalledWith("engine_apply_feedback", { p_result_id: "row-1", p_verdict: "bad", p_skills: ["python"] });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "feedback.put", p_args: { id: "row-1", verdict: "bad", skills: ["python"] } });
     expect(out[0]).toEqual({ skill: "python", strikes: 1 });
   });
 
-  it("👍 clears strikes (skills array still passed)", async () => {
+  it("good feedback clears strikes (skills array still passed)", async () => {
     rpc.mockResolvedValueOnce({ data: [], error: null });
     await sendApplyFeedback("row-2", "good", ["python"]);
-    expect(rpc).toHaveBeenCalledWith("engine_apply_feedback", { p_result_id: "row-2", p_verdict: "good", p_skills: ["python"] });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "feedback.put", p_args: { id: "row-2", verdict: "good", skills: ["python"] } });
   });
 
-  it("empty skills list is sent as null (verdict-only feedback)", async () => {
+  it("empty skills list stays an empty array (verdict-only feedback)", async () => {
     rpc.mockResolvedValueOnce({ data: [], error: null });
     await sendApplyFeedback("row-3", "bad", []);
-    expect(rpc).toHaveBeenCalledWith("engine_apply_feedback", { p_result_id: "row-3", p_verdict: "bad", p_skills: null });
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "feedback.put", p_args: { id: "row-3", verdict: "bad", skills: [] } });
   });
 
-  it("reads learned strikes for the UI strip", async () => {
+  it("reads own learned strikes for the UI strip", async () => {
     rpc.mockResolvedValueOnce({ data: [{ skill: "python", strikes: 2 }], error: null });
     const s = await getSkillStrikes();
-    expect(rpc).toHaveBeenCalledWith("admin_get_skill_strikes");
+    expect(rpc).toHaveBeenCalledWith("my_apply_action", { p_action: "strikes.list", p_args: {} });
     expect(s).toEqual([{ skill: "python", strikes: 2 }]);
   });
 
@@ -252,26 +269,31 @@ describe("feedback learning loop (👍/👎 → learned strikes)", () => {
     await expect(sendApplyFeedback("row-x", "bad", [])).rejects.toThrow("forbidden");
   });
 
-  it("skip-row 👍 writes the un-skip exemplar through admin_put_judge_exemplar", async () => {
-    rpc.mockResolvedValueOnce({ data: [], error: null }); // engine_apply_feedback
-    rpc.mockResolvedValueOnce({ data: null, error: null }); // admin_put_judge_exemplar
+  it("a wrongly skipped row writes an un-skip exemplar through exemplars.put", async () => {
+    rpc.mockResolvedValueOnce({ data: null, error: null });
     await putJudgeExemplar("positive", "ML Engineer — Acme: owner UN-skipped — this was wrongly rejected by the gates", "JD requires python — not on the resume", "https://x/j/1");
-    expect(rpc).toHaveBeenLastCalledWith("admin_put_judge_exemplar", {
-      p_kind: "positive",
-      p_summary: "ML Engineer — Acme: owner UN-skipped — this was wrongly rejected by the gates",
-      p_reason: "JD requires python — not on the resume",
-      p_source_url: "https://x/j/1",
+    expect(rpc).toHaveBeenLastCalledWith("my_apply_action", {
+      p_action: "exemplars.put",
+      p_args: {
+        kind: "positive",
+        summary: "ML Engineer — Acme: owner UN-skipped — this was wrongly rejected by the gates",
+        reason: "JD requires python — not on the resume",
+        sourceUrl: "https://x/j/1",
+      },
     });
   });
 
-  it("skip-row 👎 teaches a NEGATIVE exemplar (confirmed skip)", async () => {
+  it("a confirmed skip teaches a negative exemplar", async () => {
     rpc.mockResolvedValueOnce({ data: null, error: null });
     await putJudgeExemplar("negative", "ML Engineer — Acme: owner confirmed the skip");
-    expect(rpc).toHaveBeenLastCalledWith("admin_put_judge_exemplar", {
-      p_kind: "negative",
-      p_summary: "ML Engineer — Acme: owner confirmed the skip",
-      p_reason: null,
-      p_source_url: null,
+    expect(rpc).toHaveBeenLastCalledWith("my_apply_action", {
+      p_action: "exemplars.put",
+      p_args: {
+        kind: "negative",
+        summary: "ML Engineer — Acme: owner confirmed the skip",
+        reason: null,
+        sourceUrl: null,
+      },
     });
   });
 
@@ -281,14 +303,44 @@ describe("feedback learning loop (👍/👎 → learned strikes)", () => {
   });
 });
 
+const coreOperations = [
+  { action: "results.list", args: { limit: 100 }, call: () => listApplyResults() },
+  { action: "reviews.list", args: {}, call: () => listJobReviews() },
+  { action: "reviews.resolved", args: { limit: 150 }, call: () => listResolvedJobReviews() },
+  { action: "reviews.resolve", args: { id: "r1", status: "dismissed" }, call: () => resolveJobReview("r1", "dismissed") },
+  { action: "reviews.unresolve", args: { id: "r1" }, call: () => unresolveJobReview("r1") },
+  { action: "variants.list", args: { limit: 25 }, call: () => listResumeVariants(25) },
+  { action: "variants.approve", args: { id: "v1", approved: false }, call: () => approveResumeVariant("v1", false) },
+  { action: "memory.stats", args: {}, call: () => listFormAnswerStats() },
+  { action: "feedback.put", args: { id: "a1", verdict: "bad", skills: ["python"] }, call: () => sendApplyFeedback("a1", "bad", ["python"]) },
+  { action: "strikes.list", args: {}, call: () => getSkillStrikes() },
+  { action: "exemplars.list", args: { limit: 200 }, call: () => listJudgeExemplars() },
+  { action: "exemplars.put", args: { kind: "positive", summary: "Owner approved", reason: null, sourceUrl: null }, call: () => putJudgeExemplar("positive", "Owner approved") },
+  { action: "exemplars.delete", args: { id: "e1" }, call: () => deleteJudgeExemplar("e1") },
+];
+
+describe("personal core RPC contracts", () => {
+  it.each(coreOperations)("$action uses only my_apply_action with the exact arguments", async ({ action, args, call }) => {
+    rpc.mockResolvedValueOnce({ data: [], error: null });
+    await call();
+    expect(rpc.mock.calls).toEqual([["my_apply_action", { p_action: action, p_args: args }]]);
+  });
+
+  it.each(coreOperations)("$action propagates RPC errors without a global fallback", async ({ action, args, call }) => {
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "tenant RPC unavailable" } });
+    await expect(call()).rejects.toThrow("tenant RPC unavailable");
+    expect(rpc.mock.calls).toEqual([["my_apply_action", { p_action: action, p_args: args }]]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
 describe("notify config (per-user, RLS-scoped)", () => {
   it("reads the user's own row from user_notify_config", async () => {
     const from = vi.fn(() => ({
       select: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: { chat_id: "42", bot_token: "tok", updated_at: "2026-09-30T09:00:00Z" }, error: null }),
     }));
-    rpc.mockResolvedValueOnce({ data: null, error: null });
-    clientFn.value = { rpc, from };
+    cloud.client = { rpc, from };
     const cfg = await getNotifyConfig();
     expect(from).toHaveBeenCalledWith("user_notify_config");
     expect(cfg?.chat_id).toBe("42");
@@ -299,36 +351,55 @@ describe("notify config (per-user, RLS-scoped)", () => {
       select: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
     }));
-    clientFn.value = { rpc, from };
+    cloud.client = { rpc, from };
     expect(await getNotifyConfig()).toBeNull();
   });
 
-  it("upserts the user's own binding", async () => {
+  it("upserts the user's own binding with the user_id conflict target", async () => {
+    const updatedAt = "2026-11-13T12:00:00.000Z";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(updatedAt));
     const upsert = vi.fn().mockResolvedValue({ error: null });
     const from = vi.fn(() => ({ upsert }));
-    clientFn.value = { rpc, from };
+    cloud.client = { rpc, from };
     await setNotifyConfig("42", "tok");
     expect(from).toHaveBeenCalledWith("user_notify_config");
-    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ chat_id: "42", bot_token: "tok" }));
+    expect(upsert.mock.calls).toEqual([[
+      { user_id: "user-test", chat_id: "42", bot_token: "tok", updated_at: updatedAt },
+      { onConflict: "user_id" },
+    ]]);
+  });
+
+  it("denies a signed-out binding before accessing the database", async () => {
+    cloud.user = null;
+    await expect(setNotifyConfig("42", "tok")).rejects.toThrow("Sign in to save your Telegram binding");
+    expect(cloud.getSupabaseClient).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("testNotifyConfig surfaces the Platinum upsell for free users", async () => {
-    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "💎 Telegram pings are part of the auto-apply engine (Platinum or the auto-apply add-on). Upgrade to bind your chat." }, error: null });
-    clientFn.value = { rpc, functions: { invoke } };
+    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "Telegram pings are part of the auto-apply engine (Platinum or the auto-apply add-on). Upgrade to bind your chat." }, error: null });
     const res = await testNotifyConfig();
     expect(res).toMatch(/Platinum/);
   });
 });
 
 describe("admin notify bindings", () => {
-  it("lists every user's binding via admin_list_user_notify", async () => {
-    rpc.mockResolvedValueOnce({
-      data: [{ user_id: "u1", email: "a@b.c", chat_id: "42", token_prefix: "86499464", updated_at: "2026-09-30T09:00:00Z" }],
-      error: null,
-    });
+  it("lists binding summaries without chat ids or tokens via admin_list_notify_summary", async () => {
+    const summaries = [
+      { user_id: "u1", email: "a@b.c", bound: true, updated_at: "2026-09-30T09:00:00Z" },
+      { user_id: "u2", email: "b@b.c", bound: false, updated_at: null },
+    ];
+    rpc.mockResolvedValueOnce({ data: summaries, error: null });
     const rows = await listUserNotifyBindings();
-    expect(rpc).toHaveBeenCalledWith("admin_list_user_notify");
-    expect(rows[0].email).toBe("a@b.c");
+    expect(rpc.mock.calls).toEqual([["admin_list_notify_summary"]]);
+    expect(rows).toEqual(summaries);
+    expect(rows.map(row => row.bound)).toEqual([true, false]);
+    for (const row of rows) {
+      expect(row).not.toHaveProperty("chat_id");
+      expect(row).not.toHaveProperty("bot_token");
+      expect(row).not.toHaveProperty("token_prefix");
+    }
   });
 
   it("clears one binding via admin_clear_user_notify", async () => {
@@ -346,7 +417,8 @@ describe("probation auto-activation (pending discoveries)", () => {
       new Date(new Date(D).getTime() + 7 * 86_400_000).toISOString(),
     );
   });
-  it("never for active rows, unknown discovery dates, or probation-skip opt-outs", () => {
+
+  it("never for active rows, unknown discovery dates, or probation-skip opt-outs", () => {
     expect(probationAutoActivateAt({ status: "active", discovered_at: D, rules: {} } as never)).toBeNull();
     expect(probationAutoActivateAt({ status: "pending", discovered_at: null, rules: {} } as never)).toBeNull();
     expect(probationAutoActivateAt({ status: "pending", discovered_at: "not-a-date", rules: {} } as never)).toBeNull();
@@ -355,7 +427,10 @@ describe("probation auto-activation (pending discoveries)", () => {
 });
 
 describe("kind-aware engine_pending_login_request SQL", () => {
-  /* Tests the SQL function engine_pending_login_request(p_kind text default 'signin')     added in this session. The function scopes login requests by kind ('signin'|'view')     so builtin.com's signin state doesn't bleed into workatastartup.com's view state.  */
+  /* Tests the SQL function engine_pending_login_request(p_kind text default 'signin')
+     added in this session. The function scopes login requests by kind ('signin'|'view')
+     so builtin.com's signin state doesn't bleed into workatastartup.com's view state.
+  */
   it("default (no param) uses coalesce(r.kind, 'signin') for backward compat", async () => {
     const rpc = vi.fn();
     rpc.mockResolvedValueOnce({
@@ -366,7 +441,7 @@ describe("kind-aware engine_pending_login_request SQL", () => {
       error: null,
     });
     const client = { rpc };
-    clientFn.value = client;
+    cloud.client = client;
     // The SQL default p_kind='signin' means:
     // coalesce(null, 'signin') = 'signin' for null kind rows
     // and r.kind='signin' for explicitly signed-in rows
@@ -387,7 +462,7 @@ describe("kind-aware engine_pending_login_request SQL", () => {
       error: null,
     });
     const client = { rpc };
-    clientFn.value = client;
+    cloud.client = client;
     // Simulate calling with p_kind='view'
     // The SQL where clause: and (p_kind = 'signin' or r.kind = p_kind or r.kind is null)
     // When p_kind='view': ( 'view' = 'signin' ) is FALSE, r.kind = 'view' is TRUE for first row,

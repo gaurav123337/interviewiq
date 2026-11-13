@@ -25,6 +25,7 @@
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/gen-icons.js",
     "apply:setup": "npm i --no-save playwright && npx playwright install chromium",
+    "apply:pair": "node scripts/apply-pair.js",
     "apply:doctor": "node scripts/apply-doctor.mjs",
     "prepare": "husky"
   },

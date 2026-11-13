@@ -9,21 +9,22 @@ This inventory describes implemented scenarios, not a claim that all tests pass.
 | `e2e/routes.spec.ts` | 24 route/empty/access-control checks; excludes stateful interview/results/detail views reached in journeys |
 | `e2e/interview.spec.ts` | Completed interview/history/review/bank, early exit, JD tailoring |
 | `e2e/account-jobs.spec.ts` | Settings/theme, simulated sign-in/sync/sign-out, auth error, pro/admin restrictions, admin overview, synthetic resume/job filters |
+| `e2e/auto-apply.spec.ts` | Add-on/Platinum/complimentary own-core access, pairing/revocation, free access restriction, A/B/A history isolation, gift redemption without checkout |
 | `e2e/learning.spec.ts` | Planner/roadmap setup, drill recall persistence, local function execution, system-design completion, skill detail → practice |
 | `e2e/integrations.spec.ts` | No-result tutor, synthetic AI success/error, synthetic team creation |
-| `e2e/billing-content.spec.ts` | Three payment outcomes (blocked by modal regression), synthetic approved article filtering |
+| `e2e/billing-content.spec.ts` | Synthetic payment success/cancel/error with external provider requests blocked, approved article filtering |
 | `e2e/reliability.spec.ts` | Local export/reset, language persistence/back-forward |
 | `e2e/offline.spec.ts` | Warmed service-worker offline practice/legal reload |
 | `e2e/live.spec.ts` | Explicit anonymous public landing/onboarding smoke, backend traffic blocked |
 | `e2e/failure-probe.spec.ts` | Self-test-only manufactured broken asset; excluded from normal runs |
 
-Normal local matrix: **47 scenarios × desktop/mobile viewport + 1 offline scenario = 95 executions**. Live smoke and the deliberate failure probe run separately. Mobile means Chromium device emulation, not an actual Android device or WebKit/iOS.
+Normal local matrix: **54 scenarios × desktop/mobile viewport + 1 offline scenario = 109 executions** (the desktop execution of the mobile-only navigation contract is intentionally skipped). Latest tenant/gift verification: **108 passed / 1 intentional skip / 0 failures / 0 flaky results**. Live smoke and the deliberate failure probe run separately. Mobile means Chromium device emulation, not an actual Android device or WebKit/iOS.
 
 ## Explicit gaps
 
 - Real cloud authentication, RLS, multi-user writes/conflicts and deployed Edge Functions require an isolated backend, which is not configured.
 - Real OAuth/MFA, email/recovery delivery, charges/refunds/subscriptions, OCR downloads, compiler APIs, job submissions, and the desktop runner are not executed.
-- Checkout callbacks are implemented as a provider double but remain blocked end-to-end by the actual upgrade modal crash. No success is invented.
+- Checkout callbacks pass through an explicit synthetic provider fixture; real payment settlement and provider behavior are not verified.
 - Resources, sources, counselor and progress have route/empty-state checks; not every CRUD, moderation, learning branch or chart is exercised.
 - Jobs cover resume/profile/filtering, not every apply-kit variant, interview round, tracker transition or recommendation.
 - Admin and team flows cover representative permissions/navigation/creation with fixtures, not every admin section or member lifecycle.

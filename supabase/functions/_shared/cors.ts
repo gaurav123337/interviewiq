@@ -7,6 +7,7 @@
 
 export const ALLOWED_ORIGINS: string[] = [
   "https://gaurav123337.github.io",
+  "https://job-assist.wasmer.app",
   "http://localhost:8137",
   "http://127.0.0.1:8137",
   "http://localhost:8138",

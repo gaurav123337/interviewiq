@@ -1,108 +1,64 @@
-/* #135 follow-up — send-notify-test goes PER-USER and entitlement-gated.
-   Auth: (a) any signed-in user's JWT → they test THEIR OWN user_notify_config
-   row, and ONLY when their server entitlement grants auto-apply (platinum
-   tier or the auto_apply addon; admins keep the bypass); (b) the shared
-   NOTIFY_TEST_SECRET (engine/cron) → resolves via engine_notify_config()
-   (entitled rows first, admin bypass included). Telegram's real verdict
-   comes back either way. */
-
-import { requireAdmin, serviceClient, callerFrom, isAdminUser } from "../_shared/auth.ts";
+/* The caller tests only their own notification binding and own weekly digest.
+   The legacy function secret is restricted to the verified migration owner;
+   a missing tenant migration never falls back to a global notification row. */
+import { serviceClient } from "../_shared/serviceClient.ts";
 import { corsHeaders, isAllowedOrigin, preflightResponse } from "../_shared/cors.ts";
+import { makeLimiter, clientKey } from "../_shared/ratelimit.ts";
+import { constantTimeEqual } from "../_shared/applyAgent.ts";
 
-function json(headers: Record<string, string>, body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers });
-}
-
-/** True when the caller holds the dedicated function secret — engine and
-    cron callers authenticate with x-apply-secret (send-apply-digest shape). */
-function holdsNotifySecret(req: Request): boolean {
-  const expected = Deno.env.get("NOTIFY_TEST_SECRET") ?? "";
-  if (!expected) return false;
-  return (req.headers.get("x-apply-secret") ?? "") === expected;
-}
-
-/** Server-verified auto-apply access for one user: platinum tier (active)
-    or the auto_apply addon — mirroring the client's serverAutoApply() and
-    the admin bypass rule (#100). */
-async function hasAutoApply(admin: ReturnType<typeof serviceClient>, uid: string): Promise<boolean> {
-  const client = admin;
-  if (!client) return false;
-  const { data } = await client.from("entitlements").select("tier, expires_at, addons").eq("user_id", uid).maybeSingle();
-  if (data) {
-    const e = data as { tier: string | null; expires_at: string | null; addons: Record<string, unknown> | null };
-    const tierActive = e.tier === "platinum" && (!e.expires_at || new Date(e.expires_at) > new Date());
-    const addon = (e.addons as { auto_apply?: { active?: boolean } } | null)?.auto_apply?.active === true;
-    if (tierActive || addon) return true;
-  }
-  const { data: emailRow } = await client.from("profiles").select("email").eq("id", uid).maybeSingle();
-  return !!(emailRow && (await isAdminUser((emailRow as { email?: string }).email ?? "")));
-}
-
-/** Weekly digest lines: engine decisions beside owner verdicts per board. */
-async function digestLines(admin: ReturnType<typeof serviceClient>): Promise<string[]> {
-  if (!admin) return [];
-  const { data } = await admin.rpc("admin_apply_weekly_digest");
-  const rows = (data ?? []) as {
-    site_host: string; submitted: number; needs_review: number; skipped: number; errors: number;
-    owner_applied: number; owner_dismissed: number; owner_closed: number;
-  }[];
-  return rows.map(r =>
-    `${r.site_host}: engine ✅${r.submitted ?? 0} ⏸${r.needs_review ?? 0} ⏭${r.skipped ?? 0} ✗${r.errors ?? 0}` +
-    ` — you: ✅${r.owner_applied ?? 0} ✕${r.owner_dismissed ?? 0} 🚫${r.owner_closed ?? 0}`);
-}
+const limit = makeLimiter(5, 60_000);
+const bytes = (s: string) => new TextEncoder().encode(s);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return preflightResponse(req);
-  const headers = { ...corsHeaders(req), "Content-Type": "application/json" };
-  if (!isAllowedOrigin(req)) return json(headers, { sent: false, reason: "origin not allowed" }, 403);
+  const headers = { ...corsHeaders(req), "Content-Type": "application/json", "Cache-Control": "no-store" };
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers });
+  if (req.method !== "POST") return json(405, { sent: false, reason: "POST required" });
+  if (!isAllowedOrigin(req)) return json(403, { sent: false, reason: "origin not allowed" });
 
-  const client = serviceClient();
-  if (!client) return json(headers, { sent: false, reason: "service client unavailable" }, 500);
-
-  /* resolve WHOSE config to test: the secret caller → engine resolution
-     (entitled per-user row, admin bypass included); a signed-in user →
-     their OWN row, gated on their server entitlement */
-  let cfg: { chat_id: string; bot_token: string } | undefined;
-  let who = "engine";
-  if (holdsNotifySecret(req)) {
-    const { data } = await client.rpc("engine_notify_config");
-    cfg = (data ?? [])[0] as { chat_id: string; bot_token: string } | undefined;
-  } else {
-    const caller = await callerFrom(req);
-    if (!caller) return json(headers, { sent: false, reason: "forbidden — sign in to test your Telegram binding" }, 401);
-    who = caller.email;
-    const { data: ent } = await client.from("profiles").select("id").eq("email", caller.email).maybeSingle();
-    const uid = (ent as { id?: string } | null)?.id;
-    if (!uid) return json(headers, { sent: false, reason: "profile not found" });
-    if (!(await hasAutoApply(client, uid))) {
-      return json(headers, { sent: false, reason: "💎 Telegram pings are part of the auto-apply engine (Platinum or the auto-apply add-on). Upgrade to bind your chat." });
-    }
-    const { data: rows } = await client.from("user_notify_config").select("chat_id, bot_token").eq("user_id", uid);
-    cfg = (rows ?? [])[0] as { chat_id: string; bot_token: string } | undefined;
-  }
-  if (!cfg?.chat_id || !cfg?.bot_token) {
-    return json(headers, { sent: false, reason: "no config — save a bot token and chat id first" });
-  }
-
-  const lines = await digestLines(client);
-  let msg = "✅ InterviewIQ notify test — Telegram pings are live.\n\n📊 Last 7 days (engine → your verdicts):\n";
-  msg += lines.length ? lines.join("\n") : "(no engine activity yet this week)";
-  msg += `\n\nNeeds-review rows will ping this chat the moment the engine queues them.${who !== "engine" ? `\n(bound to ${who})` : ""}`;
-
-  let res: Response;
   try {
-    res = await fetch(`https://api.telegram.org/bot${cfg.bot_token}/sendMessage`, {
-      method: "POST",
+    const client = serviceClient();
+    const expected = Deno.env.get("NOTIFY_TEST_SECRET") ?? "";
+    const supplied = req.headers.get("x-apply-secret") ?? "";
+    let uid: string | null = null;
+    if (expected && supplied && constantTimeEqual(bytes(expected), bytes(supplied))) {
+      const { data, error } = await client.rpc("apply_legacy_user_id");
+      if (!error) uid = data as string;
+    } else {
+      const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+      if (token) {
+        const { data, error } = await client.auth.getUser(token);
+        if (!error) uid = data.user?.id ?? null;
+      }
+    }
+    if (!uid) return json(401, { sent: false, reason: "Sign in to test your Telegram binding" });
+    if (!limit(`${uid}:${clientKey(req)}`)) return json(429, { sent: false, reason: "Try again in a minute" });
+    const access = await client.rpc("has_auto_apply_access", { p_user: uid });
+    if (access.error || access.data !== true) return json(403, { sent: false, reason: "An active auto-apply plan or complimentary grant is required" });
+
+    const config = await client.rpc("apply_agent_action", { p_user: uid, p_action: "notify.get", p_args: {} });
+    const digest = await client.rpc("apply_agent_action", { p_user: uid, p_action: "digest.weekly", p_args: {} });
+    if (config.error || digest.error) return json(503, { sent: false, reason: "Personal notification data is unavailable" });
+    const cfg = config.data as { chat_id?: string; bot_token?: string } | null;
+    if (!cfg?.chat_id || !cfg.bot_token) return json(400, { sent: false, reason: "Save your chat ID and bot token first" });
+    const rows = (digest.data ?? []) as Array<{
+      site_host: string; submitted: number; needs_review: number; skipped: number; errors: number;
+      owner_applied: number; owner_dismissed: number; owner_closed: number;
+    }>;
+    const lines = rows.map(r => `${r.site_host}: engine ✅${r.submitted ?? 0} ⏸${r.needs_review ?? 0} ⏭${r.skipped ?? 0} ✗${r.errors ?? 0}` +
+      ` — you: ✅${r.owner_applied ?? 0} ✕${r.owner_dismissed ?? 0} 🚫${r.owner_closed ?? 0}`);
+    const message = "✅ InterviewIQ notification test\n\n📊 Your last 7 days:\n" +
+      (lines.length ? lines.join("\n") : "No application activity yet this week.");
+    const response = await fetch(`https://api.telegram.org/bot${cfg.bot_token}/sendMessage`, {
+      method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000),
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: cfg.chat_id, text: msg.slice(0, 3900), disable_web_page_preview: true }),
+      body: JSON.stringify({ chat_id: cfg.chat_id, text: message.slice(0, 3900), disable_web_page_preview: true }),
     });
-  } catch (e) {
-    return json(headers, { sent: false, reason: `network error: ${String(e).slice(0, 120)}` });
+    const result = await response.json().catch(() => null) as { ok?: boolean; result?: { message_id?: number } } | null;
+    if (!response.ok || !result?.ok) return json(502, { sent: false, reason: "Telegram rejected the message; check your bot and chat settings" });
+    return json(200, { sent: true, message_id: result.result?.message_id ?? null });
+  } catch {
+    // Error strings can contain a Telegram URL with its bearer token.
+    return json(503, { sent: false, reason: "Notification service unavailable" });
   }
-  const body = await res.json().catch(() => ({})) as { ok?: boolean; description?: string; result?: { message_id?: number } };
-  if (!res.ok || !body.ok) {
-    return json(headers, { sent: false, reason: body.description ?? `Telegram HTTP ${res.status}` });
-  }
-  console.log(`[send-notify-test] delivered to chat ${cfg.chat_id} (message ${body.result?.message_id ?? "?"}) for ${who}`);
-  return json(headers, { sent: true, message_id: body.result?.message_id ?? null });
 });

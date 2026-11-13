@@ -1,19 +1,72 @@
-/* job-sites-db — Supabase access for the apply engine's site registry.
-   Uses the service key from .claude/settings.local.json (owner machine,
-   gitignored) via the same parse as ai-config.js — CI never has it, and CI
-   doesn't run the local engine anyway. All writes go through the engine_*
-   RPCs (service-role gated server-side). */
+/* job-sites-db — tenant-scoped core data, with explicit legacy owner tooling.
+   Paired mode never reads a service key or falls back to owner-global RPCs. */
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+import { getApplyAgentRuntimeContext } from "./apply-agent-runtime.js";
 
-/* ABSOLUTE path: supervisor processes (relay shim, watchdogs) run from the
-   task scheduler with an arbitrary cwd (often system32) — a relative read
-   would throw there and silently fail every apply-mode gate. */
+const AGENT_CONTEXT = getApplyAgentRuntimeContext();
+const PAIRED = AGENT_CONTEXT.mode === "paired";
 const SETTINGS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".claude", "settings.local.json");
 
+export function pairedOperationUnavailable(name) {
+  const error = new Error(`${name} unavailable in paired mode (owner-global operation)`);
+  error.code = "PAIRED_UNAVAILABLE";
+  throw error;
+}
+
+const ACTIONS = new Set([
+  "sites.list", "results.list", "results.record", "reviews.list", "reviews.queue",
+  "reviews.resolve", "reviews.resolved", "reviews.unresolve", "reviews.has_pending",
+  "reviews.reviewed_urls", "reviews.resolve_url", "variants.list", "variants.put",
+  "variants.latest", "variants.approve", "memory.get", "memory.put", "memory.touch",
+  "memory.stats", "strikes.list", "strikes.clear", "exemplars.list", "exemplars.put",
+  "exemplars.delete", "feedback.put", "outcomes.record", "outcomes.stats",
+  "outcomes.digest", "digest.weekly", "notify.get",
+]);
+
+/** No retry/fallback: revoked or unavailable authorization is always an error. */
+export async function pairedAgentAction(action, args = {}) {
+  if (!PAIRED) throw new Error("Paired agent context required");
+  if (!ACTIONS.has(action)) pairedOperationUnavailable(action);
+  let res;
+  try {
+    res = await fetch(AGENT_CONTEXT.endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${AGENT_CONTEXT.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ operation: "agent.action", action, args }),
+      signal: AbortSignal.timeout(30_000),
+      redirect: "error", // never forward the bearer token through a redirect
+    });
+  } catch {
+    const error = new Error(`paired ${action}: authorization unavailable`);
+    error.code = "PAIRED_AUTH_UNAVAILABLE";
+    throw error;
+  }
+  const body = await res.json().catch(() => null);
+  if (!res.ok || body?.ok !== true || body.action !== action || !Object.hasOwn(body, "data")) {
+    const error = new Error(`paired ${action} unavailable (HTTP ${res.status})`);
+    error.code = res.status === 401 || res.status === 403 ? "PAIRED_AUTH_REJECTED" : "PAIRED_AUTH_UNAVAILABLE";
+    throw error;
+  }
+  return body.data;
+}
+
+/** sites.list authenticates the binding and its current entitlement every time. */
+export async function assertPairedEntitlement() {
+  const rows = await pairedAgentAction("sites.list");
+  if (!Array.isArray(rows)) {
+    const error = new Error("paired catalog authorization unavailable");
+    error.code = "PAIRED_AUTH_UNAVAILABLE";
+    throw error;
+  }
+  return rows;
+}
+
 export function loadLocalCreds() {
+  if (PAIRED) pairedOperationUnavailable("loadLocalCreds");
   const settings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8"));
   const rule = (settings.permissions?.allow ?? []).find(
     (r) => typeof r === "string" && /Bash\(SUPA_URL=/.test(r)
@@ -34,8 +87,23 @@ async function rpc(creds, fn, args) {
   return text ? JSON.parse(text) : null;
 }
 
-/** All registry rows (builtin + discovered + ats, any status). */
+// Pin the verified rollout owner once; never infer ownership from browser/profile data.
+let legacyUser;
+async function coreAction(action, args = {}) {
+  if (PAIRED) return pairedAgentAction(action, args);
+  const creds = loadLocalCreds();
+  legacyUser ??= rpc(creds, "apply_legacy_user_id", {}).then((id) => {
+    if (typeof id !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+      throw new Error("verified legacy apply owner unavailable");
+    }
+    return id;
+  });
+  return rpc(creds, "apply_agent_action", { p_user: await legacyUser, p_action: action, p_args: args });
+}
+
+/** Safe catalog in paired mode; legacy registry tooling can still see all rows. */
 export async function listJobSites() {
+  if (PAIRED) return assertPairedEntitlement();
   const creds = loadLocalCreds();
   const res = await fetch(`${creds.base}/rest/v1/job_sites?select=*&order=host.asc`, {
     headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
@@ -44,251 +112,104 @@ export async function listJobSites() {
   return res.json();
 }
 
-/** Probation sweep: pending discoveries older than the probation window
-    (default 7d) auto-activate, oldest first, capped per sweep (default 3).
-    Returns the activated rows so the caller can report them honestly. */
+/* Core data uses the same owner-scoped action contract in BOTH modes. */
+export async function listApplyResultsForHost(host, limit = 40) {
+  return coreAction("results.list", { host, limit });
+}
+export async function recordApplyResult({ siteHost, jobUrl, title, company, result, detail, fit, ageH, eventId }) {
+  return coreAction("results.record", { siteHost, jobUrl, title, company, result, detail, fit, ageH, eventId: eventId ?? randomUUID() });
+}
+export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason, fit, formFields, ageH }) {
+  return coreAction("reviews.queue", { siteHost, jobUrl, title, company, formUrl, reason, fit, formFields, ageH });
+}
+export async function listPendingReviews() { return coreAction("reviews.list"); }
+export async function resolveJobReview(id, status) { return coreAction("reviews.resolve", { id, status }); }
+export async function listReviewedUrls() { return coreAction("reviews.reviewed_urls"); }
+export async function hasPendingReview(jobUrl) { return coreAction("reviews.has_pending", { jobUrl }); }
+export async function resolveReviewByUrl(jobUrl, status) { return coreAction("reviews.resolve_url", { jobUrl, status }); }
+export async function putFormAnswer({ siteHost, fieldKey, answer, kind, label }) {
+  return coreAction("memory.put", { siteHost, fieldKey, answer, kind, label });
+}
+export async function touchFormAnswers(siteHost, fieldKeys) {
+  if (!Array.isArray(fieldKeys) || !fieldKeys.length) return;
+  return coreAction("memory.touch", { siteHost, fieldKeys });
+}
+export async function getFormAnswers(siteHost) {
+  const rows = await coreAction("memory.get", { siteHost });
+  return Object.fromEntries((rows ?? []).map((r) => [r.field_key, r.answer]));
+}
+export async function putResumeVariant({ jobUrl, siteHost, title, company, masterText, variantText, diffSummary, variantId }) {
+  return coreAction("variants.put", { jobUrl, siteHost, title, company, masterText, variantText, diffSummary, variantId });
+}
+export async function latestResumeVariant(jobUrl) { return coreAction("variants.latest", { jobUrl }); }
+export async function recordApplyOutcome({ siteHost, jobUrl, fit, viewed, responseKind, detail }) {
+  return coreAction("outcomes.record", { siteHost, jobUrl, fit, viewed: !!viewed, responseKind, detail });
+}
+export async function outcomeDigest() { return coreAction("outcomes.digest"); }
+export async function outcomeStats() { return coreAction("outcomes.stats"); }
+export async function getSkillStrikes(min = 2) {
+  return (await coreAction("strikes.list", { min })).map(({ skill, strikes }) => ({ skill, strikes }));
+}
+export async function getSkillStrikesRaw() { return coreAction("strikes.list", { min: 1 }); }
+export async function clearSkillStrikes(skills) { return coreAction("strikes.clear", { skills }); }
+export async function getJudgeExemplars() { return coreAction("exemplars.list"); }
+export async function putJudgeExemplar(kind, summary, reason, sourceUrl) {
+  return coreAction("exemplars.put", { kind, summary, reason, sourceUrl });
+}
+export async function applyWeeklyDigest() { return coreAction("digest.weekly"); }
+export async function getNotifyConfig() { return coreAction("notify.get"); }
+
+/* Owner-global surfaces are deliberately unavailable to paired bindings. */
 export async function activateProbationSites(days = 7, max = 3) {
+  if (PAIRED) pairedOperationUnavailable("activateProbationSites");
   return rpc(loadLocalCreds(), "engine_activate_probation_sites", { p_days: days, p_max: max }) ?? [];
 }
-
-/** Insert/update a site (discovery + rule learning). Returns the row id. */
 export async function upsertJobSite({ host, label, jobsUrl, source, rules, sessionOk }) {
+  if (PAIRED) pairedOperationUnavailable("upsertJobSite");
   return rpc(loadLocalCreds(), "engine_upsert_job_site", {
     p_host: host, p_label: label, p_jobs_url: jobsUrl ?? null, p_source: source,
     p_rules: rules ?? null, p_session_ok: sessionOk ?? null,
   });
 }
-
-/** Record a run's outcome on a site (drives the UI's last-run column). */
 export async function recordRun({ host, ok, collected, submitted, skipped, errors, notes }) {
+  if (PAIRED) pairedOperationUnavailable("recordRun");
   return rpc(loadLocalCreds(), "engine_record_job_site_run", {
     p_host: host, p_ok: ok, p_collected: collected ?? 0, p_submitted: submitted ?? 0,
     p_skipped: skipped ?? 0, p_errors: errors ?? 0, p_notes: notes ?? null,
   });
 }
-
-/** Tier 4 — recent per-job decisions for ONE host (auto-submit trust).
-    Reads the apply_results history the engine already writes; the RPC
-    must exist BEFORE trust can ever flip a host. Until the SQL is
-    applied the latch stays closed: the call rejects → [] → verdict
-    'review' → the review gate holds (honest-degradation rule). */
-export async function listApplyResultsForHost(host, limit = 40) {
-  return rpc(loadLocalCreds(), "engine_list_apply_results_for_host", { p_host: host, p_limit: limit });
-}
-
-/** Merge learned selector rules into a site's rules blob. */
 export async function setSiteRules(host, rules) {
+  if (PAIRED) pairedOperationUnavailable("setSiteRules");
   return rpc(loadLocalCreds(), "engine_set_job_site_rules", { p_host: host, p_rules: rules });
 }
-
-/** Queue a review-gate job the engine skipped in unattended mode (deduped). */
-export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason, fit, formFields, ageH }) {
-  return rpc(loadLocalCreds(), "engine_queue_job_review", {
-    p_site_host: siteHost, p_job_url: jobUrl, p_title: title ?? null,
-    p_company: company ?? null, p_form_url: formUrl ?? null, p_reason: reason ?? null,
-    p_fit: fit ?? null, p_form_fields: formFields ?? null, p_posted_age_h: ageH ?? null,
-  });
-}
-
-/* ── form-answer memory: store every filled field for reuse ─────────── */
-
-/** Upsert one field's answer (freshest wins). Fire-and-forget per field is
-    fine — failures are non-fatal (memory is an optimization, never a gate). */
-export async function putFormAnswer({ siteHost, fieldKey, answer, kind, label }) {
-  return rpc(loadLocalCreds(), "engine_put_form_answer", {  p_site_host: siteHost, p_field_key: fieldKey, p_answer: answer,
-  p_kind: kind ?? null, p_label: label ?? null,
-});
-}
-
-/** engine_touch_form_answers — mark remembered answers REUSED this form
-    (form-answer-reuse.sql): reuse_count++ / last_used_at, summed per site
-    by admin_form_answer_stats for the report's 🧠 strip. Best-effort by
-    convention: callers wrap in catch. */
-export async function touchFormAnswers(siteHost, fieldKeys) {
-  if (!Array.isArray(fieldKeys) || !fieldKeys.length) return;
-  return rpc(loadLocalCreds(), "engine_touch_form_answers", { p_site_host: siteHost, p_field_keys: fieldKeys });
-}
-
-/** The remembered (label → answer) map for one site. Empty map when the
-    memory is unavailable — planFormAnswers falls back to draftAnswer only. */
-export async function getFormAnswers(siteHost) {
-  const rows = await rpc(loadLocalCreds(), "engine_get_form_answers", { p_site_host: siteHost });
-  return Object.fromEntries((rows ?? []).map((r) => [r.field_key, r.answer]));
-}
-
-/* ── owner mode switch: off (kill switch) / local / cloud ───────────── */
-
-/** The global apply_config row (array with one element; [] when unset). */
 export async function getApplyConfig() {
+  if (PAIRED) pairedOperationUnavailable("getApplyConfig");
   return rpc(loadLocalCreds(), "engine_get_apply_config", {});
 }
-
-/** Phase 0 governance: mode + policy caps/filters + current spend, one RPC
-    (supabase/apply-governance.sql). Honest [] when the SQL isn't applied —
-    the engine degrades to a logged skip, per the repo's degradation rule. */
 export async function engineGetApplyPolicy() {
+  if (PAIRED) pairedOperationUnavailable("engineGetApplyPolicy");
   return rpc(loadLocalCreds(), "engine_get_apply_policy", {});
 }
-
-/** Phase 3: flip dead boards back to probation after the --outcomes
-    scrape proves they never earned a view. Returns [{host, applications,
-    reason}] for the digest. [] when the SQL isn't applied (honest skip). */
 export async function suspendDeadBoards(minApplications = 10, maxSweeps = 3) {
+  if (PAIRED) pairedOperationUnavailable("suspendDeadBoards");
   return rpc(loadLocalCreds(), "engine_suspend_dead_boards", { p_min_applications: minApplications, p_max_sweeps: maxSweeps });
 }
-
-/* ── judge exemplars (the judge's training set) ───────────────────── */
-
-export async function getJudgeExemplars() {
-  return rpc(loadLocalCreds(), "engine_get_judge_exemplars", {});
-}
-
-/* ── owner review verdicts: URLs the owner already resolved in the UI ── */
-
-/** Latest resolved review status per job URL (done/dismissed/closed).
-    The engine skips all of them — done/dismissed are owner decisions,
-    closed means the posting no longer accepts applications. */
-export async function listReviewedUrls() {
-  return rpc(loadLocalCreds(), "engine_list_reviewed_urls", {});
-}
-
-/** True when a PENDING review row already exists for the URL — lets the
-    engine ping the owner only when a row is NEW, not on every rerun. */
-export async function hasPendingReview(jobUrl) {
-  return rpc(loadLocalCreds(), "engine_has_pending_review", { p_job_url: jobUrl });
-}
-
-/** Resolve any pending review row for a URL (engine-side: a submission
-    makes the ask obsolete). status: done | dismissed | closed. */
-export async function resolveReviewByUrl(jobUrl, status) {
-  return rpc(loadLocalCreds(), "engine_resolve_review_by_url", { p_job_url: jobUrl, p_status: status });
-}
-
-/** Weekly digest per board: engine decisions + owner resolutions, 7d. */
-export async function applyWeeklyDigest() {
-  return rpc(loadLocalCreds(), "admin_apply_weekly_digest", {});
-}
-
-/* ── outcome scraper: employer behavior per board + fit band ──────────── */
-
-/** One scraped milestone for a submitted application (first view / first
-    response win; freshest fit wins). Fire-and-forget — never breaks a run. */
-/* ── Phase 2: tailored-resume variants (see supabase/apply-resume-variants.sql) ── */
-
-/** Push one tailored kit (master + variant + justified diff). Best-effort by
- *  convention — callers catch; until the SQL is applied the RPC rejects and
- *  the approval gate simply stays closed (fail-closed, honest skip). */
-export async function putResumeVariant({ jobUrl, siteHost, title, company, masterText, variantText, diffSummary, variantId }) {
-  return rpc(loadLocalCreds(), "engine_put_resume_variant", {
-    p_job_url: jobUrl, p_site_host: siteHost ?? null, p_title: title ?? null, p_company: company ?? null,
-    p_master: masterText ?? null, p_variant: variantText ?? null, p_diff: diffSummary ?? null, p_variant_id: variantId,
-  });
-}
-
-/** The NEWEST variant row for a job (any content) + the owner's approval.
- *  null when the SQL isn't applied or no variant exists — the caller keeps
- *  approved=false and the review gate holds (never flips trust blind). */
-export async function latestResumeVariant(jobUrl) {
-  const rows = await rpc(loadLocalCreds(), "engine_latest_resume_variant", { p_job_url: jobUrl });
-  return rows?.[0] ?? null;
-}
-
-export async function recordApplyOutcome({ siteHost, jobUrl, fit, viewed, responseKind, detail }) {
-  return rpc(loadLocalCreds(), "engine_record_apply_outcome", {
-    p_site_host: siteHost, p_job_url: jobUrl, p_fit: fit ?? null,
-    p_viewed: !!viewed, p_response_kind: responseKind ?? null, p_detail: detail ?? null,
-  });
-}
-
-/** Weekly digest rows: applications × views × responses per board + fit band. */
-export async function outcomeDigest() {
-  return rpc(loadLocalCreds(), "admin_apply_outcome_digest", {});
-}
-
-/** 90-day response rates per fit band — the judge's employer-behavior prior. */
-export async function outcomeStats() {
-  return rpc(loadLocalCreds(), "engine_outcome_stats", {});
-}
-
-/* ── learned skill strikes (owner feedback loop) ───────────────────── */
-
-/** Skills the owner 👎-ed >= p_min times → hard-reject when a JD requires them. */
-export async function getSkillStrikes(min = 2) {
-  return rpc(loadLocalCreds(), "engine_get_skill_strikes", { p_min: min });
-}
-
-/** RAW strike rows incl. updated_at — the engine applies 30-day decay locally
-    (strikesWithDecay) without a SQL migration. Service key bypasses RLS. */
-export async function getSkillStrikesRaw() {
-  const creds = loadLocalCreds();
-  const res = await fetch(`${creds.base}/rest/v1/apply_skill_strikes?site_host=eq.global&strikes=gte.1&order=strikes.desc`, {
-    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
-  });
-  if (!res.ok) throw new Error(`strikes read ${res.status}`);
-  return res.json();
-}
-
-/* ── per-job run report (the UI's applications report) ───────────────── */
-
-/** Push one per-job decision. Fire-and-forget from the engine: report
-    failures must never break an apply run. */
-export async function recordApplyResult({ siteHost, jobUrl, title, company, result, detail, fit, ageH }) {
-  return rpc(loadLocalCreds(), "engine_record_apply_result", {
-    p_site_host: siteHost, p_job_url: jobUrl, p_title: title ?? null,
-    p_company: company ?? null, p_result: result, p_detail: detail ?? null,
-    p_fit: fit ?? null, p_posted_age_h: ageH ?? null,
-  });
-}
-
-/** Engine-side exemplar write (skip/applied rows the owner then 👍/👎-s).
-    The RPC is admin/owner-seeded tooling; the LOCAL engine runs with the
-    service key, so service_role passes its guard (same as recordApplyResult). */
-export async function putJudgeExemplar(kind, summary, reason, sourceUrl) {
-  return rpc(loadLocalCreds(), "admin_put_judge_exemplar", {
-    p_kind: kind, p_summary: summary, p_reason: reason ?? null, p_source_url: sourceUrl ?? null,
-  });
-}
-
-/** Clear the strike rows for these skills (owner 👍 on a skip row: the
-    skill was never really unwanted — e.g. a false "python" strike). */
-export async function clearSkillStrikes(skills) {
-  const creds = loadLocalCreds();
-  const res = await fetch(`${creds.base}/rest/v1/apply_skill_strikes?site_host=eq.global&skill=in.(${encodeURIComponent(skills.map((s) => s.toLowerCase().trim()).join(","))})`, {
-    method: "DELETE",
-    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}`, Prefer: "return=minimal" },
-  });
-  if (!res.ok) throw new Error(`strike clear ${res.status}`);
-}
-
-/** Pending review rows (the Telegram listener resolves them by ordinal). */
-export async function listPendingReviews() {
-  return rpc(loadLocalCreds(), "admin_list_job_reviews", {});
-}
-
-/** Resolve a review row (done/dismissed/closed) — the Telegram listener's write path. */
-export async function resolveJobReview(id, status) {
-  return rpc(loadLocalCreds(), "admin_resolve_job_review", { p_id: id, p_status: status });
-}
-
-/** The credential bound to a site (secret included) — engine auto-login. */
 export async function credentialForSite(host) {
+  if (PAIRED) pairedOperationUnavailable("credentialForSite");
   const rows = await rpc(loadLocalCreds(), "engine_credential_for_site", { p_host: host });
   return rows?.[0] ?? null;
 }
-
-/** #170 — stamp the credential's last successful sign-in (expiry forecast). */
 export async function engineUpdateCredentialLastVerified(host) {
+  if (PAIRED) pairedOperationUnavailable("engineUpdateCredentialLastVerified");
   return rpc(loadLocalCreds(), "engine_update_credential_last_verified", { p_host: host });
 }
-
-/** App → desktop bridge: the listener's pending 🔑 Sign-in request (if any). */
 export async function pendingLoginRequest() {
+  if (PAIRED) pairedOperationUnavailable("pendingLoginRequest");
   const rows = await rpc(loadLocalCreds(), "engine_pending_login_request", {});
   return rows?.[0] ?? null;
 }
-
-/** Persist the verified session state after a login-only run (app reflects it). */
 export async function setSiteSession(host, ok) {
+  if (PAIRED) pairedOperationUnavailable("setSiteSession");
   const creds = loadLocalCreds();
   const res = await fetch(`${creds.base}/rest/v1/job_sites?host=eq.${encodeURIComponent(host)}`, {
     method: "PATCH",
@@ -297,88 +218,53 @@ export async function setSiteSession(host, ok) {
   });
   if (!res.ok) throw new Error(`session write ${res.status}`);
 }
-
-/** Mark a sign-in request handled (the listener spawned the login window). */
 export async function fulfillLoginRequest(host) {
+  if (PAIRED) pairedOperationUnavailable("fulfillLoginRequest");
   return rpc(loadLocalCreds(), "engine_fulfill_login_request", { p_host: host });
 }
-
-/** --sessions watchdog verdict (verified / expired / unknown) → the app's
-    three-state strip. The RPC stamps session_checked_at + flips session_ok. */
 export async function setSiteSessionState(host, state) {
+  if (PAIRED) pairedOperationUnavailable("setSiteSessionState");
   return rpc(loadLocalCreds(), "admin_set_site_session_state", { p_host: host, p_state: state });
 }
-
-/** Report a sign-in lifecycle transition (opened / crashed / verified /
-    failed) so the APP can show the owner what the sign-in is doing live
-    instead of going dark after the 🔑 click. */
 export async function reportLoginStatus(host, status, detail) {
-  return rpc(loadLocalCreds(), "engine_report_login_status", {
-    p_host: host, p_status: status, p_detail: detail ?? null,
-  });
+  if (PAIRED) pairedOperationUnavailable("reportLoginStatus");
+  return rpc(loadLocalCreds(), "engine_report_login_status", { p_host: host, p_status: status, p_detail: detail ?? null });
 }
-
-/* ⚡ Run-now bridge: the app queues a request; the listener polls it and
-   spawns --all. Same shape as the sign-in bridge. */
 export async function pendingRunRequest() {
+  if (PAIRED) pairedOperationUnavailable("pendingRunRequest");
   const rows = await rpc(loadLocalCreds(), "engine_pending_run_request", {});
   return rows?.[0] ?? null;
 }
-
 export async function fulfillRunRequest() {
+  if (PAIRED) pairedOperationUnavailable("fulfillRunRequest");
   return rpc(loadLocalCreds(), "engine_fulfill_run_request", {});
 }
-
 export async function reportRunStatus(status, detail) {
-  return rpc(loadLocalCreds(), "engine_report_run_status", {
-    p_status: status, p_detail: detail ?? null,
-  });
+  if (PAIRED) pairedOperationUnavailable("reportRunStatus");
+  return rpc(loadLocalCreds(), "engine_report_run_status", { p_status: status, p_detail: detail ?? null });
 }
-
-/* 🫀 Engine heartbeat: the listener beats every ~2 min while it is alive and
-   reports "stopped" when the owner's Off switch kills it — the app turns
-   this into a live 🟢 running / 🔴 stopped badge (staleness counts as
-   stopped, so a crashed listener can never look alive). */
 export async function reportEngineState(state, detail) {
-  return rpc(loadLocalCreds(), "engine_report_engine_state", {
-    p_state: state, p_detail: detail ?? null,
-  });
+  if (PAIRED) pairedOperationUnavailable("reportEngineState");
+  return rpc(loadLocalCreds(), "engine_report_engine_state", { p_state: state, p_detail: detail ?? null });
 }
-
-/** Independent listener-liveness signal for SUPERVISORS: the listener beats
-    engine_events every ~2 min over the NETWORK, while wmic AND Get-CimInstance
-    both run on the same WMI stack — which transiently returns EMPTY under
-    process-spawn load (that false "listener was down" spawned duplicate
-    listeners twice on 2026-10-06). A fresh beat proves the listener is up
-    no matter what process listing claims. Detail-prefixed "listener" so the
-    WATCHER's beats ("watcher …") can never mask a dead listener. Unreadable
-    → false (supervisors fall through to the rescue-spawn path, the
-    pre-existing direction). */
 export async function listenerHeartbeatFresh(maxAgeMs = 210_000) {
+  if (PAIRED) pairedOperationUnavailable("listenerHeartbeatFresh");
   try {
     const evs = await listEngineEvents(1);
     const last = evs.filter((e) => e.state === "running" && String(e.detail ?? "").startsWith("listener")).at(-1);
-    if (!last) return false;
-    return Date.now() - new Date(last.created_at).getTime() <= maxAgeMs;
+    return !!last && Date.now() - new Date(last.created_at).getTime() <= maxAgeMs;
   } catch { return false; }
 }
-
-/** Same idea for the WATCHER supervisor (ensure-apply-watcher): the watcher
-    beats with a "watcher …" detail at cycle boundaries AND per site (a site
-    child may legitimately run 12 min, hence the 15-min freshness window). */
 export async function watcherHeartbeatFresh(maxAgeMs = 15 * 60_000) {
+  if (PAIRED) pairedOperationUnavailable("watcherHeartbeatFresh");
   try {
     const evs = await listEngineEvents(1);
     const last = evs.filter((e) => e.state === "running" && String(e.detail ?? "").startsWith("watcher")).at(-1);
-    if (!last) return false;
-    return Date.now() - new Date(last.created_at).getTime() <= maxAgeMs;
+    return !!last && Date.now() - new Date(last.created_at).getTime() <= maxAgeMs;
   } catch { return false; }
 }
-
-/** Raw heartbeat history (beats + stop reports), ASC — the weekly digest's
-    uptime line reads this directly with the service key (the admin RPC caps
-    at 72h; the engine may read the full retention window). */
 export async function listEngineEvents(hours = 168) {
+  if (PAIRED) pairedOperationUnavailable("listEngineEvents");
   const creds = loadLocalCreds();
   const since = new Date(Date.now() - hours * 3600_000).toISOString();
   const res = await fetch(`${creds.base}/rest/v1/engine_events?select=state,detail,created_at&created_at=gte.${encodeURIComponent(since)}&order=created_at.asc`, {
@@ -386,26 +272,4 @@ export async function listEngineEvents(hours = 168) {
   });
   if (!res.ok) return [];
   return res.json();
-}
-
-/** Telegram notify config for pings: resolves the per-user ENTITLED row
-    (platinum/addon, admin bypass included) via engine_notify_config();
-    falls back to the legacy admin row when the RPC is missing. */
-export async function getNotifyConfig() {
-  const creds = loadLocalCreds();
-  const res = await fetch(`${creds.base}/rest/v1/rpc/engine_notify_config`, {
-    method: "POST",
-    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}`, "Content-Type": "application/json" },
-    body: "{}",
-  });
-  if (res.ok) {
-    const rows = await res.json();
-    if (rows?.[0]) return rows[0];
-  }
-  const legacy = await fetch(`${creds.base}/rest/v1/notify_config?select=*&key=eq.telegram`, {
-    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
-  });
-  if (!legacy.ok) throw new Error(`notify_config read ${legacy.status}`);
-  const rows2 = await legacy.json();
-  return rows2[0] ?? null;
 }

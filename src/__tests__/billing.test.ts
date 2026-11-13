@@ -117,6 +117,40 @@ describe("entitlement refresh (server is authoritative when signed in)", () => {
     expect(getTier()).toBe("free");
   });
 
+  it("ignores entitlement responses after switching accounts", async () => {
+    const { refreshEntitlement, clearServerEntitlement, getCachedEntitlement } = await import("../services/entitlement");
+    clearServerEntitlement();
+    let resolve!: (value: { data: unknown; error: unknown }) => void;
+    rpc.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const request = refreshEntitlement();
+    await vi.waitFor(() => expect(resolve).toBeDefined());
+    signedIn.mockReturnValue({ user: { id: "u2", email: "other@example.test" }, configured: true, syncing: false, error: null, oauth: [] });
+    resolve({ data: [{ tier: "platinum", active: true, auto_apply: true }], error: null });
+    try {
+      expect(await request).toBeNull();
+      expect(getCachedEntitlement()).toBeNull();
+    } finally {
+      signedIn.mockReturnValue({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] });
+    }
+  });
+
+  it("does not retain another account's access after a failed refresh", async () => {
+    const { refreshEntitlement, serverAutoApply, serverPro, getCachedEntitlement } = await import("../services/entitlement");
+    rpc.mockResolvedValueOnce({ data: [{ tier: "platinum", active: true, is_platinum: true, auto_apply: true }], error: null });
+    await refreshEntitlement();
+    expect(serverAutoApply()).toBe(true);
+    signedIn.mockReturnValue({ user: { id: "u2", email: "other@example.test" }, configured: true, syncing: false, error: null, oauth: [] });
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "offline" } });
+    try {
+      expect(serverPro()).toBe(false);
+      expect(serverAutoApply()).toBe(false);
+      expect(await refreshEntitlement()).toBeNull();
+      expect(getCachedEntitlement()).toBeNull();
+    } finally {
+      signedIn.mockReturnValue({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] });
+    }
+  });
+
   it("keeps the stored tier on disk but reports free to a signed-out guest", async () => {
     /* Signed out for the whole test. refreshEntitlement must stay a no-op
        offline (returns null, never clobbers the stored tier — a real Pro user
@@ -140,6 +174,22 @@ describe("entitlement refresh (server is authoritative when signed in)", () => {
 });
 
 describe("redeem grant code", () => {
+  it("ignores a late redemption after sign-out", async () => {
+    const { redeemGrant, clearServerEntitlement, getCachedEntitlement } = await import("../services/entitlement");
+    clearServerEntitlement();
+    let resolve!: (value: { data: unknown; error: unknown }) => void;
+    rpc.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const request = redeemGrant("IQGRANT-LATE");
+    await vi.waitFor(() => expect(resolve).toBeDefined());
+    signedIn.mockReturnValue({ user: null, configured: true, syncing: false, error: null, oauth: [] });
+    resolve({ data: [{ tier: "platinum", active: true, auto_apply: true }], error: null });
+    try {
+      expect((await request).ok).toBe(false);
+      expect(getCachedEntitlement()).toBeNull();
+    } finally {
+      signedIn.mockReturnValue({ user: { id: "u1", email: "a@b.c" }, configured: true, syncing: false, error: null, oauth: [] });
+    }
+  });
   it("redeems a single-use code and activates pro on the account", async () => {
     const { redeemGrant, getCachedEntitlement } = await import("../services/entitlement");
     const r = await redeemGrant(" iqgrant-test1234 ");

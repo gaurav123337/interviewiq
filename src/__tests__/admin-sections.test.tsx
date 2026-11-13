@@ -83,9 +83,13 @@ vi.mock("../services/quality", () => ({
 
 vi.mock("../services/entitlement", () => ({
   adminCreateGrant: vi.fn(),
+  adminGrantComplimentary: vi.fn(),
   adminIssueDiscount: vi.fn(),
+  adminListComplimentaryGrants: vi.fn().mockResolvedValue([]),
   adminListEntitlements: vi.fn().mockResolvedValue([]),
+  adminRevokeComplimentary: vi.fn(),
   adminSetEntitlement: vi.fn(),
+  COMPLIMENTARY_PRODUCTS: [],
   PLANS: [],
 }));
 

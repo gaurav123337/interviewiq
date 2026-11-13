@@ -145,7 +145,9 @@ export async function listEngineProcesses() {
   const listenPids = [], watchPids = [], runPids = [], loginOnlyPids = [], relayNodePids = [];
   for (const { cmd, pid } of nodes) {
     const n = normCmd(cmd);
-    if (n.includes("start-apply-relay.js")) { relayNodePids.push(pid); continue; } // relay wrapper — its Chromium is a child of it
+    // A legacy Off sweep must never terminate another user's paired agent tree.
+    if (/--agent-config(?:\s|=)/.test(n)) continue;
+    if (n.includes("start-apply-relay.js")) { relayNodePids.push(pid); continue; }
     if (!n.includes("auto-apply-jobs.js")) continue;
     if (n.includes("--login-only") || n.includes("--view-only")) { loginOnlyPids.push(pid); continue; } // a live sign-in / ⓘ proof-view run — protected (view shares the sign-in clone protocol)
     if (n.includes("--listen")) { listenPids.push(pid); continue; }

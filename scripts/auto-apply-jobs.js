@@ -54,12 +54,15 @@ import { strikesWithDecay, extractFeedbackSkills } from "./apply-engine-lib.js";
 import { tailorSubmitGate, previewTailoredResume, stableVariantId } from "./apply-kit-lib.js"; // Phase 2: LLM-authored kits cannot auto-submit unapproved
 import { buildKit, loadAi, judgeFit, mapUnknownFields, weekKeyForMap, aiHealButton, vlmExtractFields, templateResume } from "./apply-kit-node.js";
 import { vlmFillEligible, MAX_VLM_FILLS_PER_ATTEMPT } from "./vlm-form-lib.js";
-import { acquireApplyContext, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
-import { sweepEngineProcesses } from "./engine-lifecycle.js";
+import { acquireApplyContext, applyBrowserPaths, cloneApplyProfileForSignin, isRemoteEndpoint, mergeSigninProfileBack, releaseSigninCloneOwnership, signinCloneOwnedByLiveRun, readLocalCdpEndpoint } from "./apply-browser.js";
+import { getApplyAgentRuntimeContext, applyAgentChildArgs, applyAgentChildEnv } from "./apply-agent-runtime.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
-const REPORTS_DIR = path.join(ROOT, "..", "freebuff-apply-reports");
+const AGENT_CONTEXT = getApplyAgentRuntimeContext();
+const PAIRED = AGENT_CONTEXT.mode === "paired";
+const STATE_ROOT = PAIRED ? AGENT_CONTEXT.stateRoot : path.resolve(ROOT, "..");
+const { profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR } = applyBrowserPaths();
+const REPORTS_DIR = path.join(STATE_ROOT, PAIRED ? "reports" : "freebuff-apply-reports");
 
 /* ----------------------------- CLI args ----------------------------- */
 
@@ -93,7 +96,13 @@ const dim = (s) => `\x1b[2m${s}\x1b[0m`;
 
 /* ------------------- applied-dedupe + site registry ------------------- */
 
-const DEDUPE_FILE = path.join(ROOT, "..", "freebuff-apply-state.json");
+const DEDUPE_FILE = path.join(STATE_ROOT, PAIRED ? "applied.json" : "freebuff-apply-state.json");
+
+export function applyEnginePaths() {
+  return { stateRoot: STATE_ROOT, profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR,
+    reportsDir: REPORTS_DIR, dedupeFile: DEDUPE_FILE, answersFile: ANSWERS_FILE,
+    cycleLock: CYCLE_LOCK, profilePath: AGENT_CONTEXT.profilePath };
+}
 let __applied = null;
 function appliedSet() {
   if (!__applied) {
@@ -113,7 +122,10 @@ let __sitesDb = undefined;
 async function sitesDb() {
   if (__sitesDb === undefined) {
     try { __sitesDb = await import("./job-sites-db.js"); }
-    catch { __sitesDb = null; } // no local creds (e.g. borrowed machine) — degrade to CLI-only
+    catch (error) {
+      if (PAIRED) throw error;
+      __sitesDb = null; // explicit legacy tooling may run CLI-only
+    }
   }
   return __sitesDb;
 }
@@ -229,8 +241,13 @@ async function learnedCriticalSkills() {
   catch { return []; }
 }
 
-async function readApplyMode() {
+export async function readApplyMode() {
   const db = await sitesDb();
+  if (PAIRED) {
+    if (!db?.assertPairedEntitlement) throw new Error("paired authorization unavailable");
+    await db.assertPairedEntitlement();
+    return { mode: "local", provider: null, endpoint: null };
+  }
   if (!db?.getApplyConfig) return { mode: "unknown", reason: "no db" };
   try {
     const rows = await db.getApplyConfig();
@@ -317,9 +334,7 @@ function signinStepLog(msg) {
 async function browserHasSessionCookie(names, url) {
   if (!names.length) return null; // site has no named cookie — page checks only
   let host = ""; try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { /* */ }
-  const cloneDir = process.env.LOCALAPPDATA
-    ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile")
-    : path.join(ROOT, "..", "freebuff-apply-signin-profile");
+  const cloneDir = SIGNIN_PROFILE_DIR;
   for (const rel of ["Default/Network/Cookies", "Default/Cookies"]) {
     const f = path.join(cloneDir, ...rel.split("/"));
     try {
@@ -476,7 +491,7 @@ async function recordResultDb(host, job, result, detail) {
    DB (form_answers, keyed site_host+field_key) is the durable copy; a local
    JSON cache mirrors it so forms fill even when Supabase is unreachable.
    Reads are merged (DB wins on conflict) — both are just (label → answer). */
-const ANSWERS_FILE = path.join(ROOT, "..", "freebuff-apply-answers.json");
+const ANSWERS_FILE = path.join(STATE_ROOT, PAIRED ? "answers.json" : "freebuff-apply-answers.json");
 function localAnswerCache() {
   try { return JSON.parse(readFileSync(ANSWERS_FILE, "utf8")) ?? {}; }
   catch { return {}; }
@@ -560,6 +575,7 @@ async function sendTelegramNotify(text) {
    "1 done" / "2 skip" / "3 closed" and the listener resolves the rows —
    Done and Skip teach the judge, Closed just stops retries. */
 async function telegramCommandLoop() {
+  if (PAIRED) throw new Error("Telegram listener/global login and run bridges unavailable in paired mode");
   const db = await sitesDb();
   if (!db?.getNotifyConfig || !db?.listPendingReviews || !db?.resolveJobReview) {
     console.error("listener needs the review-queue DB layer"); process.exit(1);
@@ -626,7 +642,7 @@ async function telegramCommandLoop() {
       const logFile = path.join(REPORTS_DIR, "run-now.log");
       const outFd = openSync(logFile, "a");
       const runStart = Date.now(); // every per-site report from THIS cycle aggregates below
-      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--all"], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, ".."), env: { ...process.env, FREEBUFF_APP_TRIGGERED: "1" } });
+      const child = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--all", ...applyAgentChildArgs(AGENT_CONTEXT)], { stdio: ["ignore", outFd, outFd], cwd: path.join(ROOT, ".."), env: { ...applyAgentChildEnv(AGENT_CONTEXT), FREEBUFF_APP_TRIGGERED: "1" } });
       child.unref();
       closeSync(outFd);
       runInFlight.child = child;
@@ -703,7 +719,7 @@ async function telegramCommandLoop() {
         const { spawn: spawnView } = await import("node:child_process");
         const vlog = path.join(REPORTS_DIR, `view-${req.host.replace(/[^a-z0-9.-]/gi, "_")}.log`);
         const vfd = openSync(vlog, "a");
-        const v = spawnView(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--view-only"], { stdio: ["ignore", vfd, vfd], cwd: path.join(ROOT, "..") });
+        const v = spawnView(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--view-only", ...applyAgentChildArgs(AGENT_CONTEXT)], { stdio: ["ignore", vfd, vfd], cwd: path.join(ROOT, ".."), env: applyAgentChildEnv(AGENT_CONTEXT) });
         v.unref(); closeSync(vfd);
         await db.fulfillLoginRequest?.(req.host).catch(() => {});
         db.reportLoginStatus?.(req.host, "opened", "proof window open on the desktop — showing the site over the engine's signed-in session").catch(() => {});
@@ -783,7 +799,7 @@ async function telegramCommandLoop() {
       };
       const spawnSigninChild = () => {
         const fd = openSync(logFile, "a");
-        const c = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only"], { stdio: ["ignore", fd, fd], cwd: path.join(ROOT, "..") });
+        const c = spawn(process.execPath, [path.join(ROOT, "auto-apply-jobs.js"), "--url", loginUrl, "--login-only", ...applyAgentChildArgs(AGENT_CONTEXT)], { stdio: ["ignore", fd, fd], cwd: path.join(ROOT, ".."), env: applyAgentChildEnv(AGENT_CONTEXT) });
         c.unref(); closeSync(fd);
         /* re-stamp with the login-only child pid — the child outlives this
            listener, so the watcher's deferral must track the WINDOW */
@@ -828,6 +844,7 @@ async function telegramCommandLoop() {
     if (mode === "off") {
       const runPid = runInFlight.child?.pid ?? 0;
       await db.reportEngineState?.("stopped", "apply mode Off — engine processes killed; nothing runs until you switch back on").catch(() => {});
+      const { sweepEngineProcesses } = await import("./engine-lifecycle.js");
       const r = await sweepEngineProcesses({ killListener: true, selfPid: process.pid });
       if (runPid) db.reportRunStatus?.("failed", "owner switched apply mode Off — the run was killed with the rest of the engine").catch(() => {});
       console.log(`🛑 apply mode is OFF — engine killed (${r.killed} process(es)); listener stopped until the switch is back on`);
@@ -1409,10 +1426,12 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
             /* kill the orphan FIRST: chrome often survives its Playwright
                link; re-cloning over a live clone is what EPERM'd the first
                recovery attempts (#160) */
-            try {
-              const { listEngineProcesses, killTree } = await import("./engine-lifecycle.js");
-              for (const pid of (await listEngineProcesses()).signinChromePids) await killTree(pid).catch(() => {});
-            } catch { /* best-effort */ }
+            if (!PAIRED) {
+              try {
+                const { listEngineProcesses, killTree } = await import("./engine-lifecycle.js");
+                for (const pid of (await listEngineProcesses()).signinChromePids) await killTree(pid).catch(() => {});
+              } catch { /* legacy-only orphan cleanup */ }
+            }
             const { ctx: ctx2 } = await acquireApplyContext({ headless: false, endpoint: "", signIn: true, extraArgs: [] });
             __browserCleanup = () => ctx2.close().catch(() => {});
             const p2 = ctx2.pages()[0] ?? (await ctx2.newPage());
@@ -2432,7 +2451,8 @@ async function clickButton(page, locator, textRe) {
   }
 }
 
-async function trySubmit(page, site, rulesOverride, ctx = {}) {
+export async function trySubmit(page, site, rulesOverride, ctx = {}) {
+  if (PAIRED) await readApplyMode();
   const rules = rulesOverride ?? SITE_RULES[site] ?? SITE_RULES.generic;
   /* the document that holds the form (embedded-iframe ATS boards vs inline) */
   const target = await formFrame(page);
@@ -2505,6 +2525,9 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
          locate "Submit application" by text/aria and JS-click it (the
          pointer locator keeps missing it); LinkedIn's own validation gates
          the click, so an empty required field cannot slip through. */
+      // The fallback is still a submission: policy and fresh paired authorization apply.
+      if (!rules.autoSubmit) return { auto: false, note: "review gate — human submits" };
+      if (PAIRED) await readApplyMode();
       const clicked = await page.evaluate(() => {
         const b = [...document.querySelectorAll("button")]
           .find((x) => x.offsetParent && !x.disabled && /submit application/i.test((x.innerText || x.getAttribute("aria-label") || "").trim()));
@@ -2550,9 +2573,10 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
     /* TIER 3 submit-side heal END: the flow never surfaced a submit control
        the rules could match — same bounded AI heal as the entry path
        above, but pointed at a page that has REACHED the end of its flow. */
-    if (ctx.ai && healEnabled()) {
+    if (ctx.ai && healEnabled() && rules.autoSubmit) {
       const healed = await healControl(target, "submit this job application", ctx.ai);
       if (healed) {
+        if (PAIRED) await readApplyMode();
         await clickButton(target, healed, null).catch(() => {});
         await page.waitForTimeout(1000);
         const verifyH = await verifySubmission(page, site, target);
@@ -2579,6 +2603,7 @@ async function trySubmit(page, site, rulesOverride, ctx = {}) {
         .slice(0, 5)
     ).catch(() => ["(check failed)"]);
     if (emptyRequired.length) return { auto: false, note: `cannot auto-submit — required fields empty: ${emptyRequired.join(", ")}` };
+    if (PAIRED) await readApplyMode();
     await clickButton(target, btn, rules.submitButtonText ?? rules.applyButtonText);
     await page.waitForTimeout(1000);
     /* success may render in the form frame (embedded Greenhouse) or replace
@@ -2677,14 +2702,15 @@ async function runSingle(args, { existingCtx = null } = {}) {
         }
       } catch { /* history read is best-effort — rules stand */ }
     }
-  } catch { /* registry unavailable — builtin rules stand */ }
-  const profile = loadApplyProfile(args.profile);
-  const token = process.env.SUPABASE_ACCESS_TOKEN;
-  const projectRef = process.env.SUPABASE_PROJECT_REF;
-  /* sign-in-only runs skip the AI provider load entirely — no kits are
-     built, and this network fetch used to stall the flow BEFORE the window
-     opened (the app already showed "window OPEN" while nothing was up). */
-  const ai = args["login-only"] || args["view-only"] ? null : await loadAi({ token, projectRef });
+  } catch (error) {
+    if (PAIRED) throw error;
+    // explicit legacy runs retain builtin rules if the global registry is unavailable
+  }
+  const profile = loadApplyProfile(AGENT_CONTEXT.profilePath);
+  /* Paired runs never read the owner AI configuration or its service credentials. */
+  const ai = PAIRED || args["login-only"] || args["view-only"] ? null : await loadAi({
+    token: process.env.SUPABASE_ACCESS_TOKEN, projectRef: process.env.SUPABASE_PROJECT_REF,
+  });
   console.log(`apply-engine → ${rules.label} · ${args.url} · max ${args.max}${ai ? ` · AI: ${ai.model}` : args["login-only"] ? " · sign-in only" : " · AI: OFF (templates)"}`);
   /* owner kill switch: a manual single run fails open when the config is
      unreadable (the owner is running it on purpose), but honors off/cloud */
@@ -2695,7 +2721,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
   /* child of a shared --all browser: the parent passed its CDP endpoint —
      connect to THAT browser (tab, not a new window). The parent owns the
      browser's lifecycle; a child never closes it. */
-  const sharedEp = String(process.env.FREEBUFF_SHARED_CDP_EP || "").trim();
+  const sharedEp = PAIRED ? "" : String(process.env.FREEBUFF_SHARED_CDP_EP || "").trim();
   let sharedChildCtx = null, sharedChildCleanup = null;
   if (sharedEp && !args["login-only"]) {
     try {
@@ -3219,6 +3245,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
         }
         await page.waitForTimeout(rules.minIntervalMs);
       } catch (e) {
+        if (PAIRED && /^PAIRED_AUTH_/.test(e.code ?? "")) throw e;
         if (jwFired && /has been closed/i.test(e.message)) {
           /* the watchdog closed the page; the in-flight flow then threw on a
              locator — that is the timeout ABORT, not a real job failure */
@@ -3239,8 +3266,10 @@ async function runSingle(args, { existingCtx = null } = {}) {
     writeFileSync(path.join(REPORTS_DIR, `run-${stamp}.md`), buildReportMarkdown(report));
     console.log(`\n${reportLine(report)}`);
     if (ai?.__unhealthy) console.log(yellow(`🧠 AI DEGRADED this run (${String(ai.__unhealthy).slice(0, 90)}) — kits fell back to templates and the judge was down; fix the provider, then re-run.`));
-    else if (!ai) console.log(yellow("🧠 AI not configured — kits are templates and only keyword gates judged; set the provider in Admin → AI provider."));
-    console.log(dim(`reports → freebuff-apply-reports/run-${stamp}.json|.md`));
+    else if (!ai) console.log(yellow(PAIRED
+      ? "Paired mode: templates only; global AI provider is not used."
+      : "AI not configured — kits are templates and only keyword gates judged; set the provider in Admin → AI provider."));
+    console.log(dim(`reports → ${path.join(REPORTS_DIR, `run-${stamp}.json`)}`));
     await syncRunToDb(runHostKey(args.url), report).catch(() => {});
     await learnRules(runHostKey(args.url), report).catch(() => {});
     /* #162 ORDERING FIX: the sign-in browser MUST be closed BEFORE the clone
@@ -3261,10 +3290,8 @@ async function runSingle(args, { existingCtx = null } = {}) {
          real profile a Cookies file that did not exist there before, the
          owner DID sign in — no matter what the process teardown did */
       try {
-        const realCookies = path.join(ROOT, "..", "freebuff-apply-profile", "Default", "Network", "Cookies");
-        const cloneCookies = process.env.LOCALAPPDATA
-          ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile", "Default", "Network", "Cookies")
-          : path.join(ROOT, "..", "freebuff-apply-signin-profile", "Default", "Network", "Cookies");
+        const realCookies = path.join(PROFILE_DIR, "Default", "Network", "Cookies");
+        const cloneCookies = path.join(SIGNIN_PROFILE_DIR, "Default", "Network", "Cookies");
         if (!existsSync(realCookies) && existsSync(cloneCookies)) console.log(dim("  (merge moved a fresh cookie store into the real profile — sign-in state persisted)"));
       } catch { /* diagnostics only */ }
     }
@@ -3353,10 +3380,17 @@ async function runAll(args) {
       sites = (await db.listJobSites())
         .filter((s) => s.status === "active" && s.jobs_url)
         .map((s) => ({ host: s.host, url: s.jobs_url, label: s.label }));
-    } catch (e) { console.log(dim(`(registry read failed: ${e.message.slice(0, 80)})`)); }
+    } catch (e) {
+      if (PAIRED) throw e;
+      console.log(dim(`(registry read failed: ${e.message.slice(0, 80)})`));
+    }
+  }
+  if (PAIRED && !sites.length) {
+    console.log("paired catalog has no active sites — nothing was touched");
+    return "skipped";
   }
   if (!sites.length) {
-    /* registry unavailable — fall back to the three builtin boards */
+    /* explicit legacy registry unavailable — fall back to builtin boards */
     sites = [
       { host: "instahyre.com", url: "https://www.instahyre.com/search-jobs/?search=react", label: "Instahyre" },
       { host: "naukri.com", url: "https://www.naukri.com/mnjuser/recommendedjobs", label: "Naukri" },
@@ -3376,6 +3410,7 @@ async function runAll(args) {
      after the kill switch + lock (a skipped cycle must not mutate the
      registry), before the per-site loop, so a just-activated board runs
      this very cycle */
+  if (!PAIRED) {
   await runProbationSweep(db);
   if (db) {
     try {
@@ -3388,10 +3423,11 @@ async function runAll(args) {
       }
     } catch { /* the pre-sweep list stands */ }
   }
-  /* ONE SHARED BROWSER for the whole cycle: launch it here, hand its CDP
-     endpoint to each per-site child via env (they open TABS in it), and
-     close it once after the last site — no more per-site window storms. */
+  }
+  /* Legacy shares a browser; paired children acquire only their scoped profile,
+     sequentially, without the owner-global CDP/relay surface. */
   let sharedEp = "", sharedCleanup = null, sharedCtx = null;
+  if (!PAIRED) {
   try {
     sharedCtx = await launchBrowser(false, args_isCloudMode ? {} : { extraArgs: ["--remote-debugging-port=0"] });
     sharedCleanup = __browserCleanup;
@@ -3410,17 +3446,22 @@ async function runAll(args) {
     sharedCleanup = null;
     sharedEp = "";
   }
+  }
   const totals = { submitted: 0, skipped: 0, errors: 0 };
   for (const s of sites) {
+    const siteBlocked = await applyModeBlocked(true);
+    if (siteBlocked) { console.log(yellow(`cycle stopped: ${siteBlocked}`)); break; }
     console.log(`\n━━━ ${s.label} (${s.host}) ━━━`);
-    watcherBeat(`site ${s.host}`); // per-site beat: a 12-min site child can't out-age the freshness window
+    if (!PAIRED) watcherBeat(`site ${s.host}`); // legacy-only global heartbeat
     try {
       const { spawn } = await import("node:child_process");
       const SITE_TIMEOUT_MS = 12 * 60_000;
-      const env = { ...process.env };
+      const env = applyAgentChildEnv(AGENT_CONTEXT);
       if (sharedEp) env.FREEBUFF_SHARED_CDP_EP = sharedEp;
       const child = spawn(process.execPath, [
         path.join(ROOT, "auto-apply-jobs.js"), "--url", s.url, "--max", String(args.max),
+        ...applyAgentChildArgs(AGENT_CONTEXT),
+        ...(args.headless ? ["--headless"] : []),
         ...(args["dry-run"] ? ["--dry-run"] : []),
         ...(args.unattended ? ["--unattended"] : []),
       ], { stdio: ["ignore", "pipe", "pipe"], cwd: path.join(ROOT, ".."), env });
@@ -3440,6 +3481,7 @@ async function runAll(args) {
         /* honest registry: a crashed/timed-out child never reaches its own
            recordRun, so the UI kept showing days-old "✓ 1 submitted" while
            every launch actually failed (2026-10-06). Stamp the failure. */
+        if (PAIRED) throw new Error(`paired site ${s.host} failed (exit ${code}); cycle stopped`);
         await db?.recordRun?.({ host: s.host, ok: false, notes: `site run FAILED (exit ${code} — launch crash/timeout; see watch.log)` }).catch(() => {});
       }
       /* tab sweep between sites: a killed/timed-out child can leave its tab
@@ -3452,6 +3494,7 @@ async function runAll(args) {
         } catch { /* browser gone — the fallback paths handle it */ }
       }
     } catch (e) {
+      if (PAIRED) throw e;
       console.error(red(`site ${s.host} failed: ${e.message.slice(0, 120)}`));
       totals.errors++;
     }
@@ -3661,7 +3704,7 @@ async function runWatch(args) {
     /* discovery first so newly-approved sites join the rotation quickly */
     try {
       const { spawnSync } = await import("node:child_process");
-      spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), "--limit", "4"], { stdio: "inherit", cwd: path.join(ROOT, "..") });
+      spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), "--limit", "4", ...applyAgentChildArgs(AGENT_CONTEXT)], { stdio: "inherit", cwd: path.join(ROOT, ".."), env: applyAgentChildEnv(AGENT_CONTEXT) });
     } catch { /* discovery failing must never stop applying */ }
     watcherBeat(`cycle start — discovery + apply (--max ${args.max})`);
     return await runAll(args); // "ran" | "busy" (another cycle held the profile)
@@ -3680,17 +3723,33 @@ async function runWatch(args) {
   }
 }
 
-async function main() {
+export async function main() {
   const args = parseArgs(process.argv);
+  args.profile = AGENT_CONTEXT.profilePath;
+  if (PAIRED && args.discover) {
+    throw new Error("site discovery unavailable in paired mode (global registry mutation deferred)");
+  }
+  if (PAIRED && (args.listen || args.watch || args.sessions)) {
+    throw new Error("global listener/watch/session supervisors unavailable in paired mode; use --all or --url");
+  }
+  if (PAIRED && process.env.FREEBUFF_SHARED_CDP_EP) {
+    throw new Error("shared CDP/relay unavailable in paired mode");
+  }
   /* cloud/local is decided once per process (the switch rarely changes
      mid-run; per-cycle guards still re-read it) */
   args_isCloudMode = (await readApplyMode()).mode === "cloud";
+  // No artifact IO before validated runtime selection and paired authorization.
+  mkdirSync(REPORTS_DIR, { recursive: true });
   args_unattended = args.unattended;
   argURL = args.url || ""; // stamp every signin-flow.log line with the run's URL
   if (args.watch) watcherBeat(`started (pid ${process.pid})`); // boot beat for ensure-apply-watcher's liveness check
   if (args.discover) {
     const { spawnSync } = await import("node:child_process");
-    const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...process.argv.slice(3)], { stdio: "inherit", cwd: path.join(ROOT, "..") });
+    const forwarded = process.argv.slice(2).filter((a, i, all) =>
+      !["--discover", "--legacy-owner", "--agent-config", "--profile"].includes(a)
+      && !["--agent-config", "--profile"].includes(all[i - 1])
+      && !/^--(?:agent-config|profile)=/.test(a));
+    const res = spawnSync(process.execPath, [path.join(ROOT, "discover-job-sites.js"), ...forwarded, ...applyAgentChildArgs(AGENT_CONTEXT)], { stdio: "inherit", cwd: path.join(ROOT, ".."), env: applyAgentChildEnv(AGENT_CONTEXT) });
     process.exit(res.status ?? 1);
   }
   if (args["view-only"]) { await runViewOnly(args); return; }
@@ -3803,4 +3862,6 @@ async function main() {
   await runSingle(args);
 }
 
-main().catch(e => { console.error(red(e.stack ?? e.message)); process.exit(1); });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(e => { console.error(red(e.stack ?? e.message)); process.exitCode = 1; });
+}

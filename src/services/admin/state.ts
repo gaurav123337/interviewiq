@@ -3,7 +3,7 @@
 
 import type { LevelId } from "../../types";
 import { CONFIG } from "../../config";
-import { getCloudState, getSupabaseClient } from "../cloud";
+import { getCloudState, getSupabaseClient, subscribeCloud } from "../cloud";
 import { applyCoachVocab } from "../../coach/concepts";
 import {
   getRemoteConfig, replaceRemoteConfig, setAnnouncements, setPublishedQuestions, type PublishedQuestion, type RemoteConfig
@@ -17,26 +17,45 @@ import { flushEvents, queueEvent, updateProfile } from "../events";
 export interface AdminState {
   ready: boolean;
   isAdmin: boolean;
+  userId: string | null;
 }
 
 type AdminListener = (s: AdminState) => void;
 const listeners = new Set<AdminListener>();
-let state: AdminState = { ready: false, isAdmin: false };
+let state: AdminState = { ready: false, isAdmin: false, userId: null };
+let generation = 0;
+let watchingIdentity = false;
 
 function setState(patch: Partial<AdminState>): void {
   state = { ...state, ...patch };
   for (const fn of listeners) {
-    try { fn(state); } catch { /* listener errors must not break the service */ }
+    try { fn(getAdminState()); } catch { /* listener errors must not break the service */ }
   }
 }
 
 export function getAdminState(): AdminState {
-  return state;
+  const userId = getCloudState().user?.id ?? null;
+  return userId && userId === state.userId ? state : { ...state, userId: null, isAdmin: false };
+}
+
+function watchIdentity(): void {
+  if (watchingIdentity) return;
+  watchingIdentity = true;
+  let userId = getCloudState().user?.id ?? null;
+  subscribeCloud(s => {
+    const nextUserId = s.user?.id ?? null;
+    if (nextUserId === userId) return; /* configured/sync updates must not recurse through client access */
+    userId = nextUserId;
+    generation++;
+    setState({ userId: null, isAdmin: false });
+    void refreshAdminData().catch(() => {});
+  });
 }
 
 export function subscribeAdmin(fn: AdminListener): () => void {
+  watchIdentity();
   listeners.add(fn);
-  fn(state);
+  fn(getAdminState());
   return () => { listeners.delete(fn); };
 }
 
@@ -104,17 +123,32 @@ async function refreshRemoteData(client: NonNullable<Awaited<ReturnType<typeof g
 
 /** Re-fetch remote data + re-check admin role. Called by all mutation modules. */
 export async function refreshAdminData(): Promise<void> {
-  const client = await getSupabaseClient();
-  if (!client) return;
-  await refreshRemoteData(client);
-  applyCoachVocab(getRemoteConfig().coachVocab);
-  setState({ ready: true });
-  const { data } = await client.auth.getUser();
-  if (data?.user) {
-    const { data: admin } = await client.rpc("is_admin");
-    setState({ isAdmin: !!admin });
-  } else {
-    setState({ isAdmin: false });
+  watchIdentity();
+  const userId = getCloudState().user?.id ?? null;
+  const request = ++generation;
+  const isCurrent = () => request === generation && userId === (getCloudState().user?.id ?? null);
+  if (!userId || userId !== state.userId) setState({ userId: null, isAdmin: false });
+  try {
+    const client = await getSupabaseClient();
+    if (!isCurrent()) return;
+    if (!client) { setState({ ready: true, userId: null, isAdmin: false }); return; }
+    await refreshRemoteData(client);
+    applyCoachVocab(getRemoteConfig().coachVocab);
+    if (!isCurrent()) return;
+    setState({ ready: true });
+    if (!userId) return;
+    const { data, error: userError } = await client.auth.getUser();
+    if (!isCurrent()) return;
+    if (userError || data?.user?.id !== userId) {
+      setState({ userId: null, isAdmin: false });
+      return;
+    }
+    const { data: admin, error } = await client.rpc("is_admin");
+    if (!isCurrent()) return; /* late account/recheck responses must never restore a revoked role */
+    setState({ userId, isAdmin: !!admin && !error });
+  } catch (error) {
+    if (isCurrent()) setState({ ready: true, userId: null, isAdmin: false });
+    throw error;
   }
 }
 
@@ -128,25 +162,11 @@ let initPromise: Promise<void> | null = null;
 export function initAdmin(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
-      const client = await getSupabaseClient();
-      if (!client) { setState({ ready: true, isAdmin: false }); return; }
-      try {
-        await refreshRemoteData(client);
-        applyCoachVocab(getRemoteConfig().coachVocab);
-        setState({ ready: true });
-        const { data } = await client.auth.getUser();
-        const user = data?.user;
-        if (user) {
-          const { data: admin, error } = await client.rpc("is_admin");
-          setState({ isAdmin: !!admin && !error });
-          void updateProfile().catch(() => {});
-          void queueEvent("app_open", {});
-          await flushEvents().catch(() => {});
-        } else {
-          setState({ isAdmin: false });
-        }
-      } catch {
-        setState({ ready: true, isAdmin: false });
+      await refreshAdminData().catch(() => {});
+      if (getAdminState().userId) {
+        void updateProfile().catch(() => {});
+        void queueEvent("app_open", {});
+        await flushEvents().catch(() => {});
       }
     })();
   }

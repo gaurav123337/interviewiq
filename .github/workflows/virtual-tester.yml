@@ -30,6 +30,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - run: deno test supabase/functions/_shared/ supabase/functions/apply-agent/index.test.ts
       - run: node node_modules/@playwright/test/cli.js install --with-deps chromium
       - run: npm run test:virtual
       - name: Upload isolated browser report
