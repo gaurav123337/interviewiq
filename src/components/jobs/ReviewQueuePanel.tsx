@@ -3,13 +3,12 @@
    (open → submit manually → Done) or dismisses them. Also hosts the optional
    Telegram notify config the engine uses for post-batch summaries. */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
-  listJobReviews, resolveJobReview, getNotifyConfig, setNotifyConfig, putJudgeExemplar, testNotifyConfig,
+  listJobReviews, resolveJobReview, putJudgeExemplar,
   type ReviewItem, type ReviewFormField,
 } from "../../services/jobSites.ts";
-import { serverAutoApply } from "../../services/entitlement.ts";
-import { getCloudState } from "../../services/cloud.ts";
+import TelegramBindingPanel from "./TelegramBindingPanel";
 import { postedAgeChip, passesAgeFilter, cleanPostingTitle } from "../../../scripts/apply-engine-lib.js";
 
 /* max-age filter cycle for the queue (shown only when filtering): same
@@ -52,20 +51,10 @@ export default function ReviewQueuePanel() {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [notifyOpen, setNotifyOpen] = useState(false);
-  const notifyRef = useRef<HTMLDivElement | null>(null);
   const [feedbackShown, setFeedbackShown] = useState<{id: string; type: 'applied'|'dismissed'|'closed'; show: boolean} | null>(null);
   /* posting-age filter (the board's clock, NOT created_at): cycles any →
      ≤7d → ≤14d → ≤30d → any; UNDATED rows survive every step (fail-open). */
   const [maxAge, setMaxAge] = useState<number | null>(null);
-  const [chatId, setChatId] = useState("");
-  const [botToken, setBotToken] = useState("");
-  const [notifyState, setNotifyState] = useState<string | null>(null);
-  const [notifySaved, setNotifySaved] = useState(false);
-  /* per-user binding: any signed-in user CAN pay-gate themselves — free
-     users see the Platinum upsell instead of the form */
-  const [entitled, setEntitled] = useState(true);
-  useEffect(() => { setEntitled(serverAutoApply() || !getCloudState().user); }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -79,28 +68,6 @@ export default function ReviewQueuePanel() {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
-
-  /* badge truth on mount: whether Telegram is already bound (read-only peek) */
-  useEffect(() => {
-    void (async () => {
-      try {
-        const cfg = await getNotifyConfig();
-        setNotifySaved(Boolean(cfg?.chat_id && cfg?.bot_token));
-      } catch { /* config read failing shouldn't break the panel */ }
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (!notifyOpen) return;
-    void (async () => {
-      try {
-        const cfg = await getNotifyConfig();
-        setChatId(cfg?.chat_id ?? "");
-        setBotToken(cfg?.bot_token ?? "");
-        setNotifySaved(Boolean(cfg?.chat_id && cfg?.bot_token));
-      } catch { /* config read failing shouldn't break the panel */ }
-    })();
-  }, [notifyOpen]);
 
   /* posting id when the URL carries one (LinkedIn /jobs/view/<id> or
      currentJobId=<id>) — lets ownerExemplarFor match future postings by id */
@@ -166,28 +133,6 @@ export default function ReviewQueuePanel() {
     window.open(url, "_blank", "noopener,noreferrer");
   };
 
-  /* open + reveal: the form renders above the row list, but long queues
-     can still push it off-screen — scroll it into view on open */
-  const openNotify = () => {
-    setNotifyOpen(true);
-    requestAnimationFrame(() => notifyRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
-  };
-
-  const saveNotify = async () => {
-    setNotifyState(null);
-    try {
-      await setNotifyConfig(chatId.trim(), botToken.trim());
-      setNotifySaved(Boolean(chatId.trim() && botToken.trim()));
-      setNotifyState("✓ saved — sending a test DM now (it carries the weekly digest)…");
-      const res = await testNotifyConfig();
-      setNotifyState(res === "sent"
-        ? "✓ Test DM delivered — check Telegram. Every new needs-review row will ping this chat."
-        : `⚠ ${res}`);
-    } catch (e) {
-      setNotifyState(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); } catch { /* clipboard denied */ }
   };
@@ -203,44 +148,16 @@ export default function ReviewQueuePanel() {
           <span className="text-xs text-zinc-300">{open ? "▴" : "▾"}</span>
         </button>
         <div className="flex items-center gap-3">
-          <button onClick={() => (notifyOpen ? setNotifyOpen(false) : openNotify())}
-            title="Bind Telegram: get a DM the moment a job needs you (💎 Platinum or the auto-apply add-on)"
-            className={`rounded px-2 py-1 text-xs font-medium ${notifySaved ? "bg-emerald-500/15 text-emerald-400" : entitled ? "bg-amber-500/15 text-amber-400 hover:bg-amber-500/25" : "bg-zinc-700/40 text-zinc-300 hover:bg-zinc-700/60"}`}>
-            🔔 Telegram {notifySaved ? "· on" : entitled ? "· not set up" : "· 💎"}
-          </button>
           <button onClick={() => void refresh()} className="text-xs text-zinc-300 hover:text-zinc-100">↻ refresh</button>
         </div>
       </div>
+      <TelegramBindingPanel />
       {open && (<>
       <div className="mb-2 text-xs text-zinc-300">
         Review-gate forms the engine skipped in <code className="rounded bg-zinc-800 px-1">--unattended</code> mode wait here with their
         link — open, submit by hand, then record the outcome: <b className="text-zinc-200">✓ Applied</b> and <b className="text-zinc-200">✕ Not interested</b> teach the
         AI judge your preference for similar postings; <b className="text-zinc-200">🚫 Closed</b> (no longer accepting) just stops the engine from retrying.
-        {!notifySaved && <> Want a phone ping when something lands here? <button onClick={openNotify} className="text-amber-400 underline underline-offset-2 hover:text-amber-300">Bind Telegram →</button></>}
       </div>
-      {notifyOpen && !entitled && (
-        <div ref={notifyRef} className="mb-3 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-2.5 text-xs text-zinc-300">
-          💎 Per-user Telegram pings are part of the <b className="text-zinc-200">auto-apply engine</b> (Platinum or the auto-apply add-on).
-          Upgrade to bind your own bot + chat id and get needs-you pings with direct form links on your phone.
-        </div>
-      )}
-      {notifyOpen && entitled && (
-        <div ref={notifyRef} className="mb-3 space-y-2 rounded-md border border-amber-500/30 bg-zinc-900 px-2.5 py-2.5">
-          <div className="text-xs font-semibold text-zinc-300">Telegram notifications — bound to YOUR account {notifySaved && <span className="ml-1 text-emerald-400">· enabled</span>}</div>
-          <p className="text-[11px] text-zinc-300">
-            Create a bot with @BotFather (paste its token), send <code className="rounded bg-zinc-800 px-1">/start</code> to it once, then paste the chat id.
-            Saving sends a test DM carrying the weekly digest so you can verify delivery instantly.
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <input value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="chat id (e.g. 123456789)"
-              className="w-44 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
-            <input value={botToken} onChange={(e) => setBotToken(e.target.value)} placeholder="bot token (123456:ABC-DEF…)" type="password"
-              className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 outline-none focus:border-zinc-500" />
-            <button onClick={() => void saveNotify()} className="rounded bg-emerald-600 px-2 py-1 text-xs font-medium text-white hover:bg-emerald-500">Save</button>
-          </div>
-          {notifyState && <div className="text-[11px] text-zinc-300">{notifyState}</div>}
-        </div>
-      )}
       {error && <div className="mb-2 rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{error}</div>}
       {!items.length && <div className="text-xs text-zinc-300">Nothing waiting — auto-submit sites never need review, and everything else lands here when skipped.</div>}
       {/* posting-age filter: the BOARD's clock (posted_age_h), not created_at;

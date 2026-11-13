@@ -3,7 +3,7 @@
    the owner approves them here, and only 'active' sites are driven by
    `auto-apply-jobs.js --all`. */
 
-import { getCloudState, getSupabaseClient } from "./cloud.ts";
+import { getCloudState, getSupabaseClient, subscribeCloud } from "./cloud.ts";
 import { autoSubmitTrustPatch, autoSubmitTrustVerdict, AUTO_SUBMIT_NEVER_HOSTS } from "../../scripts/apply-engine-lib.js";
 
 /* Core data is owner-scoped by auth.uid() in SQL. An unapplied migration is
@@ -217,32 +217,124 @@ export async function resolveJobReview(id: string, status: "done" | "dismissed" 
   await myApply("reviews.resolve", { id, status });
 }
 
-/* ── Telegram notify config — PER-USER since #135 ──────────────────────
-   Every signed-in Platinum/add-on user binds their own bot + chat id
-   (RLS scopes the row to auth.uid()); the engine pings the entitled
-   row via engine_notify_config(). Free users see the upsell instead. */
+/* ── Telegram binding metadata — secrets never come back to the browser.
+   Save delivers a generic test before the server replaces a binding; revision
+   fences concurrent changes. Cleanup remains available without entitlement. */
 
 export interface NotifyConfig {
   chat_id: string | null;
-  bot_token: string | null;
+  has_token: boolean;
+  time_zone: string;
+  delivery_tested_at: string | null;
   updated_at: string | null;
+  revision: number;
+}
+
+export interface NotifyTestResult {
+  sent: boolean;
+  reason?: string;
+  message_id?: number;
+  disconnected?: boolean;
+  config: NotifyConfig | null;
+}
+
+export function defaultNotifyTimeZone(): string {
+  try { return new Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; }
+  catch { return "UTC"; }
+}
+
+export function validateNotifyBinding(chatId: string, botToken: string, timeZone: string, hasToken = false): string | null {
+  if (!/^-?[1-9]\d{0,19}$/.test(chatId.trim()) || BigInt(chatId.trim()) < -9223372036854775808n || BigInt(chatId.trim()) > 9223372036854775807n) {
+    return "Enter a numeric Telegram chat ID (negative group IDs are allowed).";
+  }
+  if ((!botToken.trim() && !hasToken) || (botToken.trim() && !/^\d{5,16}:[A-Za-z0-9_-]{20,128}$/.test(botToken.trim()))) {
+    return "Enter a valid BotFather token, not a bot name or URL.";
+  }
+  try {
+    if (!timeZone.trim() || timeZone.trim().length > 100 || /^[+-]/.test(timeZone.trim())) throw new Error();
+    new Intl.DateTimeFormat("en", { timeZone: timeZone.trim() });
+  } catch { return "Enter a valid IANA time zone, for example Europe/London or UTC."; }
+  return null;
+}
+
+function notifyMetadata(value: unknown): NotifyConfig | null {
+  if (value == null) return null;
+  const row = value as NotifyConfig;
+  if (typeof row !== "object" || typeof row.has_token !== "boolean" || !Number.isSafeInteger(row.revision) || row.revision < 0
+    || (row.chat_id !== null && typeof row.chat_id !== "string") || typeof row.time_zone !== "string"
+    || (row.delivery_tested_at !== null && typeof row.delivery_tested_at !== "string")
+    || (row.updated_at !== null && typeof row.updated_at !== "string")) throw new Error("Telegram configuration is unavailable. Try again.");
+  return { chat_id: row.chat_id, has_token: row.has_token, time_zone: row.time_zone,
+    delivery_tested_at: row.delivery_tested_at, updated_at: row.updated_at, revision: row.revision };
+}
+
+/* A→B→A still cancels the request. In particular, a delayed client/session
+   lookup must not send account A's draft with account B's authorization. */
+async function myNotify<T>(run: (client: NonNullable<Awaited<ReturnType<typeof getSupabaseClient>>>, check: () => void, userId: string, signal: AbortSignal) => Promise<T>): Promise<T> {
+  const userId = getCloudState().user?.id;
+  if (!userId) throw new Error("Sign in to manage your Telegram binding");
+  let changed = false;
+  const controller = new AbortController();
+  const unsubscribe = subscribeCloud(s => { if (s.user?.id !== userId) { changed = true; controller.abort(); } });
+  const check = () => {
+    if (changed || getCloudState().user?.id !== userId) throw new Error("Account changed. Reopen Telegram settings for your current account.");
+  };
+  try {
+    const client = await getSupabaseClient();
+    check();
+    if (!client) throw new Error("cloud not configured");
+    return await run(client, check, userId, controller.signal);
+  } finally { unsubscribe(); }
 }
 
 export async function getNotifyConfig(): Promise<NotifyConfig | null> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.from("user_notify_config").select("chat_id, bot_token, updated_at").maybeSingle();
-  if (error) throw error;
-  return (data as NotifyConfig | null) ?? null;
+  return myNotify(async (client, check) => {
+    const { data, error } = await client.rpc("get_my_notify_config");
+    check();
+    if (error) throw new Error("Telegram configuration is unavailable. Try again.");
+    return notifyMetadata(data);
+  });
 }
 
-export async function setNotifyConfig(chatId: string, botToken: string): Promise<void> {
-  const userId = getCloudState().user?.id;
-  if (!userId) throw new Error("Sign in to save your Telegram binding");
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { error } = await client.from("user_notify_config").upsert({ user_id: userId, chat_id: chatId, bot_token: botToken, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-  if (error) throw error;
+async function notifyOperation(body: Record<string, unknown>): Promise<NotifyTestResult> {
+  return myNotify(async (client, check, userId, signal) => {
+    const { data: session, error: sessionError } = await client.auth.getSession();
+    check();
+    if (sessionError || session.session?.user.id !== userId || !session.session.access_token) throw new Error("Sign in to manage your Telegram binding");
+    const { data, error } = await client.functions.invoke("send-notify-test", {
+      body, signal, headers: { Authorization: `Bearer ${session.session.access_token}` },
+    });
+    check();
+    if (error) {
+      const context: unknown = error.context;
+      if (context instanceof Response) {
+        let failure: { reason?: unknown; config?: unknown } | null = null;
+        try { failure = await context.clone().json(); } catch { /* transport bodies are not safe display text */ }
+        check();
+        if (typeof failure?.reason === "string" && ["stale_binding", "binding_changed", "invalid_settings", "not_entitled", "unauthorized", "rate_limited", "telegram_rejected", "telegram_unavailable"].includes(failure.reason)) {
+          return { sent: false, reason: failure.reason, config: notifyMetadata(failure.config) };
+        }
+      }
+      throw new Error("Telegram request failed. Reload settings before retrying; your previous binding is retained if delivery failed.");
+    }
+    const res = data as NotifyTestResult | null;
+    if (!res || typeof res.sent !== "boolean" || !("config" in res)) throw new Error("Telegram returned an invalid response. Reload settings before retrying.");
+    return { sent: res.sent, config: notifyMetadata(res.config),
+      ...(typeof res.reason === "string" && /^[a-z_]{1,80}$/.test(res.reason) ? { reason: res.reason } : {}),
+      ...(Number.isSafeInteger(res.message_id) ? { message_id: res.message_id } : {}),
+      ...(res.disconnected === true ? { disconnected: true } : {}),
+    };
+  });
+}
+
+export async function setNotifyConfig(chatId: string, botToken: string, timeZone: string, revision: number | null): Promise<NotifyTestResult> {
+  const invalid = validateNotifyBinding(chatId, botToken, timeZone, true);
+  if (invalid) throw new Error(invalid);
+  return notifyOperation({ operation: "save", chatId: chatId.trim(), botToken: botToken.trim(), timeZone: timeZone.trim(), revision });
+}
+
+export async function disconnectNotifyConfig(revision: number | null): Promise<NotifyTestResult> {
+  return notifyOperation({ operation: "unbind", revision });
 }
 
 /* ── admin view of every user's binding (admin_list_user_notify RPC) ── */
@@ -532,6 +624,7 @@ export interface ApplyResultRow {
   posted_age_h: number | null;
   feedback: "good" | "bad" | null;
   created_at: string;
+  occurred_at?: string | null;
 }
 
 export async function listApplyResults(limit = 100): Promise<ApplyResultRow[]> {
@@ -650,17 +743,7 @@ export async function deleteJudgeExemplar(id: string): Promise<void> {
   await myApply("exemplars.delete", { id });
 }
 
-/* ── notify test-fire: the send-notify-test edge function sends the digest DM
-   server-side and returns Telegram's REAL verdict. Per-user since #135: the
-   signed-in user tests their OWN binding, gated on Platinum/add-on (the
-   function enforces it server-side; free users get the upsell message). ── */
-
-export async function testNotifyConfig(): Promise<string> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.functions.invoke("send-notify-test");
-  if (error) throw error;
-  const res = (data ?? {}) as { sent?: boolean; reason?: string };
-  if (res.sent) return "sent";
-  return res.reason || "unknown failure";
+/* Test the saved binding, not unpersisted drafts or a digest/ownership proof. */
+export async function testNotifyConfig(revision: number | null): Promise<NotifyTestResult> {
+  return notifyOperation({ operation: "test", revision });
 }

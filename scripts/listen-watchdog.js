@@ -24,8 +24,11 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isWindows, isApplyOff, listEngineProcesses, sweepEngineProcesses } from "./engine-lifecycle.js";
-import { listenerHeartbeatFresh } from "./job-sites-db.js";
+// This existing supervisor is owner-only; never silently reinterpret a paired selection.
+if (process.env.INTERVIEWIQ_APPLY_AGENT_CONFIG || process.argv.some(a => /^--agent-config(?:=|$)/.test(a))) throw new Error("Owner listener supervisor cannot use a paired binding");
+process.argv.push("--legacy-owner");
+const { isWindows, isApplyOff, listEngineProcesses, sweepEngineProcesses } = await import("./engine-lifecycle.js");
+const { listenerHeartbeatFresh } = await import("./job-sites-db.js");
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT = path.resolve(ROOT, "..");
@@ -67,7 +70,7 @@ if (await listenerHeartbeatFresh()) process.exit(0); // beating = alive — noth
    tees its own log (FREEBUFF_LISTEN_LOG) via a share-aware node stream —
    never a shell `>>` (that opens the file without write-sharing and a stale
    handle would block every future start). */
-spawn(process.execPath, [ENGINE, "--listen"], {
+spawn(process.execPath, [ENGINE, "--listen", "--legacy-owner"], {
   cwd: PROJECT,
   detached: true,
   stdio: "ignore",

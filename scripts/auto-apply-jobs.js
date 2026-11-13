@@ -34,7 +34,9 @@
  * No credentials are stored or typed by this script — logins are manual once.
  */
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, appendFileSync, createWriteStream, openSync, closeSync, unlinkSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, existsSync, appendFileSync, createWriteStream, openSync, closeSync, unlinkSync, renameSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { createTelegramSender, createResultDeliveryQueue, resultEvent, resultCounts, formatJobNotification, formatRunNotification, safeNotifyText, notifyReason, cycleLockReclaimable, aggregateCycleReports } from "./telegram-notify-lib.js";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
@@ -169,32 +171,27 @@ function canonicalJobUrl(u) {
   } catch { return u; }
 }
 
-async function queueReview(entry) {
-  entry.jobUrl = canonicalJobUrl(entry.jobUrl); // #160: no variant twins in the queue
-  const db = await sitesDb();
-  if (!db?.queueJobReview) return false;
-  const wasPending = await db.hasPendingReview?.(entry.jobUrl).catch(() => false);
-  /* LinkedIn rewrites page.url() mid-modal to ITS canonical selection, so
-     pageUrl cannot be trusted for the Open-form link — derive the signed-in
-     Easy Apply URL from the posting id instead. */
+async function queueReview(entry, row) {
+  entry.jobUrl = canonicalJobUrl(entry.jobUrl);
   const jid = String(entry.jobUrl || "").match(/linkedin\.com\/jobs\/view\/(\d+)/i)?.[1];
   if (jid) entry.formUrl = `https://www.linkedin.com/jobs/search/?currentJobId=${jid}`;
-  await db.queueJobReview(entry).catch((e) => console.log(dim(`  (queue: ${e.message.slice(0, 60)})`)));
-  if (wasPending) return false;
-  const when = entry.fit != null ? ` · fit ${entry.fit}` : "";
-  /* the ping carries the row's POSITION in the pending list so the owner can
-     reply "N done / N skip / N closed" to the listener from the phone, plus
-     the direct form link for the 2-click finish */
-  let ordinal = "";
+  const db = await sitesDb();
+  let status = "failed", suppress = true;
   try {
-    const pending = await db.listPendingReviews?.();
-    const i = (pending ?? []).findIndex(r => r.job_url === entry.jobUrl);
-    if (i >= 0) ordinal = `\nReply "${i + 1} done", "${i + 1} skip" or "${i + 1} closed" to handle it from here.`;
-  } catch { /* ordinal is best-effort */ }
-  const ok = await sendTelegramNotify(`⏸ Freebuff apply · needs you: ${entry.title || "posting"}${entry.company ? ` — ${entry.company}` : ""}${when}\n${entry.reason || ""}\nOpen the form: ${entry.formUrl || "…/#/jobs"}${ordinal}`);
-  if (ok) console.log(dim("  📣 telegram: needs-you ping sent (with form link)"));
-  else console.log(dim("  (telegram ping failed — check notify config)"));
-  return true;
+    if (!db?.queueJobReview || !db?.hasPendingReview) throw new Error("Review persistence unavailable");
+    const wasPending = await db.hasPendingReview(entry.jobUrl);
+    suppress = !!wasPending;
+    await db.queueJobReview(entry);
+    status = "queued";
+  } catch {
+    // A failed pending probe cannot safely authorize another ping for the same posting.
+    console.log(dim("  review queue save failed — submission remains unconfirmed; open posting manually"));
+  }
+  if (row) {
+    row.reviewQueue = status;
+    await RESULT_DELIVERY?.finishReview(row.eventId, { status, suppress, formUrl: entry.formUrl });
+  }
+  return status === "queued";
 }
 
 /* --- owner mode switch: off (kill switch) / local / cloud ---
@@ -313,8 +310,52 @@ function runHostKey(sourceUrl) {
   try { return new URL(sourceUrl).hostname.replace(/^www\./, ""); } catch { return sourceUrl; }
 }
 function recordResultBoth(report, job, result, detail) {
+  const eventId = randomUUID(), at = Date.now();
   recordResult(report, job, result, detail);
-  recordResultDb(runHostKey(report.sourceUrl), job, result === "needsReview" ? "needs_review" : result, detail).catch(() => {});
+  const row = report.results.at(-1);
+  const raw = { eventId, at, url: row.url, title: row.title, company: row.company, result, detail, fit: row.fit, ageH: row.ageH };
+  const event = resultEvent(raw, runHostKey(report.sourceUrl), report.runId);
+  Object.assign(row, { eventId, at, url: event.jobUrl, title: event.title, company: event.company, detail: event.detail });
+  // Review alerts wait for queue outcome; only a persisted decision may be sent.
+  try {
+    trackResultTask(RESULT_DELIVERY.enqueue(event, row, {
+      notify: !report.dryRun && ["submitted", "needsReview", "error"].includes(result),
+      ready: result !== "needsReview" && result !== "budget_capped",
+    }));
+  } catch {
+    const error = new Error("Result metadata save failed; stopping before further jobs");
+    error.code = "RESULT_METADATA_FAILED";
+    throw error;
+  }
+}
+let RESULT_DELIVERY = null;
+let RESULT_TASK_ERROR = null;
+const RESULT_LOCK = path.join(REPORTS_DIR, "pending-results.lock");
+let RESULT_LOCK_HELD = false;
+function trackResultTask(task) {
+  void task.catch(() => { RESULT_TASK_ERROR = new Error("Result delivery metadata could not be persisted; stopping safely"); });
+}
+async function beginResultDelivery(runId) {
+  RESULT_TASK_ERROR = null;
+  const file = path.join(REPORTS_DIR, "pending-results.json");
+  await telegramSender.resetBudget();
+  RESULT_DELIVERY = createResultDeliveryQueue({
+    runId,
+    load: () => { try { return JSON.parse(readFileSync(file, "utf8")); } catch (error) { if (error.code === "ENOENT") return []; throw new Error("Result retry metadata could not be read"); } },
+    save: (entries) => { const temporary = `${file}.${process.pid}.tmp`; writeFileSync(temporary, JSON.stringify(entries), { mode: 0o600 }); renameSync(temporary, file); },
+    record: recordResultDb,
+    send: (event, beforeDispatch) => telegramSender.send(options => formatJobNotification(event, options), beforeDispatch),
+    onFailure: () => console.log(dim("  result sync pending — bounded metadata retained for retry; no alert sent")),
+  });
+  await RESULT_DELIVERY.startup();
+}
+async function drainResultDelivery({ retry = false } = {}) {
+  if (!RESULT_DELIVERY) return;
+  await RESULT_DELIVERY.drain();
+  if (RESULT_TASK_ERROR) throw RESULT_TASK_ERROR;
+  if (retry) await RESULT_DELIVERY.retry();
+  await RESULT_DELIVERY.drain();
+  if (RESULT_TASK_ERROR) throw RESULT_TASK_ERROR;
 }
 
 /* ---- sign-in flow instrumentation: every step and every close lands in
@@ -471,20 +512,10 @@ async function injectStoredSession(page, url) {
 }
 
 /* --- report every per-job decision to apply_results (UI report) --- */
-async function recordResultDb(host, job, result, detail) {
+async function recordResultDb(event) {
   const db = await sitesDb();
-  if (!db?.recordApplyResult) return;
-  try {
-    await db.recordApplyResult({
-      siteHost: host, jobUrl: job?.url ?? "", title: job?.title ?? null,
-      company: job?.company ?? null, result, detail: String(detail ?? "").slice(0, 400),
-      fit: job?.__fit ?? null,
-      /* the posting's OWN age at collect (board card stamp, hours) — the
-         report row then shows the board's clock, not "how long ago the
-         engine decided" (the two were indistinguishable before) */
-      ageH: typeof job?.__ageH === "number" && isFinite(job.__ageH) && job.__ageH >= 0 ? job.__ageH : null,
-    });
-  } catch { /* report push is best-effort — never breaks a run */ }
+  if (!db?.recordApplyResult) throw new Error("Result persistence unavailable");
+  await db.recordApplyResult(event);
 }
 
 /* --- form-answer memory: every filled field is stored for future reuse ---
@@ -558,16 +589,15 @@ async function loadAnswerMemory(host) {
 }
 
 /* --- Telegram notify: post-batch summary (opt-in via notify_config) --- */
-async function sendTelegramNotify(text) {
+const telegramSender = createTelegramSender({ getConfig: async () => {
   const db = await sitesDb();
-  const cfg = await db?.getNotifyConfig?.().catch(() => null);
-  if (!cfg?.chat_id || !cfg?.bot_token) return false;
-  const res = await fetch(`https://api.telegram.org/bot${cfg.bot_token}/sendMessage`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: cfg.chat_id, text, disable_web_page_preview: true }),
-  }).catch(() => null);
-  if (!res?.ok) { console.log(dim("  (telegram notify failed)")); return false; }
-  return true;
+  return db?.getNotifyConfig ? db.getNotifyConfig() : null;
+} });
+async function sendTelegramNotify(text) {
+  const delivery = await telegramSender.send(text);
+  if (delivery.status !== "sent") console.log(dim(`  telegram: ${delivery.status} (${delivery.reason})`));
+  // Existing status/digest/session callers expect a boolean, not a truthy failure object.
+  return delivery.status === "sent";
 }
 
 /* --- Telegram command surface: reply Done/Skip/Closed to a ping ---
@@ -755,6 +785,7 @@ async function telegramCommandLoop() {
         const nodeBlocks = String(execSync(`wmic process where "name='node.exe'" get processid,commandline /format:list`, { encoding: "utf8", timeout: 15000 }))
           .split(/\r?\n\r?\n/);
         for (const b of nodeBlocks) {
+          if (/--agent-config(?:\s|=)|[\\/]bindings[\\/]/i.test(b)) continue; // legacy sign-in handoff never kills paired runs
           if (/--(login|view)-only/.test(b)) continue; // never kill the sign-in or proof-view window's own run
           if (!/auto-apply-jobs\.js (--all|--url|--watch)/.test(b)) continue; // never the listener itself (--listen is skipped by this pattern)
           const pid = /ProcessId=(\d+)/.exec(b)?.[1];
@@ -2736,7 +2767,22 @@ async function runSingle(args, { existingCtx = null } = {}) {
     if (blocked) { console.error(red(`✗ apply engine disabled: ${blocked}.`)); return; }
   }
 
-  const ctx = existingCtx ?? sharedChildCtx ?? await launchBrowser(args.headless, { signIn: args["login-only"] });
+  const report = newReport(args.url, site);
+  report.runId = randomUUID();
+  report.cycleId = /^[0-9a-f-]{36}$/i.test(process.env.INTERVIEWIQ_APPLY_CYCLE_ID || "") ? process.env.INTERVIEWIQ_APPLY_CYCLE_ID : null;
+  report.dryRun = !!args["dry-run"];
+  mkdirSync(REPORTS_DIR, { recursive: true });
+  if (!args["login-only"]) {
+    if (!acquireCycleLock(RESULT_LOCK)) throw new Error("Another result writer is active; no new jobs attempted");
+    RESULT_LOCK_HELD = true;
+    try {
+      await beginResultDelivery(report.runId);
+      if (RESULT_DELIVERY.pending) throw new Error("Result sync pending after startup retry; no new jobs attempted");
+    } catch (error) { releaseResultLock(); throw error; }
+  }
+  let ctx;
+  try { ctx = existingCtx ?? sharedChildCtx ?? await launchBrowser(args.headless, { signIn: args["login-only"] }); }
+  catch (error) { releaseResultLock(); throw error; }
   let page = ctx.pages()[0] ?? (await ctx.newPage());
   /* KEEP-ALIVE: a headed Chromium EXITS when its last tab closes — the async-
      review page.close() and the watchdog page.close() were closing the ONLY
@@ -2751,7 +2797,6 @@ async function runSingle(args, { existingCtx = null } = {}) {
      not a closed one */
   const loginOnlyPage = args["login-only"] ? { page } : null;
   let ctxClosedEarly = false; // #162: set when a login-only path closed the browser itself — the finally must not double-close
-  const report = newReport(args.url, site);
   let warnedAiState = false; // AI-off / AI-down warning: once per run, not per job
   mkdirSync(REPORTS_DIR, { recursive: true });
 
@@ -2884,6 +2929,8 @@ async function runSingle(args, { existingCtx = null } = {}) {
       }
     }
     for (const job of jobs) {
+      await drainResultDelivery();
+      if (RESULT_DELIVERY.pending) throw new Error("Result sync pending; further jobs stopped (retry never submits)");
       /* fresh (<24h) postings are marked so the report shows WHY they went first */
       const ageMark = job.__fresh ? " ⚡<24h" : job.__ageH != null ? ` (${job.__ageH >= 24 ? Math.round(job.__ageH / 24) + "d" : Math.round(job.__ageH) + "h"} old)` : "";
       console.log(`\n▶ ${job.title}${job.company ? ` — ${job.company}` : ""}${ageMark}`);        if (wasApplied(job.url)) {
@@ -2996,7 +3043,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
         if (!warnedAiState) {
           warnedAiState = true;
           if (!ai) console.log(yellow("  ⚠️ AI judge is OFF (no provider configured) — only basic keyword gates are deciding now; the app WILL make relevance mistakes. Fix: Admin → AI provider, then re-run."));
-          else if (ai.__unhealthy) console.log(yellow(`  ⚠️ AI judge is DOWN (${ai.__unhealthy}) — keyword gates are deciding this run and kits fall back to TEMPLATES. Fix the provider and re-run.`));
+          else if (ai.__unhealthy) console.log(yellow("AI judge unavailable — keyword gates and templates used; provider response omitted for safety."));
         }
         if (ai) {
           job.__judge = await judgeFit(ai, job, profile, await judgeExemplars(), outcomePriorText);
@@ -3008,7 +3055,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
             continue;
           }
           if (job.__judge.verdict === "apply") console.log(dim(`  🧠 judge: apply (${job.__judge.reason || "match"})`));
-          else console.log(dim(`  🧠 judge: unsure (${job.__judge.reason || "no verdict"}) — proceeding on gates`));
+          else console.log(dim("  judge: unsure — proceeding on deterministic gates (provider response omitted)"));
         }
         const kit = await buildKit(ai, profile, { title: job.title, company: job.company, skills: (job.description.match(/\b(Node\.js|React|TypeScript|Python|AWS|Kubernetes|PostgreSQL|Docker|GraphQL|Kafka|System Design|Machine Learning)\b/gi) ?? []).slice(0, 8).map(s => s[0].toUpperCase() + s.slice(1)) });
         if (!kit.ai) { console.log(yellow("  ⚠️ kit fell back to TEMPLATES (AI provider failed) — the submitted resume/cover are generic, not JD-tailored.")); }
@@ -3030,7 +3077,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
             location: job.location,
             preferredLocations: profile?.locations,
           });
-          const judgeNote = job.__judge?.verdict === "apply" ? " · judge: apply" : job.__judge?.verdict === "skip" ? "" : job.__judge?.reason ? ` · judge unsure: ${job.__judge.reason.slice(0, 60)}` : "";
+          const judgeNote = job.__judge?.verdict === "apply" ? " · judge: apply" : job.__judge?.verdict === "skip" ? "" : job.__judge?.reason ? " · judge unsure" : "";
           console.log(dim(`  skills: ${gate.matched.slice(0, 6).join(", ")}${gate.missing?.length ? ` (missing: ${gate.missing.slice(0, 3).join(", ")})` : ""}${coreMissing.length ? ` (core missing: ${coreMissing.slice(0, 3).join(", ")})` : ""} · fit ${job.__fit}${judgeNote}`));
         } else if (job.__judge?.reason) {
           job.__fitNote = `judge (${job.__judge.verdict}): ${job.__judge.reason.slice(0, 80)}`;
@@ -3094,7 +3141,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
             const rawText = (await healedApply.innerText({ timeout: 2000 }).catch(() => "") || "").replace(/\s+/g, " ").trim();
             recordResultBoth(report, job, "needsReview", `apply control healed by AI: "${rawText.slice(0, 40)}" — verify and submit manually this run`);
             console.log(yellow(`  ⏸ healed apply control "${rawText.slice(0, 40)}" — queued for one-click manual finish (first heal on this host)`));
-            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `apply control healed by AI: "${rawText.slice(0, 40)}"`, fit: job.__fit ?? null, ageH: job.__ageH ?? null });
+            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `apply control healed by AI: "${rawText.slice(0, 40)}"`, fit: job.__fit ?? null, ageH: job.__ageH ?? null }, report.results.at(-1));
             await persistHeal(RUN_HOST || site, { respondentName: rawText, role: "button", confidence: 0.9, __intent: "open the job application form" });
             await page.waitForTimeout(rules.minIntervalMs);
             continue;
@@ -3138,7 +3185,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           if (guestModal) {
             recordResultBoth(report, job, "needsReview", "LinkedIn sign-in required to apply — finish manually (browser left on the posting)");
             console.log(yellow("  ⏸ LinkedIn guest apply needs sign-in — queued for manual finish"));
-            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "LinkedIn sign-in required to apply", fit: job.__fit ?? null, ageH: job.__ageH ?? null });
+            await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "LinkedIn sign-in required to apply", fit: job.__fit ?? null, ageH: job.__ageH ?? null }, report.results.at(-1));
             await page.waitForTimeout(rules.minIntervalMs);
             continue;
           }
@@ -3165,7 +3212,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
               const preview = formFieldsPreview(res2.fields, res2.plan);
               recordResultBoth(report, job, "needsReview", `external ATS form filled (${res2.filled} fields) — submit manually from the review queue`);
               console.log(yellow(`  ⏸ external ATS: filled ${res2.filled} fields — queued; you submit (never auto on unknown ATS)`));
-              await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null, formFields: preview, ageH: job.__ageH ?? null });
+              await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: target.url(), reason: "external ATS — form filled, submit manually", fit: job.__fit ?? null, formFields: preview, ageH: job.__ageH ?? null }, report.results.at(-1));
               if (atsPage) await atsPage.close().catch(() => {}); // don't leak tabs
             }
             await page.waitForTimeout(rules.minIntervalMs);
@@ -3179,7 +3226,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
              direct URL means "this one matters" — queue it with the kit
              rather than dead-ending; the owner applies signed-in. */
           recordResultBoth(report, job, "needsReview", "guest view has no apply button — open signed-in and submit (kit in reports)");
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "no apply button on guest view — apply manually", fit: job.__fit ?? null, ageH: job.__ageH ?? null });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: "no apply button on guest view — apply manually", fit: job.__fit ?? null, ageH: job.__ageH ?? null }, report.results.at(-1));
           console.log(yellow("  ⏸ no apply button on the guest view — queued for manual apply"));
           continue;
         } else {
@@ -3196,7 +3243,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
           console.log(yellow(`  ⏸ needs review (${filled} filled): ${unfilledRequired.slice(0, 3).join("; ")}`));
           /* ALWAYS queue (deduped per job URL) — the report's "needs you" row
              must have a review-queue counterpart with one-click Open/Done */
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `cannot answer: ${unfilledRequired.slice(0, 3).join("; ")}`, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null }, report.results.at(-1));
           /* ASYNC REVIEW: take a screenshot for the UI, close the tab, move on.
              Attended manual runs still get the pause for immediate human finish. */
           if (!jobRules.autoSubmit && args.unattended) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
@@ -3215,16 +3262,16 @@ async function runSingle(args, { existingCtx = null } = {}) {
         const nowBudget = probe.available ? budgetGate({ ...probe.spend, day: probe.spend.day + budgetSpendThisRun, week: probe.spend.week + budgetSpendThisRun }, { dailyCap: probe.dailyCap, weeklyCap: probe.weeklyCap }) : { ok: true, verdict: "ok", reason: "" };
         if (!nowBudget.ok) {
           recordResultBoth(report, job, "budget_capped", `${nowBudget.reason} — form is filled; queued so nothing is lost`);
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `budget: ${nowBudget.reason} — form filled, submit from the queue`, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null });
-          console.log(yellow(`  🛑 ${nowBudget.reason} — form filled + queued; nothing lost`));
+          const saved = await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: `budget: ${nowBudget.reason} — form filled, submit from the queue`, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null }, report.results.at(-1));
+          console.log(yellow(`  budget capped — ${saved ? "review queue saved" : "review queue save FAILED; open posting manually"}; not auto-submitted`));
           await page.close().catch(() => {});
           continue;
         }
         const sub = await trySubmit(page, site, jobRules, { profile, job, resumePath, dryRun: args["dry-run"], storedAnswers: mem, ai }); // merged registry rules + Phase 2 tailoring gate for THIS job
         if (sub.auto) {
+          markApplied(job.url); // stamp the confirmed one-way action before fallible report IO
           recordResultBoth(report, job, "submitted", sub.note);
-          budgetSpendThisRun++; // Phase 0: this run's own submissions count against the cap the NEXT re-check sees
-          markApplied(job.url);
+          budgetSpendThisRun++; // Phase 0: this run's own submissions count at the NEXT re-check
           /* the queue must reflect reality: a pending row for a now-submitted
              posting resolves itself (done) — no stale asks piling up */
           const db2 = await sitesDb();
@@ -3239,12 +3286,13 @@ async function runSingle(args, { existingCtx = null } = {}) {
              runs ALSO pause here so the human can finish immediately.
              App-triggered / unattended runs: async review — screenshot,
              close the tab, move on. */
-          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null });
+          await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company, formUrl: page.url(), reason: sub.note, fit: job.__fit ?? null, formFields: ffPreview, ageH: job.__ageH ?? null }, report.results.at(-1));
           if (args.unattended || appTriggered) { console.log(dim("  ⏭ async review — screenshot saved, tab closed")); try { await page.screenshot({ path: path.join(REPORTS_DIR, `review-${Date.now()}.png`), fullPage: true }).catch(() => {}); } catch { /* screenshot best-effort */ } await page.close().catch(() => {}); continue; }
           await page.pause();
         }
         await page.waitForTimeout(rules.minIntervalMs);
       } catch (e) {
+        if (e.code === "RESULT_QUEUE_FULL" || e.code === "RESULT_METADATA_FAILED") throw e;
         if (PAIRED && /^PAIRED_AUTH_/.test(e.code ?? "")) throw e;
         if (jwFired && /has been closed/i.test(e.message)) {
           /* the watchdog closed the page; the in-flight flow then threw on a
@@ -3252,20 +3300,30 @@ async function runSingle(args, { existingCtx = null } = {}) {
           recordResultBoth(report, job, "skipped", "job timed out (watchdog) — page closed mid-flow");
           console.log(dim("  ⏭ skipped — job timed out (watchdog)"));
         } else {
-          recordResultBoth(report, job, "error", e.message.slice(0, 160));
-          console.error(red(`  ✗ ${e.message.slice(0, 160)}`));
+          recordResultBoth(report, job, "error", "Engine step failed; submission not confirmed.");
+          console.error(red("  engine step failed — submission not confirmed; see local diagnostics"));
         }
       } finally {
         clearTimeout(jw);
       }
     }
   } finally {
-    /* write reports even on abort */
+    /* write reports even on abort; drain before final artifacts or forced child exit */
+    let closedInFinally = false;
+    try {
+      if (!args["login-only"]) await drainResultDelivery({ retry: true });
+      report.syncPending = RESULT_DELIVERY?.pending ?? 0;
+      report.endedAt = Date.now();
+      report.allCounts = resultCounts(report.results);
+      for (const row of report.results) {
+        row.title = safeNotifyText(row.title); row.company = safeNotifyText(row.company);
+        row.detail = notifyReason(row.result, row.detail);
+      }
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     writeFileSync(path.join(REPORTS_DIR, `run-${stamp}.json`), JSON.stringify(report, null, 2));
     writeFileSync(path.join(REPORTS_DIR, `run-${stamp}.md`), buildReportMarkdown(report));
     console.log(`\n${reportLine(report)}`);
-    if (ai?.__unhealthy) console.log(yellow(`🧠 AI DEGRADED this run (${String(ai.__unhealthy).slice(0, 90)}) — kits fell back to templates and the judge was down; fix the provider, then re-run.`));
+    if (ai?.__unhealthy) console.log(yellow("AI degraded this run — templates used; provider response omitted for safety."));
     else if (!ai) console.log(yellow(PAIRED
       ? "Paired mode: templates only; global AI provider is not used."
       : "AI not configured — kits are templates and only keyword gates judged; set the provider in Admin → AI provider."));
@@ -3278,7 +3336,6 @@ async function runSingle(args, { existingCtx = null } = {}) {
        let the final flush land in a clone that was already merged+deleted —
        so even a COMPLETED OTP login could miss the real profile. Close
        happens exactly once: here, or earlier in a failure path. */
-    let closedInFinally = false;
     if (args["login-only"] && !existingCtx && !sharedChildCtx && !ctxClosedEarly) {
       try { if (__browserCleanup) await __browserCleanup(); else await ctx.close(); } catch { /* window already gone */ }
       __browserCleanup = null;
@@ -3295,12 +3352,12 @@ async function runSingle(args, { existingCtx = null } = {}) {
         if (!existsSync(realCookies) && existsSync(cloneCookies)) console.log(dim("  (merge moved a fresh cookie store into the real profile — sign-in state persisted)"));
       } catch { /* diagnostics only */ }
     }
-    if (!args["dry-run"]) {
-      const n = report.results.filter((r) => r.result === "submitted").length;
-      const q = report.results.filter((r) => r.result === "needsReview").length;
-      const er = report.results.filter((r) => r.result === "error").length;
-      await sendTelegramNotify(`Freebuff apply · ${site}: ✅ ${n} submitted · ⏸ ${q} review · ✗ ${er} errors`).catch(() => {});
+    if (!args["dry-run"] && !args["login-only"] && !report.cycleId) {
+      report.summaryNotification = await telegramSender.send(options => formatRunNotification({ ...report, counts: report.allCounts }, options), undefined, { summary: true });
+      writeFileSync(path.join(REPORTS_DIR, `run-${stamp}.json`), JSON.stringify(report, null, 2));
     }
+    await telegramSender.drain();
+    } finally {
     /* remote sessions: DISCONNECT ONLY — browser.close() over CDP keeps the
        hosted session (and its logins) alive for the next run. A SHARED --all
        browser (existingCtx or parent-provided) closes in runAll, never here. */
@@ -3316,7 +3373,9 @@ async function runSingle(args, { existingCtx = null } = {}) {
       const pages = ctx.pages();
       for (let i = 1; i < pages.length; i++) await pages[i].close().catch(() => {});
       await sharedChildCleanup?.().catch(() => {});
-      process.exit(0); // nothing else may keep this child alive mid-cycle
+      // Returning lets the CLI finally drain; only the parent owns the cycle.
+    }
+    releaseResultLock();
     }
   }
 }
@@ -3332,17 +3391,29 @@ async function runSingle(args, { existingCtx = null } = {}) {
    The lock makes the loser SKIP honestly; the watcher then retries in 15
    minutes instead of sleeping 6h. PID-stamped: a dead holder is reclaimed. */
 const CYCLE_LOCK = path.join(REPORTS_DIR, "engine-cycle.lock");
-function acquireCycleLock() {
+function acquireCycleLock(lockFile = CYCLE_LOCK) {
+  const guardFile = `${lockFile}.guard`;
+  try { writeFileSync(guardFile, JSON.stringify({ pid: process.pid }), { flag: "wx" }); }
+  catch { return false; } // a crash during reclaim fails closed until this guard is manually inspected
   try {
-    const { pid } = JSON.parse(readFileSync(CYCLE_LOCK, "utf8"));
-    if (pid && pid !== process.pid) { try { process.kill(pid, 0); return false; } catch { /* holder died — reclaim */ } }
-  } catch { /* no/corrupt lock file — reclaim */ }
-  try { writeFileSync(CYCLE_LOCK, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: "wx" }); return true; }
-  catch { return false; } // lost a creation race
+  try {
+    const raw = readFileSync(lockFile, "utf8");
+    let lock = null;
+    try { lock = JSON.parse(raw); } catch { /* only old corrupt locks may be reclaimed */ }
+    const activePid = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code !== "ESRCH"; } };
+    if (!cycleLockReclaimable(lock, { activePid, modifiedAt: statSync(lockFile).mtimeMs })) return false;
+    // Re-read before unlink: never remove a replacement installed by another cycle.
+    if (readFileSync(lockFile, "utf8") !== raw) return false;
+    unlinkSync(lockFile);
+  } catch (error) { if (error.code !== "ENOENT") return false; }
+  try { writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), { flag: "wx" }); return true; }
+  catch { return false; }
+  } finally { try { unlinkSync(guardFile); } catch { /* missing guard leaves acquisition fail-closed */ } }
 }
-function releaseCycleLock() {
-  try { const { pid } = JSON.parse(readFileSync(CYCLE_LOCK, "utf8")); if (pid === process.pid) unlinkSync(CYCLE_LOCK); } catch { /* gone */ }
+function releaseCycleLock(lockFile = CYCLE_LOCK) {
+  try { const { pid } = JSON.parse(readFileSync(lockFile, "utf8")); if (pid === process.pid) unlinkSync(lockFile); } catch { /* gone */ }
 }
+function releaseResultLock() { if (RESULT_LOCK_HELD) releaseCycleLock(RESULT_LOCK); RESULT_LOCK_HELD = false; }
 /* 🫀 watcher heartbeat: the watcher "beats" engine_events with a
    "watcher …" detail (cycle start + every site leg), so ensure-apply-watcher
    can tell a LIVE watcher from flaky-WMI emptiness the same way the listen
@@ -3405,6 +3476,10 @@ async function runAll(args) {
     console.log(yellow("⏸ another engine cycle already holds the apply profile — this cycle SKIPPED honestly (no site was touched)"));
     return "busy";
   }
+  const cycleId = randomUUID(), cycleStartedAt = Date.now();
+  await telegramSender.resetBudget();
+  const totals = { errors: 0, attempted: 0 };
+  let sharedCleanup = null;
   try {
   /* pending discoveries past their probation window join the cycle NOW —
      after the kill switch + lock (a skipped cycle must not mutate the
@@ -3426,7 +3501,7 @@ async function runAll(args) {
   }
   /* Legacy shares a browser; paired children acquire only their scoped profile,
      sequentially, without the owner-global CDP/relay surface. */
-  let sharedEp = "", sharedCleanup = null, sharedCtx = null;
+  let sharedEp = "", sharedCtx = null;
   if (!PAIRED) {
   try {
     sharedCtx = await launchBrowser(false, args_isCloudMode ? {} : { extraArgs: ["--remote-debugging-port=0"] });
@@ -3447,7 +3522,6 @@ async function runAll(args) {
     sharedEp = "";
   }
   }
-  const totals = { submitted: 0, skipped: 0, errors: 0 };
   for (const s of sites) {
     const siteBlocked = await applyModeBlocked(true);
     if (siteBlocked) { console.log(yellow(`cycle stopped: ${siteBlocked}`)); break; }
@@ -3457,6 +3531,8 @@ async function runAll(args) {
       const { spawn } = await import("node:child_process");
       const SITE_TIMEOUT_MS = 12 * 60_000;
       const env = applyAgentChildEnv(AGENT_CONTEXT);
+      env.INTERVIEWIQ_APPLY_CYCLE_ID = cycleId;
+      totals.attempted++;
       if (sharedEp) env.FREEBUFF_SHARED_CDP_EP = sharedEp;
       const child = spawn(process.execPath, [
         path.join(ROOT, "auto-apply-jobs.js"), "--url", s.url, "--max", String(args.max),
@@ -3500,11 +3576,26 @@ async function runAll(args) {
     }
   }
   console.log(`\n--all complete (${sites.length} sites, ${totals.errors} site error(s)).`);
-  /* the shared browser dies HERE, once, after the last site — not per site */
-  if (sharedCleanup) await sharedCleanup().catch(() => {});
   return "ran";
   } finally {
-    releaseCycleLock();
+    try {
+      const reports = [];
+      for (const file of readdirSync(REPORTS_DIR).filter(f => /^run-.*\.json$/.test(f)).sort().slice(-256)) {
+        try { const report = JSON.parse(readFileSync(path.join(REPORTS_DIR, file), "utf8")); if (report.cycleId === cycleId) reports.push(report); } catch { /* missing reports are explicit in summary */ }
+      }
+      const summary = aggregateCycleReports(reports, cycleId, { startedAt: cycleStartedAt, endedAt: Date.now(), siteErrors: totals.errors, expectedReports: totals.attempted });
+      if (!args["dry-run"]) {
+        const file = path.join(REPORTS_DIR, `cycle-${cycleId}.json`);
+        summary.notification = { status: "unknown", reason: "dispatch_started" };
+        writeFileSync(file, JSON.stringify(summary, null, 2));
+        summary.notification = await telegramSender.send(options => formatRunNotification(summary, options), undefined, { summary: true });
+        writeFileSync(file, JSON.stringify(summary, null, 2));
+      }
+      await telegramSender.drain();
+    } finally {
+      if (sharedCleanup) await sharedCleanup().catch(() => {});
+      releaseCycleLock();
+    }
   }
 }
 
@@ -3863,5 +3954,6 @@ export async function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch(e => { console.error(red(e.stack ?? e.message)); process.exitCode = 1; });
+  main().catch(() => { console.error(red("Engine stopped safely; operation failed (raw error omitted).")); process.exitCode = 1; })
+    .finally(async () => { try { await drainResultDelivery(); await telegramSender.drain(); } catch { console.error("Result delivery drain failed; inspect pending metadata before resuming"); process.exitCode = 1; } });
 }

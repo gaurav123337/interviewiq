@@ -55,7 +55,7 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
-      - run: deno test supabase/functions/_shared/ supabase/functions/apply-agent/index.test.ts
+      - run: deno test supabase/functions/_shared/ supabase/functions/apply-agent/index.test.ts supabase/functions/send-notify-test/index.test.ts
       # surface the offline-shell suite on the run summary so a regression is
       # visible at a glance, not just in the test logs (also re-gates on it)
       - name: Report offline-shell check
@@ -257,6 +257,9 @@ jobs:
           # Keep deployment behind this workflow_dispatch opt-in with the other
           # backend functions; frontend pushes never change the agent API.
           supabase functions deploy apply-agent \
+            --project-ref ndrusywvceojsoirhkhl \
+            --no-verify-jwt
+          supabase functions deploy send-notify-test \
             --project-ref ndrusywvceojsoirhkhl \
             --no-verify-jwt
           supabase functions deploy import-job \

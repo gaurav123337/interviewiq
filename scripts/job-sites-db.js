@@ -77,12 +77,17 @@ export function loadLocalCreds() {
 }
 
 async function rpc(creds, fn, args) {
-  const res = await fetch(`${creds.base}/rest/v1/rpc/${fn}`, {
+  let res;
+  try {
+  res = await fetch(`${creds.base}/rest/v1/rpc/${fn}`, {
     method: "POST",
     headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}`, "Content-Type": "application/json", Prefer: "return=representation" },
-    body: JSON.stringify(args),
+    body: JSON.stringify(args), signal: AbortSignal.timeout(30_000), redirect: "error",
   });
-  if (!res.ok) throw new Error(`rpc ${fn} ${res.status}: ${(await res.text()).slice(0, 140)}`);
+  } catch {
+    throw new Error(`rpc ${fn} unavailable`);
+  }
+  if (!res.ok) throw new Error(`rpc ${fn} unavailable (HTTP ${res.status})`);
   const text = await res.text();
   return text ? JSON.parse(text) : null;
 }
@@ -116,8 +121,9 @@ export async function listJobSites() {
 export async function listApplyResultsForHost(host, limit = 40) {
   return coreAction("results.list", { host, limit });
 }
-export async function recordApplyResult({ siteHost, jobUrl, title, company, result, detail, fit, ageH, eventId }) {
-  return coreAction("results.record", { siteHost, jobUrl, title, company, result, detail, fit, ageH, eventId: eventId ?? randomUUID() });
+export async function recordApplyResult({ siteHost, jobUrl, title, company, result, detail, fit, ageH, eventId, occurredAt }) {
+  return coreAction("results.record", { siteHost, jobUrl, title, company, result, detail, fit, ageH,
+    eventId: eventId ?? randomUUID(), occurredAt: occurredAt ?? new Date().toISOString() });
 }
 export async function queueJobReview({ siteHost, jobUrl, title, company, formUrl, reason, fit, formFields, ageH }) {
   return coreAction("reviews.queue", { siteHost, jobUrl, title, company, formUrl, reason, fit, formFields, ageH });

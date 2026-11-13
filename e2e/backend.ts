@@ -33,6 +33,9 @@ export class FixtureBackend {
   readonly agentBindings: OwnedRow[] = [];
   readonly pairingCodes: { id: string; user_id: string; code: string; expires_at: string }[] = [];
   readonly notifyConfigs = new Map<string, Record<string, unknown>>();
+  notifyDeliveryFailure = false;
+  notifyStaleAfterDelivery = false;
+  readonly notifyDeliveries: { user_id: string; operation: "save" | "test"; chat_id: string; message_id: number }[] = [];
   readonly careerProfiles = new Map<string, Record<string, unknown>>();
   readonly uploadedResumes = new Map<string, Record<string, unknown>>();
   readonly giftCodes = new Map<string, { product: "platinum"; redeemedBy?: string }>();
@@ -45,6 +48,11 @@ export class FixtureBackend {
   private ownRows(rows: OwnedRow[]) {
     // Synthetic filtering only: these browser tests do not exercise real RLS.
     return rows.filter(row => row.user_id === this.userId).map(({ user_id: _owner, ...row }) => row);
+  }
+  private notifyMetadata() {
+    const row = this.notifyConfigs.get(this.userId);
+    return row ? { chat_id: row.chat_id ?? null, has_token: !!row.bot_token, time_zone: row.time_zone ?? "UTC",
+      delivery_tested_at: row.delivery_tested_at ?? null, updated_at: row.updated_at ?? null, revision: row.revision ?? 0 } : null;
   }
   private entitlement() {
     const gift = this.redeemedGifts.get(this.userId);
@@ -103,6 +111,10 @@ export class FixtureBackend {
       if (rpc === "is_admin") return json(this.signedIn && this.persona === "admin");
       if (rpc.startsWith("admin_") && (!this.signedIn || this.persona !== "admin")) return denied();
       if (rpc === "admin_get_apply_config") return json(null);
+      if (rpc === "get_my_notify_config" && method === "POST" && Object.keys(body).length === 0) {
+        if (!this.signedIn) return denied();
+        return json(this.notifyMetadata());
+      }
       if (rpc === "get_my_entitlement") return json([this.entitlement()]);
       if (rpc === "my_apply_action" && method === "POST") {
         if (!this.signedIn) return denied();
@@ -194,12 +206,45 @@ export class FixtureBackend {
       return json(request.headers().accept?.includes("vnd.pgrst.object") ? row ?? null : row ? [row] : []);
     }
     if (["/rest/v1/job_sites", "/rest/v1/site_credentials"].includes(path) && this.persona !== "admin") return denied();
-    if (path === "/rest/v1/user_notify_config") {
+    // Direct notify-table reads/writes are intentionally unsupported: browser metadata is RPC-only.
+    if (path === "/functions/v1/send-notify-test" && method === "POST") {
       if (!this.signedIn) return denied();
-      if (method === "GET") {
-        const config = this.notifyConfigs.get(this.userId);
-        return json(request.headers().accept?.includes("vnd.pgrst.object") ? config ?? null : config ? [config] : []);
+      const keys = Object.keys(body).sort().join(",");
+      const operation = body.operation;
+      const validRevision = body.revision === null || (Number.isSafeInteger(body.revision) && body.revision >= 0);
+      const shape = operation === "save" ? keys === "botToken,chatId,operation,revision,timeZone" : (operation === "test" || operation === "unbind") && keys === "operation,revision";
+      if (shape && validRevision) {
+        const config = this.notifyMetadata();
+        if (body.revision !== (config?.revision ?? null)) return json({ sent: false, reason: "stale_binding", config }, 409);
+        if (operation === "unbind") {
+          const tombstone = { chat_id: null, bot_token: null, time_zone: "UTC", delivery_tested_at: null, updated_at: new Date().toISOString(), revision: Number(config?.revision ?? 0) + 1 };
+          this.notifyConfigs.set(this.userId, tombstone); this.writes.push("notify:unbind");
+          return json({ sent: false, disconnected: true, config: this.notifyMetadata() });
+        }
+        if (!this.entitlement().auto_apply && this.persona !== "admin") return json({ sent: false, reason: "not_entitled", config }, 403);
+        const previous = this.notifyConfigs.get(this.userId);
+        let chat = String(previous?.chat_id ?? "");
+        let token = String(previous?.bot_token ?? "");
+        let zone = String(previous?.time_zone ?? "UTC");
+        if (operation === "save") {
+          let validZone = typeof body.timeZone === "string" && body.timeZone.length > 0 && body.timeZone.length <= 100;
+          try { new Intl.DateTimeFormat("en", { timeZone: body.timeZone }); } catch { validZone = false; }
+          if (typeof body.chatId !== "string" || !/^-?[1-9][0-9]{0,19}$/.test(body.chatId) || typeof body.botToken !== "string"
+            || (body.botToken !== "" && !/^[0-9]{5,16}:[A-Za-z0-9_-]{20,128}$/.test(body.botToken)) || (!body.botToken && !token) || !validZone) {
+            return json({ sent: false, reason: "invalid_settings", config }, 400);
+          }
+          chat = body.chatId; token = body.botToken || token; zone = body.timeZone;
+        }
+        if (!chat || !token || this.notifyDeliveryFailure) return json({ sent: false, reason: "telegram_rejected", config }, 502);
+        const message_id = this.notifyDeliveries.length + 1;
+        this.notifyDeliveries.push({ user_id: this.userId, operation, chat_id: chat, message_id });
+        if (this.notifyStaleAfterDelivery) return json({ sent: true, reason: "stale_binding", config, message_id }, 409);
+        const now = new Date().toISOString();
+        this.notifyConfigs.set(this.userId, { chat_id: chat, bot_token: token, time_zone: zone, delivery_tested_at: now, updated_at: now, revision: Number(config?.revision ?? 0) + 1 });
+        this.writes.push(`notify:${operation}`);
+        return json({ sent: true, config: this.notifyMetadata(), message_id });
       }
+      // Unknown operations, extra fields and malformed revisions fail the strict fixture gate.
     }
     if (path === "/functions/v1/apply-agent" && method === "POST") {
       if (!this.signedIn) return denied();

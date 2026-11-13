@@ -1,5 +1,7 @@
 # Auto-Apply Engine (local Playwright)
 
+**Telegram status release:** [Setup, timestamps and safe runner-resume instructions](../docs/telegram-job-status.md). Customer paired mode uses the scoped transport and template-only workflow described there; the older global/AI sections below apply to explicit legacy-owner tooling, not a customer entitlement.
+
 Searches a jobs-list URL (LinkedIn, Naukri recommended, Instahyre, or any board),
 generates a **JD-tailored resume + cover letter** per posting (your admin-configured
 AI provider — the same one the app uses), fills the application form with **honest

@@ -13,6 +13,7 @@ import ApplyModePanel from "./ApplyModePanel";
 import ApplyResultsPanel from "./ApplyResultsPanel";
 import AppliedByUserPanel from "./AppliedByUserPanel";
 import ReviewQueuePanel from "./ReviewQueuePanel";
+import TelegramBindingPanel from "./TelegramBindingPanel";
 import ExemplarsPanel from "./ExemplarsPanel";
 import ResumeVariantsPanel from "./ResumeVariantsPanel";
 import ApplyAgentPanel from "./ApplyAgentPanel";
@@ -124,6 +125,7 @@ export function AutoApplyCard({ locked, isAdmin, onUpgrade }: {
             <li>• Run reports: submitted / needs-review / skipped, per job</li>
           </ul>
           {userId && <ApplyAgentPanel key={`agent:${userId}`} canPair={false} />}
+          {userId && <TelegramBindingPanel key={`telegram:${userId}`} />}
           <button className={btnPrimary + btnSm} onClick={onUpgrade}>Unlock with Platinum or add-on</button>
         </div>
       ) : (
