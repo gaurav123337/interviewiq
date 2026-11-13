@@ -26,6 +26,8 @@ const RESULT_META: Record<ApplyResultRow["result"], { icon: string; label: strin
   needs_review: { icon: "⏸", label: "needs you", cls: "bg-amber-500/15 text-amber-400" },
   skipped: { icon: "⏭", label: "skipped", cls: "bg-zinc-500/15 text-zinc-300" },
   error: { icon: "✗", label: "error", cls: "bg-red-500/15 text-red-400" },
+  budget_capped: { icon: "🛑", label: "budget capped", cls: "bg-amber-500/15 text-amber-400" },
+  filtered: { icon: "⏭", label: "filtered", cls: "bg-zinc-500/15 text-zinc-300" },
 };
 
 function ago(iso: string): string {
@@ -125,7 +127,7 @@ export default function ApplyResultsPanel() {
       </div>
       {open && (<>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {(["submitted", "needs_review", "skipped", "error"] as const).map((k) => (
+        {(["submitted", "needs_review", "skipped", "error", "budget_capped", "filtered"] as const).map((k) => (
           <button key={k} onClick={() => setFilter(filter === k ? "all" : k)}
             className={`rounded px-2 py-0.5 text-[11px] font-bold ${RESULT_META[k].cls} ${filter === k ? "ring-1 ring-zinc-400" : "opacity-80"}`}>
             {RESULT_META[k].icon} {counts[k]} {RESULT_META[k].label}

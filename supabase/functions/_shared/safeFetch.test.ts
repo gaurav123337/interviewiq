@@ -77,6 +77,9 @@ Deno.test("cors allows only known origins", () => {
   /* tested via the pure helpers — the fetch spec strips the `origin` header
      from Request objects, so Request-based tests can't set it */
   assert(originAllowed("https://gaurav123337.github.io"));
+  assert(originAllowed("https://job-assist.wasmer.app"));
+  assert(!originAllowed("https://job-assist.wasmer.app.evil.example"));
+  assertEquals(corsHeadersFor("https://job-assist.wasmer.app")["Access-Control-Allow-Origin"], "https://job-assist.wasmer.app");
   assert(!originAllowed("https://evil.example.com"));
   assert(originAllowed(null)); // server-to-server
   assertEquals(corsHeadersFor("https://gaurav123337.github.io")["Access-Control-Allow-Origin"], "https://gaurav123337.github.io");

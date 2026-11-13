@@ -143,6 +143,22 @@ Create a GitHub **OAuth App** and/or a Google **OAuth client (Web)**, set the ca
 - **Pro is server-verified.** The client only *reads* the entitlements table; Pro is granted by admin action, single-use **grant codes** (`redeem_grant`), or a **Razorpay** payment confirmed by the `pay-webhook` signature check. A signed-out visitor can never hold Pro — the client fails closed to `free` and ignores any locally-stored tier.
 - The legacy `IQPRO-XXXX` format keys are **forgeable and disabled** (`CONFIG.features.testLicensing` ships `false`); they exist only for local testing of that code path.
 
+### Complimentary plans and gift codes
+
+After applying `supabase/migrations/20261113_complimentary_grants.sql`, administrators can use **Admin → Billing → Complimentary access** to give a registered user Monthly, Yearly, Lifetime, Platinum, or the auto-apply add-on at no charge. Choose the standard duration, no expiry, or a custom duration, and enter an audit reason. Revoke individual grants without removing the user's paid access.
+
+**Gift codes** are single-use, server-verified grants redeemed while signed in. They do not open checkout or create payment/subscription records. Ordinary coupons remain payment discounts; a 100%-off coupon is not the complimentary-grant mechanism.
+
+### Paired local auto-apply agent
+
+The new paired core requires the staged tenant/binding migrations and `apply-agent` Edge Function before use. In Job Match, create a pairing code and run `npm run apply:pair` locally; paste the code into its prompt, not chat. The revocable credential is stored outside the repository. Run an individual supported board or `--all` with the exported profile.
+
+This first paired release uses **deterministic resume templates**. AI tailoring, automatic discovery, watch/listen/session supervisors, server credentials, and remote Run-now controls are not enabled for customer agents. The existing owner-only engine requires explicit `--legacy-owner` during the expansion phase. Results, reviews, variants, learning and notifications are user-scoped; administrators see activity summaries rather than private application content.
+
+**Windows secure token setup:** double-click `scripts/setup-supabase-token.cmd`, paste a management personal access token into its hidden local prompt, then return to ZCode. The helper encrypts it with Windows DPAPI and restricts its directory to your Windows account, outside the repository. It does not contact Supabase or deploy anything. Do not paste tokens into chat. `powershell -NoProfile -File scripts/supabase-token.ps1 -Mode Status` verifies the saved credential without printing it; `-Mode Inspect -OwnerId <uuid> -OwnerEmail <email>` runs the existing read-only inspector with credentials confined to that child process. Any software running as the same Windows user can potentially decrypt DPAPI data; a compromised account still requires revocation/rotation.
+
+Rollout is explicit: `node scripts/migrate-apply-tenants.mjs --owner-id <verified-uuid> --owner-email <verified-email>` inspects only. `--apply` additionally requires `INTERVIEWIQ_ROLLOUT_CONFIRMED=<project>:expand` after final operator approval. Apply the contract phase only after paired owner scoped read/write and two-user isolation smoke tests succeed; set `INTERVIEWIQ_SCOPED_SMOKE_VERIFIED=<project>` to explicitly confirm those checks. Ordinary catalog access does not count as smoke verification. Do not reapply older global auto-apply SQL after these terminal migrations. See the [tenant plan](docs/implementation_plans/AUTO_APPLY_TENANT_ISOLATION_IMPLEMENTATION_PLAN_20261113.md).
+
 ## Tests & CI
 
 The **[virtual browser tester](docs/testing/virtual-tester.md)** exercises real desktop/mobile browser journeys with isolated synthetic integrations and captures reports, screenshots, and failure traces. Start with Node 22, `node node_modules/@playwright/test/cli.js install chromium`, then `npm run test:virtual`. Use `npm run test:e2e:report` to inspect results. Cloud/provider simulation is labeled explicitly; real backend integration needs a dedicated sandbox. No recurring checks are enabled.
@@ -153,7 +169,7 @@ npm run typecheck  # tsc over the WHOLE project, including tests
 npm run eval:rag   # RAG retrieval golden-set regression gate
 ```
 
-CI (`.github/workflows/deploy.yml`, on push to `main`) is a hard gate: production `npm audit`, `npm run eval:rag`, `npm run typecheck` (app **and** tests), `npm run build`, the **full `npm test` suite (blocking)**, and `deno test supabase/functions/_shared/` for the edge shared code — then deploys the same `dist/` to **GitHub Pages** and **Wasmer Edge**. The `pre-push` hook mirrors these gates locally. Supabase Edge Functions deploy only when a manual workflow run explicitly enables `deploy_supabase` and `SUPABASE_ACCESS_TOKEN` is usable; ordinary pushes leave the backend unchanged.
+CI (`.github/workflows/deploy.yml`, on push to `main`) is a hard gate: production `npm audit`, `npm run eval:rag`, `npm run typecheck` (app **and** tests), `npm run build`, the **full `npm test` suite (blocking)**, and `deno test supabase/functions/_shared/ supabase/functions/apply-agent/index.test.ts` for Edge shared code and paired-handler authorization — then deploys the same `dist/` to **GitHub Pages** and **Wasmer Edge**. The `pre-push` hook mirrors these gates locally. Supabase Edge Functions deploy only when a manual workflow run explicitly enables `deploy_supabase` and `SUPABASE_ACCESS_TOKEN` is usable; ordinary pushes leave the backend unchanged.
 
 To enable Pages deployment: repo Settings → Pages → Source → **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**. The repository name and public URL remain `interviewiq` and https://gaurav123337.github.io/interviewiq/. `vite.config.ts` uses a relative base (`./`), so `dist/` also serves from any subpath (Netlify, Vercel, Cloudflare Pages, S3…).
 

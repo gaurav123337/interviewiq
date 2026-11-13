@@ -3,8 +3,18 @@
    the owner approves them here, and only 'active' sites are driven by
    `auto-apply-jobs.js --all`. */
 
-import { getSupabaseClient } from "./cloud.ts";
+import { getCloudState, getSupabaseClient } from "./cloud.ts";
 import { autoSubmitTrustPatch, autoSubmitTrustVerdict, AUTO_SUBMIT_NEVER_HOSTS } from "../../scripts/apply-engine-lib.js";
+
+/* Core data is owner-scoped by auth.uid() in SQL. An unapplied migration is
+   an error, never permission to retry through a global admin reader. */
+async function myApply<T>(action: string, args: Record<string, unknown> = {}): Promise<T> {
+  const client = await getSupabaseClient();
+  if (!client) throw new Error("cloud not configured");
+  const { data, error } = await client.rpc("my_apply_action", { p_action: action, p_args: args });
+  if (error) throw new Error(error.message);
+  return data as T;
+}
 
 export interface JobSite {
   id: string;
@@ -142,11 +152,7 @@ export interface ReviewItem {
 }
 
 export async function listJobReviews(): Promise<ReviewItem[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_list_job_reviews");
-  if (error) throw error;
-  return (data ?? []) as ReviewItem[];
+  return (await myApply<ReviewItem[]>("reviews.list")) ?? [];
 }
 
 /* Resolved review rows (done/dismissed/closed), ONE per posting (newest
@@ -162,11 +168,7 @@ export interface ResolvedReviewItem extends ReviewItem {
 }
 
 export async function listResolvedJobReviews(): Promise<ResolvedReviewItem[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_list_resolved_job_reviews");
-  if (error) throw error;
-  return (data ?? []) as ResolvedReviewItem[];
+  return (await myApply<ResolvedReviewItem[]>("reviews.resolved", { limit: 150 })) ?? [];
 }
 
 /* Send a mistakenly resolved posting back to pending (variant-wide
@@ -174,10 +176,7 @@ export async function listResolvedJobReviews(): Promise<ResolvedReviewItem[]> {
    review-queue-resolved.sql — callers treat failure honestly (the row
    stays until the SQL is applied). */
 export async function unresolveJobReview(id: string): Promise<void> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { error } = await client.rpc("admin_unresolve_job_review", { p_id: id });
-  if (error) throw error;
+  await myApply("reviews.unresolve", { id });
 }
 
 /* ── Phase 2: tailored-resume variants (apply_resume_variants) ───────── */
@@ -204,28 +203,18 @@ export interface ResumeVariantRow {
 /** Needs `admin_list_resume_variants` from apply-resume-variants.sql — until
     it is applied the RPC errors and the panel shows the failure honestly. */
 export async function listResumeVariants(limit = 50): Promise<ResumeVariantRow[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_list_resume_variants", { p_limit: limit });
-  if (error) throw error;
-  return (data ?? []) as ResumeVariantRow[];
+  return (await myApply<ResumeVariantRow[]>("variants.list", { limit })) ?? [];
 }
 
 /** Approve / revert ONE variant row — a later tailoring (different content)
     is a new row and asks again. The engine's next run for that posting
     reads the approval and unlocks auto-submit for the gate. */
 export async function approveResumeVariant(id: string, approved: boolean): Promise<void> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { error } = await client.rpc("admin_approve_resume_variant", { p_id: id, p_approved: approved });
-  if (error) throw error;
+  await myApply("variants.approve", { id, approved });
 }
 
 export async function resolveJobReview(id: string, status: "done" | "dismissed" | "closed"): Promise<void> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { error } = await client.rpc("admin_resolve_job_review", { p_id: id, p_status: status });
-  if (error) throw error;
+  await myApply("reviews.resolve", { id, status });
 }
 
 /* ── Telegram notify config — PER-USER since #135 ──────────────────────
@@ -248,9 +237,11 @@ export async function getNotifyConfig(): Promise<NotifyConfig | null> {
 }
 
 export async function setNotifyConfig(chatId: string, botToken: string): Promise<void> {
+  const userId = getCloudState().user?.id;
+  if (!userId) throw new Error("Sign in to save your Telegram binding");
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
-  const { error } = await client.from("user_notify_config").upsert({ chat_id: chatId, bot_token: botToken, updated_at: new Date().toISOString() });
+  const { error } = await client.from("user_notify_config").upsert({ user_id: userId, chat_id: chatId, bot_token: botToken, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
   if (error) throw error;
 }
 
@@ -259,15 +250,14 @@ export async function setNotifyConfig(chatId: string, botToken: string): Promise
 export interface UserNotifyBinding {
   user_id: string;
   email: string | null;
-  chat_id: string | null;
-  token_prefix: string | null;
+  bound: boolean;
   updated_at: string | null;
 }
 
 export async function listUserNotifyBindings(): Promise<UserNotifyBinding[]> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_list_user_notify");
+  const { data, error } = await client.rpc("admin_list_notify_summary");
   if (error) throw error;
   return (data ?? []) as UserNotifyBinding[];
 }
@@ -287,28 +277,19 @@ export interface UserReviewRow { job_url: string; title: string | null; company:
 export interface UserNotifyRow { chat_id: string | null; token_prefix: string | null; updated_at: string | null }
 
 export interface UserActivity {
-  usage: UserUsageRow[];
-  applyRows: UserApplyRow[];
-  reviewRows: UserReviewRow[];
-  notify: UserNotifyRow | null;
+  available: boolean;
+  result_count: number;
+  review_count: number;
+  variant_count: number;
+  last_activity: string | null;
 }
 
 export async function getUserActivity(userId: string): Promise<UserActivity> {
   const client = await getSupabaseClient();
   if (!client) throw new Error("cloud not configured");
-  const [usage, applyRows, reviewRows, notify] = await Promise.all([
-    client.rpc("admin_user_usage", { p_user: userId, p_limit: 40 }),
-    client.rpc("admin_user_apply_rows", { p_limit: 30 }),
-    client.rpc("admin_user_review_rows"),
-    client.rpc("admin_user_notify_row", { p_user: userId }),
-  ]);
-  for (const r of [usage, applyRows, reviewRows, notify]) if (r.error) throw r.error;
-  return {
-    usage: (usage.data ?? []) as UserUsageRow[],
-    applyRows: (applyRows.data ?? []) as UserApplyRow[],
-    reviewRows: (reviewRows.data ?? []) as UserReviewRow[],
-    notify: ((notify.data as UserNotifyRow[]) ?? [])[0] ?? null,
-  };
+  const { data, error } = await client.rpc("admin_user_apply_summary", { p_user: userId });
+  if (error) throw new Error(error.message);
+  return data as UserActivity;
 }
 
 /* ── site credentials (admin): store logins per site, clubbed when sites
@@ -543,7 +524,7 @@ export interface ApplyResultRow {
   job_url: string;
   title: string | null;
   company: string | null;
-  result: "submitted" | "needs_review" | "skipped" | "error";
+  result: "submitted" | "needs_review" | "skipped" | "error" | "budget_capped" | "filtered";
   detail: string | null;
   fit: number | null;
   /** the POSTING's parsed age in hours at collect (board card stamp) —
@@ -554,15 +535,11 @@ export interface ApplyResultRow {
 }
 
 export async function listApplyResults(limit = 100): Promise<ApplyResultRow[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_list_apply_results", { p_limit: limit });
-  if (error) throw error;
-  return (data ?? []) as ApplyResultRow[];
+  return (await myApply<ApplyResultRow[]>("results.list", { limit })) ?? [];
 }
 
 export function applyResultCounts(rows: ApplyResultRow[]): Record<ApplyResultRow["result"], number> {
-  const counts = { submitted: 0, needs_review: 0, skipped: 0, error: 0 };
+  const counts = { submitted: 0, needs_review: 0, skipped: 0, error: 0, budget_capped: 0, filtered: 0 };
   for (const r of rows) if (r.result in counts) counts[r.result] += 1;
   return counts;
 }
@@ -586,11 +563,7 @@ export interface FormAnswerStats {
 }
 
 export async function listFormAnswerStats(): Promise<FormAnswerStats[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_form_answer_stats");
-  if (error) throw error;
-  return (data ?? []) as FormAnswerStats[];
+  return (await myApply<FormAnswerStats[]>("memory.stats")) ?? [];
 }
 
 /* ── auto-submit trust state (#trust-chips): recompute the same per-host
@@ -641,21 +614,11 @@ export type FeedbackVerdict = "good" | "bad";
 /** Record owner feedback; skills are the row's missing-core skills (bad →
     strikes, good → clears). Returns resulting global strike counts. */
 export async function sendApplyFeedback(id: string, verdict: FeedbackVerdict, skills: string[]): Promise<{ skill: string; strikes: number }[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("engine_apply_feedback", {
-    p_result_id: id, p_verdict: verdict, p_skills: skills.length ? skills : null,
-  });
-  if (error) throw error;
-  return ((data as { skill: string; strikes: number }[]) ?? []);
+  return (await myApply<{ skill: string; strikes: number }[]>("feedback.put", { id, verdict, skills })) ?? [];
 }
 
 export async function getSkillStrikes(): Promise<{ skill: string; strikes: number }[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_get_skill_strikes");
-  if (error) throw error;
-  return ((data as { skill: string; strikes: number }[]) ?? []);
+  return (await myApply<{ skill: string; strikes: number }[]>("strikes.list")) ?? [];
 }
 
 /* ── judge exemplars: real postings the owner labeled, fed into the judge prompt ── */
@@ -668,12 +631,7 @@ export interface JudgeExemplar {
 /* full row shape (id + source_url + created_at) is JudgeExemplarRow below */
 
 export async function putJudgeExemplar(kind: "positive" | "negative", summary: string, reason?: string, sourceUrl?: string): Promise<void> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { error } = await client.rpc("admin_put_judge_exemplar", {
-    p_kind: kind, p_summary: summary, p_reason: reason ?? null, p_source_url: sourceUrl ?? null,
-  });
-  if (error) throw error;
+  await myApply("exemplars.put", { kind, summary, reason: reason ?? null, sourceUrl: sourceUrl ?? null });
 }
 
 /* ── exemplar management: the owner sees and prunes what the judge was taught ── */
@@ -685,18 +643,11 @@ export interface JudgeExemplarRow extends JudgeExemplar {
 }
 
 export async function listJudgeExemplars(): Promise<JudgeExemplarRow[]> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { data, error } = await client.rpc("admin_list_judge_exemplars");
-  if (error) throw error;
-  return (data ?? []) as JudgeExemplarRow[];
+  return (await myApply<JudgeExemplarRow[]>("exemplars.list", { limit: 200 })) ?? [];
 }
 
 export async function deleteJudgeExemplar(id: string): Promise<void> {
-  const client = await getSupabaseClient();
-  if (!client) throw new Error("cloud not configured");
-  const { error } = await client.rpc("admin_delete_judge_exemplar", { p_id: id });
-  if (error) throw error;
+  await myApply("exemplars.delete", { id });
 }
 
 /* ── notify test-fire: the send-notify-test edge function sends the digest DM

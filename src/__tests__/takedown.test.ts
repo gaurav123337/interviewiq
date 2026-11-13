@@ -4,7 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /* services reach for Supabase — stub the client module so tests stay offline;
    each test installs its own fake client via mockResolvedValue */
 vi.mock("../services/cloud", () => ({
-  getSupabaseClient: vi.fn()
+  getSupabaseClient: vi.fn(),
+  getCloudState: () => ({ user: null }),
+  subscribeCloud: () => () => {},
 }));
 
 import { getSupabaseClient } from "../services/cloud";

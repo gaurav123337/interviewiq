@@ -16,6 +16,14 @@ playwright/.auth/
 # auto-apply engine local state (browser session + run reports + real profile)
 freebuff-apply-profile/
 freebuff-apply-reports/
+.claude/settings.local.json
+apply-profile.json
+freebuff-apply-state.json
+
+# paired-agent credentials/state (normally stored in OS user-data; protect local overrides too)
+apply-agent-binding.json
+apply-agent-state/
+.interviewiq-apply-agent/
 
 # logs
 *.log

@@ -23,6 +23,9 @@ import { fileURLToPath } from "node:url";
 import { loadAi } from "./apply-kit-node.js";
 import { upsertJobSite, listJobSites } from "./job-sites-db.js";
 import { listEngineProcesses } from "./engine-lifecycle.js";
+import { getApplyAgentRuntimeContext } from "./apply-agent-runtime.js";
+
+const AGENT_CONTEXT = getApplyAgentRuntimeContext();
 
 /* ---------- candidate generation ---------- */
 
@@ -124,7 +127,10 @@ async function probeSite(page, host, jobsUrl) {
 
 /* ---------- main ---------- */
 
-async function main() {
+export async function main() {
+  if (AGENT_CONTEXT.mode === "paired") {
+    throw new Error("site discovery unavailable in paired mode (global registry mutation deferred)");
+  }
   const limIdx = process.argv.indexOf("--limit");
   const argLimit = Number(limIdx > -1 ? process.argv[limIdx + 1] : 8) || 8;
   const queryIdx = process.argv.indexOf("--query");
@@ -185,4 +191,6 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((e) => { console.error(e); process.exitCode = 1; });
+}

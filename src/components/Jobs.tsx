@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CareerProfile, JobPosting, LevelId, UploadedResume } from "../types";
 import { getTier, isPaywallEnabled } from "../services/entitlements";
-import { refreshEntitlement } from "../services/entitlement";
+import { refreshEntitlement, serverAutoApply, subscribeEntitlement } from "../services/entitlement";
 import { getCloudState, isCloudConfigured, subscribeCloud } from "../services/cloud";
-import { subscribeAdmin } from "../services/admin";
+import { getAdminState, subscribeAdmin } from "../services/admin";
 import { toast } from "../toast";
 import { btnGhost, btnSm, cardCls, Chip } from "./ui"
 import { UpgradeModal } from "./Upgrade";
@@ -26,8 +26,6 @@ import {dueFollowUps, getTrack, listTracks, markAppliedVia, markFollowUpNotified
 import {benchLevelForYears, detectMarket, type BenchLevel, type Market} from "../services/salaryBench";
 
 import { downloadZip } from "../services/zip";
-import { platinumActive } from "../services/autoApply";
-import { serverPlatinum } from "../services/entitlement";
 import { AutoApplyCard } from "./jobs/AutoApplyCard";
 
 import { ReportModal } from "./jobs/ReportModal";
@@ -109,14 +107,24 @@ export function Jobs() {
      the button honestly. Track the live auth state instead, so a signed-out
      user sees a disabled button rather than one that throws on click. */
   const [signedIn, setSignedIn] = useState<boolean>(() => !!getCloudState().user);
-  useEffect(() => subscribeCloud(s => setSignedIn(!!s.user)), []);
-  /* 💎 Platinum (auto-apply) — platinumActive() includes the admin bypass
-     (adminUnlocked, set by App.tsx's admin subscription) AND the server
-     entitlement; re-check on admin-state changes and after the refresh so a
-     late flag flips the card without a reload. */
-  const [platinum, setPlatinum] = useState<boolean>(() => platinumActive());
-  useEffect(() => subscribeAdmin(() => setPlatinum(platinumActive())), []);
-  useEffect(() => { void refreshEntitlement().then(() => setPlatinum(platinumActive())); }, [signedIn]);
+  const [accountId, setAccountId] = useState<string | null>(() => getCloudState().user?.id ?? null);
+  useEffect(() => subscribeCloud(s => { setSignedIn(!!s.user); setAccountId(s.user?.id ?? null); }), []);
+  /* Auto-apply entitlement and administrator capability are separate server-
+     verified facts. Entitlement unlocks only personal/local-safe content;
+     administrator state separately controls the legacy global control center. */
+  const [autoApplyEntitled, setAutoApplyEntitled] = useState<boolean>(() => !!getCloudState().user && serverAutoApply());
+  const [isAdmin, setIsAdmin] = useState<boolean>(() => getAdminState().isAdmin);
+  useEffect(() => subscribeEntitlement(() => setAutoApplyEntitled(!!getCloudState().user && serverAutoApply())), []);
+  useEffect(() => subscribeAdmin(s => setIsAdmin(s.isAdmin)), []);
+  useEffect(() => {
+    let live = true;
+    setAutoApplyEntitled(false);
+    if (!accountId) {
+      return () => { live = false; };
+    }
+    void refreshEntitlement().then(() => { if (live) setAutoApplyEntitled(serverAutoApply()); });
+    return () => { live = false; };
+  }, [accountId]);
 
   /* pull the latest feed + cloud profile when signed in */
   useEffect(() => {
@@ -447,9 +455,10 @@ export function Jobs() {
       />
 
       <AutoApplyCard
-        locked={proGated && !platinum}
-        platinum={platinum}
-        onUpgrade={() => setUpgrade("Auto-apply engine is a Platinum feature")}
+        key={accountId ?? "guest"}
+        locked={!accountId || !autoApplyEntitled}
+        isAdmin={!!accountId && isAdmin && getAdminState().isAdmin}
+        onUpgrade={() => setUpgrade("Auto-apply requires Platinum or the auto-apply add-on")}
       />
 
       <JdScanCard

@@ -1,12 +1,11 @@
-/* 💎 Platinum feature card — bridges the app to the LOCAL auto-apply engine
-   (scripts/auto-apply-jobs.js). Non-Platinum users see the pitch + upgrade
-   CTA; Platinum users get their profile as apply-profile.json (download) and
-   copy-paste run commands per job board. The engine itself runs locally —
-   the card never applies anything server-side. */
+/* Auto-apply access card — bridges entitled users to the LOCAL auto-apply
+   engine (scripts/auto-apply-jobs.js). Personal profile export and static
+   commands contain no global data; the legacy control center remains admin-
+   only until every service behind it is scoped to the signed-in user. */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cardCls, btnGhost, btnOk, btnPrimary, btnSm, Chip } from "../ui";
-import { APPLY_SITES, engineCommands, exportProfileJson, platinumActive } from "../../services/autoApply";
+import { APPLY_SITES, engineCommands, exportProfileJson } from "../../services/autoApply";
 import { requestRunNow, fetchRunStatus, getApplyConfig, type ApplyMode, type RunLifecycle } from "../../services/jobSites";
 import JobSitesPanel from "./JobSitesPanel";
 import CredentialsPanel from "./CredentialsPanel";
@@ -16,14 +15,29 @@ import AppliedByUserPanel from "./AppliedByUserPanel";
 import ReviewQueuePanel from "./ReviewQueuePanel";
 import ExemplarsPanel from "./ExemplarsPanel";
 import ResumeVariantsPanel from "./ResumeVariantsPanel";
+import ApplyAgentPanel from "./ApplyAgentPanel";
+import { personalApplyReady } from "../../services/applyAgent";
+import { getCloudState, subscribeCloud } from "../../services/cloud";
 
-export function AutoApplyCard({ locked, onUpgrade, platinum }: {
+export function AutoApplyCard({ locked, isAdmin, onUpgrade }: {
   locked: boolean;
-  platinum: boolean;
+  isAdmin: boolean;
   onUpgrade: () => void;
 }) {
   const [openSite, setOpenSite] = useState<string | null>(null);
-  const active = platinum && !locked;
+  const active = isAdmin || !locked;
+  const [userId, setUserId] = useState(() => getCloudState().user?.id ?? null);
+  const [coreReady, setCoreReady] = useState(false);
+  const [coreError, setCoreError] = useState<string | null>(null);
+  useEffect(() => subscribeCloud(s => setUserId(s.user?.id ?? null)), []);
+  useEffect(() => {
+    let live = true;
+    setCoreReady(false); setCoreError(null);
+    if (!active || !userId) return () => { live = false; };
+    void personalApplyReady().then(() => { if (live) setCoreReady(true); })
+      .catch(e => { if (live) setCoreError((e as Error).message); });
+    return () => { live = false; };
+  }, [active, userId]);
 
   /* ⚡ Run now: queue a full cycle on the desktop engine and poll the
      lifecycle (queued → running → done-with-summary / failed) so the owner
@@ -55,13 +69,17 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
      button is disabled with an honest hint instead. */
   const [applyMode, setApplyMode] = useState<ApplyMode | null>(null);
   useEffect(() => {
+    if (!isAdmin) {
+      setApplyMode(null);
+      return;
+    }
     let dead = false;
     const load = () => { getApplyConfig().then((c) => { if (!dead) setApplyMode(c?.mode ?? null); }).catch(() => {}); };
     load();
     const t = setInterval(load, 60_000);
     return () => { dead = true; clearInterval(t); };
-  }, []);
-  const profileJson = useMemo(() => (active ? exportProfileJson() : ""), [active]);
+  }, [isAdmin]);
+  const profileJson = useMemo(() => (active ? exportProfileJson() : ""), [active, userId]);
   const missing = useMemo(() => {
     if (!active) return [];
     try {
@@ -87,25 +105,26 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
     <div className={`${cardCls} mt-5 overflow-hidden`}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/10 p-5">
         <div>
-          <h3 className="text-[14.5px] font-extrabold">🤖 Auto-apply engine {active ? "" : "· 💎 Platinum"}</h3>
+          <h3 className="text-[14.5px] font-extrabold">🤖 Auto-apply engine {active ? "" : "· Platinum or add-on"}</h3>
           <p className="mt-0.5 max-w-[720px] text-[11.5px] text-fnt">
-            A local Playwright browser that searches your job boards, tailors a resume + cover letter to each JD with AI,
-            fills the application with your profile answers, and submits — auto on Instahyre, Naukri &amp; LinkedIn,
-            review-gate on unknown boards. Postings must match your resume's skills, not just the job title.
+            A local browser fills applications using your profile facts. This first paired-agent release uses deterministic
+            resume templates; AI tailoring and automated discovery are not enabled for customer agents yet.
+            Unknown forms and unanswered required questions stay in your review queue.
           </p>
         </div>
-        <Chip tone={active ? "ok" : "co"}>{active ? "💎 Platinum active" : "🔒 Platinum"}</Chip>
+        <Chip tone={active ? "ok" : "co"}>{active ? "Auto-apply active" : "🔒 Platinum or add-on"}</Chip>
       </div>
 
       {!active ? (
         <div className="p-5">
           <ul className="mb-4 space-y-1 text-[12.5px] text-fnt">
             <li>• Persists your job-board logins (Google OAuth / OTP — you sign in once, it never stores passwords)</li>
-            <li>• JD-tailored resume + cover letter per posting, from your career profile and the admin AI provider</li>
+            <li>• Resume templates from your profile facts; AI tailoring is not enabled in this paired-agent release</li>
             <li>• Honest answers only — required questions it can't answer confidently stop the submission for your review</li>
             <li>• Run reports: submitted / needs-review / skipped, per job</li>
           </ul>
-          <button className={btnPrimary + btnSm} onClick={onUpgrade}>💎 Unlock with Platinum</button>
+          {userId && <ApplyAgentPanel key={`agent:${userId}`} canPair={false} />}
+          <button className={btnPrimary + btnSm} onClick={onUpgrade}>Unlock with Platinum or add-on</button>
         </div>
       ) : (
         <div className="p-5">
@@ -115,21 +134,23 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
               them in your career profile / resume first.
             </p>
           )}
-          {applyMode === "off" && (
+          {isAdmin && applyMode === "off" && (
             <p className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-300">
               🛑 Engine is <b>Off</b> — every engine process on your machine is stopped. Switch Apply mode to
               <b> 🖥 My machine</b> below to start it (the listener returns within ~1 minute).
             </p>
           )}
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            <button className={btnPrimary + btnSm} disabled={runState?.status === "requested" || runState?.status === "running" || applyMode === "off"} onClick={() => void runNow()}>
-              {runState?.status === "requested" ? "⏳ queued…" : runState?.status === "running" ? "⚙️ running — cycling active sites…" : "⚡ Run now"}
-            </button>
+            {isAdmin && (
+              <button className={btnPrimary + btnSm} disabled={runState?.status === "requested" || runState?.status === "running" || applyMode === "off"} onClick={() => void runNow()}>
+                {runState?.status === "requested" ? "⏳ queued…" : runState?.status === "running" ? "⚙️ running — cycling active sites…" : "⚡ Run now"}
+              </button>
+            )}
             <button className={btnOk + btnSm} onClick={download}>⬇️ Download apply-profile.json</button>
             <button className={btnGhost + btnSm} onClick={() => void copy(profileJson)}>📋 Copy JSON</button>
             <span className="text-[11px] text-mut">save it to the repo root (next to package.json)</span>
           </div>
-          {runState && (
+          {isAdmin && runState && (
             <p className={`mb-3 rounded-lg px-3 py-2 text-[12px] ${runState.status === "failed" ? "border border-red-500/30 bg-red-500/10 text-red-300" : "border border-ok/30 bg-ok/10 text-ink"}`}>
               {runState.status === "requested" && "⏳ Run queued — the desktop engine picks it up within ~30s, then cycles every ACTIVE site."}
               {runState.status === "running" && "⚙️ Engine is running a full cycle now — this updates when it finishes."}
@@ -168,41 +189,44 @@ export function AutoApplyCard({ locked, onUpgrade, platinum }: {
             ))}
           </div>
           <p className="mt-3 text-[11px] text-mut">
-            Reports land in <code className="font-mono">freebuff-apply-reports/</code>; the admin Scraper log shows apply runs too.
+            Paired browser sessions and reports stay in your OS user-data directory, partitioned by binding.
+            The project service key is never part of customer setup.
           </p>
 
-          {/* the owner's master switch: off (kill switch) / my machine / cloud */}
-          <ApplyModePanel />
+          {userId && <ApplyAgentPanel key={`agent:${userId}`} canPair={active} />}
+          {coreError && <p role="alert" className="mt-3 text-[12px] text-amber-400">{coreError}</p>}
+          {coreReady && userId && (
+            <div key={`core:${userId}`}>
+              <ApplyResultsPanel />
+              <AppliedByUserPanel />
+              <ResumeVariantsPanel />
+              <ReviewQueuePanel />
+              <ExemplarsPanel />
+            </div>
+          )}
+          {isAdmin ? (
+            <section className="mt-4 border-t border-line/10 pt-3" aria-label="Legacy administrator controls">
+              <h4 className="text-[12px] font-bold text-mut">Legacy owner engine — administrator controls</h4>
+              <ApplyModePanel />
+              <JobSitesPanel />
+              <CredentialsPanel />
+            </section>
+          ) : (
+            <p className="mt-3 text-[12px] text-mut">Run the paired agent locally. Platform-wide registry, credentials, and remote start/stop controls are administrator-only.</p>
+          )}
 
-          {/* full per-job decision report (submitted / needs-you / skipped / error) */}
-          <ApplyResultsPanel />
-
-          {/* resolved history (✓ applied / ✕ / 🚫) — parallel panel, not a hidden queue sub-section */}
-          <AppliedByUserPanel />
-
-          {/* Phase 2: AI-tailored kits, diffs + the approval that unlocks auto-submit */}
-          <ResumeVariantsPanel />
-
-          <JobSitesPanel />
-
-          <CredentialsPanel />
-
-          <ReviewQueuePanel />
-
-          <ExemplarsPanel />
-
-          <div className="mt-3 rounded-lg border border-line/10 bg-deep/40 p-3">
-            <div className="text-[12.5px] font-bold text-fnt">♻️ Keep applying (watch mode)</div>
+          {isAdmin && <div className="mt-3 rounded-lg border border-line/10 bg-deep/40 p-3">
+            <div className="text-[12.5px] font-bold text-fnt">♻️ Legacy owner watch mode</div>
             <p className="mt-1 text-[11px] text-mut">
-              One command runs forever on your machine:              discovers new candidate boards every cycle, applies across every
-              <b> active</b> registered site, and never re-applies the same job. Review-gate forms it can't auto-submit wait in the
-              <b> review queue</b> above. Leave it in an open terminal:
+              One command runs forever on your machine: discovers new candidate boards every cycle, applies across every
+              <b> active</b> registered site, and never re-applies the same job. Review-gate forms it can't auto-submit stay
+              pending for review. Leave it in an open terminal:
             </p>
             <div className="mt-2 flex items-center gap-2">
-              <code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-line/10 bg-deep/80 px-3 py-2 font-mono text-[11.5px] text-fnt">node scripts/auto-apply-jobs.js --watch --max 5 --every 6 --unattended</code>
-              <button className={btnGhost + btnSm} onClick={() => void copy("node scripts/auto-apply-jobs.js --watch --max 5 --every 6 --unattended")}>📋</button>
+              <code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-line/10 bg-deep/80 px-3 py-2 font-mono text-[11.5px] text-fnt">node scripts/auto-apply-jobs.js --legacy-owner --watch --max 5 --every 6 --unattended</code>
+              <button className={btnGhost + btnSm} onClick={() => void copy("node scripts/auto-apply-jobs.js --legacy-owner --watch --max 5 --every 6 --unattended")}>📋</button>
             </div>
-          </div>
+          </div>}
         </div>
       )}
     </div>

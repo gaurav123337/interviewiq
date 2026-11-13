@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import {
-  adminIssueDiscount, adminSetAddon, adminSetEntitlement, PLANS,
-  type AdminEntitlementRow
+  adminGrantComplimentary, adminIssueDiscount, adminListComplimentaryGrants,
+  adminRevokeComplimentary, COMPLIMENTARY_PRODUCTS,
+  type AdminEntitlementRow, type ComplimentaryGrantRow, type ComplimentaryProduct
 } from "../../services/entitlement";
 import {
   REFUND_POLICY_DEFAULTS, adminCancelSubscription, adminCreateCoupon,
@@ -26,15 +27,17 @@ export function BillingSection() {
   const _subsSummary = subscriptionSummary(subs);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Record<string, "grant" | "discount" | undefined>>({});
-  /* create-grant form */
+  const [gifts, setGifts] = useState<ComplimentaryGrantRow[]>([]);
   /* coupon form */
   const [coCode, setCoCode] = useState("");
   const [coPct, setCoPct] = useState(20);
   const [coMax, setCoMax] = useState(0);
   const [coExp, setCoExp] = useState("");
-  /* per-row grant form */
-  const [gPlan, setGPlan] = useState<string>("monthly");
+  /* per-row complimentary form */
+  const [gProduct, setGProduct] = useState<ComplimentaryProduct>("monthly");
+  const [gExpiry, setGExpiry] = useState<"standard" | "lifetime" | "custom">("standard");
   const [gDays, setGDays] = useState(30);
+  const [gReason, setGReason] = useState("");
   /* per-row discount form */
   const [dPct, setDPct] = useState(30);
   const [dDays, setDDays] = useState(90);
@@ -44,6 +47,13 @@ export function BillingSection() {
   useEffect(() => {
     void getRefundPolicy().then(p => { setPolicyDraft(p); setPresetsText((p.reason_presets ?? []).join(", ")); }).catch(() => {});
   }, []);
+
+  const loadGifts = () => {
+    void adminListComplimentaryGrants(null, true).then(setGifts).catch(() => setGifts([]));
+  };
+  useEffect(loadGifts, []);
+
+  const reload = () => { load(); loadGifts(); };
 
   /* cancel-with-reason — row being cancelled + its reason input */
   const [cancelTarget, setCancelTarget] = useState<AdminSubscriptionRow | null>(null);
@@ -67,50 +77,48 @@ export function BillingSection() {
     finally { setBusy(false); }
   };
 
+  const selectGrantProduct = (product: ComplimentaryProduct) => {
+    const selected = COMPLIMENTARY_PRODUCTS.find(item => item.id === product)!;
+    setGProduct(product);
+    setGExpiry(selected.defaultDays > 0 ? "standard" : "lifetime");
+    if (selected.defaultDays > 0) setGDays(selected.defaultDays);
+  };
+
   const grant = async (u: AdminEntitlementRow) => {
+    const reason = gReason.trim();
+    if (!reason) { toast("A reason is required for the complimentary audit trail"); return; }
+    const selected = COMPLIMENTARY_PRODUCTS.find(item => item.id === gProduct)!;
+    const days = gExpiry === "custom" ? gDays : gExpiry === "standard" ? selected.defaultDays : 0;
+    const expiresAt = days > 0 ? new Date(Date.now() + days * 86_400_000).toISOString() : null;
     setBusy(true);
     try {
-      /* platinum is a TIER grant (no expiry in the select) — pro plans keep
-         their days-based expiry */
-      if (gPlan === "platinum") {
-        await adminSetEntitlement(u.userId, "platinum", "platinum", null);
-        toast(`💎 Granted Platinum (auto-apply) to ${u.email || u.userId.slice(0, 8)}`);
-      } else {
-        await adminSetEntitlement(u.userId, "pro", gPlan, gPlan === "lifetime" ? null : new Date(Date.now() + gDays * 86400000).toISOString());
-        toast(`💎 Granted Pro (${gPlan}) to ${u.email || u.userId.slice(0, 8)}`);
-      }
-      load();
+      await adminGrantComplimentary(u.userId, gProduct, expiresAt, reason);
+      toast(`🎁 Granted complimentary ${selected.label} to ${u.email || u.userId.slice(0, 8)}`);
+      setGReason("");
+      setOpen(o => ({ ...o, [u.userId]: undefined }));
+      reload();
     } catch (e) { toast("✗ " + ((e as Error).message || "Grant failed")); }
     finally { setBusy(false); }
   };
 
-  const revoke = async (u: AdminEntitlementRow) => {
+  const revokeGift = async (gift: ComplimentaryGrantRow) => {
     setBusy(true);
     try {
-      await adminSetEntitlement(u.userId, "free", null, null);
-      toast(`⛔ Revoked Pro from ${u.email || u.userId.slice(0, 8)}`);
-      load();
+      await adminRevokeComplimentary(gift.grantId, "Revoked from Admin Billing");
+      toast(`⛔ Revoked complimentary ${gift.product} from ${gift.email || gift.userId.slice(0, 8)} — paid access is unchanged`);
+      reload();
     } catch (e) { toast("✗ " + ((e as Error).message || "Revoke failed")); }
     finally { setBusy(false); }
   };
 
   const simulate = async (u: AdminEntitlementRow) => {
+    const paidPlan = gProduct === "auto_apply" ? "auto_apply" : gProduct;
     setBusy(true);
     try {
-      const ext = await adminSimulatePurchase(u.userId, gPlan);
-      toast(`🪙 Simulated ${gPlan} purchase for ${u.email || u.userId.slice(0, 8)} (${ext}) — same grant path as a real webhook`);
+      const ext = await adminSimulatePurchase(u.userId, paidPlan);
+      toast(`🪙 Simulated ${paidPlan} purchase for ${u.email || u.userId.slice(0, 8)} (${ext}) — same grant path as a real webhook`);
       load();
     } catch (e) { toast("✗ " + ((e as Error).message || "Simulate failed")); }
-    finally { setBusy(false); }
-  };
-
-  const toggleAddon = async (u: AdminEntitlementRow) => {
-    setBusy(true);
-    try {
-      await adminSetAddon(u.userId, "auto_apply", !u.autoApply);
-      toast(`${u.autoApply ? "⛔ Removed" : "🤖 Granted"} auto-apply add-on for ${u.email || u.userId.slice(0, 8)}`);
-      load();
-    } catch (e) { toast("✗ " + ((e as Error).message || "Add-on update failed")); }
     finally { setBusy(false); }
   };
 
@@ -158,20 +166,41 @@ export function BillingSection() {
     finally { setBusy(false); }
   };
 
-  const planLabel = (p: string | null) => (PLANS as readonly { id: string; label: string }[]).find(x => x.id === p)?.label ?? p ?? "—";
+  const planLabel = (product: string | null) => COMPLIMENTARY_PRODUCTS.find(x => x.id === product)?.label ?? product ?? "—";
 
   return (
     <div className="space-y-4">
       <div className={`${cardCls} p-5`}>
-        <h2 className="text-[16px] font-extrabold">💰 Billing — server-verified Pro</h2>
+        <h2 className="text-[16px] font-extrabold">💰 Billing — paid + complimentary access</h2>
         <p className="mt-1 text-[12.5px] text-mut">
-          Pro is an <span className="font-bold">account property</span>, not a local flag: only admins (and single-use grant codes)
-          can write it, and the app checks it on every sign-in. Grant Pro to a test account to try the gating end-to-end —
-          sign in as that user and the paywall opens instantly; revoke it and the limits come right back.
+          Paid entitlements stay in their original ledger. Complimentary and Gift access is layered separately, so revoking a gift never removes a purchase.
+          Use gift codes for one-time sharing; coupons below remain checkout discounts.
         </p>
       </div>
 
       <GrantCodeCard busy={busy} setBusy={setBusy} />
+
+      <div className={`${cardCls} overflow-hidden`}>
+        <div className="border-b border-line/10 p-5">
+          <h3 className="text-[14.5px] font-extrabold">🎁 Active Complimentary & Gift access ({gifts.length})</h3>
+          <p className="mt-0.5 text-[11.5px] text-fnt">Revoke removes only this ledger row. Paid entitlements and payment history are never changed.</p>
+        </div>
+        <div className="space-y-1.5 p-5">
+          {gifts.length === 0 && <p className="text-[12.5px] text-mut">No active complimentary access.</p>}
+          {gifts.map(gift => (
+            <div key={gift.grantId} className="flex flex-wrap items-center gap-2 rounded-xl border border-line/10 bg-deep/40 px-3 py-2 text-[12.5px]">
+              <span className="font-bold">{gift.email || `${gift.userId.slice(0, 8)}…`}</span>
+              <Chip tone="lvl">{gift.source === "gift_code" ? "Gift" : "Complimentary"}</Chip>
+              <Chip>{planLabel(gift.product)}</Chip>
+              <span className="text-fnt">{gift.expiresAt ? `until ${new Date(gift.expiresAt).toLocaleDateString()}` : "no expiry"}</span>
+              {gift.code && <span className="font-mono text-[11px] text-fnt">{gift.code}</span>}
+              {gift.reason && <span className="min-w-[120px] flex-1 truncate text-[11px] text-fnt" title={gift.reason}>{gift.reason}</span>}
+              <button className={btnDanger + btnSm} disabled={busy} onClick={() => void revokeGift(gift)}>Revoke gift</button>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <RevenueSnapshotCard payments={payments} />
       <div className={`${cardCls} p-5`}>
         <h3 className="text-[14.5px] font-extrabold">🎟️ Coupon codes</h3>
@@ -243,14 +272,20 @@ export function BillingSection() {
                 <tr key={u.userId} className="border-b border-line/5 align-top last:border-0 hover:bg-wht/5">
                   <td className="px-4 py-3">
                     <div className="font-bold">{u.email || "—"}</div>
-                    <div className="text-[11px] text-fnt">{u.userId.slice(0, 8)}… · {u.source ?? "none"}</div>
+                    <div className="flex flex-wrap gap-1 text-[11px] text-fnt">
+                      <span>{u.userId.slice(0, 8)}…</span>
+                      {u.complimentary && <Chip tone="lvl">{u.complimentarySource === "gift_code" ? "Gift" : "Complimentary"}</Chip>}
+                      {u.paidSource && <span>paid via {u.paidSource}</span>}
+                    </div>
                   </td>
                   <td className="px-3 py-3">
-                    {u.tier === "platinum" ? <Chip tone="lvl">💎 PLATINUM</Chip> : u.active ? <Chip tone="ok">PRO</Chip> : <Chip>free</Chip>}
+                    {u.isPlatinum || u.tier === "platinum" ? <Chip tone="lvl">💎 PLATINUM</Chip> : u.active ? <Chip tone="ok">PRO</Chip> : u.autoApply ? <Chip tone="ok">AUTO-APPLY</Chip> : <Chip>free</Chip>}
                   </td>
-                  <td className="px-3 py-3">{u.tier === "pro" ? planLabel(u.plan) : "—"}</td>
+                  <td className="px-3 py-3">
+                    {u.active ? planLabel(u.plan) : u.autoApply ? "Auto-apply add-on" : "—"}
+                  </td>
                   <td className="px-3 py-3 text-[12px] text-fnt">
-                    {u.tier === "pro" ? (u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : "never") : "—"}
+                    {u.active ? (u.expiresAt ? new Date(u.expiresAt).toLocaleDateString() : "never") : u.complimentaryProduct === "auto_apply" ? (u.complimentaryExpiresAt ? new Date(u.complimentaryExpiresAt).toLocaleDateString() : "never") : "—"}
                   </td>
                   <td className="px-3 py-3">
                     {u.discountPct > 0 ? (
@@ -259,35 +294,31 @@ export function BillingSection() {
                   </td>
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap gap-1.5">
-                      {u.active ? (
-                        <button className={btnDanger + btnSm} disabled={busy} onClick={() => revoke(u)}>⛔ Revoke</button>
-                      ) : (
-                        <button className={btnOk + btnSm} disabled={busy} onClick={() => setOpen(o => ({ ...o, [u.userId]: o[u.userId] === "grant" ? undefined : "grant" }))}>
-                          💎 Grant Pro
-                        </button>
-                      )}
+                      <button className={btnOk + btnSm} disabled={busy} onClick={() => setOpen(o => ({ ...o, [u.userId]: o[u.userId] === "grant" ? undefined : "grant" }))}>
+                        🎁 Complimentary
+                      </button>
                       <button className={btnGhost + btnSm} disabled={busy} onClick={() => setOpen(o => ({ ...o, [u.userId]: o[u.userId] === "discount" ? undefined : "discount" }))}>
                         🏷️ Discount
                       </button>
-                      <button className={btnGhost + btnSm} disabled={busy} onClick={() => simulate(u)} title="Simulate a confirmed purchase — same apply_purchase grant path as the real webhook">
+                      <button className={btnGhost + btnSm} disabled={busy} onClick={() => simulate(u)} title="Simulate a confirmed purchase — same paid apply_purchase path as the real webhook">
                         🪙 Sim purchase
-                      </button>
-                      <button
-                        className={btnGhost + btnSm}
-                        disabled={busy}
-                        title={u.autoApply ? "Revoke the auto-apply add-on" : "Grant the auto-apply add-on (works with any tier)"}
-                        onClick={() => void toggleAddon(u)}
-                      >
-                        {u.autoApply ? "🤖 Remove add-on" : "🤖 Add-on"}
                       </button>
                     </div>
                     {open[u.userId] === "grant" && (
-                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                        <select value={gPlan} onChange={e => setGPlan(e.target.value)} className="inp w-28 py-1 text-[12px]">
-                          {PLANS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                      <div className="mt-2 grid max-w-[520px] grid-cols-1 gap-1.5 sm:grid-cols-[1fr_1fr_auto]">
+                        <select value={gProduct} onChange={e => selectGrantProduct(e.target.value as ComplimentaryProduct)} className="inp py-1 text-[12px]">
+                          {COMPLIMENTARY_PRODUCTS.map(product => <option key={product.id} value={product.id}>{product.label}</option>)}
                         </select>
-                        <input type="number" min={1} value={gDays} onChange={e => setGDays(Math.max(1, Number(e.target.value) || 30))} className="inp w-16 py-1 text-center text-[12px]" title="days (lifetime/platinum ignore this)" disabled={gPlan === "platinum"} />
-                        <button className={btnOk + btnSm} disabled={busy} onClick={() => grant(u)}>Grant</button>
+                        <select value={gExpiry} onChange={e => setGExpiry(e.target.value as typeof gExpiry)} className="inp py-1 text-[12px]" aria-label="Complimentary expiry">
+                          {(COMPLIMENTARY_PRODUCTS.find(product => product.id === gProduct)?.defaultDays ?? 0) > 0 && (
+                            <option value="standard">Standard ({COMPLIMENTARY_PRODUCTS.find(product => product.id === gProduct)?.defaultDays} days)</option>
+                          )}
+                          <option value="lifetime">No expiry</option>
+                          <option value="custom">Custom days</option>
+                        </select>
+                        {gExpiry === "custom" && <input type="number" min={1} value={gDays} onChange={e => setGDays(Math.max(1, Number(e.target.value) || 1))} className="inp w-24 py-1 text-center text-[12px]" aria-label="Custom days" />}
+                        <input value={gReason} onChange={e => setGReason(e.target.value)} maxLength={500} placeholder="Reason (required; audited)" className="inp py-1 text-[12px] sm:col-span-2" />
+                        <button className={btnOk + btnSm} disabled={busy || !gReason.trim()} onClick={() => grant(u)}>Grant</button>
                       </div>
                     )}
                     {open[u.userId] === "discount" && (

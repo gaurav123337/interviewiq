@@ -32,18 +32,26 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getApplyAgentRuntimeContext } from "./apply-agent-runtime.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PROFILE_DIR = path.join(ROOT, "..", "freebuff-apply-profile");
+const AGENT_CONTEXT = getApplyAgentRuntimeContext();
+const PAIRED = AGENT_CONTEXT.mode === "paired";
+const PROFILE_DIR = PAIRED ? path.join(AGENT_CONTEXT.stateRoot, "browser-profile") : path.join(ROOT, "..", "freebuff-apply-profile");
 /* independent sign-in window: a THROWAWAY clone of the engine profile. It
    deliberately lives OUTSIDE the repo (LOCALAPPDATA, not OneDrive): the repo
    tree syncs to OneDrive, and a Chromium profile is thousands of tiny files
    being written and deleted continuously — sync churn + hydration kills
    browsers. The real profile stays untouched (and lockable) while the owner
    signs in — then the fresh cookies are merged back. Never shipped. */
-const SIGNIN_PROFILE_DIR = process.env.LOCALAPPDATA
-  ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile")
-  : path.join(ROOT, "..", "freebuff-apply-signin-profile");
+const SIGNIN_PROFILE_DIR = PAIRED ? path.join(AGENT_CONTEXT.stateRoot, "signin-profile")
+  : process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile")
+    : path.join(ROOT, "..", "freebuff-apply-signin-profile");
+
+export function applyBrowserPaths() {
+  return { profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR };
+}
 const CLONE_OWNER_MARKER = "owner-alive.json";
 
 /* Chromium's live-process lock files — copying ANY of them into the clone
@@ -171,6 +179,7 @@ function mergeInto(dest, src) {
     DevToolsActivePort file inside the profile) — the --all parent uses this
     to hand ONE shared browser to its per-site children (tabs, not windows). */
 export async function readLocalCdpEndpoint(retries = 20) {
+  if (PAIRED) throw new Error("shared CDP/relay unavailable in paired mode");
   const f = path.join(PROFILE_DIR, "DevToolsActivePort");
   for (let i = 0; i < retries; i++) {
     try {
@@ -213,6 +222,10 @@ export function isRemoteEndpoint(endpoint) {
  * @returns {Promise<{ctx: import("playwright").BrowserContext, cleanup: () => Promise<void>, remote: boolean, reused: boolean}>}
  */
 export async function acquireApplyContext({ headless = false, endpoint = "", signIn = false, extraArgs = [] } = {}) {
+  // Refuse before importing Playwright or opening any shared/local profile.
+  if (PAIRED && (String(endpoint).trim() || extraArgs.some((arg) => /^--remote-debugging-(port|pipe)/.test(arg)))) {
+    throw new Error("cloud/shared CDP/relay unavailable in paired mode");
+  }
   /* computed specifier so vite/vitest never statically resolve playwright
      (same trick as the engine's launchBrowser) */
   const spec = ["play", "wright"].join("");
