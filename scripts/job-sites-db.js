@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { getApplyAgentRuntimeContext } from "./apply-agent-runtime.js";
 
-const AGENT_CONTEXT = getApplyAgentRuntimeContext();
-const PAIRED = AGENT_CONTEXT.mode === "paired";
+function agentContext() { return getApplyAgentRuntimeContext(); }
+function isPaired() { return agentContext().mode === "paired"; }
 const SETTINGS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".claude", "settings.local.json");
 
 export function pairedOperationUnavailable(name) {
@@ -27,15 +27,56 @@ const ACTIONS = new Set([
   "outcomes.digest", "digest.weekly", "notify.get",
 ]);
 
+/** A factory keeps the new worker independent from legacy credentials and owner RPCs. */
+export function createPipelineTransport(context, { fetchImpl = fetch, timeoutMs = 30_000 } = {}) {
+  if (context?.mode !== "paired") throw new Error("Pipeline requires a paired binding");
+  const actions = new Set(["profile.get", "settings.get", "answers.list", "questions.queue", "boards.list", "boards.discover",
+    "jobs.list", "jobs.ingest", "tasks.claim", "tasks.renew", "tasks.report", "submission.reserve",
+    "submission.finish", "agent.heartbeat", "sessions.report", "commands.claim", "commands.report"]);
+  return async (action, args = {}) => {
+    if (!actions.has(action)) throw new Error("Unsupported pipeline action");
+    let response;
+    try {
+      response = await fetchImpl(context.endpoint, { method: "POST", redirect: "error",
+        headers: { Authorization: `Bearer ${context.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "pipeline.action", action, args }), signal: AbortSignal.timeout(timeoutMs) });
+    } catch {
+      const error = new Error("Pipeline transport unavailable"); error.code = "PIPELINE_OFFLINE"; throw error;
+    }
+    const body = await response.json().catch(() => null);
+    if (!response.ok || body?.ok !== true || body.action !== action || !Object.hasOwn(body, "data")) {
+      const error = new Error(`Pipeline action rejected (HTTP ${response.status})`);
+      error.code = response.status === 401 || response.status === 403 ? "PIPELINE_REVOKED"
+        : response.status === 409 ? "PIPELINE_STALE" : "PIPELINE_OFFLINE";
+      throw error;
+    }
+    return body.data;
+  };
+}
+
+/** Fixed legacy-compatible notify action, scoped by this same paired binding. */
+export function createPipelineNotifyConfig(context, { fetchImpl = fetch } = {}) {
+  if (context?.mode !== "paired") throw new Error("Paired notify binding required");
+  return async () => {
+    const response = await fetchImpl(context.endpoint, { method: "POST", redirect: "error",
+      headers: { Authorization: `Bearer ${context.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ operation: "agent.action", action: "notify.get", args: {} }), signal: AbortSignal.timeout(5000) });
+    const body = await response.json().catch(() => null);
+    if (!response.ok || body?.ok !== true || body.action !== "notify.get") return null;
+    return body.data;
+  };
+}
+
 /** No retry/fallback: revoked or unavailable authorization is always an error. */
 export async function pairedAgentAction(action, args = {}) {
-  if (!PAIRED) throw new Error("Paired agent context required");
+  if (!isPaired()) throw new Error("Paired agent context required");
   if (!ACTIONS.has(action)) pairedOperationUnavailable(action);
+  const context = agentContext();
   let res;
   try {
-    res = await fetch(AGENT_CONTEXT.endpoint, {
+    res = await fetch(context.endpoint, {
       method: "POST",
-      headers: { Authorization: `Bearer ${AGENT_CONTEXT.token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${context.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ operation: "agent.action", action, args }),
       signal: AbortSignal.timeout(30_000),
       redirect: "error", // never forward the bearer token through a redirect
@@ -66,7 +107,7 @@ export async function assertPairedEntitlement() {
 }
 
 export function loadLocalCreds() {
-  if (PAIRED) pairedOperationUnavailable("loadLocalCreds");
+  if (isPaired()) pairedOperationUnavailable("loadLocalCreds");
   const settings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8"));
   const rule = (settings.permissions?.allow ?? []).find(
     (r) => typeof r === "string" && /Bash\(SUPA_URL=/.test(r)
@@ -95,7 +136,7 @@ async function rpc(creds, fn, args) {
 // Pin the verified rollout owner once; never infer ownership from browser/profile data.
 let legacyUser;
 async function coreAction(action, args = {}) {
-  if (PAIRED) return pairedAgentAction(action, args);
+  if (isPaired()) return pairedAgentAction(action, args);
   const creds = loadLocalCreds();
   legacyUser ??= rpc(creds, "apply_legacy_user_id", {}).then((id) => {
     if (typeof id !== "string" || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
@@ -108,13 +149,22 @@ async function coreAction(action, args = {}) {
 
 /** Safe catalog in paired mode; legacy registry tooling can still see all rows. */
 export async function listJobSites() {
-  if (PAIRED) return assertPairedEntitlement();
+  if (isPaired()) return assertPairedEntitlement();
   const creds = loadLocalCreds();
-  const res = await fetch(`${creds.base}/rest/v1/job_sites?select=*&order=host.asc`, {
-    headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
-  });
-  if (!res.ok) throw new Error(`job_sites read ${res.status}`);
-  return res.json();
+  const rows = [];
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const res = await fetch(`${creds.base}/rest/v1/job_sites?select=*&order=host.asc&offset=${offset}&limit=${pageSize}`, {
+      headers: { apikey: creds.key, Authorization: `Bearer ${creds.key}` },
+      signal: AbortSignal.timeout(30_000), redirect: "error",
+    });
+    if (!res.ok) throw new Error(`job_sites read ${res.status}`);
+    const page = await res.json();
+    if (!Array.isArray(page)) throw new Error("job_sites catalog malformed");
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+    if (offset >= 100000) throw new Error("job_sites catalog pagination exceeded limit");
+  }
 }
 
 /* Core data uses the same owner-scoped action contract in BOTH modes. */
@@ -167,55 +217,55 @@ export async function getNotifyConfig() { return coreAction("notify.get"); }
 
 /* Owner-global surfaces are deliberately unavailable to paired bindings. */
 export async function activateProbationSites(days = 7, max = 3) {
-  if (PAIRED) pairedOperationUnavailable("activateProbationSites");
+  if (isPaired()) pairedOperationUnavailable("activateProbationSites");
   return rpc(loadLocalCreds(), "engine_activate_probation_sites", { p_days: days, p_max: max }) ?? [];
 }
 export async function upsertJobSite({ host, label, jobsUrl, source, rules, sessionOk }) {
-  if (PAIRED) pairedOperationUnavailable("upsertJobSite");
+  if (isPaired()) pairedOperationUnavailable("upsertJobSite");
   return rpc(loadLocalCreds(), "engine_upsert_job_site", {
     p_host: host, p_label: label, p_jobs_url: jobsUrl ?? null, p_source: source,
     p_rules: rules ?? null, p_session_ok: sessionOk ?? null,
   });
 }
 export async function recordRun({ host, ok, collected, submitted, skipped, errors, notes }) {
-  if (PAIRED) pairedOperationUnavailable("recordRun");
+  if (isPaired()) pairedOperationUnavailable("recordRun");
   return rpc(loadLocalCreds(), "engine_record_job_site_run", {
     p_host: host, p_ok: ok, p_collected: collected ?? 0, p_submitted: submitted ?? 0,
     p_skipped: skipped ?? 0, p_errors: errors ?? 0, p_notes: notes ?? null,
   });
 }
 export async function setSiteRules(host, rules) {
-  if (PAIRED) pairedOperationUnavailable("setSiteRules");
+  if (isPaired()) pairedOperationUnavailable("setSiteRules");
   return rpc(loadLocalCreds(), "engine_set_job_site_rules", { p_host: host, p_rules: rules });
 }
 export async function getApplyConfig() {
-  if (PAIRED) pairedOperationUnavailable("getApplyConfig");
+  if (isPaired()) pairedOperationUnavailable("getApplyConfig");
   return rpc(loadLocalCreds(), "engine_get_apply_config", {});
 }
 export async function engineGetApplyPolicy() {
-  if (PAIRED) pairedOperationUnavailable("engineGetApplyPolicy");
+  if (isPaired()) pairedOperationUnavailable("engineGetApplyPolicy");
   return rpc(loadLocalCreds(), "engine_get_apply_policy", {});
 }
 export async function suspendDeadBoards(minApplications = 10, maxSweeps = 3) {
-  if (PAIRED) pairedOperationUnavailable("suspendDeadBoards");
+  if (isPaired()) pairedOperationUnavailable("suspendDeadBoards");
   return rpc(loadLocalCreds(), "engine_suspend_dead_boards", { p_min_applications: minApplications, p_max_sweeps: maxSweeps });
 }
 export async function credentialForSite(host) {
-  if (PAIRED) pairedOperationUnavailable("credentialForSite");
+  if (isPaired()) pairedOperationUnavailable("credentialForSite");
   const rows = await rpc(loadLocalCreds(), "engine_credential_for_site", { p_host: host });
   return rows?.[0] ?? null;
 }
 export async function engineUpdateCredentialLastVerified(host) {
-  if (PAIRED) pairedOperationUnavailable("engineUpdateCredentialLastVerified");
+  if (isPaired()) pairedOperationUnavailable("engineUpdateCredentialLastVerified");
   return rpc(loadLocalCreds(), "engine_update_credential_last_verified", { p_host: host });
 }
 export async function pendingLoginRequest() {
-  if (PAIRED) pairedOperationUnavailable("pendingLoginRequest");
+  if (isPaired()) pairedOperationUnavailable("pendingLoginRequest");
   const rows = await rpc(loadLocalCreds(), "engine_pending_login_request", {});
   return rows?.[0] ?? null;
 }
 export async function setSiteSession(host, ok) {
-  if (PAIRED) pairedOperationUnavailable("setSiteSession");
+  if (isPaired()) pairedOperationUnavailable("setSiteSession");
   const creds = loadLocalCreds();
   const res = await fetch(`${creds.base}/rest/v1/job_sites?host=eq.${encodeURIComponent(host)}`, {
     method: "PATCH",
@@ -225,36 +275,36 @@ export async function setSiteSession(host, ok) {
   if (!res.ok) throw new Error(`session write ${res.status}`);
 }
 export async function fulfillLoginRequest(host) {
-  if (PAIRED) pairedOperationUnavailable("fulfillLoginRequest");
+  if (isPaired()) pairedOperationUnavailable("fulfillLoginRequest");
   return rpc(loadLocalCreds(), "engine_fulfill_login_request", { p_host: host });
 }
 export async function setSiteSessionState(host, state) {
-  if (PAIRED) pairedOperationUnavailable("setSiteSessionState");
+  if (isPaired()) pairedOperationUnavailable("setSiteSessionState");
   return rpc(loadLocalCreds(), "admin_set_site_session_state", { p_host: host, p_state: state });
 }
 export async function reportLoginStatus(host, status, detail) {
-  if (PAIRED) pairedOperationUnavailable("reportLoginStatus");
+  if (isPaired()) pairedOperationUnavailable("reportLoginStatus");
   return rpc(loadLocalCreds(), "engine_report_login_status", { p_host: host, p_status: status, p_detail: detail ?? null });
 }
 export async function pendingRunRequest() {
-  if (PAIRED) pairedOperationUnavailable("pendingRunRequest");
+  if (isPaired()) pairedOperationUnavailable("pendingRunRequest");
   const rows = await rpc(loadLocalCreds(), "engine_pending_run_request", {});
   return rows?.[0] ?? null;
 }
 export async function fulfillRunRequest() {
-  if (PAIRED) pairedOperationUnavailable("fulfillRunRequest");
+  if (isPaired()) pairedOperationUnavailable("fulfillRunRequest");
   return rpc(loadLocalCreds(), "engine_fulfill_run_request", {});
 }
 export async function reportRunStatus(status, detail) {
-  if (PAIRED) pairedOperationUnavailable("reportRunStatus");
+  if (isPaired()) pairedOperationUnavailable("reportRunStatus");
   return rpc(loadLocalCreds(), "engine_report_run_status", { p_status: status, p_detail: detail ?? null });
 }
 export async function reportEngineState(state, detail) {
-  if (PAIRED) pairedOperationUnavailable("reportEngineState");
+  if (isPaired()) pairedOperationUnavailable("reportEngineState");
   return rpc(loadLocalCreds(), "engine_report_engine_state", { p_state: state, p_detail: detail ?? null });
 }
 export async function listenerHeartbeatFresh(maxAgeMs = 210_000) {
-  if (PAIRED) pairedOperationUnavailable("listenerHeartbeatFresh");
+  if (isPaired()) pairedOperationUnavailable("listenerHeartbeatFresh");
   try {
     const evs = await listEngineEvents(1);
     const last = evs.filter((e) => e.state === "running" && String(e.detail ?? "").startsWith("listener")).at(-1);
@@ -262,7 +312,7 @@ export async function listenerHeartbeatFresh(maxAgeMs = 210_000) {
   } catch { return false; }
 }
 export async function watcherHeartbeatFresh(maxAgeMs = 15 * 60_000) {
-  if (PAIRED) pairedOperationUnavailable("watcherHeartbeatFresh");
+  if (isPaired()) pairedOperationUnavailable("watcherHeartbeatFresh");
   try {
     const evs = await listEngineEvents(1);
     const last = evs.filter((e) => e.state === "running" && String(e.detail ?? "").startsWith("watcher")).at(-1);
@@ -270,7 +320,7 @@ export async function watcherHeartbeatFresh(maxAgeMs = 15 * 60_000) {
   } catch { return false; }
 }
 export async function listEngineEvents(hours = 168) {
-  if (PAIRED) pairedOperationUnavailable("listEngineEvents");
+  if (isPaired()) pairedOperationUnavailable("listEngineEvents");
   const creds = loadLocalCreds();
   const since = new Date(Date.now() - hours * 3600_000).toISOString();
   const res = await fetch(`${creds.base}/rest/v1/engine_events?select=state,detail,created_at&created_at=gte.${encodeURIComponent(since)}&order=created_at.asc`, {

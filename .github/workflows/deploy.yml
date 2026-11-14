@@ -65,6 +65,8 @@ jobs:
       # directories. The production dist/ above is not rebuilt or replaced.
       - name: Install Chromium for the virtual tester
         run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify synthetic paired worker and portal execution
+        run: xvfb-run -a npm run test:apply:worker
       - name: Virtual tester safety and browser gate
         run: npm run test:e2e:check && npm run test:e2e
       - name: Upload isolated browser evidence

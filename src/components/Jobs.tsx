@@ -27,6 +27,7 @@ import {benchLevelForYears, detectMarket, type BenchLevel, type Market} from "..
 
 import { downloadZip } from "../services/zip";
 import { AutoApplyCard } from "./jobs/AutoApplyCard";
+import ApplyPipelinePanel from "./jobs/ApplyPipelinePanel";
 
 import { ReportModal } from "./jobs/ReportModal";
 import { ImportModal } from "./jobs/ImportModal";
@@ -453,6 +454,8 @@ export function Jobs() {
         save={save}
         addSuggestedSkill={addSuggestedSkill}
       />
+
+      <ApplyPipelinePanel canRun={!!accountId && (autoApplyEntitled || isAdmin && getAdminState().isAdmin)} />
 
       <AutoApplyCard
         key={accountId ?? "guest"}

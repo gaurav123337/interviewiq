@@ -3,7 +3,7 @@
    commands contain no global data; the legacy control center remains admin-
    only until every service behind it is scoped to the signed-in user. */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cardCls, btnGhost, btnOk, btnPrimary, btnSm, Chip } from "../ui";
 import { APPLY_SITES, engineCommands, exportProfileJson } from "../../services/autoApply";
 import { requestRunNow, fetchRunStatus, getApplyConfig, type ApplyMode, type RunLifecycle } from "../../services/jobSites";
@@ -43,25 +43,38 @@ export function AutoApplyCard({ locked, isAdmin, onUpgrade }: {
   /* ⚡ Run now: queue a full cycle on the desktop engine and poll the
      lifecycle (queued → running → done-with-summary / failed) so the owner
      sees progress instead of a dead button. */
-  const [runState, setRunState] = useState<{ status: RunLifecycle; detail: string | null } | null>(null);
+  const [runState, setRunState] = useState<{ status: RunLifecycle | "unverified"; detail: string | null } | null>(null);
+  const runGeneration = useRef(0);
+  useEffect(() => {
+    const unsubscribe = subscribeCloud(s => {
+      if (s.user?.id !== userId) { runGeneration.current++; setRunState(null); }
+    });
+    return () => { runGeneration.current++; unsubscribe(); };
+  }, [userId]);
   const runNow = useCallback(async () => {
+    if (!isAdmin || !userId || getCloudState().user?.id !== userId) return;
+    const generation = ++runGeneration.current;
+    const current = () => generation === runGeneration.current && getCloudState().user?.id === userId;
     setRunState({ status: "requested", detail: null });
     try {
       await requestRunNow();
-      const deadline = Date.now() + 40 * 60_000; // a full cycle can take many minutes
+      if (!current()) return;
+      const deadline = Date.now() + 40 * 60_000;
       for (;;) {
         await new Promise((r) => setTimeout(r, 10_000));
-        if (Date.now() > deadline) { setRunState({ status: "done", detail: "poll timed out — check the Applications report" }); return; }
+        if (!current()) return;
+        if (Date.now() > deadline) { setRunState({ status: "unverified", detail: "Status checks timed out. Completion is unverified; check the Applications report." }); return; }
         const { status, detail } = await fetchRunStatus().catch(() => ({ status: null, detail: null }));
-        if (!status || status === "requested") continue; // listener hasn't picked it up yet
+        if (!current()) return;
+        if (!status || status === "requested") continue;
         setRunState({ status, detail });
-        if (status === "running") continue; // keep watching until done/failed
+        if (status === "running") continue;
         return;
       }
-    } catch (e) {
-      setRunState({ status: "failed", detail: (e as Error).message });
+    } catch {
+      if (current()) setRunState({ status: "failed", detail: "Legacy owner run request failed. Check the owner engine status." });
     }
-  }, []);
+  }, [isAdmin, userId]);
   useEffect(() => { if (runState?.status === "done" || runState?.status === "failed") { const t = setTimeout(() => setRunState(null), 60_000); return () => clearTimeout(t); } }, [runState?.status]);
 
   /* apply mode mirrors the engine's kill switch: while Off, every engine
@@ -80,9 +93,11 @@ export function AutoApplyCard({ locked, isAdmin, onUpgrade }: {
     const t = setInterval(load, 60_000);
     return () => { dead = true; clearInterval(t); };
   }, [isAdmin]);
-  const profileJson = useMemo(() => (active ? exportProfileJson() : ""), [active, userId]);
+  const [ownerProfileConfirmed, setOwnerProfileConfirmed] = useState(false);
+  useEffect(() => { setOwnerProfileConfirmed(false); }, [userId]);
+  const profileJson = useMemo(() => (active && isAdmin && ownerProfileConfirmed ? exportProfileJson() : ""), [active, isAdmin, ownerProfileConfirmed, userId]);
   const missing = useMemo(() => {
-    if (!active) return [];
+    if (!active || !isAdmin || !ownerProfileConfirmed) return [];
     try {
       const p = JSON.parse(profileJson) as { name?: string; email?: string; phone?: string };
       return (["name", "email", "phone"] as const).filter(k => !p[k]);
@@ -145,23 +160,28 @@ export function AutoApplyCard({ locked, isAdmin, onUpgrade }: {
           <div className="mb-4 flex flex-wrap items-center gap-2">
             {isAdmin && (
               <button className={btnPrimary + btnSm} disabled={runState?.status === "requested" || runState?.status === "running" || applyMode === "off"} onClick={() => void runNow()}>
-                {runState?.status === "requested" ? "⏳ queued…" : runState?.status === "running" ? "⚙️ running — cycling active sites…" : "⚡ Run now"}
+                {runState?.status === "requested" ? "queued…" : runState?.status === "running" ? "running — legacy owner cycle…" : "Legacy owner Run now"}
               </button>
             )}
-            <button className={btnOk + btnSm} onClick={download}>⬇️ Download apply-profile.json</button>
-            <button className={btnGhost + btnSm} onClick={() => void copy(profileJson)}>📋 Copy JSON</button>
-            <span className="text-[11px] text-mut">save it to the repo root (next to package.json)</span>
+            {isAdmin && <label className="flex w-full items-start gap-2 text-[11px] text-mut"><input type="checkbox" checked={ownerProfileConfirmed} onChange={event => setOwnerProfileConfirmed(event.target.checked)} />I recognize this device's locally cached profile as the legacy owner's profile, not the signed-in customer's cloud profile. Enable legacy export.</label>}
+            {isAdmin && ownerProfileConfirmed && <>
+              <button className={btnOk + btnSm} onClick={download}>Download legacy owner apply-profile.json</button>
+              <button className={btnGhost + btnSm} onClick={() => void copy(profileJson)}>Copy legacy owner JSON</button>
+              <span className="text-[11px] text-mut">local owner profile only · save it to the owner checkout</span>
+            </>}
+            {!isAdmin && <p className="text-[12px] text-mut">Use the verified pipeline above to import your own account's saved draft. Local legacy profile export and site commands are owner-only.</p>}
           </div>
           {isAdmin && runState && (
             <p className={`mb-3 rounded-lg px-3 py-2 text-[12px] ${runState.status === "failed" ? "border border-red-500/30 bg-red-500/10 text-red-300" : "border border-ok/30 bg-ok/10 text-ink"}`}>
               {runState.status === "requested" && "⏳ Run queued — the desktop engine picks it up within ~30s, then cycles every ACTIVE site."}
               {runState.status === "running" && "⚙️ Engine is running a full cycle now — this updates when it finishes."}
+              {runState.status === "unverified" && runState.detail}
               {runState.status === "done" && (runState.detail ?? "Run finished — see the Applications report below.")}
               {runState.status === "failed" && (runState.detail ?? "Run failed — check the engine logs.")}
             </p>
           )}
 
-          <div className="space-y-2">
+          {isAdmin && <div className="space-y-2">
             {APPLY_SITES.map(s => (
               <div key={s.id} className="rounded-xl border border-line/10 bg-deep/40">
                 <button
@@ -189,7 +209,7 @@ export function AutoApplyCard({ locked, isAdmin, onUpgrade }: {
                 )}
               </div>
             ))}
-          </div>
+          </div>}
           <p className="mt-3 text-[11px] text-mut">
             Paired browser sessions and reports stay in your OS user-data directory, partitioned by binding.
             The project service key is never part of customer setup.

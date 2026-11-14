@@ -19,6 +19,7 @@ export interface PairedApplyAgentRuntimeContext {
 export interface LegacyApplyAgentRuntimeContext {
   mode: "legacy";
   profilePath: string;
+  dataRoot?: string;
 }
 
 export type ApplyAgentRuntimeContext =

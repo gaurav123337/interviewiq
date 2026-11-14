@@ -1,11 +1,12 @@
 /* apply-agent — paired local-agent control plane.
 
-   One POST endpoint, five explicit operations:
+   One POST endpoint, six explicit operations:
      pair.create       signed-in + entitled; returns one short-lived code once
      bindings.list     signed-in; returns caller-owned metadata even after expiry
      bindings.revoke   signed-in; revokes caller-owned binding even after expiry
      pair.exchange     possession of an unused code; returns token once
-     agent.action      binding bearer token; strict action allowlist only
+     agent.action      binding bearer token; legacy strict action allowlist only
+     pipeline.action   binding bearer token; separate verified pipeline allowlist
 
    Deploy with --no-verify-jwt because pair.exchange and agent.action use their
    own high-entropy credentials. Signed-in operations still call auth.getUser.
@@ -27,6 +28,8 @@ import {
   sha256Hex,
   validateAgentActionRequest,
 } from "../_shared/applyAgent.ts";
+
+import { validatePipelineActionRequest } from "../_shared/applyPipeline.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-store" };
 const BROWSER_OPERATIONS = new Set(["pair.create", "bindings.list", "bindings.revoke"]);
@@ -67,7 +70,10 @@ function firstRow<T>(value: unknown): T | null {
 }
 
 function statusForRpc(message: string, fallback = 500): number {
-  if (/forbidden|not entitled|permission denied/i.test(message)) return 403;
+  if (/invalid or revoked binding/i.test(message)) return 401;
+  if (/revision conflict|stale task lease|already reserved|already finished/i.test(message)) return 409;
+  if (/not found/i.test(message)) return 404;
+  if (/forbidden|not entitled|permission denied|cap reached|quiet hours|paused|unanswered|verified session required/i.test(message)) return 403;
   if (/invalid|bad |violates|malformed/i.test(message)) return 400;
   return fallback;
 }
@@ -185,6 +191,7 @@ async function handleExchange(
 async function authenticateBinding(
   req: Request,
   client: RpcClient,
+  requireAccess = true,
 ): Promise<{ bindingId: string; ownerId: string } | null> {
   const parsed = parseBindingToken(bearer(req));
   if (!parsed) return null;
@@ -197,8 +204,10 @@ async function authenticateBinding(
   const storedBytes = new TextEncoder().encode(row.token_hash ?? "");
   if (!constantTimeEqual(presentedBytes, storedBytes)) return null;
 
-  const entitlement = await rpc(client, "service_apply_agent_has_access", { p_user: row.owner_id });
-  if (entitlement.error || entitlement.data !== true) return null;
+  if (requireAccess) {
+    const entitlement = await rpc(client, "service_apply_agent_has_access", { p_user: row.owner_id });
+    if (entitlement.error || entitlement.data !== true) return null;
+  }
   return { bindingId: parsed.bindingId, ownerId: row.owner_id };
 }
 
@@ -239,6 +248,33 @@ async function handleAgentAction(
   return json(200, { ok: true, action: validated.action, data });
 }
 
+async function handlePipelineAction(req: Request, body: Record<string, unknown>, client: RpcClient): Promise<Response> {
+  if (req.headers.has("origin")) return json(403, { ok: false, error: "browser_origin_forbidden" });
+  const validated = validatePipelineActionRequest(body, "agent");
+  if (!validated.ok) return json(validated.error === "unsupported_action" ? 404 : 400, { ok: false, error: validated.error });
+  /* Only an already reserved attempt can be closed after entitlement expiry;
+     SQL validates that exact reservation, never permitting new private reads. */
+  const binding = await authenticateBinding(req, client, validated.action !== "submission.finish");
+  if (!binding) return json(401, { ok: false, error: "invalid_or_revoked_binding" });
+  const rateKey = `${binding.bindingId}:${clientKey(req, "pipeline")}`;
+  if (!ACTION_LIMIT(rateKey) || !(await durableRateLimit(client, "agent_action", binding.bindingId, 600, 60))) {
+    return json(429, { ok: false, error: "rate_limited" });
+  }
+  const { data, error } = await rpc(client, "service_apply_pipeline_dispatch", {
+    p_binding_id: binding.bindingId,
+    p_token_hash: await sha256Hex(parseBindingToken(bearer(req))!.secret),
+    p_action: validated.action,
+    p_args: validated.args,
+  });
+  if (error) {
+    const missing = error.code === "PGRST202" || /could not find the function/i.test(error.message);
+    return json(missing ? 503 : statusForRpc(error.message), {
+      ok: false, error: missing ? "pipeline_unavailable" : "pipeline_action_failed",
+    });
+  }
+  return json(200, { ok: true, action: validated.action, data });
+}
+
 export async function handleApplyAgent(
   req: Request,
   clientFactory: () => AuthClient = () => serviceClient() as unknown as AuthClient,
@@ -264,6 +300,7 @@ export async function handleApplyAgent(
     if (BROWSER_OPERATIONS.has(operation)) return await handleBrowserOperation(req, body, client);
     if (operation === "pair.exchange") return await handleExchange(req, body, client);
     if (operation === "agent.action") return await handleAgentAction(req, body, client);
+    if (operation === "pipeline.action") return await handlePipelineAction(req, body, client);
     return json(404, { ok: false, error: "unsupported_operation" });
   } catch {
     /* Never interpolate thrown values: PostgREST errors can include request data. */

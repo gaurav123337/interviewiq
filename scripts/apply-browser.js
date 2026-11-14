@@ -29,28 +29,30 @@
  * context's pages behave like local ones.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getApplyAgentRuntimeContext } from "./apply-agent-runtime.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const AGENT_CONTEXT = getApplyAgentRuntimeContext();
-const PAIRED = AGENT_CONTEXT.mode === "paired";
-const PROFILE_DIR = PAIRED ? path.join(AGENT_CONTEXT.stateRoot, "browser-profile") : path.join(ROOT, "..", "freebuff-apply-profile");
-/* independent sign-in window: a THROWAWAY clone of the engine profile. It
-   deliberately lives OUTSIDE the repo (LOCALAPPDATA, not OneDrive): the repo
-   tree syncs to OneDrive, and a Chromium profile is thousands of tiny files
-   being written and deleted continuously — sync churn + hydration kills
-   browsers. The real profile stays untouched (and lockable) while the owner
-   signs in — then the fresh cookies are merged back. Never shipped. */
-const SIGNIN_PROFILE_DIR = PAIRED ? path.join(AGENT_CONTEXT.stateRoot, "signin-profile")
-  : process.env.LOCALAPPDATA
-    ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile")
-    : path.join(ROOT, "..", "freebuff-apply-signin-profile");
+let __agentContext;
+function browserRuntime() { return __agentContext ??= getApplyAgentRuntimeContext(); }
+function browserPaths(context = browserRuntime()) {
+  const paired = context.mode === "paired";
+  const root = paired ? context.stateRoot : context.dataRoot ?? path.resolve(ROOT, "..");
+  return {
+    profileDir: path.join(root, paired ? "browser-profile" : "freebuff-apply-profile"),
+    signinProfileDir: paired ? path.join(root, "browser-profile")
+      : context.dataRoot ? path.join(root, "freebuff-apply-signin-profile")
+        : process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "freebuff-apply-signin-profile")
+          : path.join(root, "freebuff-apply-signin-profile"),
+  };
+}
+// Legacy helpers resolve paths on invocation, never when the new worker imports this module.
+function legacyPaths() { return browserPaths(); }
 
 export function applyBrowserPaths() {
-  return { profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR };
+  return browserPaths();
 }
 const CLONE_OWNER_MARKER = "owner-alive.json";
 
@@ -71,7 +73,10 @@ function isProfileLockEntry(name) {
     without it. Returns true when real session data was carried over.
     THROWS when a LIVE sign-in run already owns the clone (its owner marker
     pid is alive) — no second run may ever wipe a live window's profile. */
-export function cloneApplyProfileForSignin() {  try { const owner = JSON.parse(readFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), "utf8"));
+export function cloneApplyProfileForSignin() {
+  if (browserRuntime().mode === "paired") throw new Error("Paired sign-in uses the same binding profile; cookie copying is forbidden");
+  const { profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR } = legacyPaths();
+  try { const owner = JSON.parse(readFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), "utf8"));
     try { process.kill(owner.pid, 0); throw new Error(`sign-in already in progress — the clone profile is owned by a live run (pid ${owner.pid}); refusing to wipe it`); } catch (e) { if (e.code !== "ESRCH" && String(e.message).includes("refusing")) throw e; }
   } catch (e) { if (String(e.message).includes("refusing")) throw e; }
   /* session-presence check: BOTH cookie locations — modern Chromium keeps the
@@ -133,6 +138,7 @@ function cpFilter(src, dest) {
    modal the owner must dismiss before the login form is even reachable.
    Patch the clone's prefs to a CLEAN exit BEFORE the browser reads them. */
 function sanitizeCloneForLaunch() {
+  const { signinProfileDir: SIGNIN_PROFILE_DIR } = legacyPaths();
   const prefs = path.join(SIGNIN_PROFILE_DIR, "Default", "Preferences");
   try {
     const json = JSON.parse(readFileSync(prefs, "utf8"));
@@ -148,6 +154,8 @@ function sanitizeCloneForLaunch() {
     so anything new in the real profile since the clone was made is kept.
     Returns the number of files merged (0 = nothing to do / all locked). */
 export function mergeSigninProfileBack() {
+  if (browserRuntime().mode === "paired") return 0;
+  const { profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR } = legacyPaths();
   let merged = 0;
   try {
     if (!existsSync(SIGNIN_PROFILE_DIR)) return 0;
@@ -179,7 +187,8 @@ function mergeInto(dest, src) {
     DevToolsActivePort file inside the profile) — the --all parent uses this
     to hand ONE shared browser to its per-site children (tabs, not windows). */
 export async function readLocalCdpEndpoint(retries = 20) {
-  if (PAIRED) throw new Error("shared CDP/relay unavailable in paired mode");
+  if (browserRuntime().mode === "paired") throw new Error("shared CDP/relay unavailable in paired mode");
+  const { profileDir: PROFILE_DIR } = legacyPaths();
   const f = path.join(PROFILE_DIR, "DevToolsActivePort");
   for (let i = 0; i < retries; i++) {
     try {
@@ -195,6 +204,8 @@ export async function readLocalCdpEndpoint(retries = 20) {
     (owner marker present + its pid alive) — listeners use this to skip a
     whole flow cycle instead of walking into the clone mid-launch. */
 export function signinCloneOwnedByLiveRun() {
+  if (browserRuntime().mode === "paired") return false;
+  const { signinProfileDir: SIGNIN_PROFILE_DIR } = legacyPaths();
   try {
     const owner = JSON.parse(readFileSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), "utf8"));
     try { process.kill(owner.pid, 0); return true; } catch { return false; }
@@ -207,6 +218,8 @@ export function signinCloneOwnedByLiveRun() {
     wipe a clone whose owner pid is ALIVE, and on an in-process relaunch that
     owner is the flow itself — the refusal must not deadlock the recovery. */
 export function releaseSigninCloneOwnership() {
+  if (browserRuntime().mode === "paired") return;
+  const { signinProfileDir: SIGNIN_PROFILE_DIR } = legacyPaths();
   try { rmSync(path.join(SIGNIN_PROFILE_DIR, CLONE_OWNER_MARKER), { force: true }); } catch { /* best-effort */ }
 }
 
@@ -221,7 +234,36 @@ export function isRemoteEndpoint(endpoint) {
  * Acquire the apply browser context.
  * @returns {Promise<{ctx: import("playwright").BrowserContext, cleanup: () => Promise<void>, remote: boolean, reused: boolean}>}
  */
-export async function acquireApplyContext({ headless = false, endpoint = "", signIn = false, extraArgs = [] } = {}) {
+export async function acquirePipelineBrowser(runtime, { headless = true } = {}) {
+  if (runtime?.mode !== "paired") throw new Error("Paired browser binding required");
+  const { profileDir } = browserPaths(runtime);
+  const ownerFile = path.join(runtime.stateRoot, "browser-owner.json");
+  mkdirSync(runtime.stateRoot, { recursive: true });
+  let fd;
+  try { fd = openSync(ownerFile, "wx", 0o600); }
+  catch {
+    // Never remove another browser owner's marker; crashes require an explicit recovery.
+    throw new Error("Binding browser already owned; close or recover the prior worker first");
+  }
+  writeFileSync(fd, JSON.stringify({ pid: process.pid, bindingId: runtime.bindingId }));
+  closeSync(fd);
+  try {
+    const profilePresent = existsSync(path.join(profileDir, "Default", "Preferences"));
+    const acquired = await acquireApplyContext({ runtime, headless });
+    let closed = false;
+    return { ctx: acquired.ctx, profileMetadata: { bindingId: runtime.bindingId, profilePresent },
+      cleanup: async () => {
+        if (closed) return; closed = true;
+        await acquired.cleanup();
+        rmSync(ownerFile, { force: true });
+      } };
+  } catch (error) { rmSync(ownerFile, { force: true }); throw error; }
+}
+
+export async function acquireApplyContext({ headless = false, endpoint = "", signIn = false, extraArgs = [], runtime } = {}) {
+  const context = runtime ?? browserRuntime();
+  const PAIRED = context.mode === "paired";
+  const { profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR } = browserPaths(context);
   // Refuse before importing Playwright or opening any shared/local profile.
   if (PAIRED && (String(endpoint).trim() || extraArgs.some((arg) => /^--remote-debugging-(port|pipe)/.test(arg)))) {
     throw new Error("cloud/shared CDP/relay unavailable in paired mode");
@@ -242,7 +284,7 @@ export async function acquireApplyContext({ headless = false, endpoint = "", sig
     return { ctx, cleanup, remote: true, reused };
   }
 
-  if (signIn) {
+  if (signIn && !PAIRED) {
     /* INDEPENDENT sign-in browser: fresh clone, zero lock contention — the
        owner's personal Chrome and any running engine instance are irrelevant
        here. No retry loop needed: the clone can never be "in use". */

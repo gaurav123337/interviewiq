@@ -107,6 +107,27 @@ describe("getApplyAgentRuntimeContext", () => {
   });
 });
 
+describe("legacy root and early mode guards", () => {
+  it("preserves an explicit stable owner root in child arguments/environment", () => {
+    const { root, home } = fixture();
+    const ownerRoot = path.join(home, "original-owner-root");
+    const context = getApplyAgentRuntimeContext({ argv: ["node", "engine", "--legacy-owner", "--legacy-data-root", ownerRoot],
+      env: {}, repoRoot: root, home, platform: "linux" });
+    expect(context).toMatchObject({ mode: "legacy", dataRoot: ownerRoot, profilePath: path.join(ownerRoot, "apply-profile.json") });
+    expect(applyAgentChildArgs(context)).toContain(ownerRoot);
+    expect(applyAgentChildEnv(context).INTERVIEWIQ_LEGACY_DATA_ROOT).toBe(ownerRoot);
+  });
+  it("rejects owner root in paired mode before attempting a config read", () => {
+    const { root, home } = fixture();
+    expect(() => getApplyAgentRuntimeContext({ argv: ["node", "engine", "--legacy-data-root", home], env: {}, repoRoot: root, home, platform: "linux" }))
+      .toThrow(/explicit --legacy-owner/);
+  });
+  it.each([["--all", "--login-only"], ["--login-only", "--headless"]])("rejects incompatible modes %s %s before private IO", (a, b) => {
+    expect(() => getApplyAgentRuntimeContext({ argv: ["node", "engine", a, b], env: {}, repoRoot: "/nonexistent", home: "/nonexistent", platform: "linux" }))
+      .toThrow(/cannot be combined/);
+  });
+});
+
 describe("child propagation", () => {
   it("keeps the bearer token out of command-line arguments", () => {
     const { root, home, configPath } = fixture();
