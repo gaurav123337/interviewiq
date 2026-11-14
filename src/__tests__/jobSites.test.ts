@@ -5,10 +5,14 @@ const cloud = vi.hoisted(() => ({
   client: null as unknown,
   user: { id: "user-test" } as { id: string } | null,
   getSupabaseClient: vi.fn(),
+  listeners: new Set<(state: { user: { id: string } | null }) => void>(),
 }));
 vi.mock("../services/cloud", () => ({
   getSupabaseClient: cloud.getSupabaseClient,
   getCloudState: vi.fn(() => ({ user: cloud.user })),
+  subscribeCloud: vi.fn((fn: (state: { user: { id: string } | null }) => void) => {
+    cloud.listeners.add(fn); return () => cloud.listeners.delete(fn);
+  }),
 }));
 
 import {
@@ -17,16 +21,21 @@ import {
   getNotifyConfig, setNotifyConfig, listUserNotifyBindings, clearUserNotifyBinding,
   getApplyConfig, setApplyConfig, listApplyResults, applyResultCounts, listFormAnswerStats,
   sendApplyFeedback, getSkillStrikes, putJudgeExemplar, listJudgeExemplars,
-  deleteJudgeExemplar, testNotifyConfig, probationAutoActivateAt, discoveredStamp,
+  deleteJudgeExemplar, testNotifyConfig, disconnectNotifyConfig, validateNotifyBinding, defaultNotifyTimeZone, type NotifyConfig, probationAutoActivateAt, discoveredStamp,
 } from "../services/jobSites";
 
 const rpc = vi.fn();
 const invoke = vi.fn();
-const client = { rpc, functions: { invoke } };
+const getSession = vi.fn();
+const client = { rpc, functions: { invoke }, auth: { getSession } };
+const token = "123456789:synthetic_dummy_token_not_a_secret";
+const notifyConfig: NotifyConfig = { chat_id: "42", has_token: true, time_zone: "UTC", delivery_tested_at: "2026-11-13T12:00:00Z", updated_at: "2026-11-13T12:00:00Z", revision: 1 };
 
 beforeEach(() => {
   rpc.mockReset();
   invoke.mockReset();
+  getSession.mockReset().mockImplementation(async () => ({ data: { session: { user: cloud.user, access_token: "synthetic-session-only" } }, error: null }));
+  cloud.listeners.clear();
   cloud.client = client;
   cloud.user = { id: "user-test" };
   cloud.getSupabaseClient.mockReset().mockImplementation(async () => cloud.client);
@@ -152,22 +161,38 @@ describe("judge exemplar management", () => {
 });
 
 describe("notify test-fire (send-notify-test edge function)", () => {
-  it("invokes the function and reports delivery", async () => {
-    invoke.mockResolvedValueOnce({ data: { sent: true, message_id: 5 }, error: null });
-    const res = await testNotifyConfig();
-    expect(invoke).toHaveBeenCalledWith("send-notify-test");
-    expect(res).toBe("sent");
+  it("invokes test for the saved revision with account-bound authorization and reports structured delivery", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: true, message_id: 5, config: notifyConfig }, error: null });
+    const res = await testNotifyConfig(1);
+    expect(invoke).toHaveBeenCalledWith("send-notify-test", {
+      body: { operation: "test", revision: 1 }, signal: expect.any(AbortSignal), headers: { Authorization: "Bearer synthetic-session-only" },
+    });
+    expect(res).toEqual({ sent: true, message_id: 5, config: notifyConfig });
   });
 
-  it("surfaces Telegram's real failure reason (bad token etc.)", async () => {
-    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "Unauthorized" }, error: null });
-    const res = await testNotifyConfig();
-    expect(res).toBe("Unauthorized");
+  it("surfaces safe structured Telegram failure reasons without claiming delivery", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "telegram_rejected", config: notifyConfig }, error: null });
+    expect(await testNotifyConfig(1)).toEqual({ sent: false, reason: "telegram_rejected", config: notifyConfig });
   });
 
-  it("propagates invoke errors", async () => {
-    invoke.mockResolvedValueOnce({ data: null, error: { message: "forbidden" } });
-    await expect(testNotifyConfig()).rejects.toThrow("forbidden");
+  it("handles invoke errors honestly without echoing a token or transport URL", async () => {
+    invoke.mockResolvedValueOnce({ data: null, error: { message: `forbidden ${token}` } });
+    await expect(testNotifyConfig(1)).rejects.toThrow("Telegram request failed");
+  });
+
+  it("sanitizes HTTP failures and never treats a stale 409 acknowledgement as saved", async () => {
+    invoke.mockResolvedValueOnce({ data: null, error: { context: new Response(JSON.stringify({ sent: true, reason: "stale_binding", message: token, config: notifyConfig }), { status: 409 }) } });
+    expect(await testNotifyConfig(1)).toEqual({ sent: false, reason: "stale_binding", config: notifyConfig });
+  });
+
+  it("does not expose raw HTTP failure messages", async () => {
+    invoke.mockResolvedValueOnce({ data: null, error: { context: new Response(JSON.stringify({ reason: token, message: token }), { status: 502 }) } });
+    await expect(testNotifyConfig(1)).rejects.toThrow("Telegram request failed");
+  });
+
+  it("does not convert a delivered but stale/missing-config response into success", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: true, reason: "stale_binding" }, error: null });
+    await expect(testNotifyConfig(1)).rejects.toThrow("invalid response");
   });
 });
 
@@ -334,53 +359,117 @@ describe("personal core RPC contracts", () => {
   });
 });
 
-describe("notify config (per-user, RLS-scoped)", () => {
-  it("reads the user's own row from user_notify_config", async () => {
-    const from = vi.fn(() => ({
-      select: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: { chat_id: "42", bot_token: "tok", updated_at: "2026-09-30T09:00:00Z" }, error: null }),
-    }));
-    cloud.client = { rpc, from };
+describe("notify config (per-user metadata and delivery-first writes)", () => {
+  it("reads metadata through get_my_notify_config and strips unexpected secrets", async () => {
+    rpc.mockResolvedValueOnce({ data: { ...notifyConfig, bot_token: token }, error: null });
     const cfg = await getNotifyConfig();
-    expect(from).toHaveBeenCalledWith("user_notify_config");
-    expect(cfg?.chat_id).toBe("42");
+    expect(rpc.mock.calls).toEqual([["get_my_notify_config"]]);
+    expect(cfg).toEqual(notifyConfig);
+    expect(cfg).not.toHaveProperty("bot_token");
   });
 
   it("returns null when unset", async () => {
-    const from = vi.fn(() => ({
-      select: vi.fn().mockReturnThis(),
-      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-    }));
-    cloud.client = { rpc, from };
+    rpc.mockResolvedValueOnce({ data: null, error: null });
     expect(await getNotifyConfig()).toBeNull();
   });
 
-  it("upserts the user's own binding with the user_id conflict target", async () => {
-    const updatedAt = "2026-11-13T12:00:00.000Z";
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date(updatedAt));
-    const upsert = vi.fn().mockResolvedValue({ error: null });
-    const from = vi.fn(() => ({ upsert }));
-    cloud.client = { rpc, from };
-    await setNotifyConfig("42", "tok");
-    expect(from).toHaveBeenCalledWith("user_notify_config");
-    expect(upsert.mock.calls).toEqual([[
-      { user_id: "user-test", chat_id: "42", bot_token: "tok", updated_at: updatedAt },
-      { onConflict: "user_id" },
-    ]]);
+  it("saves and tests through the edge function, never a browser table upsert", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: true, config: notifyConfig }, error: null });
+    expect(await setNotifyConfig(" 42 ", ` ${token} `, " UTC ", null)).toEqual({ sent: true, config: notifyConfig });
+    expect(invoke.mock.calls).toEqual([["send-notify-test", {
+      body: { operation: "save", chatId: "42", botToken: token, timeZone: "UTC", revision: null },
+      signal: expect.any(AbortSignal), headers: { Authorization: "Bearer synthetic-session-only" },
+    }]]);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("blank replacement token asks the server to reuse the existing secret", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: true, config: notifyConfig }, error: null });
+    await setNotifyConfig("42", "", "UTC", 1);
+    expect(invoke.mock.calls[0][1].body).toEqual({ operation: "save", chatId: "42", botToken: "", timeZone: "UTC", revision: 1 });
+  });
+
+  it("disconnects by revision without any token or entitlement lookup", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: false, disconnected: true, config: null }, error: null });
+    expect(await disconnectNotifyConfig(1)).toEqual({ sent: false, disconnected: true, config: null });
+    expect(invoke.mock.calls[0][1].body).toEqual({ operation: "unbind", revision: 1 });
   });
 
   it("denies a signed-out binding before accessing the database", async () => {
     cloud.user = null;
-    await expect(setNotifyConfig("42", "tok")).rejects.toThrow("Sign in to save your Telegram binding");
+    await expect(setNotifyConfig("42", token, "UTC", null)).rejects.toThrow("Sign in to manage your Telegram binding");
     expect(cloud.getSupabaseClient).not.toHaveBeenCalled();
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("testNotifyConfig surfaces the Platinum upsell for free users", async () => {
-    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "Telegram pings are part of the auto-apply engine (Platinum or the auto-apply add-on). Upgrade to bind your chat." }, error: null });
-    const res = await testNotifyConfig();
-    expect(res).toMatch(/Platinum/);
+  it("testNotifyConfig preserves the structured entitlement failure", async () => {
+    invoke.mockResolvedValueOnce({ data: { sent: false, reason: "not_entitled", config: notifyConfig }, error: null });
+    expect(await testNotifyConfig(1)).toEqual({ sent: false, reason: "not_entitled", config: notifyConfig });
+  });
+
+  it("rejects an account switch during client acquisition before sending a draft", async () => {
+    cloud.getSupabaseClient.mockImplementationOnce(async () => {
+      cloud.user = { id: "other" };
+      for (const listener of cloud.listeners) listener({ user: cloud.user });
+      return client;
+    });
+    await expect(setNotifyConfig("42", token, "UTC", null)).rejects.toThrow("Account changed");
+    expect(invoke).not.toHaveBeenCalled();
+    expect(getSession).not.toHaveBeenCalled();
+    expect(cloud.listeners.size).toBe(0);
+  });
+
+  it("rejects a mismatched authenticated session before dispatch", async () => {
+    getSession.mockResolvedValueOnce({ data: { session: { user: { id: "other" }, access_token: "other-synthetic-session" } }, error: null });
+    await expect(setNotifyConfig("42", token, "UTC", null)).rejects.toThrow("Sign in");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("rejects even an A→B→A switch during invoke rather than publishing stale results", async () => {
+    invoke.mockImplementationOnce(async () => {
+      cloud.user = { id: "other" };
+      for (const listener of cloud.listeners) listener({ user: cloud.user });
+      cloud.user = { id: "user-test" };
+      for (const listener of cloud.listeners) listener({ user: cloud.user });
+      return { data: { sent: true, config: notifyConfig }, error: null };
+    });
+    await expect(testNotifyConfig(1)).rejects.toThrow("Account changed");
+    expect(cloud.listeners.size).toBe(0);
+    expect(invoke.mock.calls[0][1].signal.aborted).toBe(true);
+  });
+
+  it("rejects stale reads and fails honestly on an unapplied metadata RPC", async () => {
+    rpc.mockImplementationOnce(async () => {
+      cloud.user = { id: "other" };
+      return { data: notifyConfig, error: null };
+    });
+    await expect(getNotifyConfig()).rejects.toThrow("Account changed");
+    cloud.user = { id: "user-test" };
+    rpc.mockResolvedValueOnce({ data: null, error: { message: "RPC missing" } });
+    await expect(getNotifyConfig()).rejects.toThrow("configuration is unavailable");
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("Telegram draft validation", () => {
+  it.each(["@mychat", "0", "12.3", "https://example.invalid", "9223372036854775808"])("rejects invalid chat ID %s", chat => {
+    expect(validateNotifyBinding(chat, token, "UTC")).toMatch(/numeric/);
+  });
+  it.each(["@mybot", "not-a-token", "123456789:short"])("rejects malformed token %s", value => {
+    expect(validateNotifyBinding("42", value, "UTC")).toMatch(/BotFather/);
+  });
+  it("accepts numeric groups and IANA zones, requires a token for a first binding", () => {
+    expect(validateNotifyBinding("-100123456789", token, "Asia/Kolkata")).toBeNull();
+    expect(validateNotifyBinding("42", "", "UTC")).toMatch(/BotFather/);
+    expect(validateNotifyBinding("42", "", "UTC", true)).toBeNull();
+    expect(validateNotifyBinding("42", token, "Mars/Olympus")).toMatch(/IANA/);
+    expect(validateNotifyBinding("42", token, "")).toMatch(/IANA/);
+  });
+  it("defaults to the browser zone and safely falls back to UTC", () => {
+    expect(defaultNotifyTimeZone()).toBeTruthy();
+    const formatter = vi.spyOn(Intl, "DateTimeFormat").mockImplementationOnce(function () { throw new Error("unavailable"); });
+    expect(defaultNotifyTimeZone()).toBe("UTC");
+    formatter.mockRestore();
   });
 });
 

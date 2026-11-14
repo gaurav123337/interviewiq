@@ -59,6 +59,8 @@ npm run dev        # http://127.0.0.1:8137
 
 This gives you the full offline interview coach. Connected features stay gated until you point the app at a backend (next section).
 
+**Auto-apply Telegram:** see [binding, dated job statuses and local runner-resume instructions](docs/telegram-job-status.md). Telegram connection testing is user-scoped and generic; deployment does not start a runner or send messages.
+
 Production build and preview:
 
 ```bash

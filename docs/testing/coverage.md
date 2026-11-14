@@ -33,3 +33,7 @@ Normal local matrix: **54 scenarios × desktop/mobile viewport + 1 offline scena
 - Automated screenshots are captured for evidence. Broad pixel-diff baselines, accessibility audits, and human visual acceptance are not claimed.
 
 Keep these gaps visible when interpreting a green subset. New routes or new critical flows need explicit scenarios and this inventory updated alongside them.
+
+## Telegram status fix
+
+The focused Telegram release adds synthetic binding save/test/disconnect flows, original event-time/status formatting, bounded delivery and safe retry tests. Mocked Telegram acceptance is not proof of delivery to a real chat. `scripts/test-telegram-sql.mjs` runs the notification migration twice and owner/CAS/timestamp assertions in an explicitly selected disposable PostgreSQL container; it never uses a Supabase management token. The new `send-notify-test` handler cases are included in Deno CI. Real Telegram testing is initiated by the user against their intended destination, never by deployment or a backlog broadcast.

@@ -16,8 +16,7 @@ vi.mock("../services/jobSites.ts", () => ({
   putJudgeExemplar: vi.fn().mockResolvedValue(undefined),
   testNotifyConfig: vi.fn().mockResolvedValue("sent"),
 }));
-vi.mock("../services/entitlement.ts", () => ({ serverAutoApply: vi.fn().mockReturnValue(true) }));
-vi.mock("../services/cloud.ts", () => ({ getCloudState: vi.fn().mockReturnValue({ user: null }) }));
+vi.mock("../components/jobs/TelegramBindingPanel", () => ({ default: () => <div>Telegram controls</div> }));
 
 import ReviewQueuePanel from "../components/jobs/ReviewQueuePanel";
 import { listJobReviews, type ReviewItem } from "../services/jobSites.ts";

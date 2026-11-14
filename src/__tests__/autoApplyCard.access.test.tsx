@@ -86,6 +86,9 @@ vi.mock("../components/jobs/CredentialsPanel", () => ({
 vi.mock("../components/jobs/ReviewQueuePanel", () => ({
   default: () => { corePanels.reviewQueue(); return <StatefulPanel name="Review queue panel" />; },
 }));
+vi.mock("../components/jobs/TelegramBindingPanel", () => ({
+  default: () => <StatefulPanel name="Telegram cleanup panel" />,
+}));
 vi.mock("../components/jobs/ExemplarsPanel", () => ({
   default: () => { corePanels.exemplars(); return <StatefulPanel name="Exemplars panel" />; },
 }));
@@ -156,9 +159,11 @@ describe("AutoApplyCard access composition", () => {
       if (account === "guest") {
         expect(services.applyAgent).not.toHaveBeenCalled();
         expect(screen.queryByLabelText("Personal agent panel state")).toBeNull();
+        expect(screen.queryByLabelText("Telegram cleanup panel state")).toBeNull();
       } else {
         expect(services.applyAgent.mock.calls).toEqual([[{ canPair: false }]]);
         expect(screen.getByLabelText("Personal agent panel state")).toBeTruthy();
+        expect(screen.getByLabelText("Telegram cleanup panel state")).toBeTruthy();
       }
     },
   );

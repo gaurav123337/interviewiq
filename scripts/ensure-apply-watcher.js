@@ -26,8 +26,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { exec } from "node:child_process";
-import { isApplyOff, sweepEngineProcesses, lockHolderAlive } from "./engine-lifecycle.js";
-import { watcherHeartbeatFresh } from "./job-sites-db.js";
+// This existing supervisor is owner-only; never silently reinterpret a paired selection.
+if (process.env.INTERVIEWIQ_APPLY_AGENT_CONFIG || process.argv.some(a => /^--agent-config(?:=|$)/.test(a))) throw new Error("Owner watcher supervisor cannot use a paired binding");
+process.argv.push("--legacy-owner");
+const { isApplyOff, sweepEngineProcesses, lockHolderAlive } = await import("./engine-lifecycle.js");
+const { watcherHeartbeatFresh } = await import("./job-sites-db.js");
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT = path.resolve(ROOT, "..");
 const ENGINE = path.join(ROOT, "auto-apply-jobs.js");
@@ -108,7 +111,7 @@ function startWatcher() {
      watcher tees its own log (FREEBUFF_WATCH_LOG) via a node stream that
      opens share-aware. */
   const child = spawn(process.execPath,
-    [ENGINE, "--watch", "--max", "5", "--every", "6", "--unattended"],
+    [ENGINE, "--watch", "--legacy-owner", "--max", "5", "--every", "6", "--unattended"],
     {
       cwd: PROJECT,
       detached: true,
