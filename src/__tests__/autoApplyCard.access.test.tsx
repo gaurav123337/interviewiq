@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 
 const cloud = vi.hoisted(() => ({
   user: { id: "user-test" } as { id: string } | null,
-  listener: null as ((state: { user: { id: string } | null }) => void) | null,
+  listeners: new Set<(state: { user: { id: string } | null }) => void>(),
   unsubscribe: vi.fn(),
 }));
 const services = vi.hoisted(() => ({
@@ -37,9 +37,9 @@ const globalPanels = vi.hoisted(() => ({
 
 vi.mock("../services/cloud", () => ({
   getCloudState: vi.fn(() => ({ user: cloud.user })),
-  subscribeCloud: vi.fn((listener: typeof cloud.listener) => {
-    cloud.listener = listener;
-    return () => { cloud.listener = null; cloud.unsubscribe(); };
+  subscribeCloud: vi.fn((listener: (state: { user: { id: string } | null }) => void) => {
+    cloud.listeners.add(listener);
+    return () => { cloud.listeners.delete(listener); cloud.unsubscribe(); };
   }),
 }));
 vi.mock("../services/applyAgent", () => ({ personalApplyReady: services.personalApplyReady }));
@@ -124,14 +124,14 @@ function deferred() {
 function switchAccount(id: string | null) {
   act(() => {
     cloud.user = id ? { id } : null;
-    cloud.listener?.({ user: cloud.user });
+    for (const listener of [...cloud.listeners]) listener({ user: cloud.user });
   });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   cloud.user = { id: "user-test" };
-  cloud.listener = null;
+  cloud.listeners.clear();
   services.personalApplyReady.mockReset().mockResolvedValue(undefined);
   services.getApplyConfig.mockReset().mockResolvedValue({ mode: "local", cloud_provider: null, cloud_endpoint: null, updated_at: null });
   services.requestRunNow.mockReset().mockResolvedValue("requested");
@@ -176,12 +176,13 @@ describe("AutoApplyCard access composition", () => {
       render(<AutoApplyCard locked={false} isAdmin={false} onUpgrade={vi.fn()} />);
 
       expect(screen.getByText("Auto-apply active")).toBeTruthy();
-      expect(screen.getByRole("button", { name: /Download apply-profile\.json/i })).toBeTruthy();
-      expect(screen.getByRole("button", { name: /Copy JSON/i })).toBeTruthy();
-      fireEvent.click(screen.getByRole("button", { name: /Instahyre/i }));
-      expect(screen.getByText("setup instahyre")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /Download.*apply-profile\.json/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /Copy.*JSON/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /Instahyre/i })).toBeNull();
+      expect(screen.getByText(/Use the verified pipeline above to import your own account/)).toBeTruthy();
       expect(screen.getByText(/Platform-wide registry, credentials, and remote start\/stop controls are administrator-only/)).toBeTruthy();
-      expect(services.exportProfileJson).toHaveBeenCalledOnce();
+      expect(services.exportProfileJson).not.toHaveBeenCalled();
+      expect(services.engineCommands).not.toHaveBeenCalled();
       expect(services.applyAgent).toHaveBeenCalledWith({ canPair: true });
       expect(services.personalApplyReady.mock.calls).toEqual([[]]);
       expectNoCorePanels();
@@ -238,6 +239,18 @@ describe("AutoApplyCard access composition", () => {
 
     await act(async () => readiness.resolve());
     expectCorePanels();
+  });
+
+  it("legacy local profile export requires explicit owner consent and resets on account change", async () => {
+    render(<AutoApplyCard locked={false} isAdmin={true} onUpgrade={vi.fn()} />);
+    await waitFor(expectCorePanels);
+    expect(services.exportProfileJson).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Copy legacy owner JSON" })).toBeNull();
+    fireEvent.click(screen.getByLabelText(/I recognize this device's locally cached profile/));
+    expect(services.exportProfileJson).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Copy legacy owner JSON" })).toBeTruthy();
+    switchAccount("user-next");
+    expect(screen.queryByRole("button", { name: "Copy legacy owner JSON" })).toBeNull();
   });
 
   it("account switches discard agent and core panel state and probe the new account", async () => {

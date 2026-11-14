@@ -47,19 +47,19 @@ export async function judgeFit(ai, job, profile, exemplars = null, outcomePriorT
 
 export function templateResume(profile, job) {
   const p = profile || {};
-  const j = job || {};
+  // The posting is not evidence about the candidate: no job-title fallback,
+  // default stack or fabricated production-software/achievement claims.
+  if (p.resumeApproved === true && typeof p.resumeText === "string") return p.resumeText;
   const name = p.name || "Candidate";
-  const head = [p.headline || j.title || "Software Engineer", p.locations?.[0], p.email, p.phone]
+  const head = [p.headline, p.locations?.[0], p.email, p.phone]
     .filter(Boolean).join(" · ");
-  const skills = (p.skills?.length ? p.skills : ["JavaScript", "TypeScript", "React", "Node.js"]).join(", ");
-  const matched = (j.skills ?? []).slice(0, 6);
+  const skills = (p.skills ?? []).join(", ");
   const lines = [
     name.toUpperCase(),
     head,
     "",
     "SUMMARY",
-    p.summary || `${p.headline || j.title || "Engineer"} with ${p.years ?? "several"} years of experience building and shipping production software.` +
-      (matched.length ? ` Strongest with: ${matched.join(", ")}.` : ""),
+    p.summary || [p.headline, p.years != null ? `Experience: ${p.years} years` : ""].filter(Boolean).join("\n"),
     "",
     "SKILLS",
     skills,
@@ -81,16 +81,18 @@ export function templateResume(profile, job) {
 
 export function templateCoverLetter(profile, job) {
   const p = profile || {};
-  const skills = (job?.skills ?? p.skills ?? []).slice(0, 4).join(", ");
+  const skills = (p.skills ?? []).slice(0, 4).join(", ");
   return [
     p.name || "Candidate",
     "",
     `Dear Hiring Team at ${job?.company || "your company"},`,
     "",
-    `I'm applying for the ${job?.title || "engineering"} role. ${p.headline ? `As a ${p.headline}` : "As an engineer"}`
-    + `${p.years != null ? ` with ${p.years}+ years of experience` : ""}, I work daily with ${skills || "modern web technologies"}.`,
+    `I'm applying for the ${job?.title || "advertised"} role.`,
+    ...(p.headline ? [`Current role: ${p.headline}.`] : []),
+    ...(p.years != null ? [`Experience: ${p.years} years.`] : []),
+    ...(skills ? [`My listed skills include ${skills}.`] : []),
     "",
-    p.summary || "I ship production software, own outcomes end to end, and enjoy turning ambiguous problems into simple, reliable systems.",
+    p.summary || "",
     "",
     `I'd love to discuss how my experience maps to ${job?.company || "the team"}'s goals for this role.`,
     "",
@@ -154,8 +156,9 @@ async function chatOnce(ai, messages, maxTokens) {
 /** Rewrite the template resume for this JD. Fallback: template (never throws). */
 export async function tailorResume(ai, profile, job) {
   const template = templateResume(profile, job);
+  if (profile?.resumeApproved === true && typeof profile.resumeText === "string") return { text: template, ai: false, note: "exact user-approved resume; no AI rewriting" };
   if (PAIRED || !ai?.key) return { text: template, ai: false, note: PAIRED ? "paired mode — templates only" : "no AI provider configured" };
-  const sys = "You are an expert resume writer for tech roles. Rewrite the given resume to be sharper, more concrete, and tailored to the target job. Emphasize the candidate's real skills that transfer to this role (even adjacent ones — a frontend engineer applying to backend roles DOES have API, data-modeling and systems experience worth highlighting). Keep the same sections and facts — never invent experience, companies, titles, or credentials. The input may lack employment history or other data: that is EXPECTED — work with what is provided, never refuse or comment on missing data. Only if the role is in a genuinely unrelated field where NO honest mapping exists, reply with exactly: SKIP. Use action verbs and quantify impact where the facts allow. Under ~320 words. Output ONLY the resume text.";
+  const sys = "You are an expert resume writer for tech roles. Rewrite the given resume to be sharper, more concrete, and tailored to the target job. Emphasize only explicitly listed real skills and achievements; never infer API, systems, backend or adjacent experience from a role title or a job description. Keep the same sections and facts — never invent experience, companies, titles, or credentials. The input may lack employment history or other data: that is EXPECTED — work with what is provided, never refuse or comment on missing data. Only if the role is in a genuinely unrelated field where NO honest mapping exists, reply with exactly: SKIP. Use action verbs and quantify impact where the facts allow. Under ~320 words. Output ONLY the resume text.";
   const usr = `Target job: ${job.title} at ${job.company}.\nKey requirements: ${(job.skills ?? []).join(", ") || "general engineering"}.\n\nCurrent resume:\n${template}\n\nRewrite it tailored to this job.`;
   try {
     const out = await chatOnce(ai, [{ role: "system", content: sys }, { role: "user", content: usr }], 800);

@@ -24,8 +24,12 @@
     "gen:rag-corpus": "node scripts/gen-rag-corpus.mjs",
     "typecheck": "tsc --noEmit",
     "icons": "node scripts/gen-icons.js",
-    "apply:setup": "npm i --no-save playwright && npx playwright install chromium",
+    "apply:setup": "node node_modules/@playwright/test/cli.js install chromium",
     "apply:pair": "node scripts/apply-pair.js",
+    "apply:agent": "node scripts/apply-pipeline-worker.js",
+    "test:apply:worker": "node tests/apply-worker/process-fixture.mjs --mode all",
+    "test:apply:sql": "node scripts/test-apply-pipeline-sql.mjs",
+    "test:apply:worker:sql": "node tests/apply-worker/sql-process-fixture.mjs",
     "apply:doctor": "node scripts/apply-doctor.mjs",
     "prepare": "husky"
   },

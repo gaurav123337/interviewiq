@@ -62,7 +62,7 @@ import { getApplyAgentRuntimeContext, applyAgentChildArgs, applyAgentChildEnv } 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_CONTEXT = getApplyAgentRuntimeContext();
 const PAIRED = AGENT_CONTEXT.mode === "paired";
-const STATE_ROOT = PAIRED ? AGENT_CONTEXT.stateRoot : path.resolve(ROOT, "..");
+const STATE_ROOT = PAIRED ? AGENT_CONTEXT.stateRoot : AGENT_CONTEXT.dataRoot ?? path.resolve(ROOT, "..");
 const { profileDir: PROFILE_DIR, signinProfileDir: SIGNIN_PROFILE_DIR } = applyBrowserPaths();
 const REPORTS_DIR = path.join(STATE_ROOT, PAIRED ? "reports" : "freebuff-apply-reports");
 
@@ -1364,11 +1364,10 @@ async function ensureLoggedIn(page, url, site, loginOnly, { loginOnlyPage = null
     const verifySession = async () => {
       const names = rules.sessionCookieNames ?? [];
       if (!names.length) {
-        /* page-based verification only (site has no durable named session
-           cookie) — say so, so a false positive is diagnosable in the log */
         const st = await waitForStableState(page, rules, url, { settleMs: 0 });
-        if (st.kind === "loggedIn") console.log(dim("  (page-verified login — no named session cookie to check for this site)"));
-        return st;
+        // Absence of a login wall is not authentication on generic guest pages.
+        const positive = Boolean(rules.loggedInHint && page.url().includes(rules.loggedInHint));
+        return positive ? st : { ...st, kind: "login" };
       }
       for (let i = 0; i < 3; i++) {
         const cookies = await page.context().cookies(url).catch(() => []);
@@ -2801,7 +2800,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
   mkdirSync(REPORTS_DIR, { recursive: true });
 
   try {
-    if (!await ensureLoggedIn(page, args.url, site, args["login-only"])) {
+    if (!await ensureLoggedIn(page, args.url, site, args["login-only"], { loginOnlyPage })) {
       console.error(red("Login required — aborting (nothing was submitted)."));
       /* #162: close before the finally-merge so a last-gasp cookie flush is
          folded back too (the merge used to race the still-open browser) */
@@ -2820,7 +2819,7 @@ async function runSingle(args, { existingCtx = null } = {}) {
       /* the window may have been closed/reopened/relaunched by the healing
          loop — always verify the LIVE page, never the stale one */
       const livePage = loginOnlyPage?.page ?? page;
-      let ok = true;
+      let ok = Boolean(loginOnlyPage?.verified || rules.loggedInHint && livePage.url().includes(rules.loggedInHint));
       if (names.length) {
         if (loginOnlyPage?.verified) {
           /* #165: the wait loop verified THIS session live (named cookie seen,

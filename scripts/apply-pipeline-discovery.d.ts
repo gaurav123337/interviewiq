@@ -1,0 +1,1 @@
+export function discoverPipelineJobs(options: { action: (action: string, args: Record<string, unknown>) => Promise<any>; signal?: AbortSignal; fetchFn?: typeof fetch }): Promise<{ collected: number; unavailable: number }>;

@@ -9,6 +9,7 @@ dist/
 playwright-report/
 test-results/
 playwright/.auth/
+tests/apply-worker/evidence/
 
 # local app / tool state (Freebuff desktop database — never commit)
 .freebuff/

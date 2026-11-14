@@ -3,6 +3,8 @@ import type { Route } from "@playwright/test";
 export type Persona = "guest" | "free" | "pro" | "admin" | "addon" | "platinum" | "complimentary";
 type OwnedRow = Record<string, unknown> & { user_id: string };
 const USER_ID = "00000000-0000-4000-8000-000000000001";
+const PIPELINE_DEFAULTS = { enabled: false, autoSubmit: false, threshold: 60, dailyCap: 10, weeklyCap: 50, employerDailyCap: 2, timeZone: "UTC", roles: [], locations: [], countries: [], excludeCompanies: [], requireWorkAuthorization: false, allowSponsorship: true, maxAgeDays: 14, aiConsent: false };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PUBLIC_CONFIG_KEYS = new Set(["features", "ai", "limits", "companyFreq", "company_freq", "coachVocab", "coach_vocab", "rag", "policies", "menuVisibility", "jobs", "resumeBranding", "site_config", "refund_policy", "pricing"]);
 const EMPTY_TABLES = new Set([
   "announcements", "published_questions", "content_items", "content_sources", "skill_roadmaps", "skill_prerequisites",
@@ -31,6 +33,18 @@ export class FixtureBackend {
   readonly memoryStats: OwnedRow[] = [];
   readonly skillStrikes: OwnedRow[] = [];
   readonly agentBindings: OwnedRow[] = [];
+  readonly pipelineProfiles = new Map<string, Record<string, any>>();
+  readonly pipelineSettings = new Map<string, Record<string, any>>();
+  readonly pipelineAnswers: OwnedRow[] = [];
+  readonly pipelineQuestions: OwnedRow[] = [];
+  readonly pipelineBoards: OwnedRow[] = [];
+  readonly pipelineRuns: OwnedRow[] = [];
+  readonly pipelineTasks: OwnedRow[] = [];
+  readonly pipelineAgents: OwnedRow[] = [];
+  readonly pipelineSessions: OwnedRow[] = [];
+  readonly pipelineCommands: OwnedRow[] = [];
+  pipelineUnavailable = false;
+  private pipelineSequence = 0;
   readonly pairingCodes: { id: string; user_id: string; code: string; expires_at: string }[] = [];
   readonly notifyConfigs = new Map<string, Record<string, unknown>>();
   notifyDeliveryFailure = false;
@@ -48,6 +62,143 @@ export class FixtureBackend {
   private ownRows(rows: OwnedRow[]) {
     // Synthetic filtering only: these browser tests do not exercise real RLS.
     return rows.filter(row => row.user_id === this.userId).map(({ user_id: _owner, ...row }) => row);
+  }
+  private pipelineId() { return `70000000-0000-4000-8000-${String(++this.pipelineSequence).padStart(12, "0")}`; }
+  /* No fixture auto-submission. A test must explicitly simulate worker evidence. */
+  completeSyntheticPipelineTask(taskId: string, outcome: "submitted" | "unverified") {
+    const task = this.pipelineTasks.find(row => row.user_id === this.userId && row.id === taskId);
+    if (!task || task.status !== "queued") throw new Error("Synthetic task must be own and queued before worker evidence");
+    task.status = outcome; task.reason = outcome === "submitted" ? "synthetic_confirmation_observed" : "synthetic_submit_timeout";
+    const run = this.pipelineRuns.find(row => row.id === task.run_id && row.user_id === this.userId);
+    if (run && this.pipelineTasks.filter(row => row.run_id === run.id).every(row => !["queued", "in_progress", "waiting_answer", "waiting_login", "waiting_review"].includes(String(row.status)))) {
+      run.status = "completed"; run.finished_at = new Date().toISOString();
+    }
+  }
+  private pipelineContract(body: Record<string, any>): { body: unknown; status?: number } | null {
+    const args = body.p_args;
+    const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === "object" && !Array.isArray(value);
+    const shape = (allowed: string[], required: string[] = []) => object(args) && Object.keys(args).every(key => allowed.includes(key)) && required.every(key => key in args);
+    const limit = (max = 200) => args.limit === undefined || Number.isSafeInteger(args.limit) && args.limit > 0 && args.limit <= max;
+    const revision = (value: unknown) => value === null || Number.isSafeInteger(value) && Number(value) > 0;
+    const uuid = (value: unknown) => typeof value === "string" && UUID.test(value);
+    const text = (value: unknown, max = 500, min = 1) => typeof value === "string" && value.length >= min && value.length <= max && !value.includes("\u0000");
+    const stringList = (value: unknown, max = 100) => Array.isArray(value) && value.length <= max && value.every(item => text(item));
+    const publicUrl = (value: unknown) => {
+      if (!text(value, 2048)) return false;
+      try { const url = new URL(value as string), host = url.hostname.replace(/\.$/, ""); return url.protocol === "https:" && !url.username && !url.password && (!url.port || url.port === "443") && host.includes(".") && !host.includes(":") && !/^[\d.]+$/.test(host) && !/(^|\.)(localhost|local|internal|test|invalid)$/.test(host); } catch { return false; }
+    };
+    const owned = (rows: OwnedRow[]) => rows.filter(row => row.user_id === this.userId);
+    const strip = (row: OwnedRow) => { const { user_id: _owner, lease_nonce: _nonce, ...result } = row; return result; };
+    const reply = (value: unknown, status = 200) => ({ body: value, status });
+    const invalid = (message: string, status = 400) => reply({ message, code: status === 409 ? "40001" : "22023" }, status);
+    if (!this.signedIn || !object(args) || Object.keys(body).sort().join(",") !== "p_action,p_args") return null;
+    if (this.pipelineUnavailable) return reply({ message: "Synthetic pipeline RPC not installed", code: "PGRST202" }, 404);
+    const now = new Date().toISOString();
+    const profile = this.pipelineProfiles.get(this.userId);
+    let preferences = this.pipelineSettings.get(this.userId);
+    const entitled = this.entitlement().auto_apply || this.persona === "admin";
+    const needAccess = () => invalid("not entitled", 403);
+    const invalidate = (reason: string) => {
+      for (const task of owned(this.pipelineTasks)) if (["queued", "in_progress", "waiting_answer", "waiting_login", "waiting_review"].includes(String(task.status))) { task.status = "waiting_review"; task.reason = reason; }
+    };
+    switch (body.p_action) {
+      case "profile.get": if (shape([])) return reply({ profile: profile ?? null }); break;
+      case "settings.get": if (shape([])) {
+        if (!preferences) { preferences = { revision: 1, data: structuredClone(PIPELINE_DEFAULTS), updated_at: now }; this.pipelineSettings.set(this.userId, preferences); }
+        return reply({ settings: preferences });
+      } break;
+      case "profile.confirm": if (shape(["expectedRevision", "facts", "resumeText", "resumeApproved"], ["expectedRevision", "facts", "resumeText", "resumeApproved"]) && revision(args.expectedRevision) && object(args.facts) && Object.keys(args.facts).length <= 100 && text(args.resumeText, 12000, 0) && typeof args.resumeApproved === "boolean") {
+        if (!entitled) return needAccess();
+        if (args.expectedRevision !== (profile?.revision ?? null)) return invalid("revision conflict", 409);
+        if (args.resumeApproved && !args.resumeText.trim()) return invalid("approved resume required");
+        const facts: Record<string, unknown> = {};
+        for (const [key, fact] of Object.entries(args.facts)) {
+          if (!object(fact) || !(/^[A-Za-z][A-Za-z0-9_.:-]{0,119}$/.test(key) || /^skillYears:[a-z0-9+#. /-]{1,80}$/.test(key)) || fact.source !== "user" || Object.keys(fact).some(key => !["value", "source", "confirmedAt", "scope", "validUntil"].includes(key)) || !(text(fact.value, key.startsWith("portalResumeText:") ? 12000 : 10000, 0) || typeof fact.value === "boolean" || typeof fact.value === "number" && Number.isFinite(fact.value) || stringList(fact.value))) return null;
+          if (fact.scope !== undefined && (!object(fact.scope) || Object.keys(fact.scope).some(key => !["country", "employer", "portal", "application"].includes(key)) || Object.values(fact.scope).some(value => !text(value)))) return null;
+          if (fact.validUntil !== undefined && (!Number.isFinite(Date.parse(fact.validUntil)) || Date.parse(fact.validUntil) <= Date.now())) return invalid("invalid fact expiry");
+          if (["workAuthorization", "requiresSponsorship"].includes(key) && !fact.scope?.country) return invalid("country scope required");
+          facts[key] = { ...fact, source: "user", confirmedAt: now };
+        }
+        const saved = { revision: Number(profile?.revision ?? 0) + 1, answers_revision: Number(profile?.answers_revision ?? 0) + 1, facts, resume_text: args.resumeText, resume_approved: args.resumeApproved, confirmed_at: now, updated_at: now };
+        this.pipelineProfiles.set(this.userId, saved);
+        for (const answer of owned(this.pipelineAnswers)) if (!answer.revoked_at) { answer.revoked_at = now; answer.revoke_reason = "profile_changed"; }
+        for (const question of owned(this.pipelineQuestions)) if (question.status === "pending") question.status = "dismissed";
+        invalidate("profile_changed"); this.writes.push("pipeline:profile.confirm"); return reply({ profile: saved });
+      } break;
+      case "settings.put": if (shape(["expectedRevision", "settings"], ["expectedRevision", "settings"]) && revision(args.expectedRevision) && object(args.settings)) {
+        const settings = args.settings;
+        const allowed = [...Object.keys(PIPELINE_DEFAULTS), "minimumSalary", "quietFrom", "quietTo"];
+        let zoneValid = text(settings.timeZone, 100);
+        try { new Intl.DateTimeFormat("en", { timeZone: settings.timeZone }); } catch { zoneValid = false; }
+        const int = (key: string, max: number, min = 0) => Number.isSafeInteger(settings[key]) && settings[key] >= min && settings[key] <= max;
+        const quietValid = settings.quietFrom === undefined && settings.quietTo === undefined || typeof settings.quietFrom === "string" && typeof settings.quietTo === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(settings.quietFrom) && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(settings.quietTo);
+        if (Object.keys(settings).some(key => !allowed.includes(key)) || !Object.keys(PIPELINE_DEFAULTS).every(key => key in settings) || !["enabled", "autoSubmit", "aiConsent", "requireWorkAuthorization", "allowSponsorship"].every(key => typeof settings[key] === "boolean") || !int("threshold", 100) || !int("dailyCap", 100) || !int("weeklyCap", 500) || !int("employerDailyCap", 20) || !int("maxAgeDays", 90, 1) || !["roles", "locations", "countries", "excludeCompanies"].every(key => stringList(settings[key])) || !zoneValid || !quietValid) return null;
+        if (settings.minimumSalary !== undefined && (!object(settings.minimumSalary) || !Number.isFinite(settings.minimumSalary.value) || settings.minimumSalary.value < 0 || !/^[A-Z]{3}$/.test(settings.minimumSalary.currency) || !["year", "month", "hour"].includes(settings.minimumSalary.period))) return null;
+        if (!entitled && (settings.enabled || settings.autoSubmit)) return needAccess();
+        if (args.expectedRevision !== (preferences?.revision ?? null)) return invalid("revision conflict", 409);
+        const saved = { revision: Number(preferences?.revision ?? 0) + 1, data: structuredClone(settings), updated_at: now };
+        this.pipelineSettings.set(this.userId, saved); invalidate("settings_changed"); this.writes.push("pipeline:settings.put"); return reply({ settings: saved });
+      } break;
+      case "answers.list": if (shape(["limit", "includeRevoked"]) && limit() && (args.includeRevoked === undefined || typeof args.includeRevoked === "boolean")) return reply({ answers: owned(this.pipelineAnswers).filter(row => args.includeRevoked || !row.revoked_at).slice(0, args.limit ?? 200).map(strip), revision: profile?.answers_revision ?? 0 }); break;
+      case "answers.revoke": if (shape(["answerId"], ["answerId"]) && uuid(args.answerId)) {
+        const answer = owned(this.pipelineAnswers).find(row => row.id === args.answerId); if (!answer) return invalid("answer not found", 404);
+        answer.revoked_at = now; answer.revoke_reason = "user_revoked"; if (profile) profile.answers_revision++;
+        invalidate("answer_revoked"); this.writes.push("pipeline:answers.revoke"); return reply({ answer: strip(answer) });
+      } break;
+      case "questions.list": if (shape(["limit", "status"]) && limit() && (args.status === undefined || ["pending", "answered", "dismissed"].includes(args.status))) return reply({ questions: owned(this.pipelineQuestions).filter(row => row.status === (args.status ?? "pending")).slice(0, args.limit ?? 200).map(strip) }); break;
+      case "questions.answer": if (shape(["questionId", "answer", "scope", "scopeKey", "expiresAt", "confirm"], ["questionId", "answer", "scope", "confirm"]) && uuid(args.questionId) && text(args.answer, 10000) && args.confirm === true && ["global", "country", "employer", "portal", "application"].includes(args.scope) && (args.scope === "global" ? args.scopeKey === undefined || args.scopeKey === "" : text(args.scopeKey))) {
+        if (!entitled) return needAccess();
+        const question = owned(this.pipelineQuestions).find(row => row.id === args.questionId); if (!question) return invalid("question not found", 404);
+        if (!profile || question.status !== "pending" || question.profile_revision !== profile.revision) return invalid("revision conflict", 409);
+        if (question.scope !== args.scope || question.scope_key !== (args.scopeKey ?? "")) return invalid("question scope mismatch");
+        if (["select", "radio"].includes(String(question.control_type)) && !(question.options as string[]).includes(args.answer)) return invalid("answer must match offered option");
+        if (args.expiresAt !== undefined && (!Number.isFinite(Date.parse(args.expiresAt)) || Date.parse(args.expiresAt) <= Date.now())) return invalid("invalid answer expiry");
+        const answer: OwnedRow = { user_id: this.userId, id: this.pipelineId(), question_key: question.question_key, meaning: question.meaning, question_text: question.question_text, control_type: question.control_type, options: question.options, context: question.context, answer: args.answer, scope: args.scope, scope_key: args.scopeKey ?? "", profile_revision: profile.revision, confirmed_at: now, expires_at: args.expiresAt ?? null, provenance: "user", revoked_at: null, revoke_reason: null };
+        this.pipelineAnswers.push(answer); question.status = "answered"; question.answer_id = answer.id; profile.answers_revision++;
+        for (const task of owned(this.pipelineTasks)) if (task.status === "waiting_answer" && (question.task_ids as string[]).includes(String(task.id)) && !owned(this.pipelineQuestions).some(other => other.status === "pending" && (other.task_ids as string[]).includes(String(task.id)))) { task.status = "queued"; task.answers_revision = profile.answers_revision; task.reason = null; }
+        this.writes.push("pipeline:questions.answer"); return reply({ answer: strip(answer), revision: profile.answers_revision });
+      } break;
+      case "boards.list": if (shape(["limit"]) && limit()) return reply({ boards: owned(this.pipelineBoards).slice(0, args.limit ?? 200).map(strip) }); break;
+      case "boards.add": if (shape(["url", "label", "type"], ["url"]) && publicUrl(args.url) && (args.label === undefined || text(args.label, 200)) && (args.type === undefined || ["manual", "greenhouse", "lever", "ashby", "workday"].includes(args.type))) {
+        if (!entitled) return needAccess(); const host = new URL(args.url).hostname;
+        const board: OwnedRow = { user_id: this.userId, id: this.pipelineId(), url: args.url, host, label: args.label ?? host, type: args.type ?? "manual", status: "pending", created_at: now, updated_at: now };
+        this.pipelineBoards.push(board); this.writes.push("pipeline:boards.add"); return reply({ board: strip(board) });
+      } break;
+      case "run.list": if (shape(["limit"]) && limit()) return reply({ runs: owned(this.pipelineRuns).slice(0, args.limit ?? 200).map(strip) }); break;
+      case "run.request": if (shape(["bindingId", "limit", "mode"], ["bindingId"]) && uuid(args.bindingId) && limit(100) && (args.mode === undefined || ["review", "auto"].includes(args.mode))) {
+        if (!entitled) return needAccess();
+        const binding = owned(this.pipelineAgents).find(row => row.binding_id === args.bindingId && !row.revoked_at) ?? owned(this.agentBindings).find(row => row.binding_id === args.bindingId && !row.revoked_at);
+        if (!binding) return invalid("binding not found", 404);
+        if (!profile || !preferences?.data.enabled) return invalid("confirmed profile and enabled settings required");
+        if (args.mode === "auto" && (!profile.resume_approved || !preferences.data.autoSubmit)) return invalid("explicit auto-submit and approved resume required");
+        const run: OwnedRow = { user_id: this.userId, id: this.pipelineId(), binding_id: args.bindingId, mode: args.mode ?? "review", status: "queued", profile_revision: profile.revision, settings_revision: preferences.revision, answers_revision: profile.answers_revision, candidate_count: 1, task_count: 1, created_at: now, started_at: null, finished_at: null };
+        const job = { jobUrl: "https://employer.example.com/job/synthetic-pipeline", title: "Synthetic TypeScript Engineer", company: "Synthetic Company", description: "Strict synthetic pipeline fixture only", skills: ["typescript", "react"], location: "Remote", country: "US", postedAt: now, portal: "employer.example.com" };
+        const task: OwnedRow = { user_id: this.userId, id: this.pipelineId(), run_id: run.id, target_binding_id: args.bindingId, job, status: "queued", lease_version: 0, lease_until: null, profile_revision: profile.revision, settings_revision: preferences.revision, answers_revision: profile.answers_revision, score: 100, reason: null };
+        this.pipelineRuns.unshift(run); this.pipelineTasks.unshift(task); this.writes.push("pipeline:run.request"); return reply({ run: strip(run), publicFeedAvailable: true });
+      } break;
+      case "run.cancel": if (shape(["runId"], ["runId"]) && uuid(args.runId)) {
+        const run = owned(this.pipelineRuns).find(row => row.id === args.runId); if (!run) return invalid("run not found", 404);
+        run.status = "cancelled"; run.finished_at = now;
+        for (const task of owned(this.pipelineTasks)) if (task.run_id === run.id && ["queued", "in_progress", "submitting", "waiting_answer", "waiting_login", "waiting_review"].includes(String(task.status))) { task.status = task.status === "submitting" ? "unverified" : "cancelled"; task.reason = "run_cancelled"; }
+        this.writes.push("pipeline:run.cancel"); return reply({ run: strip(run) });
+      } break;
+      case "tasks.list": if (shape(["runId", "limit"]) && limit() && (args.runId === undefined || uuid(args.runId))) return reply({ tasks: owned(this.pipelineTasks).filter(row => !args.runId || row.run_id === args.runId).slice(0, args.limit ?? 200).map(strip) }); break;
+      case "agent.list": if (shape(["limit"]) && limit()) {
+        const agents = new Map(owned(this.agentBindings).map(row => [row.binding_id, { user_id: this.userId, binding_id: row.binding_id, label: row.label, engine_version: null, capabilities: [], status: null, profile_metadata: {}, heartbeat_at: null, revoked_at: row.revoked_at, last_used_at: row.last_used_at }] as const));
+        for (const row of owned(this.pipelineAgents)) agents.set(row.binding_id, row as any);
+        return reply({ agents: [...agents.values()].slice(0, args.limit ?? 200).map(strip) });
+      } break;
+      case "sessions.list": if (shape(["limit"]) && limit()) return reply({ sessions: owned(this.pipelineSessions).slice(0, args.limit ?? 200).map(strip) }); break;
+      case "commands.request": if (shape(["bindingId", "type", "args"], ["bindingId", "type"]) && uuid(args.bindingId) && ["pause", "resume", "retry_login", "open_question", "check_session"].includes(args.type) && (args.args === undefined || object(args.args) && Object.keys(args.args).every(key => ["portal", "questionId"].includes(key)) && (args.args.portal === undefined || text(args.args.portal, 200)) && (args.args.questionId === undefined || uuid(args.args.questionId)))) {
+        if (!entitled && args.type !== "pause") return needAccess();
+        const binding = owned(this.pipelineAgents).find(row => row.binding_id === args.bindingId && !row.revoked_at) ?? owned(this.agentBindings).find(row => row.binding_id === args.bindingId && !row.revoked_at);
+        if (!binding) return invalid("binding not found", 404);
+        if (args.args?.questionId && !owned(this.pipelineQuestions).some(row => row.id === args.args.questionId)) return invalid("question not found", 404);
+        const command: OwnedRow = { user_id: this.userId, id: this.pipelineId(), binding_id: args.bindingId, type: args.type, args: args.args ?? {}, status: "queued", reason: null, created_at: now, claimed_at: null, finished_at: null };
+        this.pipelineCommands.push(command); this.writes.push("pipeline:commands.request"); return reply({ command: strip(command) });
+      } break;
+    }
+    return null;
   }
   private notifyMetadata() {
     const row = this.notifyConfigs.get(this.userId);
@@ -116,6 +267,12 @@ export class FixtureBackend {
         return json(this.notifyMetadata());
       }
       if (rpc === "get_my_entitlement") return json([this.entitlement()]);
+      if (rpc === "my_apply_pipeline_action" && method === "POST") {
+        if (!this.signedIn) return denied();
+        const result = this.pipelineContract(body);
+        if (result) return json(result.body, result.status);
+        // Unknown actions and argument shapes fall through to the strict gate.
+      }
       if (rpc === "my_apply_action" && method === "POST") {
         if (!this.signedIn) return denied();
         const args = body.p_args;

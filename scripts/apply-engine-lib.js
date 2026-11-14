@@ -1895,30 +1895,32 @@ export function buildApplyReportSql(report, { totalSeen }) {
  * returns { ok: boolean, hallucinations: string[] }
  */
 export async function auditAuthenticity(ai, tailoredResume, profile, jd) {
-  if (!ai?.key) return { ok: true, hallucinations: [] }; // Fail-open if no AI
-  
+  const rejected = reason => ({ ok: false, hallucinations: [reason] });
+  if (!ai?.key || typeof ai.base !== "string") return rejected("authenticity audit unavailable");
+  if (typeof tailoredResume !== "string" || tailoredResume.length > 100000) return rejected("invalid audit input");
+
   const sys = "You are a strict auditor. Compare the TAILORED RESUME against the MASTER PROFILE. Your only goal is to detect HALLUCINATIONS (fake facts). A hallucination is ANY company, job title, degree, or specific technical achievement mentioned in the tailored resume that is NOT present in the master profile. Highlight only the fake additions. If it is honest, reply with 'OK'. Otherwise, list the hallucinations as a JSON array of strings. Output ONLY the JSON array or 'OK'.";
-  const usr = `MASTER PROFILE:\n${JSON.stringify(profile, null, 2)}\n\nTAILORED RESUME:\n${tailoredResume}\n\nJD for context:\n${jd}`;
-  
   try {
-    // We use a high-precision call here
+    const usr = `MASTER PROFILE:\n${JSON.stringify(profile, null, 2)}\n\nTAILORED RESUME:\n${tailoredResume}\n\nJD for context:\n${jd}`;
     const res = await fetch(`${ai.base.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
+      signal: AbortSignal.timeout(15000),
       headers: { Authorization: `Bearer ${ai.key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: ai.model, messages: [{ role: "system", content: sys }, { role: "user", content: usr }], temperature: 0 }),
     });
+    if (!res.ok) return rejected("authenticity audit HTTP failure");
     const body = await res.json();
-    const text = (body.choices?.[0]?.message?.content ?? "").trim();
-    
-    if (text.toUpperCase() === "OK") return { ok: true, hallucinations: [] };
-    
-    const m = text.match(/\[[\s\S]*\]/);
-    if (!m) return { ok: true, hallucinations: [] }; // If it's not a list, assume OK
-    
-    const hallucinations = JSON.parse(m[0]);
+    const raw = body.choices?.[0]?.message?.content;
+    if (typeof raw !== "string" || raw.length > 10000) return rejected("malformed authenticity audit response");
+    const text = raw.trim();
+    if (text === "OK") return { ok: true, hallucinations: [] };
+    const hallucinations = JSON.parse(text);
+    if (!Array.isArray(hallucinations) || hallucinations.some(h => typeof h !== "string" || !h.trim())) return rejected("malformed authenticity audit result");
     return { ok: hallucinations.length === 0, hallucinations };
-  } catch (e) {
-    return { ok: true, hallucinations: [] }; // Fail-open on error
+  } catch {
+    // An absent/broken audit is not proof that generated candidate claims are
+    // truthful. The caller falls back to its facts-only template, never sends.
+    return rejected("authenticity audit failed");
   }
 }
 

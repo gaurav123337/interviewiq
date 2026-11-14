@@ -17,6 +17,7 @@ const CONFIG_ENV = "INTERVIEWIQ_APPLY_AGENT_CONFIG";
 const PROFILE_ENV = "INTERVIEWIQ_APPLY_PROFILE";
 const LEGACY_ENV = "INTERVIEWIQ_LEGACY_OWNER";
 const EXPECTED_BINDING_ENV = "INTERVIEWIQ_APPLY_EXPECTED_BINDING_ID";
+const LEGACY_ROOT_ENV = "INTERVIEWIQ_LEGACY_DATA_ROOT";
 const PAIRED_SECRET_ENV = new Set([
   "SUPA_KEY",
   "SUPABASE_SERVICE_ROLE_KEY",
@@ -104,19 +105,29 @@ export function getApplyAgentRuntimeContext(options) {
     platform = process.platform,
   } = options ?? {};
   const args = Array.from(argv ?? [], String);
+  // Reject incompatible browser modes before reading a binding or private profile.
+  if ((args.includes("--all") || args.includes("--watch")) && args.includes("--login-only")) {
+    throw new Error("--all cannot be combined with --login-only");
+  }
+  if (args.includes("--login-only") && args.includes("--headless")) {
+    throw new Error("--login-only cannot be combined with --headless");
+  }
   const root = path.resolve(String(repoRoot));
-  const profilePath = profilePathFrom(args, env, root);
+  const legacyRoot = optionValue(args, "--legacy-data-root") ?? String(env[LEGACY_ROOT_ENV] ?? "").trim();
+  const profilePath = profilePathFrom(args, env, legacyRoot ? path.resolve(root, legacyRoot) : root);
   const cliConfig = optionValue(args, "--agent-config");
   const envConfig = String(env[CONFIG_ENV] ?? "").trim() || null;
   const legacy = hasFlag(args, "--legacy-owner") || env[LEGACY_ENV] === "1";
 
   if (legacy) {
     if (cliConfig || envConfig) throw new Error("Legacy owner mode cannot be combined with an apply-agent config");
-    const context = Object.freeze({ mode: "legacy", profilePath });
+    const context = Object.freeze({ mode: "legacy", profilePath,
+      ...(legacyRoot ? { dataRoot: path.resolve(root, legacyRoot) } : {}) });
     if (options === undefined) defaultRuntimeContext = context;
     return context;
   }
 
+  if (legacyRoot) throw new Error("--legacy-data-root requires explicit --legacy-owner mode");
   const dataRoot = resolveApplyAgentDataRoot({ platform, env, home });
   const configPath = cliConfig || envConfig
     ? resolveExternalPath(cliConfig ?? envConfig, root)
@@ -150,7 +161,7 @@ export function applyAgentChildArgs(context, profilePath) {
   if (!selectedProfile) throw new Error("Candidate profile path is required");
   return context.mode === "paired"
     ? ["--agent-config", context.configPath, "--profile", selectedProfile]
-    : ["--legacy-owner", "--profile", selectedProfile];
+    : ["--legacy-owner", ...(context.dataRoot ? ["--legacy-data-root", context.dataRoot] : []), "--profile", selectedProfile];
 }
 
 /** Child processes receive only external file paths, never bearer credentials. */
@@ -168,8 +179,11 @@ export function applyAgentChildEnv(context, env = process.env) {
     child[CONFIG_ENV] = context.configPath;
     child[EXPECTED_BINDING_ENV] = context.bindingId;
     delete child[LEGACY_ENV];
+    delete child[LEGACY_ROOT_ENV];
   } else {
     child[LEGACY_ENV] = "1";
+    if (context.dataRoot) child[LEGACY_ROOT_ENV] = context.dataRoot;
+    else delete child[LEGACY_ROOT_ENV];
     delete child[CONFIG_ENV];
     delete child[EXPECTED_BINDING_ENV];
   }

@@ -109,6 +109,9 @@ export function draftAnswer(
 
 export function valueMatchesList(answer: string, optionText: string): boolean;
 
+/** Missing provider, malformed output and transport errors fail closed. */
+export function auditAuthenticity(ai: { key?: string; base?: string; model?: string } | null, tailoredResume: string, profile: unknown, jd: unknown): Promise<{ ok: boolean; hallucinations: string[] }>;
+
 export interface ApplyRunResult {
   title: string; company: string; url: string;
   result: "submitted" | "needsReview" | "skipped" | "error";
