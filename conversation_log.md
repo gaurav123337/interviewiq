@@ -1,5 +1,9 @@
 # Conversation Log
 
+## Independent live verification — 2026-11-16
+
+**Assistant:** Continued the approved [CI-only implementation plan](docs/implementation_plans/INDEPENDENT_LIVE_VERIFICATION_IMPLEMENTATION_PLAN_20261114.md) on an isolated branch from main. The change separates publication from read-only live verification, archives the original full-build hash manifest, bounds readiness for lazy assets, and preserves strict browser failures. No new merge, production rollout, account writes or worker changes are part of this follow-up; prepare a focused PR and report the verification evidence.
+
 ## Frontend deployment synchronization — 2026-11-06
 
 **Assistant:** Created the approved [Frontend Deployment Sync implementation plan](docs/implementation_plans/FRONTEND_DEPLOYMENT_SYNC_IMPLEMENTATION_PLAN_20261106.md). Preserve the `interviewiq` repository and GitHub Pages URL; deploy the same build to the existing Wasmer `jobassist` app. Keep this release limited to frontend deployment configuration and documentation, with no Supabase deployment.

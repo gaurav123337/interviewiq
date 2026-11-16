@@ -31,8 +31,14 @@ jobs:
       - name: Start disposable pipeline database
         run: |
           docker run --name pipeline-sql --network none -e POSTGRES_PASSWORD=synthetic-ci-only -d postgres:17-alpine
+          ready=0
           for attempt in $(seq 1 30); do
-            if docker exec pipeline-sql pg_isready -U postgres; then exit 0; fi
+            if docker exec pipeline-sql psql -U postgres -d postgres -X -A -t -q -c 'select 1' | grep -qx 1; then
+              ready=$((ready + 1))
+              if [ "$ready" -eq 2 ]; then exit 0; fi
+            else
+              ready=0
+            fi
             sleep 1
           done
           exit 1
@@ -66,8 +72,14 @@ jobs:
         id: worker_database
         run: |
           docker run --name pipeline-worker-sql --network none -e POSTGRES_PASSWORD=synthetic-ci-only -d postgres:17-alpine
+          ready=0
           for attempt in $(seq 1 30); do
-            if docker exec pipeline-worker-sql pg_isready -U postgres; then exit 0; fi
+            if docker exec pipeline-worker-sql psql -U postgres -d postgres -X -A -t -q -c 'select 1' | grep -qx 1; then
+              ready=$((ready + 1))
+              if [ "$ready" -eq 2 ]; then exit 0; fi
+            else
+              ready=0
+            fi
             sleep 1
           done
           exit 1

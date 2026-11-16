@@ -1,5 +1,6 @@
 import { test as base, expect, type Page, type TestInfo } from "@playwright/test";
 import { requestPolicy } from "../scripts/virtual-tester-lib.js";
+import { fulfillLiveStatic } from "../scripts/virtual-tester-live-lib.js";
 import { FixtureBackend } from "./backend";
 import { PAYMENT_FIXTURE_SCRIPT } from "./payment-fixture";
 
@@ -39,17 +40,7 @@ export const test = base.extend<{ backend: FixtureBackend; safety: void }>({
       const decision = requestPolicy(request.url(), request.method(), baseURL, mode);
       if (decision === "static") {
         if (mode !== "live") return route.continue();
-        // Routing only sees the initial URL, not redirect hops. Fetch without
-        // following redirects so an approved site cannot send us elsewhere.
-        const response = await route.fetch({ maxRedirects: 0, timeout: 25_000 });
-        if (response.status() >= 300 && response.status() < 400) {
-          errors.push(`Redirect rejected on approved static path: ${new URL(request.url()).pathname}`);
-          await response.dispose();
-          return route.abort("blockedbyclient");
-        }
-        await route.fulfill({ response });
-        await response.dispose();
-        return;
+        return fulfillLiveStatic(route, errors);
       }
       if (decision === "fixture") return backend.handle(route);
       if (decision === "checkout-fixture") return route.fulfill({ contentType: "text/javascript", body: PAYMENT_FIXTURE_SCRIPT });

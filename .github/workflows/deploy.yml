@@ -12,17 +12,25 @@ on:
         default: false
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
+  contents: read
+  actions: read
 
 jobs:
   build-and-deploy:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    # A verification rerun must not cancel or repeat publication.
+    concurrency:
+      group: frontend-publication
+      cancel-in-progress: false
+    outputs:
+      release_sha: ${{ steps.manifest.outputs.release_sha }}
+      release_run_id: ${{ steps.manifest.outputs.release_run_id }}
+      release_attempt: ${{ steps.manifest.outputs.release_attempt }}
     steps:
       # actions pinned to commit SHAs (docs/app-security.md G7) — upgrade
       # deliberately: bump the tag, then re-pin its SHA
@@ -73,12 +81,16 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: virtual-tester-isolated-${{ github.run_id }}
+          name: virtual-tester-isolated-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             playwright-report/
             test-results/
           retention-days: 7
           if-no-files-found: warn
+
+      - name: Record frontend manifest
+        id: manifest
+        run: node scripts/verify-frontends.mjs record --dist dist --out release-manifest/manifest.json
 
       # ── Deploy to GitHub Pages via gh-pages branch ──────────────────────
       # Upload the built dist/ to a gh-pages branch so GitHub Pages can
@@ -154,71 +166,42 @@ jobs:
             exit "$STATUS"
           fi
 
-      # Verify the public responses, not just the platform's deploy status. Pages
-      # publishes asynchronously after the gh-pages push; allow propagation, then
-      # compare the shell, service worker, and its referenced bundles byte-for-byte.
-      - name: Verify synchronized frontend sites
-        timeout-minutes: 10
-        run: |
-          python -I - "$GITHUB_WORKSPACE/dist" \
-            https://gaurav123337.github.io/interviewiq/ \
-            https://job-assist.wasmer.app/ <<'PY'
-          import hashlib
-          import os
-          import re
-          import sys
-          import time
-          from concurrent.futures import ThreadPoolExecutor
-          from pathlib import Path
-          from urllib.request import Request, urlopen
-
-          dist = Path(sys.argv[1])
-          html = (dist / "index.html").read_bytes()
-          assets = sorted(set(re.findall(r'(?:src|href)="\./(assets/[A-Za-z0-9_.-]+)"', html.decode("utf-8"))))
-          if not assets:
-              raise SystemExit("No built assets found in index.html")
-          files = ["index.html", "sw.js", *assets]
-          expected = {name: hashlib.sha256((dist / name).read_bytes()).hexdigest() for name in files}
-          revision = os.environ["GITHUB_SHA"]
-
-          def verify(base, name):
-              request = Request(base + name + "?release=" + revision, headers={"Cache-Control": "no-cache"})
-              with urlopen(request, timeout=15) as response:
-                  actual = hashlib.sha256(response.read()).hexdigest()
-              if actual != expected[name]:
-                  raise RuntimeError(f"{base}{name} does not match this release")
-
-          for base in sys.argv[2:]:
-              for attempt in range(8):
-                  try:
-                      verify(base, "index.html")
-                      break
-                  except Exception as error:
-                      if attempt == 7:
-                          raise
-                      print(f"Waiting for {base}: {error}", flush=True)
-                      time.sleep(15)
-              with ThreadPoolExecutor(max_workers=6) as pool:
-                  list(pool.map(lambda name: verify(base, name), files))
-              message = f"Verified {base}: {len(files)} files match commit {revision} (SHA-256)"
-              print(message, flush=True)
-              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-                  summary.write(message + "\n\n")
-          PY
-
-      - name: Verify anonymous deployed browser journeys
-        id: live_browser
-        run: npm run test:e2e:live
-      - name: Upload live browser evidence
-        if: ${{ always() && steps.live_browser.outcome != 'skipped' }}
+      # The original manifest is archived only after both publishing steps succeed.
+      - name: Archive frontend release manifest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: virtual-tester-live-${{ github.run_id }}
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 7
-          if-no-files-found: warn
+          name: ${{ steps.manifest.outputs.artifact_name }}
+          path: release-manifest/manifest.json
+          retention-days: 30
+          if-no-files-found: error
+
+  verify-live:
+    needs: build-and-deploy
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/verify-live.yml
+    with:
+      release_run_id: ${{ needs.build-and-deploy.outputs.release_run_id }}
+      release_attempt: ${{ needs.build-and-deploy.outputs.release_attempt }}
+      release_sha: ${{ needs.build-and-deploy.outputs.release_sha }}
+
+  deploy-backend:
+    needs: [build-and-deploy, verify-live]
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_supabase }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
 
       # ── Deploy Supabase edge functions (explicit manual opt-in only) ───
       # A frontend push must not change backend functions. Request them through

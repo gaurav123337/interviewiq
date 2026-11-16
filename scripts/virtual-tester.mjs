@@ -40,6 +40,9 @@ if (command === "prepare") process.exit(0);
 if (command === "check") {
   run("node_modules/typescript/bin/tsc", ["--noEmit", "-p", "tsconfig.e2e.json"]);
   run("scripts/virtual-tester-lib.test.mjs", []);
+  run("scripts/virtual-tester-live-lib.test.mjs", []);
+  run("scripts/verify-frontends-lib.test.mjs", []);
+  run("scripts/verify-frontends-workflow.test.mjs", []);
 } else if (command === "report") {
   run("node_modules/@playwright/test/cli.js", ["show-report", "playwright-report", ...extra]);
 } else if (command === "selftest") {
