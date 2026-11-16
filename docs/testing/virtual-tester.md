@@ -28,13 +28,13 @@ npm run test:virtual
 | `npm run test:e2e:repeat` | Run each browser scenario twice to catch state leakage |
 | `npm run test:e2e:prepare` | Prepare isolated builds only |
 | `npm run test:e2e:browser -- --project=desktop` | Run against previously prepared builds |
-| `npm run test:e2e:check` | E2E TypeScript check plus pure containment-policy tests |
+| `npm run test:e2e:check` | E2E TypeScript, network containment, live transport, manifest readiness and workflow-isolation tests |
 | `npm run test:e2e:selftest` | After preparing builds, deliberately break a bundle and verify failure evidence in a separate probe report |
 | `npm run test:e2e:ui` | Interactive Playwright runner |
 | `npm run test:e2e:report` | Open the HTML report |
 | `npm run test:e2e:live` | Explicit read-only checks of Pages and Wasmer |
 
-Normal commands exit nonzero on failure. CI retries once but still fails on flaky tests. Default local concurrency is one worker to avoid saturating a desktop; CI uses two. `--workers` and `--grep` are Playwright options, not a reason to exclude regressions from release checks.
+Normal commands exit nonzero on failure. CI retries once but still fails on flaky tests. Local and CI browser concurrency default to one worker. `--workers` and `--grep` are Playwright options, not a reason to exclude regressions from release checks.
 
 The existing audit, RAG, Vitest, Deno, build, and offline suites remain separate hard CI gates. `test:virtual` does not replace them. For existing Vitest offline tests, build `dist/` first.
 
@@ -79,7 +79,7 @@ A route inventory check is deliberately shallow and never represented as exhaust
 | Articles/resources | Inventory empty state and synthetic article UI/filtering | Real ingestion/indexing/resource moderation not certified |
 | Legal/sources/counselor | Route/access/empty-state inventory | Not comprehensive legal or career advice verification |
 | PWA | Warmed practice/legal routes, service worker, offline reload | No claim that arbitrary cold lazy routes work offline |
-| Public deployments | Landing and local onboarding with backend blocked | Public static/frontend reachability only |
+| Public deployments | Landing/local onboarding and signed-out Jobs/pipeline controls with backend blocked | Public static/frontend reachability only; no authenticated pipeline execution |
 
 All routed views in `src/components/App.tsx` are represented by inventory or journey scenarios. Stateful interview/results and skill-detail views are reached by interaction rather than injected completed state. Update the matrix and scenarios when introducing a new route.
 
@@ -97,7 +97,27 @@ First determine whether a failure is **app behavior**, **a missing fixture contr
 
 `virtual-tester.yml` runs on pull requests and manual dispatch with read-only GitHub permissions and no production secrets. Reports have seven-day retention. It never uses `pull_request_target`.
 
-`deploy.yml` retains every existing gate and adds isolated browser tests before either frontend deployment. After publication and the existing artifact-hash check, anonymous browser smoke runs against both public sites. A post-deployment failure reports a bad release but does not silently roll back production.
+`deploy.yml` retains every existing pre-publication gate. Its `build-and-deploy` job records a SHA-256 manifest for **every public build file**, including lazy chunks, and adds a `release.json` identity marker. It publishes those exact bytes to both sites, then archives the manifest in the immutable artifact `frontend-manifest-<SHA>-<run ID>-<publication attempt>` for 30 days. Publication concurrency is separate from verification and does not cancel an in-flight publisher.
+
+The downstream `verify-live` job calls `verify-live.yml` with only `contents: read` and `actions: read`; no publishing/backend secrets are inherited. It verifies the original run/attempt/repository/SHA, confirms both publishing steps succeeded, downloads the exact artifact ID with digest validation, and checks browser-equivalent asset URLs. Readiness uses at most six parallel requests, a 15-second request/body timeout, five-second retry intervals and a three-minute total deadline. Every recovered failure remains in the report. It rechecks the marker/shell to reject superseded or changing releases, runs strict anonymous browser smoke, then rechecks publication identity. Browser retries and `failOnFlakyTests` are unchanged. Transport exceptions are explicitly recorded separately from real HTTP failures; neither is turned into a successful response.
+
+### Rerun verification without publishing
+
+For a failed verification job, use **Re-run failed jobs**, not **Re-run all jobs**. The successful publisher and its original manifest remain the reference. Attempt-qualified evidence artifacts retain each result independently. If the original dispatch opted into `deploy_supabase`, a successful rerun can unlock that already-authorized downstream job; use the standalone verification workflow instead when no backend continuation is intended.
+
+For a standalone check, run **Verify published frontends** (`verify-live.yml`) from `main` with:
+
+- `release_run_id`: original `deploy.yml` run ID;
+- `release_attempt`: the attempt that successfully published both sites (not the verification retry's attempt);
+- `release_sha`: full 40-character source SHA of that publication.
+
+This workflow has **no publishing or backend job**, takes no arbitrary target URL, and checks only the two existing public sites. Use the exact recorded inputs; do not replace them with the newest run or a rebuild. Missing/expired manifest artifacts, unsuccessful publication, mismatched provenance, or a superseded live release fail honestly.
+
+Historical runs before manifest archival (including PR179's original deployment) cannot gain this proof retroactively. Their separate anonymous smoke evidence remains valid for its observed behavior, but rebuilding the same source is not original-byte verification. Do not rerun their old monolithic deploy merely to make its status green.
+
+A manual `deploy.yml` backend opt-in remains a separate `deploy-backend` job after both publication and verification succeed. Standalone verification can never start it. No rollback or ignored failure is introduced.
+
+Verification reports include `verification-evidence/provenance.json`, `readiness.json`, `post-browser.json` and the ordinary browser evidence in `live-verification-<verification run ID>-<attempt>`, retained for 30 days. A post-deployment failure records what failed without silently rolling back or republishing.
 
 No recurring schedule is enabled. Use GitHub Actions notifications for failures; configure external alerts or a recurrence separately if desired.
 

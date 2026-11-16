@@ -1,0 +1,100 @@
+name: Verify published frontends
+
+# Manual reruns only verify an existing publication; no publish/backend secrets.
+on:
+  workflow_call:
+    inputs:
+      release_run_id:
+        type: string
+        required: true
+      release_attempt:
+        type: string
+        required: true
+      release_sha:
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      release_run_id:
+        description: Original deploy.yml run ID
+        type: string
+        required: true
+      release_attempt:
+        description: Attempt that successfully published both sites
+        type: string
+        required: true
+      release_sha:
+        description: Full 40-character commit SHA of that publication
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: frontend-verification-${{ inputs.release_run_id }}-${{ inputs.release_attempt }}
+      cancel-in-progress: false
+    steps:
+      # Verifier code comes from the trusted workflow ref, not from downloaded artifacts.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Validate original publication provenance
+        id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          RELEASE_ATTEMPT: ${{ inputs.release_attempt }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: >-
+          node scripts/verify-frontends.mjs provenance
+          --run-id "$RELEASE_RUN_ID" --run-attempt "$RELEASE_ATTEMPT" --commit "$RELEASE_SHA"
+          --out verification-evidence/provenance.json
+      - name: Download original manifest by immutable artifact ID
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ steps.publication.outputs.artifact_id }}
+          run-id: ${{ inputs.release_run_id }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/release-manifest-${{ github.run_id }}-${{ github.run_attempt }}
+          merge-multiple: true
+          digest-mismatch: error
+      - name: Wait for every original published asset
+        env:
+          MANIFEST: ${{ runner.temp }}/release-manifest-${{ github.run_id }}-${{ github.run_attempt }}/manifest.json
+        run: >-
+          node scripts/verify-frontends.mjs verify --manifest "$MANIFEST"
+          --provenance verification-evidence/provenance.json --out verification-evidence/readiness.json
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Verify anonymous deployed browser journeys
+        run: npm run test:e2e:live
+      - name: Recheck release identity after browser journeys
+        env:
+          MANIFEST: ${{ runner.temp }}/release-manifest-${{ github.run_id }}-${{ github.run_attempt }}/manifest.json
+        run: >-
+          node scripts/verify-frontends.mjs verify --manifest "$MANIFEST"
+          --provenance verification-evidence/provenance.json --out verification-evidence/post-browser.json
+      - name: Upload live verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            verification-evidence/
+            playwright-report/
+            test-results/
+          retention-days: 30
+          if-no-files-found: error
