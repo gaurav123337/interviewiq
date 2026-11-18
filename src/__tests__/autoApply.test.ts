@@ -112,6 +112,13 @@ describe("extractContacts (from the uploaded resume text)", () => {
 });
 
 describe("engineCommands", () => {
+  it.each(["instahyre", "naukri", "linkedin", "unknown"])("selects the legacy owner for every %s command", (siteId) => {
+    for (const { command } of engineCommands(siteId)) {
+      expect(command).toMatch(/\s--legacy-owner(?:\s|$)/);
+      expect(command).not.toContain("--agent-config");
+    }
+  });
+
   it("gives login → real run → dry run per site, with the site's submit mode", () => {
     const cmds = engineCommands("linkedin", 7);
     expect(cmds).toHaveLength(3);
