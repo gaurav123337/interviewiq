@@ -2,20 +2,23 @@
    Every async operation is fenced by account generation and selected binding. */
 import { useEffect, useRef, useState } from "react";
 import { getCloudState, subscribeCloud } from "../../services/cloud";
-import { agentReadiness, createPipelineClient, pipelineErrorMessage, type PipelineAnswer, type PipelineAgent, type PipelineBoard, type PipelineClient, type PipelineCommand, type PipelineCommandType, type PipelineProfile, type PipelineQuestion, type PipelineRun, type PipelineSession, type PipelineSettingsRecord, type PipelineTask, type PipelineTaskStatus, type VerifiedFact } from "../../services/applyPipeline";
+import { agentReadiness, createPipelineClient, pipelineErrorMessage, type PipelineAnswer, type PipelineAgent, type PipelineBoard, type PipelineClient, type PipelineCommand, type PipelineCommandType, type PipelineLearning, type PipelineProfile, type PipelineQuestion, type PipelineRun, type PipelineSession, type PipelineSettingsRecord, type PipelineTask, type PipelineTaskStatus, type VerifiedFact } from "../../services/applyPipeline";
 import { btnDanger, btnGhost, btnPrimary, btnSm, cardCls, Chip } from "../ui";
 import { PipelineProfileForm } from "./PipelineProfileForm";
 import { PipelineSettingsForm } from "./PipelineSettingsForm";
 import { PipelineQuestionCard } from "./PipelineQuestionCard";
+import { PipelineMatchLearningCard } from "./PipelineMatchLearningCard";
 
 const TASK_LABELS: Record<PipelineTaskStatus, string> = {
   queued: "Queued", in_progress: "Matching / preparing", submitting: "Submission in progress · not confirmed",
   waiting_answer: "Waiting for your answer", waiting_login: "Waiting for sign-in", waiting_review: "Waiting for human review",
   unsupported: "Unsupported · manual application required", submitted: "Submitted · confirmation observed", unverified: "Unverified · do not retry blindly",
-  failed: "Failed", cancelled: "Cancelled", filtered: "Filtered by your preferences",
+  failed: "Failed", cancelled: "Cancelled", filtered: "Filtered by your preferences · retained for manual review",
+  manual_actionable: "Manual action available · factual gates block automation", waiting_match_answer: "Waiting for match answer · no skill claimed",
+  manual_applied: "Manual application reported · inspect receipt evidence", user_skipped: "Skipped by preference · retained for manual review",
 };
 interface Snapshot { agents: PipelineAgent[]; settings: PipelineSettingsRecord; runs: PipelineRun[]; tasks: PipelineTask[]; sessions: PipelineSession[] }
-interface PrivateSnapshot { profile: PipelineProfile | null; answers: PipelineAnswer[]; answersRevision: number; questions: PipelineQuestion[]; boards: PipelineBoard[] }
+interface PrivateSnapshot { profile: PipelineProfile | null; answers: PipelineAnswer[]; answersRevision: number; questions: PipelineQuestion[]; boards: PipelineBoard[]; learning: PipelineLearning | null; learningError: string | null }
 export default function ApplyPipelinePanel({ canRun }: { canRun: boolean }) {
   const [account, setAccount] = useState(() => ({ id: getCloudState().user?.id ?? null, version: 0 }));
   useEffect(() => subscribeCloud(state => setAccount(previous => {
@@ -61,8 +64,11 @@ function AccountPipeline({ userId, canRun }: { userId: string; canRun: boolean }
     return { agents, settings, runs, tasks, sessions };
   }
   async function readPrivate(client: PipelineClient): Promise<PrivateSnapshot> {
-    const [profile, answers, questions, boards] = await Promise.all([client.getProfile(), client.listAnswers(), client.listQuestions(), client.listBoards()]);
-    return { profile, answers: answers.answers, answersRevision: answers.revision, questions, boards };
+    const [profile, answers, questions, boards, learningResult] = await Promise.all([client.getProfile(), client.listAnswers(), client.listQuestions(), client.listBoards(),
+      // An unapplied additive learning backend must not disable the old controls.
+      // Failure is visible and drops the ledger, never becomes an empty success.
+      client.listLearning().then(learning => ({ learning, learningError: null }), failure => ({ learning: null, learningError: pipelineErrorMessage(failure) }))]);
+    return { profile, answers: answers.answers, answersRevision: answers.revision, questions, boards, ...learningResult };
   }
   async function reload(includePrivate = open, background = false) {
     const client = api.current, version = generation.current;
@@ -129,7 +135,13 @@ function AccountPipeline({ userId, canRun }: { userId: string; canRun: boolean }
       if (!current(version)) return null;
       setSnapshot(next); if (personal) setPrivateData(personal);
       return value;
-    } catch (failure) { if (current(version)) setError(pipelineErrorMessage(failure)); return null; }
+    } catch (failure) {
+      if (current(version)) {
+        const message = pipelineErrorMessage(failure); setError(message); setMessage(null);
+        if (/changed elsewhere|Match learning is unavailable/.test(message)) setPrivateData(previous => previous ? { ...previous, learning: null, learningError: `${message} Reload to recheck learning eligibility.` } : null);
+      }
+      return null;
+    }
     finally { if (current(version)) { pending.current = false; setBusy(false); } }
   }
   async function sendCommand(type: PipelineCommandType, targetPortal?: string, questionId?: string) {
@@ -205,6 +217,40 @@ function AccountPipeline({ userId, canRun }: { userId: string; canRun: boolean }
               onAnswer={async input => { await operation(client => client.answerQuestion(question, input), () => "Answer confirmed for the displayed scope. Matching tasks may resume after all their required questions are resolved."); }}
               onOpen={async () => { await sendCommand("open_question", undefined, question.id); }} />)}</div>}
           </section>
+          <section aria-label="Manual queue and match learning" className="rounded-xl border border-line/10 p-4">
+            <h4 className="text-[14px] font-bold">Manual queue and match learning · selected agent</h4>
+            <p className="mt-1 text-[12px] text-mut">Skipped, filtered and close-match jobs are retained, not deleted. Apply/skip choices are scoped preferences only; they never grant submission permission or override factual vetoes. A yes to a skill-gap question only suggests a manual profile update and exact resume reapproval.</p>
+            {privateData.learningError && <p className="mt-2 text-[12px] text-warn">{privateData.learningError} Learning actions and manual-open commands are disabled. Existing controls and exact job links remain available.</p>}
+            {!bindingId ? <p className="mt-2 text-[12px]">Select an agent to inspect its retained candidates.</p> : !tasks.length ? <p className="mt-2 text-[12px]">No retained tasks for this agent.</p> : <div className="mt-3 space-y-3">{tasks.filter(task => !!task.matchDecision || ["manual_actionable", "waiting_match_answer", "manual_applied", "user_skipped", "filtered", "waiting_review", "unsupported", "unverified"].includes(task.status)).map(task => <PipelineMatchLearningCard
+              key={`${bindingId}:${task.id}:${task.profileRevision}:${task.settingsRevision}:${privateData.profile?.revision}:${snapshot.settings.revision}:${task.matchDecision?.status}:${privateData.learning ? "available" : "unavailable"}`}
+              task={task} learning={privateData.learning} profileRevision={privateData.profile?.revision} settingsRevision={snapshot.settings.revision} busy={busy} canEdit={canRun}
+              onFeedback={async input => { await operation(client => client.recordMatchFeedback(input), () => "Match preference recorded for the displayed scope and revisions. Nothing was submitted or authorized; factual vetoes still apply."); }}
+              onQuestion={async input => { await operation(client => client.answerMatchQuestion(input), () => input.answer === "yes" ? "Match answer recorded. Manually edit your verified profile and reapprove your exact resume before reconsideration. No skill was added and nothing was submitted." : "Match answer recorded. No profile facts or application permissions were created."); }}
+              onReport={async input => { await operation(client => client.reportManualApplication(input), () => "Manual application self-report recorded. It is not observed evidence and gives no autonomy graduation credit."); }}
+              onGrant={async input => { await operation(client => client.grantMatchAutonomy(input), () => "Scoped autonomy granted after server checks, bound to this similarity, portal, revisions and expiry. Pipeline settings were not enabled; factual safety checks still apply."); }}
+              onOpen={async () => {
+                const result = await operation(client => client.requestCommand(bindingId, "open_manual", { taskId: task.id }), () => "Exact manual-open command queued. The local agent may only open this job, never fill or click Apply. An independently observed manual receipt is required; queue acknowledgement is not submission proof.");
+                if (result) setCommand(result);
+              }}
+            />)}</div>}
+            <h5 className="mt-4 text-[13px] font-bold">Learning history · this account</h5>
+            <p className="mt-1 text-[11px] text-mut">History spans your own agents; grants/preferences only apply at their exact profile/settings revisions. Revocation remains available without auto-apply access.</p>
+            {privateData.learning && <>
+              {!privateData.learning.feedback.length && !privateData.learning.grants.length && <p className="mt-2 text-[12px]">No saved match preferences or autonomy grants.</p>}
+              <ul className="mt-2 space-y-2">{privateData.learning.feedback.map(feedback => <li key={feedback.id} className="rounded-lg border border-line/10 p-3 text-[12px]">
+                <b>User preference: {feedback.verdict} · {feedback.scope === "exact" ? "exact job only" : "similarity fingerprint"}</b>
+                <p className="mt-1 break-all text-[11px]">{feedback.similarityKey} · Portal: {feedback.portal || "unverified"}</p>
+                <a className="mt-1 inline-block underline" href={feedback.jobUrl} target="_blank" rel="noopener noreferrer">View preference job</a>
+                <p className="mt-1 text-[11px] text-mut">Profile {feedback.profileRevision} / Preferences {feedback.settingsRevision} · {feedback.revokedAt ? "Revoked · not applicable" : feedback.profileRevision !== privateData.profile?.revision || feedback.settingsRevision !== snapshot.settings.revision ? "Stale revisions · not applicable" : "Current preference only · not permission to apply"}</p>
+                {!feedback.revokedAt && <button type="button" className={btnDanger + btnSm + " mt-2"} disabled={busy} onClick={() => void operation(client => client.revokeLearning({ feedbackId: feedback.id }), () => "Match preference revoked. Future decisions must reread the learning ledger.", true)}>Revoke match preference</button>}
+              </li>)}</ul>
+              <ul className="mt-2 space-y-2">{privateData.learning.grants.map(grant => <li key={grant.id} className="rounded-lg border border-line/10 p-3 text-[12px]">
+                <b>Explicit autonomy grant · {grant.portal}</b><p className="mt-1 break-all text-[11px]">{grant.similarityKey}</p>
+                <p className="mt-1 text-[11px] text-mut">Profile {grant.profileRevision} / Preferences {grant.settingsRevision} · Expires {new Date(grant.expiresAt).toLocaleString()} · {grant.revokedAt ? "Revoked · not applicable" : Date.parse(grant.expiresAt) <= Date.now() ? "Expired · not applicable" : grant.profileRevision !== privateData.profile?.revision || grant.settingsRevision !== snapshot.settings.revision ? "Stale revisions · not applicable" : "Current scoped grant · factual gates still required"}</p>
+                {!grant.revokedAt && <button type="button" className={btnDanger + btnSm + " mt-2"} disabled={busy} onClick={() => void operation(client => client.revokeLearning({ grantId: grant.id }), () => "Scoped autonomy grant revoked. Future submissions must recheck permission.", true)}>Revoke autonomy grant</button>}
+              </li>)}</ul>
+            </>}
+          </section>
           <section aria-label="Pipeline answer bank" className="rounded-xl border border-line/10 p-4">
             <h4 className="text-[14px] font-bold">Verified answer bank · revision {privateData.answersRevision}</h4>
             <p className="mt-1 text-[11px] text-mut">Revoking an answer invalidates pending approvals. Expired or prior-profile answers are not reusable.</p>
@@ -231,8 +277,8 @@ function AccountPipeline({ userId, canRun }: { userId: string; canRun: boolean }
             <div className="flex flex-wrap items-center gap-2"><b>{new Date(run.createdAt).toLocaleString()}</b><Chip tone={run.status === "cancelled" ? "default" : "co"}>{run.status === "completed" ? "Processing ended · inspect task outcomes" : run.status === "queued" ? "Queued · waiting for worker" : run.status}</Chip><span>{run.mode === "auto" ? "Auto-submit opted in" : "Review only"} · {run.taskCount} tasks / {run.candidateCount} candidates</span>
               {["queued", "running"].includes(run.status) && <button type="button" className={btnDanger + btnSm} disabled={busy} onClick={() => void operation(client => client.cancelRun(run.id), () => "Run cancelled. Attempts that may have crossed submission remain unverified; do not retry them blindly.", true)}>Cancel pipeline run</button>}
             </div>
-            <ul className="mt-2 space-y-2">{tasks.filter(task => task.runId === run.id).map(task => <li key={task.id} className="border-l-2 border-line/20 pl-3"><b>{task.job.title}</b> · {task.job.company}<p>{TASK_LABELS[task.status]} · Confirmed skill match {task.score}%</p><p className="break-words text-[11px] text-mut">{task.reason ?? "Deterministic match accepted; application preflight still required."} · Profile {task.profileRevision} / Preferences {task.settingsRevision} / Answers {task.answersRevision}</p>
-              {task.status === "waiting_review" && <button type="button" className={btnGhost + btnSm + " mt-1"} disabled={busy || !canRun} onClick={() => void sendCommand("retry_login", task.job.portal ?? new URL(task.job.jobUrl).hostname)}>Open local sign-in window</button>}
+            <ul className="mt-2 space-y-2">{tasks.filter(task => task.runId === run.id).map(task => <li key={task.id} className="border-l-2 border-line/20 pl-3"><b>{task.job.title}</b> · {task.job.company}<p>{TASK_LABELS[task.status]} · Confirmed skill match {task.score}%</p><p className="break-words text-[11px] text-mut">{task.matchDecision?.reason ?? task.reason ?? "No decision reason reported; application preflight is still required."} · Profile {task.profileRevision} / Preferences {task.settingsRevision} / Answers {task.answersRevision}</p>
+              <a className="mt-1 inline-block text-[11px] underline" href={task.job.jobUrl} target="_blank" rel="noopener noreferrer">View task job</a>
             </li>)}</ul>
           </li>)}</ul>}
         </section>

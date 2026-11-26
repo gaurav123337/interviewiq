@@ -17,11 +17,27 @@ export interface PipelineSettings {
 export interface PipelineSettingsRecord { revision: number; data: PipelineSettings; updatedAt: string }
 export interface PipelineJob {
   jobUrl: string; title: string; company: string; description: string; skills: string[]; location: string;
-  country?: string; postedAt?: string; source?: string; externalId?: string; remote?: boolean; portal?: string;
+  country?: string; postedAt?: string; source?: string; externalId?: string; remote?: boolean; portal?: string; boardMatch?: "low" | "medium" | "high" | "unknown";
   salary?: { min?: number; max?: number; currency: string; period: "year" | "month" | "hour" };
 }
-export type PipelineTaskStatus = "queued" | "in_progress" | "submitting" | "waiting_answer" | "waiting_login" | "waiting_review" | "unsupported" | "submitted" | "unverified" | "failed" | "cancelled" | "filtered";
-export interface PipelineTask { id: string; runId: string; bindingId: string; job: PipelineJob; status: PipelineTaskStatus; profileRevision: number; settingsRevision: number; answersRevision: number; score: number; reason: string | null }
+export type PipelineTaskStatus = "queued" | "in_progress" | "submitting" | "waiting_answer" | "waiting_login" | "waiting_review" | "unsupported" | "submitted" | "unverified" | "failed" | "cancelled" | "filtered" | "manual_actionable" | "waiting_match_answer" | "manual_applied" | "user_skipped";
+export interface PipelineMatchDecision {
+  status: "manual_actionable" | "waiting_match_answer" | "eligible_review" | "eligible_auto";
+  similarityKey: string; portal: string; reason: string; codes: string[]; missingCore: string[]; eligible: boolean; score: number; profileRevision: number;
+  requirements: { anyOf: string[]; core: boolean; evidence: string }[];
+  question?: { kind: "skill_gap"; skills: string[]; text: string };
+}
+export interface PipelineTask { id: string; runId: string; bindingId: string; job: PipelineJob; status: PipelineTaskStatus; profileRevision: number; settingsRevision: number; answersRevision: number; score: number; reason: string | null; matchDecision?: PipelineMatchDecision }
+export type PipelineFeedbackScope = "exact" | "similar";
+export type PipelineFeedbackVerdict = "apply" | "skip";
+export type PipelineMatchAnswer = "yes" | "no" | "unsure";
+export interface PipelineMatchFeedback { id: string; jobUrl: string; similarityKey: string; portal: string; scope: PipelineFeedbackScope; verdict: PipelineFeedbackVerdict; profileRevision: number; settingsRevision: number; confirmedAt: string; revokedAt: string | null; source: "user" }
+export interface PipelineAutonomyGrant { id: string; similarityKey: string; portal: string; profileRevision: number; settingsRevision: number; grantedAt: string; expiresAt: string; revokedAt: string | null; source: "user" }
+export interface PipelineLearningConfirmation { taskId: string; profileRevision: number; settingsRevision: number; confirm: true }
+export interface PipelineManualReceipt { id: string; taskId: string; jobUrl: string; similarityKey: string; portal: string; profileRevision: number; settingsRevision: number; reportedAt: string | null; observedAt: string | null; source: "user" | "worker"; commandId?: string; accountIdentity?: string }
+export interface PipelineMatchLearningQuestion { id: string; taskId: string; jobUrl: string; similarityKey: string; portal: string; profileRevision: number; settingsRevision: number; question: NonNullable<PipelineMatchDecision["question"]>; answer: PipelineMatchAnswer; answeredAt: string; source: "user"; suggestion: "profile_update" | "none" }
+export interface PipelineLearningEligibility { taskId: string; eligible: boolean; applySimilarCount: number; observedManualReceiptCount: number; profileRevision: number; settingsRevision: number; similarityKey: string; portal: string }
+export interface PipelineLearning { feedback: PipelineMatchFeedback[]; grants: PipelineAutonomyGrant[]; receipts: PipelineManualReceipt[]; questions: PipelineMatchLearningQuestion[]; eligibility: PipelineLearningEligibility[] }
 export interface PipelineRun { id: string; bindingId: string; mode: "review" | "auto"; status: "queued" | "running" | "completed" | "cancelled"; profileRevision: number; settingsRevision: number; answersRevision: number; candidateCount: number; taskCount: number; createdAt: string; startedAt: string | null; finishedAt: string | null }
 export type QuestionControl = "text" | "textarea" | "email" | "tel" | "url" | "select" | "radio" | "checkbox" | "number" | "date";
 export interface PipelineQuestion { id: string; questionKey: string; meaning: string; questionText: string; controlType: QuestionControl; options: string[]; context: FactScope & { currency?: string }; scope: AnswerScope; scopeKey: string; currency: string | null; reason: string | null; profileRevision: number; status: "pending" | "answered" | "dismissed"; answerId: string | null; taskIds: string[]; createdAt: string; updatedAt: string }
@@ -29,7 +45,7 @@ export interface PipelineAnswer { id: string; meaning: string; questionText: str
 export interface PipelineBoard { id: string; url: string; host: string; label: string; type: "manual" | "greenhouse" | "lever" | "ashby" | "workday"; status: "pending" | "disabled" | "dead"; createdAt: string; updatedAt: string }
 export interface PipelineAgent { bindingId: string; label: string; engineVersion: string | null; capabilities: string[]; status: "ready" | "paused" | "offline" | null; profileMetadata: { revision?: number; resumeApproved?: boolean }; heartbeatAt: string | null; revokedAt: string | null; lastUsedAt: string | null }
 export interface PipelineSession { bindingId: string; portal: string; status: "authenticated" | "expired" | "login_required" | "unsupported"; accountLabel: string | null; checkedAt: string }
-export type PipelineCommandType = "pause" | "resume" | "retry_login" | "open_question" | "check_session";
+export type PipelineCommandType = "pause" | "resume" | "retry_login" | "open_question" | "check_session" | "open_manual";
 export interface PipelineCommand { id: string; bindingId: string; type: PipelineCommandType; status: "queued" | "claimed" | "done" | "failed" | "cancelled"; reason: string | null; createdAt: string }
 export const DEFAULT_PIPELINE_SETTINGS: PipelineSettings = {
   enabled: false, autoSubmit: false, threshold: 60, dailyCap: 10, weeklyCap: 50,
@@ -74,7 +90,7 @@ function scope(v: unknown, currency = false): FactScope & { currency?: string } 
   return out;
 }
 function oneOf<T extends string>(v: unknown, allowed: readonly T[]): T { return typeof v === "string" && allowed.includes(v as T) ? v as T : fail(); }
-function owner(row: Record<string, unknown>, userId: string): void { if (row.user_id !== undefined && row.user_id !== userId) fail("Account mismatch. Reopen the pipeline for your current account."); }
+function owner(row: Record<string, unknown>, userId: string): void { if (row.user_id !== undefined && row.user_id !== userId || row.userId !== undefined && row.userId !== userId) fail("Account mismatch. Reopen the pipeline for your current account."); }
 function facts(v: unknown): Record<string, VerifiedFact> {
   const input = object(v);
   if (Object.keys(input).length > 100) fail();
@@ -146,7 +162,9 @@ export function validateProfileConfirmation(value: { facts: Record<string, Verif
 
 const ANSWER_SCOPES = ["global", "country", "employer", "portal", "application"] as const;
 const CONTROLS = ["text", "textarea", "email", "tel", "url", "select", "radio", "checkbox", "number", "date"] as const;
-const TASK_STATES = ["queued", "in_progress", "submitting", "waiting_answer", "waiting_login", "waiting_review", "unsupported", "submitted", "unverified", "failed", "cancelled", "filtered"] as const;
+const TASK_STATES = ["queued", "in_progress", "submitting", "waiting_answer", "waiting_login", "waiting_review", "unsupported", "submitted", "unverified", "failed", "cancelled", "filtered", "manual_actionable", "waiting_match_answer", "manual_applied", "user_skipped"] as const;
+const COMMAND_TYPES = ["pause", "resume", "retry_login", "open_question", "check_session", "open_manual"] as const;
+const learningUnavailable = "Match learning is unavailable. Its backend may not be installed or may need an update. Existing pipeline controls remain usable; no learning or manual-open fallback is used.";
 export function isPublicPipelineUrl(value: string): boolean {
   try {
     const url = new URL(value), host = url.hostname.toLowerCase().replace(/\.$/, "");
@@ -170,6 +188,7 @@ function jobRow(raw: unknown): PipelineJob {
     ...(row.country !== undefined ? { country: text(row.country, 100, 1) } : {}), ...(row.postedAt !== undefined ? { postedAt: date(row.postedAt) } : {}),
     ...(row.source !== undefined ? { source: text(row.source, 100, 1) } : {}), ...(row.externalId !== undefined ? { externalId: text(row.externalId, 500, 1) } : {}),
     ...(row.remote !== undefined ? { remote: bool(row.remote) } : {}), ...(row.portal !== undefined ? { portal: text(row.portal, 200, 1) } : {}),
+    ...(row.boardMatch !== undefined ? { boardMatch: oneOf(row.boardMatch, ["low", "medium", "high", "unknown"] as const) } : {}),
     ...(row.salary !== undefined ? { salary: salaryRow(row.salary) } : {}) };
 }
 function salaryRow(raw: unknown): NonNullable<PipelineJob["salary"]> {
@@ -179,10 +198,61 @@ function salaryRow(raw: unknown): NonNullable<PipelineJob["salary"]> {
   if (min === undefined && max === undefined || min !== undefined && max !== undefined && min > max) fail();
   return { ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}), currency: text(row.currency, 10, 1), period: oneOf(row.period, ["year", "month", "hour"] as const) };
 }
+function matchQuestionRow(raw: unknown): NonNullable<PipelineMatchDecision["question"]> {
+  const row = object(raw);
+  return { kind: oneOf(row.kind, ["skill_gap"] as const), skills: strings(row.skills, 100), text: text(row.text, 2000, 1) };
+}
+function matchDecisionRow(raw: unknown): PipelineMatchDecision {
+  const row = object(raw);
+  const result: PipelineMatchDecision = { status: oneOf(row.status, ["manual_actionable", "waiting_match_answer", "eligible_review", "eligible_auto"] as const),
+    similarityKey: text(row.similarityKey, 16000, 1), portal: text(row.portal, 200), reason: text(row.reason, 2000, 1), codes: strings(row.codes), missingCore: strings(row.missingCore),
+    eligible: bool(row.eligible), score: integer(row.score, 0, 100), profileRevision: integer(row.profileRevision, 1),
+    requirements: Array.isArray(row.requirements) && row.requirements.length <= 100 ? row.requirements.map(raw => { const requirement = object(raw); return { anyOf: strings(requirement.anyOf, 100), core: bool(requirement.core), evidence: text(requirement.evidence, 2000) }; }) : fail(),
+    ...(row.question !== undefined && row.question !== null ? { question: matchQuestionRow(row.question) } : {}) };
+  if (result.eligible !== ["eligible_review", "eligible_auto"].includes(result.status)) fail();
+  return result;
+}
 function taskRow(raw: unknown, userId: string): PipelineTask {
   const row = object(raw); owner(row, userId);
-  return { id: id(row.id), runId: id(row.run_id), bindingId: id(row.target_binding_id), job: jobRow(row.job), status: oneOf(row.status, TASK_STATES),
-    profileRevision: integer(row.profile_revision, 1), settingsRevision: integer(row.settings_revision, 1), answersRevision: integer(row.answers_revision), score: integer(row.score, 0, 100), reason: nullableText(row.reason) };
+  const task: PipelineTask = { id: id(row.id), runId: id(row.run_id), bindingId: id(row.target_binding_id), job: jobRow(row.job), status: oneOf(row.status, TASK_STATES),
+    profileRevision: integer(row.profile_revision, 1), settingsRevision: integer(row.settings_revision, 1), answersRevision: integer(row.answers_revision), score: integer(row.score, 0, 100), reason: nullableText(row.reason),
+    ...(row.match_decision !== undefined && row.match_decision !== null ? { matchDecision: matchDecisionRow(row.match_decision) } : {}) };
+  if (task.matchDecision && task.matchDecision.profileRevision !== task.profileRevision) fail();
+  return task;
+}
+function learningScopeRow(raw: unknown, userId: string) {
+  const row = object(raw); owner(row, userId);
+  return { row, similarityKey: text(row.similarityKey, 16000, 1), portal: text(row.portal, 200), profileRevision: integer(row.profileRevision, 1), settingsRevision: integer(row.settingsRevision, 1) };
+}
+function feedbackRow(raw: unknown, userId: string): PipelineMatchFeedback {
+  const { row, ...bound } = learningScopeRow(raw, userId);
+  return { ...bound, id: id(row.id), jobUrl: publicUrl(row.jobUrl), scope: oneOf(row.scope, ["exact", "similar"] as const), verdict: oneOf(row.verdict, ["apply", "skip"] as const), confirmedAt: date(row.confirmedAt), revokedAt: nullableDate(row.revokedAt), source: oneOf(row.source, ["user"] as const) };
+}
+function grantRow(raw: unknown, userId: string): PipelineAutonomyGrant {
+  const { row, ...bound } = learningScopeRow(raw, userId);
+  const result = { ...bound, id: id(row.id), grantedAt: date(row.grantedAt), expiresAt: date(row.expiresAt), revokedAt: nullableDate(row.revokedAt), source: oneOf(row.source, ["user"] as const) };
+  if (Date.parse(result.expiresAt) <= Date.parse(result.grantedAt) || Date.parse(result.expiresAt) > Date.parse(result.grantedAt) + 30 * 86400000) fail();
+  return result;
+}
+function manualReceiptRow(raw: unknown, userId: string): PipelineManualReceipt {
+  const { row, ...bound } = learningScopeRow(raw, userId);
+  const result = { ...bound, id: id(row.id), taskId: id(row.taskId), jobUrl: publicUrl(row.jobUrl), reportedAt: nullableDate(row.reportedAt), observedAt: nullableDate(row.observedAt), source: oneOf(row.source, ["user", "worker"] as const),
+    ...(row.commandId !== undefined && row.commandId !== null ? { commandId: id(row.commandId) } : {}), ...(row.accountIdentity !== undefined && row.accountIdentity !== null ? { accountIdentity: text(row.accountIdentity, 500, 1) } : {}) };
+  // A user report can never masquerade as worker-observed submission evidence.
+  if (result.source === "user" && (result.observedAt !== null || !result.reportedAt) || result.source === "worker" && !result.observedAt) fail();
+  return result;
+}
+function learningQuestionRow(raw: unknown, userId: string): PipelineMatchLearningQuestion {
+  const { row, ...bound } = learningScopeRow(raw, userId);
+  const result = { ...bound, id: id(row.id), taskId: id(row.taskId), jobUrl: publicUrl(row.jobUrl), question: matchQuestionRow(row.question), answer: oneOf(row.answer, ["yes", "no", "unsure"] as const), answeredAt: date(row.answeredAt), source: oneOf(row.source, ["user"] as const), suggestion: oneOf(row.suggestion, ["profile_update", "none"] as const) };
+  if (result.suggestion === "profile_update" && result.answer !== "yes") fail();
+  return result;
+}
+function eligibilityRow(raw: unknown, userId: string): PipelineLearningEligibility {
+  const { row, ...bound } = learningScopeRow(raw, userId);
+  const result = { ...bound, taskId: id(row.taskId), eligible: bool(row.eligible), applySimilarCount: integer(row.applySimilarCount), observedManualReceiptCount: integer(row.observedManualReceiptCount) };
+  if (result.eligible && (result.applySimilarCount < 3 || result.observedManualReceiptCount < 2 || !result.portal)) fail();
+  return result;
 }
 function runRow(raw: unknown, userId: string): PipelineRun {
   const row = object(raw); owner(row, userId);
@@ -222,7 +292,7 @@ function sessionRow(raw: unknown, userId: string): PipelineSession {
 }
 function commandRow(raw: unknown, userId: string): PipelineCommand {
   const row = object(raw); owner(row, userId);
-  return { id: id(row.id), bindingId: id(row.binding_id), type: oneOf(row.type, ["pause", "resume", "retry_login", "open_question", "check_session"] as const), status: oneOf(row.status, ["queued", "claimed", "done", "failed", "cancelled"] as const), reason: nullableText(row.reason), createdAt: date(row.created_at) };
+  return { id: id(row.id), bindingId: id(row.binding_id), type: oneOf(row.type, COMMAND_TYPES), status: oneOf(row.status, ["queued", "claimed", "done", "failed", "cancelled"] as const), reason: nullableText(row.reason), createdAt: date(row.created_at) };
 }
 function rows<T>(raw: unknown, parse: (row: unknown, userId: string) => T, userId: string): T[] { return Array.isArray(raw) && raw.length <= 200 ? raw.map(row => parse(row, userId)) : fail(); }
 export function agentReadiness(agent: PipelineAgent, now = Date.now()): { online: boolean; ready: boolean; label: string } {
@@ -266,6 +336,10 @@ export function createPipelineClient(userId: string) {
       const code = typeof error.code === "string" ? error.code : "";
       const message = typeof error.message === "string" ? error.message : "";
       if (code === "40001" || message.includes("stale_profile") || message.includes("stale_settings")) fail("Profile, settings or questions changed elsewhere. Reload before saving again.");
+      const learningAction = name.startsWith("learning.") || name === "commands.request" && args.type === "open_manual";
+      if (learningAction && (["PGRST202", "42883", "42P01"].includes(code) || /unsupported[ _]action|unknown[ _]action/.test(message))) fail(learningUnavailable);
+      if (name === "learning.grant" && /grant_not_eligible|insufficient.*(?:feedback|receipt)|graduation.*(?:denied|ineligible)/.test(message)) fail("This scope is not eligible for autonomy. The server requires three distinct current apply-similar preferences and two worker-observed manual receipts for the same portal and revisions. Self-reports do not count.");
+      if (learningAction && /(?:factual|match)_veto|manual_only|core_gap|missing_core/.test(message)) fail("Factual requirements still block this action. Preferences and question answers cannot override verified skill or safety gaps.");
       if (/not[ _]entitled|entitlement_required/.test(message)) fail("Auto-apply access is required to start or change the pipeline. You can still cancel runs and revoke answers.");
       if (["PGRST202", "42883", "42P01"].includes(code)) fail(unavailable);
       fail("Pipeline request failed. Reload before retrying; completion is not confirmed.");
@@ -351,14 +425,89 @@ export function createPipelineClient(userId: string) {
   async function listTasks(runId?: string) { return rows((await action("tasks.list", { ...(runId ? { runId: id(runId) } : {}), limit: 200 })).tasks, taskRow, userId); }
   async function listAgents() { return rows((await action("agent.list", { limit: 200 })).agents, agentRow, userId); }
   async function listSessions() { return rows((await action("sessions.list", { limit: 200 })).sessions, sessionRow, userId); }
-  async function requestCommand(bindingId: string, type: PipelineCommandType, args: { portal?: string; questionId?: string } = {}) {
-    const selected = id(bindingId), commandType = oneOf(type, ["pause", "resume", "retry_login", "open_question", "check_session"] as const);
-    const commandArgs = { ...(args.portal !== undefined ? { portal: text(args.portal, 200, 1) } : {}), ...(args.questionId !== undefined ? { questionId: id(args.questionId) } : {}) };
+  async function listLearning(): Promise<PipelineLearning> {
+    const pageSize = 200, maxRows = 10000;
+    const learning: PipelineLearning = { feedback: [], grants: [], receipts: [], questions: [], eligibility: [] };
+    // Each table has its own stable 200-row page at this offset. Never publish a
+    // partial ledger: omitted skips or grants would hide current revocation controls.
+    for (let offset = 0; offset < maxRows; offset += pageSize) {
+      const result = await action("learning.list", offset === 0 ? {} : { limit: pageSize, offset }); owner(result, userId);
+      const raw = object(result.learning); owner(raw, userId);
+      const page: PipelineLearning = { feedback: rows(raw.feedback, feedbackRow, userId), grants: rows(raw.grants, grantRow, userId), receipts: rows(raw.receipts, manualReceiptRow, userId), questions: rows(raw.questions, learningQuestionRow, userId),
+        // Old installations may lack graduation proof; never infer it from counts.
+        eligibility: raw.eligibility === undefined ? [] : rows(raw.eligibility, eligibilityRow, userId) };
+      const hasMore = result.hasMore === undefined ? false : bool(result.hasMore);
+      for (const key of Object.keys(learning) as (keyof PipelineLearning)[]) {
+        if (learning[key].length + page[key].length > maxRows) fail("Match learning exceeds the 10,000-row read limit. The complete history could not be loaded; no partial learning is shown.");
+      }
+      learning.feedback.push(...page.feedback); learning.grants.push(...page.grants); learning.receipts.push(...page.receipts);
+      learning.questions.push(...page.questions); learning.eligibility.push(...page.eligibility);
+      if (!hasMore) return learning;
+    }
+    return fail("Match learning exceeds the 10,000-row read limit. The complete history could not be loaded; no partial learning is shown.");
+  }
+  function learningConfirmation(input: PipelineLearningConfirmation) {
+    if (input.confirm !== true) fail("Explicitly confirm this learning action yourself.");
+    return { taskId: id(input.taskId), profileRevision: integer(input.profileRevision, 1), settingsRevision: integer(input.settingsRevision, 1), confirm: true as const };
+  }
+  async function acknowledgeLearning(name: string, args: Record<string, unknown>): Promise<{ ok: true }> {
+    const result = await action(name, args); owner(result, userId);
+    if (result.ok !== true) fail();
+    // SQL acknowledges the exact saved row, not just transport success. Validate
+    // provenance/ownership and the requested target before claiming completion.
+    const key = name === "learning.feedback" || name === "learning.revoke" && args.feedbackId !== undefined ? "feedback"
+      : name === "learning.question" ? "question" : name === "learning.manual_report" ? "receipt" : "grant";
+    const raw = object(result[key]);
+    if (name === "learning.revoke") {
+      const revoked = key === "feedback" ? feedbackRow(raw, userId) : grantRow(raw, userId);
+      if (revoked.id !== (args.feedbackId ?? args.grantId) || !revoked.revokedAt) fail();
+    } else {
+      const bound = learningScopeRow(raw, userId);
+      if (id(raw.taskId) !== args.taskId || bound.profileRevision !== args.profileRevision || bound.settingsRevision !== args.settingsRevision) fail();
+      if (key === "feedback") {
+        const saved = feedbackRow(raw, userId);
+        if (saved.scope !== args.scope || saved.verdict !== args.verdict || saved.revokedAt !== null) fail();
+      } else if (key === "question") {
+        if (learningQuestionRow(raw, userId).answer !== args.answer) fail();
+      } else if (key === "receipt") {
+        if (manualReceiptRow(raw, userId).source !== "user") fail();
+      } else {
+        const saved = grantRow(raw, userId);
+        if (Date.parse(saved.expiresAt) !== Date.parse(date(args.expiresAt)) || saved.revokedAt !== null) fail();
+      }
+    }
+    return { ok: true };
+  }
+  async function recordMatchFeedback(input: PipelineLearningConfirmation & { scope: PipelineFeedbackScope; verdict: PipelineFeedbackVerdict }) {
+    return acknowledgeLearning("learning.feedback", { ...learningConfirmation(input), scope: oneOf(input.scope, ["exact", "similar"] as const), verdict: oneOf(input.verdict, ["apply", "skip"] as const) });
+  }
+  async function answerMatchQuestion(input: PipelineLearningConfirmation & { answer: PipelineMatchAnswer }) {
+    return acknowledgeLearning("learning.question", { ...learningConfirmation(input), answer: oneOf(input.answer, ["yes", "no", "unsure"] as const) });
+  }
+  async function reportManualApplication(input: PipelineLearningConfirmation) { return acknowledgeLearning("learning.manual_report", learningConfirmation(input)); }
+  async function revokeLearning(input: { feedbackId?: string; grantId?: string }) {
+    const keys = Object.keys(input);
+    if (keys.length !== 1 || !["feedbackId", "grantId"].includes(keys[0])) fail("Select exactly one preference or autonomy grant to revoke.");
+    return acknowledgeLearning("learning.revoke", input.feedbackId !== undefined ? { feedbackId: id(input.feedbackId) } : { grantId: id(input.grantId) });
+  }
+  async function grantMatchAutonomy(input: PipelineLearningConfirmation & { expiresAt: string }) {
+    const confirmed = learningConfirmation(input), expiresAt = date(input.expiresAt), remaining = Date.parse(expiresAt) - Date.now();
+    if (remaining <= 0) fail("Choose a future autonomy expiry.");
+    if (remaining > 30 * 86400000) fail("Autonomy expiry must be within 30 days.");
+    return acknowledgeLearning("learning.grant", { ...confirmed, expiresAt });
+  }
+  async function requestCommand(bindingId: string, type: PipelineCommandType, args: { portal?: string; questionId?: string; taskId?: string } = {}) {
+    const selected = id(bindingId), commandType = oneOf(type, COMMAND_TYPES);
+    if (Object.keys(args).some(key => !["portal", "questionId", "taskId"].includes(key))) fail("Only exact pipeline targets are allowed; no browser URL, fill or click instruction is accepted.");
+    const commandArgs = { ...(args.portal !== undefined ? { portal: text(args.portal, 200, 1) } : {}), ...(args.questionId !== undefined ? { questionId: id(args.questionId) } : {}), ...(args.taskId !== undefined ? { taskId: id(args.taskId) } : {}) };
     if (["retry_login", "check_session"].includes(commandType) && !commandArgs.portal) fail("Select the exact portal for this agent.");
+    if (commandType === "open_manual" && (!commandArgs.taskId || Object.keys(commandArgs).length !== 1)) fail("Select the exact task to open manually; no filling or clicking is authorized.");
+    if (commandType !== "open_manual" && commandArgs.taskId) fail("Task targets are only accepted for exact manual open.");
     const result = commandRow((await action("commands.request", { bindingId: selected, type: commandType, args: commandArgs })).command, userId);
     return result.bindingId === selected && result.type === commandType ? result : fail();
   }
   return { dispose, check, importDraft, getProfile, confirmProfile, getSettings, putSettings, listAnswers, revokeAnswer,
-    listQuestions, answerQuestion, listBoards, addBoard, requestRun, listRuns, cancelRun, listTasks, listAgents, listSessions, requestCommand };
+    listQuestions, answerQuestion, listBoards, addBoard, requestRun, listRuns, cancelRun, listTasks, listAgents, listSessions, requestCommand,
+    listLearning, recordMatchFeedback, answerMatchQuestion, reportManualApplication, revokeLearning, grantMatchAutonomy };
 }
 export type PipelineClient = ReturnType<typeof createPipelineClient>;

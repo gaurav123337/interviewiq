@@ -51,4 +51,15 @@ if (races.filter(row => row.code === 0).length !== 1 || races.filter(row => row.
   throw new Error(`Concurrent cap proof failed; inspect retained disposable database ${database}`);
 }
 execute(database, read("tests/apply-pipeline-concurrency-assert.sql"));
-console.log(`Pipeline replay, ownership, answers, leases, submission safety and concurrent caps passed in ${database}; retained for inspection.`);
+console.log(`Historical pipeline replay, ownership, answers, leases, submission safety and concurrent caps passed in ${database}.`);
+// Install learning only AFTER the original suites and exact one-success cap race.
+// Record catalog identities, not source-text assertions, to prove replay keeps
+// the installed base dispatcher/validator instead of wrapping its own wrapper.
+execute(database, `create table public.test_verified_learning_baseline as select
+  'public.apply_pipeline_action(uuid,uuid,text,jsonb)'::regprocedure::oid dispatcher,
+  'public.apply_pipeline_validate_job(jsonb)'::regprocedure::oid validator;`);
+const learning = read("migrations/20261121000000_verified_match_learning.sql");
+execute(database, learning);
+execute(database, learning);
+execute(database, read("tests/verified-match-learning.sql"));
+console.log(`Verified match learning replay and current wrapper contracts passed in ${database}; retained for inspection.`);

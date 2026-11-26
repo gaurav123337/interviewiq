@@ -140,7 +140,8 @@ export function createPortalBrowser(runtime, { fixtureOrigin, headless = true, a
         ...(applyControl ? { applyControl } : {}),
         challenge: /verify you are human|captcha|access denied|unusual traffic/i.test(body),
         loginVisible: adapter.loginSelectors.some(s => observedSelectors.includes(s)), observedSelectors, verifiedFields,
-        cookies: adapter.requiresAuth ? await page.context().cookies(realUrl(job.jobUrl)) : [] };
+        cookies: adapter.requiresAuth ? (await page.context().cookies(realUrl(job.jobUrl))).map(cookie => fixtureOrigin
+          ? { ...cookie, domain: new URL(job.jobUrl).hostname } : cookie) : [] };
       // Cookie values are used in-memory only by the pure validator and never reported.
       latestSession = validateAdapterSession(adapter, evidence);
       return latestSession;
@@ -241,10 +242,15 @@ export function createPortalBrowser(runtime, { fixtureOrigin, headless = true, a
       }
       return { url: canonicalUrl(page.url(), job.jobUrl), observedAt: clock(), jobIdentity: adapter.jobIdentity, ...(data ? { receipt: data } : {}) };
     }
-    async function submit() {
+    async function submit(reservation) {
+      if (!reservation || typeof reservation.id !== 'string' || !reservation.id || typeof reservation.nonce !== 'string' || !reservation.nonce || reservation.status !== 'reserved') throw new Error('Current submission reservation required before any application click');
       if (!adapter.autoSubmit || !adapter.submitSelector) throw new Error('Portal policy forbids submission');
       if (!verifiedExpected || !await verifyFilled(verifiedExpected)) throw new Error('Every live field requires verified value or empty state before the click');
-      const button = page.locator(adapter.submitSelector);
+      // On saved-profile boards Apply can itself send the application. There is
+      // no reversible opener: choose that unique observed control only here,
+      // after reservation and the no-questions/profile/account worker gates.
+      const inPlace = observedFields.length === 0 && ['naukri', 'instahyre'].includes(adapter.id);
+      const button = inPlace ? page.getByRole('button', { name: adapter.applyButtonText }) : page.locator(adapter.submitSelector);
       if (await button.count() !== 1 || !await button.isVisible() || !await button.isEnabled()) throw new Error('Unique enabled submit control not found');
       await button.click({ noWaitAfter: true });
       if (adapter.receiptSelector) await page.locator(adapter.receiptSelector).waitFor({ state: 'visible', timeout: 10000 }).catch(() => {});
@@ -284,6 +290,41 @@ export function createPortalBrowser(runtime, { fixtureOrigin, headless = true, a
       } };
   }
   return { open,
+    manual: async (job, { signal, timeoutMs = 180000 } = {}) => {
+      const handle = await open(job, { headed: true });
+      try {
+        // Manual means navigation + observation only. Never collect/fill a form,
+        // upload a resume, or click Apply/Submit on the user's behalf.
+        const firstSession = await handle.session().catch(() => ({ ok: false }));
+        const firstIdentity = (await handle.inPlaceEvidence()).accountIdentity;
+        const first = await handle.snapshot();
+        const before = { jobUrl: job.jobUrl, checkedAt: first.observedAt, accountIdentity: firstIdentity,
+          session: firstSession, receipt: first.receipt ? { selector: first.receipt.selector, text: first.receipt.text, url: first.url } : null };
+        const start = Date.now(), bounded = Math.max(1, Math.min(180000, timeoutMs));
+        let latestSession, latestIdentity;
+        while (!signal?.aborted && Date.now() - start < bounded) {
+          const probe = await handle.session().catch(() => ({ ok: false }));
+          const identity = (await handle.inPlaceEvidence()).accountIdentity;
+          if (probe.ok && identity === firstIdentity) { latestSession = probe; latestIdentity = identity; }
+          else { latestSession = undefined; latestIdentity = undefined; }
+          const snapshot = await handle.snapshot();
+          if (snapshot.receipt) {
+            if (firstSession.ok && !first.receipt && firstIdentity && latestSession && latestIdentity === identity
+              && Date.parse(latestSession.checkedAt) >= Date.parse(first.observedAt)
+              && Date.now() - Date.parse(latestSession.checkedAt) <= 2000) {
+              const after = { jobUrl: job.jobUrl, checkedAt: snapshot.observedAt, accountIdentity: identity,
+                session: { ok: latestSession.ok, jobUrl: latestSession.jobUrl, checkedAt: latestSession.checkedAt },
+                receipt: { selector: snapshot.receipt.selector, text: snapshot.receipt.text, url: snapshot.url } };
+              return { opened: true, before: { ...before, session: { ok: firstSession.ok, jobUrl: firstSession.jobUrl, checkedAt: firstSession.checkedAt } }, after };
+            }
+            // Preexisting success or unverified identity never supplies credit.
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        return { opened: true };
+      } finally { await handle.close(); }
+    },
     login: async (job, options = {}) => {
       // Once headed, independent task tabs reuse this same binding profile without a mode switch.
       const handle = await open(job, { headed: true });

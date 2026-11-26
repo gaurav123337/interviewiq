@@ -5,10 +5,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { adapterForJob, validateSubmissionEvidence } from './apply-adapters-lib.js';
-import { buildVerifiedResume, classifyQuestion, isTrustedResumeField, matchVerifiedJob, questionBatchKey, resolveVerifiedAnswer, validateInPlaceApplication, validateVerifiedProfile } from './apply-pipeline-lib.js';
+import { buildVerifiedResume, classifyQuestion, decideVerifiedJob, isTrustedResumeField, questionBatchKey, resolveVerifiedAnswer, validateInPlaceApplication, validateVerifiedProfile } from './apply-pipeline-lib.js';
 
-export const PIPELINE_ENGINE_VERSION = 'paired-worker/1.0.0';
-const capabilities = ['leased-tasks', 'verified-answer-bank', 'job-bound-receipts', 'human-signin', 'session-check'];
+export const PIPELINE_ENGINE_VERSION = 'paired-worker/1.1.0';
+const capabilities = ['leased-tasks', 'verified-answer-bank', 'job-bound-receipts', 'human-signin', 'session-check', 'verified-match-learning'];
 const iso = () => new Date().toISOString();
 const hash = value => createHash('sha256').update(value).digest('hex');
 const terminalAuth = error => ['PIPELINE_REVOKED', 'PIPELINE_STALE'].includes(error?.code);
@@ -121,15 +121,40 @@ export function createPipelineWorker({ runtime, action, browser, signal, notify,
     await call('agent.heartbeat', { engineVersion: PIPELINE_ENGINE_VERSION, capabilities,
       status: paused ? 'paused' : 'ready', ...(profileMetadata ? { profileMetadata } : {}) });
   }
+  async function readLearning() {
+    const learning = { feedback: [], grants: [] };
+    for (let offset = 0; offset < 10000; offset += 200) {
+      const page = await call('learning.list', offset ? { limit: 200, offset } : {});
+      if (!page.learning || !Array.isArray(page.learning.feedback) || !Array.isArray(page.learning.grants)
+        || page.learning.feedback.length > 200 || page.learning.grants.length > 200
+        || page.hasMore !== undefined && typeof page.hasMore !== 'boolean') throw new Error('Verified match learning unavailable; no browser activity permitted');
+      learning.feedback.push(...page.learning.feedback);
+      learning.grants.push(...page.learning.grants);
+      if (page.hasMore !== true) return learning;
+    }
+    // A partial ledger could hide a skip or revocation. Never proceed after a
+    // bounded read fails to reach the end of the account's learning history.
+    throw new Error('Verified match learning exceeds bounded complete read; no browser activity permitted');
+  }
   async function snapshots() {
     const p = await call('profile.get'), s = await call('settings.get'), a = await call('answers.list', { limit: 200 });
+    const learning = await readLearning();
     const profile = normalizePipelineProfile(p.profile), settings = s.settings?.data;
     if (!profile || !validateVerifiedProfile(profile, Date.now()).ok || !Number.isSafeInteger(s.settings?.revision)
       || !settings || typeof settings.enabled !== 'boolean' || typeof settings.autoSubmit !== 'boolean'
       || !Number.isFinite(settings.threshold)) throw new Error('Confirmed profile/settings unavailable');
     profileMetadata = { revision: profile.revision, resumeApproved: profile.resumeApproved };
-    return { profile, settings, settingsRevision: s.settings.revision,
+    return { profile, settings, settingsRevision: s.settings.revision, learning,
       answersRevision: p.profile.answers_revision, answers: normalizePipelineAnswers(a.answers) };
+  }
+  async function recordDecision(task, snapshot) {
+    const decision = decideVerifiedJob(task.job, { ...snapshot, now: Date.now() });
+    const result = await call('tasks.decide', { ...leaseArgs(task), decision: { ...decision, settingsRevision: snapshot.settingsRevision } });
+    const expected = decision.status === 'eligible_auto' ? 'in_progress' : decision.status === 'eligible_review' ? 'waiting_review' : decision.status;
+    if (result.task?.status !== expected || result.task.match_decision?.similarityKey !== decision.similarityKey) {
+      throw Object.assign(new Error('Current match decision was not recorded'), { code: 'PIPELINE_STALE' });
+    }
+    return decision;
   }
   async function commands() {
     const data = await call('commands.claim', { limit: 10 });
@@ -141,7 +166,7 @@ export function createPipelineWorker({ runtime, action, browser, signal, notify,
       if (command.type === 'pause' || command.type === 'resume') {
         paused = command.type === 'pause';
         await commandReport('done');
-      } else if (['retry_login', 'check_session', 'open_question'].includes(command.type)) {
+      } else if (['retry_login', 'check_session', 'open_question', 'open_manual'].includes(command.type)) {
         // The claim supplies an owner/binding-derived exact job; caller args never supply navigation.
         const job = command.job, adapter = adapterForJob(job);
         const question = command.question;
@@ -151,16 +176,27 @@ export function createPipelineWorker({ runtime, action, browser, signal, notify,
           && typeof question.question_text === 'string' && Array.isArray(question.options)
           && typeof browser.review === 'function');
         const serverPortal = typeof job?.portal === 'string' && job.portal.length <= 500 && !/[:/?#\s]/.test(job.portal) ? job.portal : null;
-        const validPortal = command.type === 'open_question' || [portal, adapter.id, adapter.boardIdentity, serverPortal].filter(Boolean).includes(command.args?.portal);
+        const validPortal = ['open_question', 'open_manual'].includes(command.type) || [portal, adapter.id, adapter.boardIdentity, serverPortal].filter(Boolean).includes(command.args?.portal);
+        const validManual = command.type !== 'open_manual' || command.args?.taskId === command.task_id && typeof browser.manual === 'function';
         if (!adapter.supported || !adapter.safeUrl || typeof command.task_id !== 'string' || !command.task_id
-          || !validQuestion || !validPortal || loginPending) {
+          || !validQuestion || !validPortal || !validManual || loginPending) {
           await commandReport('failed', 'Exact bound command context unavailable, changed, or human window already running');
           continue;
         }
         const run = async () => {
           let handle;
           try {
-            if (command.type === 'open_question') {
+            if (command.type === 'open_manual') {
+              const result = await browser.manual(job, { signal: loginController.signal });
+              if (loginPending?.commandId === command.id) loginPending.released = true;
+              if (result.before && result.after) {
+                await call('sessions.report', { portal: adapter.boardIdentity, status: 'authenticated', accountLabel: result.after.accountIdentity });
+                await call('learning.manual_observe', { commandId: command.id, claimNonce: command.claim_nonce, before: result.before, after: result.after });
+              }
+              await commandReport(result.opened ? 'done' : 'failed', result.before && result.after
+                ? 'Manual receipt observation recorded independently; no worker application click'
+                : 'Manual job window opened; no observed application receipt or application success claimed');
+            } else if (command.type === 'open_question') {
               const result = await browser.review(job, question, { signal: loginController.signal });
               if (loginPending?.commandId === command.id) loginPending.released = true;
               await commandReport(result.opened ? 'done' : 'failed', result.opened
@@ -221,8 +257,11 @@ export function createPipelineWorker({ runtime, action, browser, signal, notify,
       if (!initial.settings.enabled || paused) return report(task, 'waiting_review', 'Automation is disabled or paused');
       if (initial.profile.revision !== task.profile_revision || initial.settingsRevision !== task.settings_revision
         || initial.answersRevision !== task.answers_revision) return report(task, 'waiting_review', 'Profile/settings/answers changed; request a fresh task');
-      const match = matchVerifiedJob(task.job, { profile: initial.profile, settings: initial.settings, now: Date.now() });
-      if (!match.eligible) return report(task, 'filtered', match.reason);
+      const decision = await recordDecision(task, initial);
+      // Review/preferences are not authority to open, fill or click a job. The
+      // separate human-owned manual command only navigates and observes receipts.
+      if (decision.status !== 'eligible_auto') return { status: decision.status };
+      if (!initial.settings.autoSubmit) return report(task, 'waiting_review', 'Auto-submit is disabled; open the job manually without automatic filling');
       if (adapter.id === 'linkedin' || adapter.id === 'workday') return report(task, 'waiting_review', 'This portal requires manual application review; no automatic multistep promise');
       await checkpoint();
       handle = await browser.open(task.job);
@@ -290,6 +329,8 @@ export function createPipelineWorker({ runtime, action, browser, signal, notify,
       const current = await snapshots();
       if (!current.settings.enabled || !current.settings.autoSubmit || current.profile.revision !== initial.profile.revision
         || current.settingsRevision !== initial.settingsRevision || current.answersRevision !== initial.answersRevision) return report(task, 'waiting_review', 'Submission settings/profile/answers changed during form fill');
+      const currentDecision = await recordDecision(task, current);
+      if (currentDecision.status !== 'eligible_auto' || currentDecision.grantId !== decision.grantId) return { status: currentDecision.status };
       const finalSession = await handle.session();
       const expected = [...fills.map(item => ({ field: item.field, value: item.resolution.value })),
         ...files.map(field => ({ field, artifact: artifact?.path })), ...leaves.map(field => ({ field, empty: true }))];
@@ -317,6 +358,7 @@ export function createPipelineWorker({ runtime, action, browser, signal, notify,
       await checkpoint();
       const reserved = await call('submission.reserve', { ...leaseArgs(task), profileRevision: current.profile.revision,
         settingsRevision: current.settingsRevision, answersRevision: current.answersRevision,
+        grantId: currentDecision.grantId, similarityKey: currentDecision.similarityKey,
         siteAllowed: adapter.autoSubmit === true, accountVerified: finalSession.ok === true, requiredComplete: true,
         answerIds: [...new Set(answerIds)], idempotencyKey: `${runtime.bindingId}:${task.id}:${task.lease_version}` });
       reservation = reserved.reservation;
@@ -325,7 +367,7 @@ export function createPipelineWorker({ runtime, action, browser, signal, notify,
       ledger[jobKey] = { taskId: task.id, reservationId: reservation.id, status: 'uncertain', at: iso() }; saveLedger();
       if (renewError || stopped || signal?.aborted || paused) throw new Error('Submission interrupted before click');
       const clickedAt = iso();
-      const after = await handle.submit();
+      const after = await handle.submit(reservation);
       const verified = validateSubmissionEvidence(task.job, { before, after, clickedAt, now: Date.now() });
       if (process.env.INTERVIEWIQ_APPLY_SYNTHETIC === '1' && !verified.verified) console.error('Synthetic receipt diagnostic', verified.reason);
       const evidence = verified.verified ? { kind: 'confirmation_page', text: after.receipt.text, url: after.url } : undefined;

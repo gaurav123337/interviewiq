@@ -10,8 +10,16 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { resolveApplyAgentDataRoot, deriveBindingStateRoot } from '../../scripts/apply-agent-context.js';
+import { adapterForJob } from '../../scripts/apply-adapters-lib.js';
+import { verifiedSimilarityKey } from '../../scripts/apply-pipeline-lib.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+// Independent expected scope: these jobs only require the stamped JavaScript
+// skill, US country, Remote location, and no explicit remote=true flag.
+const fixtureSimilarityKey = '["verified-match-v1","software","unspecified",["javascript"],"US","remote",false]';
+const fixtureBoards = { 'boards.greenhouse.io': 'greenhouse:boards.greenhouse.io/fixture',
+  'www.naukri.com': 'naukri:www.naukri.com/candidate', 'www.instahyre.com': 'instahyre:www.instahyre.com/candidate',
+  'www.linkedin.com': 'linkedin:www.linkedin.com/jobs' };
 const bindingId = '65dfaf34-9194-4bc9-a717-ea3f9aa56fc2';
 const fakeToken = `aiq1_${bindingId}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`;
 const escape = value => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
@@ -73,16 +81,31 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
   const tasks = mode === 'reuse' ? [task(job(1)), task(job(2)), task(job(3, 'Different Co')), task(job(4))]
     : mode === 'login' ? [task(job(1)), task(job(4))] : [task(job(1))];
   let loginRound = 0, loginPosts = 0, wrongAccountBlocked = false, headedVerified = false, reviewOpened = false;
-  if (['inplace', 'login'].includes(mode)) {
-    tasks[0].job.jobUrl = 'https://www.naukri.com/job-listings-software-engineer-fixture-123456789012';
-    tasks[0].job.portal = 'www.naukri.com';
-    const scope = { portal: 'naukri:www.naukri.com/candidate' }, validUntil = new Date(Date.now() + 86400000).toISOString();
-    profile.facts['portalProfileApproved:naukri'] = { ...stamped(true), scope, validUntil };
-    profile.facts['portalAccountIdentity:naukri'] = { ...stamped('fixture@example.invalid'), scope, validUntil };
-    profile.facts['portalResumeText:naukri'] = { ...stamped(profile.resume_text), scope, validUntil };
+  const inPlacePortal = ['instahyre', 'no-grant', 'grant-revoked', 'board-low'].includes(mode) ? 'instahyre'
+    : ['inplace', 'login'].includes(mode) ? 'naukri' : null;
+  if (inPlacePortal) {
+    const host = `www.${inPlacePortal}.com`;
+    tasks[0].job.jobUrl = inPlacePortal === 'instahyre' ? 'https://www.instahyre.com/job-123456-software-engineer-fixture'
+      : 'https://www.naukri.com/job-listings-software-engineer-fixture-123456789012';
+    tasks[0].job.portal = host;
+    const scope = { portal: fixtureBoards[host] }, validUntil = new Date(Date.now() + 86400000).toISOString();
+    profile.facts[`portalProfileApproved:${inPlacePortal}`] = { ...stamped(true), scope, validUntil };
+    profile.facts[`portalAccountIdentity:${inPlacePortal}`] = { ...stamped('fixture@example.invalid'), scope, validUntil };
+    profile.facts[`portalResumeText:${inPlacePortal}`] = { ...stamped(profile.resume_text), scope, validUntil };
   }
+  if (mode === 'board-low') tasks[0].job.boardMatch = 'LOW';
   if (mode === 'forbidden') tasks[0].job.jobUrl = 'https://www.linkedin.com/jobs/view/12345';
   if (mode === 'unknown') tasks[0].job.jobUrl = 'https://unknown.example/jobs/123';
+  for (const t of tasks) {
+    assert.equal(verifiedSimilarityKey(t.job), fixtureSimilarityKey, 'Fixture grants must use the independently pinned similarity scope');
+    const board = fixtureBoards[new URL(t.job.jobUrl).hostname];
+    if (board) assert.equal(adapterForJob(t.job).boardIdentity, board, 'Fixture grants must use the exact qualified board identity');
+  }
+  const grants = mode === 'no-grant' ? [] : [...new Set(tasks.map(t => fixtureBoards[new URL(t.job.jobUrl).hostname]).filter(Boolean))]
+    .map(portal => ({ id: randomUUID(), similarityKey: fixtureSimilarityKey, portal, profileRevision: profile.revision,
+      settingsRevision: settings.revision, source: 'user', grantedAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 86400000).toISOString(), revokedAt: null }));
+  let learningReads = 0;
   const hasUnknown = id => (mode === 'reuse' && id !== '4') || mode === 'sql-reuse';
   const json = (response, data, status = 200) => { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(data)); };
   const server = createServer(async (request, response) => {
@@ -94,7 +117,9 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
         const body = JSON.parse(text); assert.equal(body.operation, 'pipeline.action');
         const { action, args } = body;
         // Only lease/safe metadata is retained as evidence, never profile facts/token.
-        events.push({ action, taskId: args.taskId, status: args.status || args.outcome, at: new Date().toISOString() });
+        events.push({ action, taskId: args.taskId, status: args.status || args.outcome || args.decision?.status,
+          ...(action === 'tasks.decide' ? { similarityKey: args.decision?.similarityKey, grantId: args.decision?.grantId,
+            codes: args.decision?.codes } : {}), at: new Date().toISOString() });
         const data = value => json(response, { ok: true, action, data: value });
         if (sqlBackend) {
           try {
@@ -140,6 +165,14 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
         if (action === 'profile.get') return data({ profile: mode === 'missing-profile' ? null : profile });
         if (action === 'settings.get') return data({ settings });
         if (action === 'answers.list') return data({ answers, revision: profile.answers_revision });
+        if (action === 'learning.list') {
+          learningReads++;
+          if (mode === 'grant-revoked' && learningReads === 2) {
+            assert.equal(posts.length, 0, 'Autonomy revoked before the first possible Apply click');
+            for (const grant of grants) grant.revokedAt = new Date().toISOString();
+          }
+          return data({ learning: { feedback: [], grants } });
+        }
         if (action === 'tasks.claim') {
           if (mode === 'reuse' && tasks[0].status === 'waiting_answer' && tasks[1].status === 'waiting_answer' && !answered) {
             // Explicit synthetic USER confirmation after both jobs shared one inbox question.
@@ -158,6 +191,25 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
         }
         const t = tasks.find(t => t.id === args.taskId);
         if (!t || t.lease_version !== args.leaseVersion || t.lease_nonce !== args.leaseNonce) return json(response, { ok: false }, 409);
+        if (action === 'tasks.decide') {
+          assert.equal(t.status, 'in_progress');
+          assert(Date.parse(t.lease_until) > Date.now(), 'Decision requires an active lease');
+          assert.equal(args.decision.similarityKey, fixtureSimilarityKey);
+          assert.equal(args.decision.portal, fixtureBoards[new URL(t.job.jobUrl).hostname]);
+          assert.equal(args.decision.profileRevision, profile.revision);
+          assert.equal(args.decision.settingsRevision, settings.revision);
+          assert(['eligible_auto', 'eligible_review', 'manual_actionable', 'waiting_match_answer'].includes(args.decision.status));
+          if (args.decision.status === 'eligible_auto') {
+            assert(grants.some(grant => grant.id === args.decision.grantId && !grant.revokedAt
+              && grant.portal === args.decision.portal && grant.similarityKey === args.decision.similarityKey
+              && grant.profileRevision === profile.revision && grant.settingsRevision === settings.revision
+              && Date.parse(grant.expiresAt) > Date.now()), 'Automatic decision requires a current exact user grant');
+          } else assert.equal(args.decision.grantId, undefined);
+          t.match_decision = { ...args.decision };
+          t.status = args.decision.status === 'eligible_auto' ? 'in_progress'
+            : args.decision.status === 'eligible_review' ? 'waiting_review' : args.decision.status;
+          return data({ task: { ...t } });
+        }
         if (action === 'tasks.renew') {
           if (mode === 'cancel' && events.filter(e => e.action === 'tasks.renew').length >= 2) { t.status = 'cancelled'; return json(response, { ok: false }, 409); }
           t.lease_until = new Date(Date.now() + 90000).toISOString(); return data({ task: { ...t } });
@@ -176,6 +228,12 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
           assert.equal(args.siteAllowed, true); assert.equal(args.accountVerified, true); assert.equal(args.requiredComplete, true);
           assert.equal(args.profileRevision, profile.revision); assert.equal(args.settingsRevision, settings.revision);
           assert.equal(args.answersRevision, profile.answers_revision);
+          assert.equal(t.status, 'in_progress'); assert.equal(t.match_decision?.status, 'eligible_auto');
+          assert.equal(args.similarityKey, fixtureSimilarityKey); assert.equal(args.grantId, t.match_decision.grantId);
+          assert(grants.some(grant => grant.id === args.grantId && !grant.revokedAt
+            && grant.similarityKey === args.similarityKey && grant.portal === fixtureBoards[new URL(t.job.jobUrl).hostname]
+            && grant.profileRevision === args.profileRevision && grant.settingsRevision === args.settingsRevision
+            && Date.parse(grant.expiresAt) > Date.now()), 'Reservation requires a current exact scoped grant');
           assert(!reserved || ['reuse', 'login'].includes(mode)); reserved = true;
           t.reservation = { id: randomUUID(), nonce: randomUUID(), status: 'reserved' }; t.status = 'submitting';
           return data({ reservation: { ...t.reservation } });
@@ -195,20 +253,31 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
         response.writeHead(302, { 'Set-Cookie': `fixture_account=${encodeURIComponent(email)}; Path=/; HttpOnly`,
           Location: '/job-listings-software-engineer-fixture-123456789012' }); response.end(); return;
       }
-      if (url.pathname.startsWith('/job-listings-') || url.pathname === '/inplace-submit') {
+      if (url.pathname.startsWith('/job-listings-') || url.pathname === '/inplace-submit' || url.pathname === '/job-123456-software-engineer-fixture') {
+        const instahyre = url.pathname === '/job-123456-software-engineer-fixture';
         const account = request.headers.cookie?.match(/fixture_account=([^;]+)/)?.[1];
+        if (request.method === 'GET') events.push({ action: 'browser.open', taskId: tasks[0].id, at: new Date().toISOString() });
         if (mode === 'login' && (!account || loginRound === 2 && decodeURIComponent(account) === 'wrong@example.invalid')) {
           response.writeHead(200, { 'Content-Type': 'text/html' });
           return response.end('<html><body><h1>Synthetic candidate sign-in</h1><form method="post" action="/fixture-login"><label for="username">Email</label><input id="username" name="email" type="email" required><label for="password">Fixture password</label><input id="password" type="password" name="password"><button type="submit">Sign in</button></form></body></html>');
         }
         if (request.method === 'POST') {
-          assert(reserved, 'In-place apply clicked before reserve');
-          posts.push({ jobId: 'inplace', reserved: true, occurredAt: new Date().toISOString() });
+          assert(reserved, 'In-place Apply itself clicked before reserve');
+          if (instahyre) assert.match(request.headers.cookie || '', /(?:^|;\s*)sessionid=synthetic-fixture-session(?:;|$)/);
+          if (!sqlBackend) {
+            assert.equal(tasks[0].status, 'submitting'); assert.equal(tasks[0].reservation?.status, 'reserved');
+            assert.equal(posts.filter(post => post.jobId === (instahyre ? 'instahyre' : 'inplace')).length, 0, 'Apply must be clicked exactly once');
+          }
+          events.push({ action: 'browser.apply', taskId: tasks[0].id, at: new Date().toISOString() });
+          posts.push({ jobId: instahyre ? 'instahyre' : 'inplace', reserved: true, occurredAt: new Date().toISOString() });
           response.writeHead(200, { 'Content-Type': 'text/html' });
           return response.end('<html><body><div role="status" data-receipt-id="inplace-fixture-receipt">Application submitted.</div></body></html>');
         }
-        response.writeHead(200, { 'Content-Type': 'text/html' });
-        return response.end(`<html><body><a href="/mnjuser/myapply">My applications</a><a href="mailto:${account ? escape(decodeURIComponent(account)) : 'fixture@example.invalid'}">Account email</a><p>Profile complete. Resume uploaded.</p><form method="post"><button type="submit">Apply</button></form></body></html>`);
+        response.writeHead(200, { 'Content-Type': 'text/html',
+          ...(instahyre ? { 'Set-Cookie': 'sessionid=synthetic-fixture-session; Path=/; HttpOnly; Secure' } : {}) });
+        // Apply is the entire irreversible operation, not navigation to a later
+        // Submit form. Instahyre also requires this exact dummy session cookie.
+        return response.end(`<html><body><a href="${instahyre ? '/candidate/opportunities/' : '/mnjuser/myapply'}">My applications</a><a href="mailto:${account ? escape(decodeURIComponent(account)) : 'fixture@example.invalid'}">Account email</a><p>Profile complete. Resume uploaded.</p><form method="post"><button type="submit">Apply</button></form></body></html>`);
       }
       if (request.method === 'POST' && /\/submit\/\d+/.test(url.pathname)) {
         const id = url.pathname.split('/').at(-1);
@@ -235,6 +304,7 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
       }
       if (/\/fixture\/jobs\/\d+$/.test(url.pathname)) {
         const id = url.pathname.split('/').at(-1);
+        events.push({ action: 'browser.open', taskId: tasks.find(t => t.job.jobUrl.endsWith(`/jobs/${id}`))?.id, at: new Date().toISOString() });
         response.writeHead(200, { 'Content-Type': 'text/html' });
         const unknown = hasUnknown(id) ? '<label for="notice">Notice period</label><input id="notice" name="notice" required>' : '';
         return response.end(`<html><body><form method="post" action="/submit/${id}" enctype="multipart/form-data">
@@ -265,13 +335,16 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
       stdio: ['ignore', 'pipe', 'pipe'] });
     worker.stdout.on('data', chunk => { output += chunk; }); worker.stderr.on('data', chunk => { output += chunk; });
     const exited = once(worker, 'exit');
-    const deadline = Date.now() + (['login', 'review'].includes(mode) || sqlBackend ? 120000 : 45000);
+    // Real SQL adds a separate Docker/psql process at every backend boundary;
+    // keep the deadline finite without killing a healthy third browser cycle.
+    const deadline = Date.now() + (sqlBackend ? 300000 : ['login', 'review'].includes(mode) ? 120000 : 45000);
     while (Date.now() < deadline && worker.exitCode === null && !crashKilled) {
       const done = sqlBackend ? await sqlBackend.progress()
         : mode === 'login' ? tasks.every(t => t.status === 'submitted') && headedVerified && wrongAccountBlocked
         : mode === 'reuse' ? tasks[0].status === 'submitted' && tasks[1].status === 'submitted' && tasks[2].status === 'waiting_answer' && tasks[3].status === 'submitted'
         : mode === 'review' ? reviewOpened && tasks[0].status === 'waiting_review'
-        : ['dynamic', 'optional-radio'].includes(mode) ? tasks[0].status === 'waiting_review'
+        : ['dynamic', 'optional-radio', 'no-grant', 'grant-revoked'].includes(mode) ? tasks[0].status === 'waiting_review'
+        : mode === 'board-low' ? tasks[0].status === 'manual_actionable'
         : mode === 'cancel' ? tasks[0].status === 'cancelled' : mode === 'missing-profile' ? tasks[0].status === 'failed'
           : mode === 'forbidden' ? tasks[0].status === 'waiting_review' : mode === 'unknown' ? tasks[0].status === 'unsupported' : tasks[0].status === 'submitted';
       if (done) { await captureOwnedPids(); stopOwnedTree(); break; }
@@ -294,9 +367,30 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
       assert(resumeUploaded); assert.equal([...questions.values()].filter(q => q.meaning === 'noticePeriod').length, 1);
       assert.equal(tasks[2].status, 'waiting_answer');
     } else if (mode === 'review') { assert(reviewOpened, JSON.stringify({ tasks: tasks.map(t => t.status), commands: events.filter(e => e.action?.startsWith('commands.')).slice(-10) }) + output); assert.equal(posts.length, 0); assert(output.includes('"syntheticActor":"headed_review"')); }
+    else if (['no-grant', 'grant-revoked', 'board-low'].includes(mode)) {
+      assert.equal(posts.length, 0, output);
+      assert.equal(events.filter(e => e.action === 'submission.reserve').length, 0);
+      assert.equal(events.filter(e => e.action === 'browser.apply').length, 0);
+      assert.equal(tasks[0].status, mode === 'board-low' ? 'manual_actionable' : 'waiting_review', output);
+      const decisions = events.filter(e => e.action === 'tasks.decide');
+      assert.deepEqual(decisions.map(e => e.status), mode === 'grant-revoked' ? ['eligible_auto', 'eligible_review']
+        : [mode === 'board-low' ? 'manual_actionable' : 'eligible_review']);
+      assert.equal(events.filter(e => e.action === 'browser.open').length, mode === 'grant-revoked' ? 1 : 0,
+        'Only a current grant can authorize browser navigation');
+      if (mode === 'grant-revoked') assert.equal(learningReads, 2);
+      if (mode === 'board-low') assert(decisions[0].codes.includes('board_match_low'));
+    }
     else if (['dynamic', 'optional-radio', 'cancel', 'forbidden', 'unknown', 'missing-profile'].includes(mode)) assert.equal(posts.length, 0);
     else if (['optional-defaults', 'resume-labels'].includes(mode)) { assert.equal(posts.length, 1, output); assert(resumeUploaded); }
-    else if (mode === 'inplace') { assert.equal(posts.length, 1, output); assert.equal(tasks[0].status, 'submitted', output); }
+    else if (['inplace', 'instahyre'].includes(mode)) {
+      assert.equal(posts.length, 1, output); assert.equal(tasks[0].status, 'submitted', output);
+      assert.equal(posts[0].jobId, mode === 'instahyre' ? 'instahyre' : 'inplace');
+      assert.equal(events.filter(e => e.action === 'submission.reserve').length, 1);
+      assert.equal(events.filter(e => e.action === 'browser.apply').length, 1);
+      assert(events.findIndex(e => e.action === 'submission.reserve') < events.findIndex(e => e.action === 'browser.apply'),
+        'The one irreversible Apply click must follow reservation');
+      assert.deepEqual(events.filter(e => e.action === 'tasks.decide').map(e => e.status), ['eligible_auto', 'eligible_auto']);
+    }
     else if (mode === 'crash') {
       assert.equal(posts.length, 1); assert.equal(tasks[0].status, 'submitting');
       const ledgerFile = path.join(bindingState, 'submission-ledger.json');
@@ -325,7 +419,7 @@ export async function runWorkerFixture({ mode = 'reuse', nodePath = process.exec
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const modeArg = process.argv.includes('--mode') ? process.argv[process.argv.indexOf('--mode') + 1] : process.argv[2];
   const mode = modeArg || 'reuse';
-  const modes = mode === 'all' ? ['reuse', 'inplace', 'login', 'review', 'optional-defaults', 'optional-radio', 'resume-labels', 'dynamic', 'cancel', 'forbidden', 'unknown', 'missing-profile', 'crash'] : [mode];
+  const modes = mode === 'all' ? ['reuse', 'inplace', 'instahyre', 'no-grant', 'grant-revoked', 'board-low', 'login', 'review', 'optional-defaults', 'optional-radio', 'resume-labels', 'dynamic', 'cancel', 'forbidden', 'unknown', 'missing-profile', 'crash'] : [mode];
   (async () => { for (const selected of modes) {
     const result = await runWorkerFixture({ mode: selected });
     const evidenceDir = path.join(root, 'tests', 'apply-worker', 'evidence'); mkdirSync(evidenceDir, { recursive: true });

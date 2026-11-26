@@ -57,6 +57,16 @@ export interface VerifiedJobMatch {
   eligible: boolean; score: number; reason: string; reasons: string[]; missing: string[]; matched: string[];
   ageHours: number | null; profileRevision: number; source: 'deterministic';
 }
+export type VerifiedDecisionStatus = 'manual_actionable' | 'waiting_match_answer' | 'eligible_review' | 'eligible_auto';
+export interface VerifiedRequirement { anyOf: string[]; core: boolean; evidence: string }
+export interface MatchFeedback { id: string; jobUrl: string; similarityKey: string; scope: 'exact' | 'similar'; verdict: 'apply' | 'skip'; profileRevision: number; settingsRevision: number; confirmedAt: string; revokedAt: string | null; source: string }
+export interface AutonomyGrant { id: string; similarityKey: string; portal: string; profileRevision: number; settingsRevision: number; grantedAt: string; expiresAt: string; revokedAt: string | null; source: string }
+export interface MatchLearning { feedback: MatchFeedback[]; grants: AutonomyGrant[] }
+export interface VerifiedJobDecision extends VerifiedJobMatch { status: VerifiedDecisionStatus; codes: string[]; missingCore: string[]; requirements: VerifiedRequirement[]; similarityKey: string; portal: string; grantId?: string; question?: { kind: 'skill_gap'; skills: string[]; text: string } }
+export function verifiedRoleFamily(title: unknown): string;
+export function extractVerifiedRequirements(job: Partial<ApplyTaskJob>): VerifiedRequirement[];
+export function verifiedSimilarityKey(job: Partial<ApplyTaskJob>, requirements?: VerifiedRequirement[]): string;
+export function decideVerifiedJob(job: ApplyTaskJob & { boardMatch?: string; remote?: boolean }, input: { profile: VerifiedProfile; settings?: VerifiedMatchSettings; learning?: MatchLearning; settingsRevision?: number; now: number | string | Date }): VerifiedJobDecision;
 export function matchVerifiedJob(job: ApplyTaskJob, input: { profile: VerifiedProfile; settings?: VerifiedMatchSettings; now: number | string | Date }): VerifiedJobMatch;
 export function rankVerifiedJobs(jobs: ApplyTaskJob[], input: { profile: VerifiedProfile; settings?: VerifiedMatchSettings; now: number | string | Date }): { job: ApplyTaskJob; match: VerifiedJobMatch }[];
 export interface InPlacePortalEvidence {

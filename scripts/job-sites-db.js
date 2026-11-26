@@ -31,7 +31,7 @@ const ACTIONS = new Set([
 export function createPipelineTransport(context, { fetchImpl = fetch, timeoutMs = 30_000 } = {}) {
   if (context?.mode !== "paired") throw new Error("Pipeline requires a paired binding");
   const actions = new Set(["profile.get", "settings.get", "answers.list", "questions.queue", "boards.list", "boards.discover",
-    "jobs.list", "jobs.ingest", "tasks.claim", "tasks.renew", "tasks.report", "submission.reserve",
+    "jobs.list", "jobs.ingest", "learning.list", "learning.manual_observe", "tasks.claim", "tasks.renew", "tasks.report", "tasks.decide", "submission.reserve",
     "submission.finish", "agent.heartbeat", "sessions.report", "commands.claim", "commands.report"]);
   return async (action, args = {}) => {
     if (!actions.has(action)) throw new Error("Unsupported pipeline action");

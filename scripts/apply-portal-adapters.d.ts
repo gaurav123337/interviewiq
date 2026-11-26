@@ -12,14 +12,16 @@ export interface PortalHandle {
   verifyFilled(expected: { field: ApplicationField; value?: string; artifact?: string; empty?: boolean }[]): Promise<boolean>;
   inPlaceEvidence?(): Promise<import('./apply-pipeline-lib.js').InPlacePortalEvidence>;
   snapshot(): Promise<SubmissionSnapshot>;
-  submit(): Promise<SubmissionSnapshot>;
+  submit(reservation: { id: string; nonce: string; status: string }): Promise<SubmissionSnapshot>;
   close(): Promise<void>;
   waitForLogin(options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<{ ok: boolean; reason?: string }>;
 }
 export interface ReviewQuestion { id: string; question_text: string; control_type: string; options: string[]; context: Record<string, string>; status: string; task_ids: string[] }
+export interface ManualObservation { jobUrl: string; checkedAt: string; accountIdentity: string; session: { ok: boolean; jobUrl: string; checkedAt: string }; receipt: { selector: string; text: string; url: string } | null }
 export interface PortalBrowser {
   open(job: ApplyTaskJob): Promise<PortalHandle>;
   login(job: ApplyTaskJob, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<{ ok: boolean; reason?: string }>;
+  manual?(job: ApplyTaskJob, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<{ opened: boolean; before?: ManualObservation; after?: ManualObservation }>;
   review?(job: ApplyTaskJob, question: ReviewQuestion, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<{ opened: boolean }>;
   close(): Promise<void>;
 }

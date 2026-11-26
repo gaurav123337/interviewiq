@@ -5,7 +5,7 @@ import type { PipelineAgent, PipelineAnswer, PipelineClient, PipelineProfile, Pi
 const state = vi.hoisted(() => ({
   user: { id: "account-a" } as { id: string } | null,
   listeners: new Set<(value: { user: { id: string } | null }) => void>(),
-  getProfile: vi.fn(), confirmProfile: vi.fn(), getSettings: vi.fn(), putSettings: vi.fn(), listAgents: vi.fn(), listRuns: vi.fn(), listTasks: vi.fn(), listSessions: vi.fn(), listAnswers: vi.fn(), listQuestions: vi.fn(), listBoards: vi.fn(), requestRun: vi.fn(), cancelRun: vi.fn(), answerQuestion: vi.fn(), revokeAnswer: vi.fn(), requestCommand: vi.fn(), importDraft: vi.fn(), addBoard: vi.fn(), dispose: vi.fn(), clients: [] as { live: boolean; userId: string }[],
+  getProfile: vi.fn(), confirmProfile: vi.fn(), getSettings: vi.fn(), putSettings: vi.fn(), listAgents: vi.fn(), listRuns: vi.fn(), listTasks: vi.fn(), listSessions: vi.fn(), listAnswers: vi.fn(), listQuestions: vi.fn(), listBoards: vi.fn(), listLearning: vi.fn(), requestRun: vi.fn(), cancelRun: vi.fn(), answerQuestion: vi.fn(), revokeAnswer: vi.fn(), requestCommand: vi.fn(), importDraft: vi.fn(), addBoard: vi.fn(), dispose: vi.fn(), clients: [] as { live: boolean; userId: string }[],
 }));
 vi.mock("../services/cloud", () => ({
   getCloudState: () => ({ user: state.user }),
@@ -57,6 +57,7 @@ beforeEach(() => {
   state.listAgents.mockResolvedValue([agent(), agent(AGENT_B, "Synthetic laptop B")]); state.listRuns.mockResolvedValue([run()]);
   state.listTasks.mockResolvedValue([task(), task(TASK_B, "Synthetic role B")]); state.listSessions.mockResolvedValue([]);
   state.listAnswers.mockResolvedValue({ answers: [], revision: 1 }); state.listQuestions.mockResolvedValue([question]); state.listBoards.mockResolvedValue([]);
+  state.listLearning.mockResolvedValue({ feedback: [], grants: [], receipts: [], questions: [], eligibility: [] });
   state.requestRun.mockResolvedValue({ run: run(), publicFeedAvailable: true }); state.cancelRun.mockResolvedValue({ ...run(), status: "cancelled" });
   state.answerQuestion.mockResolvedValue({ answer, revision: 2 }); state.revokeAnswer.mockResolvedValue({ ...answer, revokedAt: now });
   state.requestCommand.mockImplementation(async (bindingId, type) => ({ id: "60000000-0000-4000-8000-000000000001", bindingId, type, status: "queued", reason: null, createdAt: now }));

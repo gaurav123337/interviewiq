@@ -14,7 +14,7 @@ const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { force: true, recursive: true }); });
 const now = () => new Date().toISOString();
 const fact = (value: any) => ({ value, source: 'user' as const, confirmedAt: now() });
-function fixture({ missing = false, autoSubmit = true, reserveDenied = false, unknown = false } = {}) {
+function fixture({ missing = false, autoSubmit = true, reserveDenied = false, unknown = false, granted = true } = {}) {
   const stateRoot = mkdtempSync(path.join(tmpdir(), 'pipeline-unit-')); roots.push(stateRoot);
   const runtime = { mode: 'paired' as const, endpoint: 'https://example.supabase.co/functions/v1/apply-agent', token: 'not-read',
     bindingId: '65dfaf34-9194-4bc9-a717-ea3f9aa56fc2', configPath: '/external-binding', profilePath: '/unused-profile', stateRoot };
@@ -42,6 +42,12 @@ function fixture({ missing = false, autoSubmit = true, reserveDenied = false, un
     if (name === 'settings.get') return { settings: { revision: 1, data: { enabled: true, autoSubmit, threshold: 60,
       roles: ['Software Engineer'], locations: ['Remote'], requireWorkAuthorization: false, maxAgeDays: 14 } } };
     if (name === 'answers.list') return { answers: [] };
+    if (name === 'learning.list') return { learning: { feedback: [], grants: granted ? [{ id: 'd6f54efb-c05c-4f73-b7ca-df524af52be1',
+      similarityKey: '["verified-match-v1","software","unspecified",["javascript"],"","remote",false]', portal: 'greenhouse:boards.greenhouse.io/fixture',
+      profileRevision: 1, settingsRevision: 1, grantedAt: new Date(Date.now() - 10000).toISOString(),
+      expiresAt: new Date(Date.now() + 86400000).toISOString(), revokedAt: null, source: 'user' }] : [] } };
+    if (name === 'tasks.decide') return { task: { ...task, match_decision: args.decision,
+      status: args.decision.status === 'eligible_auto' ? 'in_progress' : args.decision.status === 'eligible_review' ? 'waiting_review' : args.decision.status } };
     if (name === 'tasks.renew') return { task: { ...task } };
     if (name === 'submission.reserve') {
       if (reserveDenied) throw Object.assign(new Error('cancelled'), { code: 'PIPELINE_STALE' });
@@ -56,6 +62,52 @@ function fixture({ missing = false, autoSubmit = true, reserveDenied = false, un
   return { runtime, profile, task, handle, browser, action, calls, worker, notify };
 }
 describe('paired worker gates', () => {
+  it('without a current scoped grant retains a review job without browser activity', async () => {
+    const f = fixture({ granted: false }); await f.worker.processTask(f.task);
+    expect(f.browser.open).not.toHaveBeenCalled();
+    expect(f.calls.find(c => c.action === 'tasks.decide')?.args.decision.status).toBe('eligible_review');
+    expect(f.handle.submit).not.toHaveBeenCalled();
+  });
+  it('re-reads learning and refuses a grant revoked during form preparation', async () => {
+    const f = fixture(); let reads = 0;
+    const original = f.action.getMockImplementation()!;
+    f.action.mockImplementation(async (name, args) => {
+      if (name === 'learning.list' && ++reads > 1) return { learning: { feedback: [], grants: [] } } as any;
+      return original(name, args);
+    });
+    await f.worker.processTask(f.task);
+    expect(f.handle.fill).toHaveBeenCalledTimes(1);
+    expect(reads).toBeGreaterThanOrEqual(2);
+    expect(f.calls.some(c => c.action === 'submission.reserve')).toBe(false);
+    expect(f.handle.submit).not.toHaveBeenCalled();
+  });
+  it('reads all learning pages so an older active skip still blocks browser activity', async () => {
+    const f = fixture(); const original = f.action.getMockImplementation()!;
+    f.action.mockImplementation(async (name, args) => {
+      if (name === 'learning.list') {
+        if (!args?.offset) return { ...await original(name, args), hasMore: true } as any;
+        return { learning: { grants: [], feedback: [{ id: 'skip-old', source: 'user', revokedAt: null,
+          profileRevision: 1, settingsRevision: 1, confirmedAt: new Date(Date.now() - 10000).toISOString(),
+          scope: 'exact', verdict: 'skip', jobUrl: f.task.job.jobUrl, similarityKey: 'unused' }] }, hasMore: false } as any;
+      }
+      return original(name, args);
+    });
+    await f.worker.processTask(f.task);
+    expect(f.browser.open).not.toHaveBeenCalled();
+    expect(f.calls.find(c => c.action === 'tasks.decide')?.args.decision.codes).toContain('user_skip_similar');
+  });
+  it('learning unavailable fails closed without opening a browser', async () => {
+    const f = fixture(); const original = f.action.getMockImplementation()!;
+    f.action.mockImplementation(async (name, args) => name === 'learning.list' ? {} as any : original(name, args));
+    await f.worker.processTask(f.task);
+    expect(f.browser.open).not.toHaveBeenCalled(); expect(f.handle.submit).not.toHaveBeenCalled();
+  });
+  it('a board LOW veto is retained as manually actionable before any browser activity', async () => {
+    const f = fixture(); Object.assign(f.task.job, { boardMatch: 'low' });
+    await f.worker.processTask(f.task);
+    expect(f.browser.open).not.toHaveBeenCalled();
+    expect(f.calls.find(c => c.action === 'tasks.decide')?.args.decision).toMatchObject({ status: 'manual_actionable', codes: ['board_match_low'] });
+  });
   it('reserves before the single click and reports only new receipt evidence', async () => {
     const f = fixture(); await f.worker.processTask(f.task);
     expect(f.handle.submit).toHaveBeenCalledTimes(1);
@@ -81,9 +133,9 @@ describe('paired worker gates', () => {
     const f = fixture({ reserveDenied: true }); await f.worker.processTask(f.task);
     expect(f.handle.submit).not.toHaveBeenCalled(); expect(f.notify).not.toHaveBeenCalled();
   });
-  it('disabled auto-submit still fills verified fields but waits for review', async () => {
+  it('disabled auto-submit never opens or fills a form automatically', async () => {
     const f = fixture({ autoSubmit: false }); await f.worker.processTask(f.task);
-    expect(f.handle.fill).toHaveBeenCalledTimes(1); expect(f.handle.submit).not.toHaveBeenCalled();
+    expect(f.browser.open).not.toHaveBeenCalled(); expect(f.handle.fill).not.toHaveBeenCalled(); expect(f.handle.submit).not.toHaveBeenCalled();
     expect(f.calls.some(c => c.action === 'tasks.report' && c.args.status === 'waiting_review')).toBe(true);
   });
   it('a lost receipt never becomes submitted', async () => {
@@ -191,6 +243,30 @@ const claimedCommand = (f: ReturnType<typeof fixture>, type: string) => ({ id: '
   binding_id: f.runtime.bindingId, claim_nonce: '7016d301-a803-4e38-b2a8-59afcd1e8a1d', type, task_id: f.task.id, job: f.task.job,
   args: { portal: 'greenhouse', jobUrl: 'https://evil.example/ignored' } });
 describe('persisted claimed command recovery', () => {
+  it('manual open observes independently without filling/clicking and reports before completion', async () => {
+    const f = fixture(); const identity = 'fixture@example.invalid';
+    const before = { jobUrl: f.task.job.jobUrl, checkedAt: now(), accountIdentity: identity,
+      session: { ok: true, jobUrl: f.task.job.jobUrl, checkedAt: now() }, receipt: null };
+    const after = { ...before, checkedAt: now(), receipt: { selector: '#application_confirmation', text: 'Application submitted.', url: `${f.task.job.jobUrl}/thanks` } };
+    const manual = vi.fn(async () => ({ opened: true, before, after }));
+    Object.assign(f.browser, { manual });
+    const command = { ...claimedCommand(f, 'open_manual'), args: { taskId: f.task.id },
+      match_decision: { portal: 'greenhouse:boards.greenhouse.io/fixture' } };
+    await commandWorker(f, [command]).run({ maxCycles: 2 });
+    expect(manual).toHaveBeenCalledWith(f.task.job, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(f.handle.fill).not.toHaveBeenCalled(); expect(f.handle.submit).not.toHaveBeenCalled();
+    const observed = f.calls.findIndex(c => c.action === 'learning.manual_observe');
+    expect(observed).toBeGreaterThan(-1);
+    expect(f.calls[observed].args).toMatchObject({ commandId: command.id, claimNonce: command.claim_nonce, before, after });
+    expect(f.calls.findIndex(c => c.action === 'commands.report')).toBeGreaterThan(observed);
+  });
+  it('manual open without independent receipt evidence never claims manual application success', async () => {
+    const f = fixture(); const manual = vi.fn(async () => ({ opened: true })); Object.assign(f.browser, { manual });
+    await commandWorker(f, [{ ...claimedCommand(f, 'open_manual'), args: { taskId: f.task.id } }]).run({ maxCycles: 2 });
+    expect(manual).toHaveBeenCalledTimes(1);
+    expect(f.calls.some(c => c.action === 'learning.manual_observe')).toBe(false);
+    expect(f.handle.submit).not.toHaveBeenCalled();
+  });
   it.each(['retry_login', 'check_session'])('recovers %s from exact claim job before any task is processed', async type => {
     const f = fixture(), command = claimedCommand(f, type);
     await commandWorker(f, [command]).run({ maxCycles: 2 });

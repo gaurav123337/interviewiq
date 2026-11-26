@@ -10,7 +10,7 @@ export const PIPELINE_BROWSER_ACTIONS = [
 ] as const;
 export const PIPELINE_AGENT_ACTIONS = [
   "profile.get", "settings.get", "answers.list", "questions.queue", "boards.list", "boards.discover",
-  "jobs.list", "jobs.ingest", "tasks.claim", "tasks.renew", "tasks.report",
+  "jobs.list", "jobs.ingest", "learning.list", "learning.manual_observe", "tasks.claim", "tasks.renew", "tasks.report", "tasks.decide",
   "submission.reserve", "submission.finish", "agent.heartbeat", "sessions.report",
   "commands.claim", "commands.report",
 ] as const;
@@ -72,6 +72,7 @@ export interface PipelineJob {
   externalId?: string;
   remote?: boolean;
   portal?: string;
+  boardMatch?: "low" | "medium" | "high" | "unknown";
   salary?: { min?: number; max?: number; currency: string; period: "year" | "month" | "hour" };
 }
 export interface PipelineRun {
@@ -101,9 +102,9 @@ export interface PipelineSession {
   binding_id: string; portal: string; status: "authenticated" | "expired" | "login_required" | "unsupported";
   account_label: string | null; checked_at: string;
 }
-export type PipelineCommandType = "pause" | "resume" | "retry_login" | "open_question" | "check_session";
+export type PipelineCommandType = "pause" | "resume" | "retry_login" | "open_question" | "check_session" | "open_manual";
 export interface PipelineCommand {
-  id: string; binding_id: string; type: PipelineCommandType; args: { portal?: string; questionId?: string };
+  id: string; binding_id: string; type: PipelineCommandType; args: { portal?: string; questionId?: string; taskId?: string };
   task_id: string | null; claim_nonce: string | null;
   job?: PipelineJob; question?: PipelineQuestionRow; // Server-derived, never accepted in command requests.
   status: "queued" | "claimed" | "done" | "failed" | "cancelled"; reason: string | null;
@@ -158,6 +159,20 @@ export interface VerifiedAnswer {
   revoked_at: string | null;
 }
 export interface LeaseArgs { taskId: string; leaseVersion: number; leaseNonce: string }
+/** Mirrors the pure worker decision, not user approval or server-owned snapshots. */
+export interface VerifiedJobDecision {
+  eligible: boolean; score: number; reason: string; reasons: string[]; missing: string[]; matched: string[];
+  ageHours: number | null; profileRevision: number; settingsRevision: number; source: "deterministic";
+  status: "manual_actionable" | "waiting_match_answer" | "eligible_review" | "eligible_auto";
+  codes: string[]; missingCore: string[]; requirements: { anyOf: string[]; core: boolean; evidence: string }[];
+  similarityKey: string; portal: string; grantId?: string;
+  question?: { kind: "skill_gap"; skills: string[]; text: string };
+}
+export interface ManualObservationSnapshot {
+  jobUrl: string; checkedAt: string; accountIdentity: string;
+  session: { ok: true; jobUrl: string; checkedAt: string };
+  receipt: null | { selector: string; text: string; url: string };
+}
 export interface SubmissionEvidence { kind: "confirmation_page" | "receipt"; text: string; url?: string }
 export interface SubmissionReservation {
   id: string;
@@ -184,16 +199,19 @@ export interface PipelineActionArgs {
   "tasks.list": { runId?: string; limit?: number };
   "jobs.list": { offset?: number; limit?: number };
   "jobs.ingest": { boardId: string; jobs: PipelineJob[] };
+  "learning.list": { limit?: number; offset?: number };
+  "learning.manual_observe": { commandId: string; claimNonce: string; before: ManualObservationSnapshot; after: ManualObservationSnapshot };
+  "tasks.decide": LeaseArgs & { decision: VerifiedJobDecision };
   "tasks.claim": { limit?: number; leaseSeconds?: number };
   "tasks.renew": LeaseArgs & { leaseSeconds?: number };
   "tasks.report": LeaseArgs & { status: "waiting_answer" | "waiting_login" | "waiting_review" | "unsupported" | "failed" | "filtered" | "unverified"; reason?: string; evidence?: SubmissionEvidence };
-  "submission.reserve": LeaseArgs & { profileRevision: number; settingsRevision: number; answersRevision: number; siteAllowed: true; accountVerified: true; requiredComplete: true; answerIds: string[]; idempotencyKey: string };
+  "submission.reserve": LeaseArgs & { profileRevision: number; settingsRevision: number; answersRevision: number; siteAllowed: true; accountVerified: true; requiredComplete: true; answerIds: string[]; idempotencyKey: string; grantId: string; similarityKey: string };
   "submission.finish": LeaseArgs & { reservationId: string; reservationNonce: string; outcome: "submitted" | "unverified" | "failed"; evidence?: SubmissionEvidence };
   "agent.list": { limit?: number };
   "agent.heartbeat": { engineVersion: string; capabilities: string[]; status: "ready" | "paused" | "offline"; profileMetadata?: { revision?: number; resumeApproved?: boolean } };
   "sessions.list": { limit?: number };
   "sessions.report": { portal: string; status: "authenticated" | "expired" | "login_required" | "unsupported"; accountLabel?: string };
-  "commands.request": { bindingId: string; type: PipelineCommandType; args?: { portal?: string; questionId?: string } };
+  "commands.request": { bindingId: string; type: PipelineCommandType; args?: { portal?: string; questionId?: string; taskId?: string } };
   "commands.claim": { limit?: number };
   "commands.report": { commandId: string; claimNonce: string; status: "done" | "failed"; reason?: string };
 }
@@ -281,11 +299,44 @@ function question(v: unknown): boolean {
     && (!["select", "radio"].includes(v.controlType as string) || (v.options as string[]).length > 0);
 }
 function job(v: unknown): boolean {
-  return object(v) && keys(v, ["jobUrl", "title", "company", "description", "skills", "location", "country", "postedAt", "source", "externalId", "remote", "portal", "salary"])
+  return object(v) && keys(v, ["jobUrl", "title", "company", "description", "skills", "location", "country", "postedAt", "source", "externalId", "remote", "portal", "salary", "boardMatch"])
     && isPublicPipelineUrl(v.jobUrl) && text(v.title, 500) && text(v.company, 500) && text(v.description, 50000, 0)
     && strings(v.skills, 100) && text(v.location, 500, 0) && optional(v.country, x => text(x, 100))
-    && optional(v.postedAt, timestamp) && optional(v.source, x => text(x, 100)) && optional(v.externalId, x => text(x, 500))
-    && optional(v.portal, x => text(x, 200)) && optional(v.remote, x => typeof x === "boolean") && optional(v.salary, jobSalary);
+    && optional(v.postedAt, timestamp) && optional(v.source, x => metadata(x, 100)) && optional(v.externalId, x => metadata(x, 500))
+    && optional(v.portal, x => metadata(x, 200)) && optional(v.remote, x => typeof x === "boolean") && optional(v.salary, jobSalary)
+    && optional(v.boardMatch, x => ["low", "medium", "high", "unknown"].includes(x as string));
+}
+/** Learning metadata is inert text, never executable instructions or control data. */
+function metadata(v: unknown, max: number, min = 1): v is string {
+  return text(v, max, min) && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f<>]|(?:javascript|data|vbscript)\s*:|\b(?:eval|function)\s*\(/i.test(v);
+}
+function metadataStrings(v: unknown, maxItems: number, maxLength: number): v is string[] {
+  return Array.isArray(v) && v.length <= maxItems && v.every(x => metadata(x, maxLength));
+}
+function decision(v: unknown): boolean {
+  return object(v) && keys(v, ["eligible", "score", "reason", "reasons", "missing", "matched", "ageHours", "profileRevision", "settingsRevision", "source",
+    "status", "codes", "missingCore", "requirements", "similarityKey", "portal", "grantId", "question"])
+    && typeof v.eligible === "boolean" && integer(v.score, 0, 100) && metadata(v.reason, 2000, 0)
+    && metadataStrings(v.reasons, 100, 2000) && metadataStrings(v.missing, 200, 200) && metadataStrings(v.matched, 200, 200)
+    && (v.ageHours === null || typeof v.ageHours === "number" && Number.isFinite(v.ageHours) && v.ageHours >= 0 && v.ageHours <= Number.MAX_SAFE_INTEGER)
+    && integer(v.profileRevision, 1, 2147483647) && integer(v.settingsRevision, 1, 2147483647) && v.source === "deterministic"
+    && ["manual_actionable", "waiting_match_answer", "eligible_review", "eligible_auto"].includes(v.status as string)
+    && metadataStrings(v.codes, 100, 200) && metadataStrings(v.missingCore, 100, 200)
+    && Array.isArray(v.requirements) && v.requirements.length <= 200 && v.requirements.every(g => object(g)
+      && keys(g, ["anyOf", "core", "evidence"]) && metadataStrings(g.anyOf, 100, 80) && g.anyOf.length > 0
+      && typeof g.core === "boolean" && metadata(g.evidence, 300, 0))
+    && metadata(v.similarityKey, 16000) && metadata(v.portal, 200, 0) && optional(v.grantId, uuid)
+    && (v.status !== "eligible_auto" || uuid(v.grantId))
+    && optional(v.question, q => object(q) && keys(q, ["kind", "skills", "text"]) && q.kind === "skill_gap"
+      && metadataStrings(q.skills, 100, 200) && q.skills.length > 0 && metadata(q.text, 2000));
+}
+function observation(v: unknown): v is ManualObservationSnapshot {
+  return object(v) && keys(v, ["jobUrl", "checkedAt", "accountIdentity", "session", "receipt"])
+    && isPublicPipelineUrl(v.jobUrl) && timestamp(v.checkedAt) && metadata(v.accountIdentity, 200) && !!v.accountIdentity.trim()
+    && object(v.session) && keys(v.session, ["ok", "jobUrl", "checkedAt"]) && v.session.ok === true
+    && v.session.jobUrl === v.jobUrl && timestamp(v.session.checkedAt)
+    && (v.receipt === null || object(v.receipt) && keys(v.receipt, ["selector", "text", "url"])
+      && metadata(v.receipt.selector, 500) && metadata(v.receipt.text, 2000) && isPublicPipelineUrl(v.receipt.url));
 }
 function evidence(v: unknown): boolean {
   return object(v) && keys(v, ["kind", "text", "url"]) && ["confirmation_page", "receipt"].includes(v.kind as string)
@@ -337,15 +388,20 @@ export function validatePipelineActionRequest(value: unknown, caller: "browser" 
     case "tasks.list": valid = keys(a, ["runId", "limit"]) && optional(a.runId, uuid) && listLimit(); break;
     case "jobs.list": valid = keys(a, ["offset", "limit"]) && optional(a.offset, x => integer(x, 0, 100000)) && listLimit(); break;
     case "jobs.ingest": valid = keys(a, ["boardId", "jobs"]) && uuid(a.boardId) && Array.isArray(a.jobs) && a.jobs.length <= 100 && a.jobs.every(job); break;
+    case "learning.list": valid = keys(a, ["limit", "offset"]) && listLimit() && optional(a.offset, x => integer(x, 0, 2147483647)); break;
+    case "learning.manual_observe": valid = keys(a, ["commandId", "claimNonce", "before", "after"]) && uuid(a.commandId) && uuid(a.claimNonce)
+      && observation(a.before) && observation(a.after) && a.before.jobUrl === a.after.jobUrl; break;
+    case "tasks.decide": valid = keys(a, [...LEASE_KEYS, "decision"]) && lease(a) && decision(a.decision); break;
     case "tasks.claim": valid = keys(a, ["limit", "leaseSeconds"]) && listLimit(10) && optional(a.leaseSeconds, x => integer(x, 30, 300)); break;
     case "tasks.renew": valid = keys(a, [...LEASE_KEYS, "leaseSeconds"]) && lease(a) && optional(a.leaseSeconds, x => integer(x, 30, 300)); break;
     case "tasks.report": valid = keys(a, [...LEASE_KEYS, "status", "reason", "evidence"]) && lease(a)
       && ["waiting_answer", "waiting_login", "waiting_review", "unsupported", "failed", "filtered", "unverified"].includes(a.status as string)
       && optional(a.reason, x => text(x, 2000)) && optional(a.evidence, evidence); break;
-    case "submission.reserve": valid = keys(a, [...LEASE_KEYS, "profileRevision", "settingsRevision", "answersRevision", "siteAllowed", "accountVerified", "requiredComplete", "answerIds", "idempotencyKey"])
+    case "submission.reserve": valid = keys(a, [...LEASE_KEYS, "profileRevision", "settingsRevision", "answersRevision", "siteAllowed", "accountVerified", "requiredComplete", "answerIds", "idempotencyKey", "grantId", "similarityKey"])
       && lease(a) && integer(a.profileRevision, 1, 2147483647) && integer(a.settingsRevision, 1, 2147483647)
       && integer(a.answersRevision, 0, 2147483647) && a.siteAllowed === true && a.accountVerified === true && a.requiredComplete === true
-      && Array.isArray(a.answerIds) && a.answerIds.length <= 100 && a.answerIds.every(uuid) && text(a.idempotencyKey, 200); break;
+      && Array.isArray(a.answerIds) && a.answerIds.length <= 100 && a.answerIds.every(uuid) && text(a.idempotencyKey, 200)
+      && uuid(a.grantId) && metadata(a.similarityKey, 16000); break;
     case "submission.finish": valid = keys(a, [...LEASE_KEYS, "reservationId", "reservationNonce", "outcome", "evidence"])
       && lease(a) && uuid(a.reservationId) && uuid(a.reservationNonce) && ["submitted", "unverified", "failed"].includes(a.outcome as string)
       && optional(a.evidence, evidence) && (a.outcome !== "submitted" || evidence(a.evidence)); break;
@@ -353,14 +409,15 @@ export function validatePipelineActionRequest(value: unknown, caller: "browser" 
       && strings(a.capabilities, 50, 100) && ["ready", "paused", "offline"].includes(a.status as string)
       && optional(a.profileMetadata, x => object(x) && keys(x, ["revision", "resumeApproved"])
         && optional(x.revision, n => integer(n, 0, 2147483647)) && optional(x.resumeApproved, n => typeof n === "boolean")); break;
-    case "sessions.report": valid = keys(a, ["portal", "status", "accountLabel"]) && text(a.portal, 200)
+    case "sessions.report": valid = keys(a, ["portal", "status", "accountLabel"]) && metadata(a.portal, 200)
       && ["authenticated", "expired", "login_required", "unsupported"].includes(a.status as string) && optional(a.accountLabel, x => text(x, 200)); break;
     case "commands.request": {
       const commandArgs = a.args === undefined ? {} : a.args;
       valid = keys(a, ["bindingId", "type", "args"]) && uuid(a.bindingId) && object(commandArgs)
         && (["pause", "resume"].includes(a.type as string) ? keys(commandArgs, [])
-          : ["retry_login", "check_session"].includes(a.type as string) ? keys(commandArgs, ["portal"]) && text(commandArgs.portal, 200) && !!commandArgs.portal.trim()
-          : a.type === "open_question" && keys(commandArgs, ["questionId"]) && uuid(commandArgs.questionId));
+          : ["retry_login", "check_session"].includes(a.type as string) ? keys(commandArgs, ["portal"]) && metadata(commandArgs.portal, 200) && !!commandArgs.portal.trim()
+          : a.type === "open_question" ? keys(commandArgs, ["questionId"]) && uuid(commandArgs.questionId)
+          : a.type === "open_manual" && keys(commandArgs, ["taskId"]) && uuid(commandArgs.taskId));
       break;
     }
     case "commands.report": valid = keys(a, ["commandId", "claimNonce", "status", "reason"]) && uuid(a.commandId) && uuid(a.claimNonce)

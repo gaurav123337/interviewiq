@@ -4,6 +4,7 @@ import {
   isPipelineSettings, isPublicPipelineUrl, matchPipelineJob, validatePipelineActionRequest,
   type PipelineJob, type VerifiedProfile,
 } from "./applyPipeline.ts";
+import { validateAgentActionRequest } from "./applyAgent.ts";
 
 const id = "11111111-1111-4111-8111-111111111111";
 const lease = { taskId: id, leaseVersion: 1, leaseNonce: id };
@@ -32,12 +33,66 @@ Deno.test("strict task fences and reserved attempts cannot report arbitrary succ
   assertEquals(request("tasks.renew", { ...lease, leaseVersion: 0 }).ok, false);
   assertEquals(request("tasks.report", { ...lease, status: "submitted" }).ok, false);
   assertEquals(request("submission.reserve", { ...lease, profileRevision: 1, settingsRevision: 1, answersRevision: 0,
-    siteAllowed: true, accountVerified: true, requiredComplete: true, answerIds: [], idempotencyKey: "proof" }).ok, true);
+    siteAllowed: true, accountVerified: true, requiredComplete: true, answerIds: [], idempotencyKey: "proof", grantId: id, similarityKey: "proof" }).ok, true);
   assertEquals(request("submission.reserve", { ...lease, profileRevision: 1, settingsRevision: 1, answersRevision: 0,
-    siteAllowed: "true", accountVerified: true, requiredComplete: true, answerIds: [], idempotencyKey: "proof" }).ok, false);
+    siteAllowed: "true", accountVerified: true, requiredComplete: true, answerIds: [], idempotencyKey: "proof", grantId: id, similarityKey: "proof" }).ok, false);
   assertEquals(request("submission.finish", { ...lease, reservationId: id, reservationNonce: id, outcome: "submitted" }).ok, false);
   assertEquals(request("submission.finish", { ...lease, reservationId: id, reservationNonce: id, outcome: "unverified" }).ok, true);
 });
+Deno.test("verified worker learning accepts strict decision and observation metadata without user authority", () => {
+  const decision = { eligible: true, score: 100, reason: "Factual gates passed", reasons: [], missing: [], matched: ["typescript"],
+    ageHours: 1, profileRevision: 1, settingsRevision: 1, source: "deterministic", status: "eligible_review",
+    codes: [], missingCore: [], requirements: [{ anyOf: ["typescript"], core: true, evidence: "TypeScript required" }], similarityKey: "proof", portal: "greenhouse:boards.greenhouse.io/proof" };
+  assertEquals(request("learning.list").ok, true);
+  assertEquals(request("learning.list", { limit: 200, offset: 0 }).ok, true);
+  assertEquals(request("tasks.decide", { ...lease, decision }).ok, true);
+  for (const patch of [{ settingsRevision: undefined }, { profileRevision: 0 }, { source: "ai" }, { score: NaN }, { grantId: "bad" },
+    { status: "eligible_auto" }, { requirements: [{ anyOf: [], core: true, evidence: "required" }] }, { reason: "javascript:alert(1)" }]) {
+    assertEquals(request("tasks.decide", { ...lease, decision: { ...decision, ...patch } }).ok, false);
+  }
+  const snapshot = { jobUrl: job.jobUrl, checkedAt: "2026-11-14T12:00:00Z", accountIdentity: "synthetic@example.com",
+    session: { ok: true, jobUrl: job.jobUrl, checkedAt: "2026-11-14T12:00:00Z" }, receipt: null };
+  const observation = { commandId: id, claimNonce: id, before: snapshot, after: { ...snapshot,
+    receipt: { selector: "#application_confirmation", text: "Application received", url: job.jobUrl } } };
+  assertEquals(request("learning.manual_observe", observation).ok, true);
+  assertEquals(request("learning.manual_observe", { ...observation, after: { ...snapshot, accountIdentity: " " } }).ok, false);
+  assertEquals(request("learning.manual_observe", { ...observation, before: { ...snapshot, session: { ...snapshot.session, ok: "true" } } }).ok, false);
+  assertEquals(request("learning.manual_observe", { ...observation, claimNonce: "bad" }).ok, false);
+  assertEquals(request("learning.manual_observe", observation, "browser").ok, false);
+  for (const action of ["learning.feedback", "learning.question", "learning.grant", "learning.revoke", "learning.manual_report"]) assertEquals(request(action).ok, false);
+});
+Deno.test("learning pagination is bounded, optional and isolated from browser and legacy agent actions", () => {
+  const cases: Record<string, number>[] = [{}, { limit: 1 }, { limit: 200 }, { offset: 0 }, { offset: 2147483647 }, { limit: 200, offset: 400 }];
+  for (const args of cases) {
+    assertEquals(request("learning.list", args), { ok: true, action: "learning.list", args });
+    assertEquals(request("learning.list", args, "browser"), { ok: false, error: "unsupported_action" });
+    assertEquals(validateAgentActionRequest({ operation: "agent.action", action: "learning.list", args }).ok, false);
+  }
+  for (const args of [{ limit: -1 }, { limit: 0 }, { limit: 201 }, { limit: 1.5 }, { limit: "1" }, { limit: null },
+    { offset: -1 }, { offset: 0.5 }, { offset: 2147483648 }, { offset: "0" }, { offset: null }, { offset: NaN }, { offset: Infinity },
+    { limit: 200, offset: 0, hasMore: true }]) assertEquals(request("learning.list", args), { ok: false, error: "invalid_args" });
+  for (const caller of ["agent", "browser"] as const) {
+    assertEquals(request("learning.list", { limit: 200, offset: 0, ownerId: id }, caller), { ok: false, error: "authoritative_user_forbidden" });
+    assertEquals(request("learning.list", { limit: 200, offset: 0, metadata: { user_id: id } }, caller), { ok: false, error: "authoritative_user_forbidden" });
+  }
+});
+Deno.test("reserve retains every original gate and requires current scoped learning selectors", () => {
+  const reserve = { ...lease, profileRevision: 1, settingsRevision: 1, answersRevision: 0,
+    siteAllowed: true, accountVerified: true, requiredComplete: true, answerIds: [], idempotencyKey: "proof", grantId: id, similarityKey: "proof" };
+  assertEquals(request("submission.reserve", reserve).ok, true);
+  for (const patch of [{ grantId: undefined }, { grantId: "bad" }, { similarityKey: undefined }, { similarityKey: "" },
+    { similarityKey: "x".repeat(16001) }, { siteAllowed: false }, { accountVerified: false }, { requiredComplete: false }, { leaseVersion: 0 }]) {
+    assertEquals(request("submission.reserve", { ...reserve, ...patch }).ok, false);
+  }
+});
+Deno.test("board match metadata and exact-task manual open preserve browser control isolation", () => {
+  for (const boardMatch of ["low", "medium", "high", "unknown"]) assertEquals(request("jobs.ingest", { boardId: id, jobs: [{ ...job, boardMatch }] }).ok, true);
+  assertEquals(request("jobs.ingest", { boardId: id, jobs: [{ ...job, boardMatch: "LOW" }] }).ok, false);
+  assertEquals(request("commands.request", { bindingId: id, type: "open_manual", args: { taskId: id } }, "browser").ok, true);
+  assertEquals(request("commands.request", { bindingId: id, type: "open_manual", args: { taskId: id } }).ok, false);
+  assertEquals(request("commands.request", { bindingId: id, type: "open_manual", args: { taskId: id, jobUrl: job.jobUrl } }, "browser").ok, false);
+});
+
 Deno.test("settings require explicit booleans, bounded caps, real timezone and paired quiet hours", () => {
   assertEquals(isPipelineSettings(DEFAULT_PIPELINE_SETTINGS), true);
   for (const settings of [
