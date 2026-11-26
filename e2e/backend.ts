@@ -102,6 +102,9 @@ export class FixtureBackend {
       for (const task of owned(this.pipelineTasks)) if (["queued", "in_progress", "waiting_answer", "waiting_login", "waiting_review"].includes(String(task.status))) { task.status = "waiting_review"; task.reason = reason; }
     };
     switch (body.p_action) {
+      case "learning.list": if (shape(["limit", "offset"]) && limit() && (args.offset === undefined || Number.isSafeInteger(args.offset) && args.offset >= 0 && args.offset <= 2147483647)) {
+        return reply({ hasMore: false, learning: { feedback: [], grants: [], receipts: [], questions: [], eligibility: [] } });
+      } break;
       case "profile.get": if (shape([])) return reply({ profile: profile ?? null }); break;
       case "settings.get": if (shape([])) {
         if (!preferences) { preferences = { revision: 1, data: structuredClone(PIPELINE_DEFAULTS), updated_at: now }; this.pipelineSettings.set(this.userId, preferences); }

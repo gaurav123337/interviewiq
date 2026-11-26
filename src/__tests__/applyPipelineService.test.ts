@@ -137,6 +137,248 @@ describe("pipeline request account fencing", () => {
   });
 });
 
+describe("match-learning control plane", () => {
+  const confirmedAt = new Date().toISOString();
+  const feedback = { id: USER_A, jobUrl: "https://careers.example.com/job/test", similarityKey: "verified-match-v1:test", portal: "naukri:www.naukri.com/candidate", scope: "similar", verdict: "apply", profileRevision: 2, settingsRevision: 3, confirmedAt, revokedAt: null, source: "user" };
+  const confirmation = { taskId: USER_A, profileRevision: 2, settingsRevision: 3, confirm: true as const };
+  const bound = { similarityKey: feedback.similarityKey, portal: feedback.portal, profileRevision: 2, settingsRevision: 3 };
+  const grant = { ...bound, id: USER_B, taskId: USER_A, grantedAt: confirmedAt, expiresAt: new Date(Date.parse(confirmedAt) + 86400000).toISOString(), revokedAt: null, source: "user" };
+  const receipt = { ...bound, id: USER_B, taskId: USER_A, jobUrl: feedback.jobUrl, reportedAt: confirmedAt, observedAt: null, source: "user", commandId: null, accountIdentity: null };
+  const question = { ...bound, id: USER_B, taskId: USER_A, jobUrl: feedback.jobUrl, question: { kind: "skill_gap", skills: ["react"], text: "Do you know React?" }, answer: "yes", answeredAt: confirmedAt, source: "user", suggestion: "profile_update" };
+  const eligibility = { ...bound, taskId: USER_A, eligible: false, applySimilarCount: 0, observedManualReceiptCount: 0 };
+  const ledger = () => ({ feedback: [], grants: [], receipts: [], questions: [], eligibility: [] });
+  const rowId = (index: number) => `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+  const respond = (data: unknown, error: unknown = null) => state.rpc.mockImplementation(() => builder(Promise.resolve({ data, error })));
+  it("appends every learning array sequentially, preserving current grant and skip beyond the first 200 rows", async () => {
+    const pages = Array.from({ length: 3 }, (_, page) => {
+      const indices = Array.from({ length: page === 2 ? 1 : 200 }, (_, index) => page * 200 + index);
+      return { learning: {
+        feedback: indices.map(index => ({ ...feedback, id: rowId(index), verdict: index === 200 ? "skip" : "apply", profileRevision: index === 200 ? 2 : 1 })),
+        grants: indices.map(index => ({ ...grant, id: rowId(index), revokedAt: index === 200 ? null : confirmedAt })),
+        receipts: indices.map(index => ({ ...receipt, id: rowId(index) })),
+        questions: indices.map(index => ({ ...question, id: rowId(index) })),
+        eligibility: indices.map(index => ({ ...eligibility, taskId: rowId(index) })),
+      }, hasMore: page < 2 };
+    });
+    const second = deferred<unknown>();
+    state.rpc.mockImplementationOnce(() => builder(Promise.resolve({ data: pages[0], error: null })))
+      .mockImplementationOnce(() => builder(second.promise))
+      .mockImplementationOnce(() => builder(Promise.resolve({ data: pages[2], error: null })));
+    const api = createPipelineClient(USER_A), request = api.listLearning();
+    await vi.waitFor(() => expect(state.rpc).toHaveBeenCalledTimes(2));
+    expect(state.rpc).toHaveBeenCalledTimes(2);
+    second.resolve({ data: pages[1], error: null });
+    const learning = await request;
+    for (const key of Object.keys(learning) as (keyof typeof learning)[]) expect(learning[key]).toHaveLength(401);
+    expect(learning.feedback[200]).toMatchObject({ id: rowId(200), verdict: "skip", profileRevision: 2 });
+    expect(learning.grants[200]).toMatchObject({ id: rowId(200), revokedAt: null });
+    expect(learning.feedback.map(row => row.id)).toEqual(Array.from({ length: 401 }, (_, index) => rowId(index)));
+    expect(state.rpc.mock.calls.map(call => call[1])).toEqual([
+      { p_action: "learning.list", p_args: {} },
+      { p_action: "learning.list", p_args: { limit: 200, offset: 200 } },
+      { p_action: "learning.list", p_args: { limit: 200, offset: 400 } },
+    ]);
+    expect(state.session).toHaveBeenCalledTimes(3);
+    expect(state.headers).toEqual(Array.from({ length: 3 }, () => ["Authorization", "Bearer synthetic-account-token"])); api.dispose();
+  });
+  it("continues when only one learning table has more rows", async () => {
+    const first = { ...ledger(), grants: Array.from({ length: 200 }, (_, index) => ({ ...grant, id: rowId(index) })) };
+    state.rpc.mockImplementationOnce(() => builder(Promise.resolve({ data: { learning: first, hasMore: true }, error: null })))
+      .mockImplementationOnce(() => builder(Promise.resolve({ data: { learning: { ...ledger(), grants: [grant] }, hasMore: false }, error: null })));
+    const api = createPipelineClient(USER_A), learning = await api.listLearning();
+    expect(learning.grants).toHaveLength(201); expect(learning.feedback).toEqual([]); api.dispose();
+  });
+  it.each(["feedback", "grants", "receipts", "questions", "eligibility"] as const)("accepts exactly 10,000 %s rows without truncation", async key => {
+    const sample = { feedback, grants: grant, receipts: receipt, questions: question, eligibility }[key];
+    state.rpc.mockImplementation((_name, request) => builder(Promise.resolve({ data: { learning: { ...ledger(), [key]: Array(200).fill(sample) }, hasMore: (request.p_args.offset ?? 0) < 9800 }, error: null })));
+    const api = createPipelineClient(USER_A), learning = await api.listLearning();
+    expect(learning[key]).toHaveLength(10000); expect(state.rpc).toHaveBeenCalledTimes(50); api.dispose();
+  });
+  it("rejects a ledger beyond the read bound instead of returning a silently truncated success", async () => {
+    respond({ learning: { ...ledger(), feedback: Array(200).fill(feedback) }, hasMore: true });
+    const api = createPipelineClient(USER_A);
+    await expect(api.listLearning()).rejects.toThrow(/10,000|10000/);
+    expect(state.rpc).toHaveBeenCalledTimes(50); api.dispose();
+  });
+  it.each(["marker", "oversized", "foreign", "malformed", "backend"])("rejects %s errors on a later page instead of returning partial learning", async kind => {
+    const second = kind === "backend" ? { data: null, error: { code: "XX", message: "private payload" } }
+      : { data: { learning: { ...ledger(), feedback: kind === "oversized" ? Array(201).fill(feedback) : kind === "foreign" ? [{ ...feedback, user_id: USER_B }] : kind === "malformed" ? [{ ...feedback, source: "ai" }] : [] }, hasMore: kind === "marker" ? "false" : false }, error: null };
+    state.rpc.mockImplementationOnce(() => builder(Promise.resolve({ data: { learning: { ...ledger(), feedback: Array(200).fill(feedback) }, hasMore: true }, error: null })))
+      .mockImplementationOnce(() => builder(Promise.resolve(second)));
+    const api = createPipelineClient(USER_A);
+    await expect(api.listLearning()).rejects.toThrow(kind === "foreign" ? /Account mismatch/ : kind === "backend" ? /completion is not confirmed/ : /invalid response/);
+    expect(state.rpc).toHaveBeenCalledTimes(2); api.dispose();
+  });
+  it("A→B→A during next-page authorization prevents the next RPC and permanently invalidates learning", async () => {
+    const pending = deferred<unknown>();
+    state.session.mockImplementationOnce(async () => ({ data: { session: { user: { id: USER_A }, access_token: "synthetic-account-token" } }, error: null }))
+      .mockImplementationOnce(() => pending.promise);
+    respond({ learning: { ...ledger(), feedback: Array(200).fill(feedback) }, hasMore: true });
+    const api = createPipelineClient(USER_A), request = api.listLearning(), rejected = expect(request).rejects.toThrow(/Account or selected agent changed/);
+    await vi.waitFor(() => expect(state.session).toHaveBeenCalledTimes(2));
+    switchAccount(USER_B); switchAccount(USER_A);
+    pending.resolve({ data: { session: { user: { id: USER_A }, access_token: "synthetic-account-token" } }, error: null });
+    await rejected; expect(state.rpc).toHaveBeenCalledTimes(1);
+    await expect(api.listLearning()).rejects.toThrow(/Account or selected agent changed/); api.dispose();
+  });
+  it("A→B→A aborts a later page and never returns the earlier page as a partial success", async () => {
+    const pending = deferred<unknown>();
+    state.rpc.mockImplementationOnce(() => builder(Promise.resolve({ data: { learning: { ...ledger(), feedback: Array(200).fill(feedback) }, hasMore: true }, error: null })))
+      .mockImplementationOnce(() => builder(pending.promise));
+    const api = createPipelineClient(USER_A), request = api.listLearning(), rejected = expect(request).rejects.toThrow(/Account or selected agent changed/);
+    await vi.waitFor(() => expect(state.rpc).toHaveBeenCalledTimes(2));
+    switchAccount(USER_B); switchAccount(USER_A); pending.resolve({ data: { learning: ledger(), hasMore: false }, error: null });
+    await rejected; expect(state.signals.every(signal => signal.aborted)).toBe(true); api.dispose();
+  });
+  it("parses revision-bound learning without exposing secrets, rejecting foreign or inferred rows", async () => {
+    const api = createPipelineClient(USER_A);
+    respond({ learning: { feedback: [{ ...feedback, user_id: USER_A, binding_token: "private" }], grants: [], receipts: [], questions: [] } });
+    const learning = await api.listLearning();
+    expect(learning.feedback).toEqual([feedback]);
+    expect(state.rpc.mock.calls[0]).toEqual(["my_apply_pipeline_action", { p_action: "learning.list", p_args: {} }]);
+    respond({ learning: { feedback: [{ ...feedback, user_id: USER_B }], grants: [], receipts: [], questions: [] } });
+    await expect(api.listLearning()).rejects.toThrow(/Account mismatch/);
+    respond({ learning: { feedback: [{ ...feedback, source: "ai" }], grants: [], receipts: [], questions: [] } });
+    await expect(api.listLearning()).rejects.toThrow(/invalid response/);
+    respond({ learning: { feedback: [], grants: [], receipts: [] } });
+    await expect(api.listLearning()).rejects.toThrow(/invalid response/); api.dispose();
+  });
+  it("parses camel match decisions and new manual statuses while old task snapshots stay usable", async () => {
+    const raw = { id: USER_A, run_id: USER_A, target_binding_id: USER_A, status: "waiting_match_answer", profile_revision: 2, settings_revision: 3, answers_revision: 0, score: 80, reason: null,
+      job: { jobUrl: feedback.jobUrl, title: "Engineer", company: "Example", description: "Vue required", skills: ["vue"], location: "Remote", boardMatch: "low" },
+      match_decision: { status: "waiting_match_answer", eligible: false, score: 80, profileRevision: 2, similarityKey: feedback.similarityKey, portal: feedback.portal, reason: "Unconfirmed Vue", codes: [], missingCore: [], requirements: [{ anyOf: ["vue", "react"], core: false, evidence: "Vue or React" }], question: { kind: "skill_gap", skills: ["vue/react"], text: "Do you have experience?" } } };
+    const api = createPipelineClient(USER_A); respond({ tasks: [raw] });
+    expect((await api.listTasks())[0]).toMatchObject({ status: "waiting_match_answer", job: { boardMatch: "low" }, matchDecision: { profileRevision: 2, requirements: [{ anyOf: ["vue", "react"] }] } });
+    for (const status of ["manual_actionable", "manual_applied", "user_skipped"]) {
+      respond({ tasks: [{ ...raw, status }] }); expect((await api.listTasks())[0].status).toBe(status);
+    }
+    respond({ tasks: [{ ...raw, match_decision: undefined, job: { ...raw.job, boardMatch: undefined } }] });
+    expect((await api.listTasks())[0].matchDecision).toBeUndefined();
+    respond({ tasks: [{ ...raw, match_decision: { ...raw.match_decision, eligible: true } }] });
+    await expect(api.listTasks()).rejects.toThrow(/invalid response/);
+    respond({ tasks: [{ ...raw, match_decision: { ...raw.match_decision, profileRevision: 1 } }] });
+    await expect(api.listTasks()).rejects.toThrow(/invalid response/);
+    respond({ tasks: [{ ...raw, job: { ...raw.job, boardMatch: "excellent" } }] });
+    await expect(api.listTasks()).rejects.toThrow(/invalid response/); api.dispose();
+  });
+  it("typed receipts distinguish worker observation from self-report; eligibility cannot manufacture counts", async () => {
+    const api = createPipelineClient(USER_A), bound = { similarityKey: feedback.similarityKey, portal: feedback.portal, profileRevision: 2, settingsRevision: 3 };
+    const selfreport = { ...bound, id: USER_A, taskId: USER_A, jobUrl: feedback.jobUrl, reportedAt: confirmedAt, observedAt: null, source: "user" };
+    const observed = { ...selfreport, id: USER_B, reportedAt: null, observedAt: confirmedAt, source: "worker", commandId: USER_A, accountIdentity: "user@example.invalid", secret: "private" };
+    const question = { ...bound, id: USER_A, taskId: USER_A, jobUrl: feedback.jobUrl, question: { kind: "skill_gap", skills: ["react"], text: "Do you know React?" }, answer: "yes", answeredAt: confirmedAt, source: "user", suggestion: "profile_update" };
+    const eligibility = { ...bound, taskId: USER_A, eligible: true, applySimilarCount: 3, observedManualReceiptCount: 2 };
+    const ledger = { feedback: [], grants: [], receipts: [selfreport, observed], questions: [question], eligibility: [eligibility] };
+    respond({ learning: ledger });
+    const learning = await api.listLearning();
+    expect(learning.receipts[0]).toEqual(selfreport); expect(learning.receipts[1]).not.toHaveProperty("secret"); expect(learning.questions[0]).toEqual(question); expect(learning.eligibility).toEqual([eligibility]);
+    respond({ learning: { ...ledger, receipts: [{ ...selfreport, observedAt: confirmedAt }] } });
+    await expect(api.listLearning()).rejects.toThrow(/invalid response/);
+    respond({ learning: { ...ledger, receipts: [{ ...observed, userId: USER_B }] } });
+    await expect(api.listLearning()).rejects.toThrow(/Account mismatch/);
+    respond({ learning: { ...ledger, eligibility: [{ ...eligibility, observedManualReceiptCount: 1 }] } });
+    await expect(api.listLearning()).rejects.toThrow(/invalid response/);
+    respond({ learning: { ...ledger, questions: [{ ...question, answer: "no" }] } });
+    await expect(api.listLearning()).rejects.toThrow(/invalid response/);
+    respond({ learning: { ...ledger, grants: [{ ...bound, id: USER_A, grantedAt: confirmedAt, expiresAt: new Date(Date.parse(confirmedAt) + 31 * 86400000).toISOString(), revokedAt: null, source: "user" }] } });
+    await expect(api.listLearning()).rejects.toThrow(/invalid response/); api.dispose();
+  });
+  it("records preferences/questions/self-reports only with explicit scope/revisions, never promotes profile facts", async () => {
+    state.rpc.mockImplementation((_name, request) => builder(Promise.resolve({ data: request.p_action === "learning.feedback" ? { ok: true, feedback: { ...feedback, taskId: USER_A, scope: "exact", verdict: "skip" } }
+      : request.p_action === "learning.question" ? { ok: true, question } : { ok: true, receipt }, error: null })));
+    const api = createPipelineClient(USER_A);
+    await api.recordMatchFeedback({ ...confirmation, scope: "exact", verdict: "skip" });
+    await api.answerMatchQuestion({ ...confirmation, answer: "yes" });
+    await api.reportManualApplication(confirmation);
+    expect(state.rpc.mock.calls.map(call => call[1])).toEqual([
+      { p_action: "learning.feedback", p_args: { ...confirmation, scope: "exact", verdict: "skip" } },
+      { p_action: "learning.question", p_args: { ...confirmation, answer: "yes" } },
+      { p_action: "learning.manual_report", p_args: confirmation },
+    ]);
+    expect(state.rpc.mock.calls.every(call => !call[1].p_action.startsWith("profile."))).toBe(true);
+    await expect(api.recordMatchFeedback({ ...confirmation, scope: "global" as "exact", verdict: "apply" })).rejects.toThrow();
+    await expect(api.reportManualApplication({ ...confirmation, confirm: false as true })).rejects.toThrow(/confirm/);
+    await expect(api.answerMatchQuestion({ ...confirmation, profileRevision: 0, answer: "yes" })).rejects.toThrow();
+    expect(state.rpc).toHaveBeenCalledTimes(3); api.dispose();
+  });
+  it.each(["feedback", "question", "receipt", "grant", "revoke_feedback", "revoke_grant"] as const)("requires a valid SQL keyed result for %s, not a generic acknowledgement", async kind => {
+    const api = createPipelineClient(USER_A), expiresAt = grant.expiresAt;
+    const key = kind === "revoke_feedback" ? "feedback" : kind === "revoke_grant" ? "grant" : kind;
+    const saved = { feedback: { ...feedback, taskId: USER_A }, question, receipt, grant }[key];
+    const resultRow = kind.startsWith("revoke_") ? { ...saved, revokedAt: confirmedAt } : saved;
+    const run = () => kind === "feedback" ? api.recordMatchFeedback({ ...confirmation, scope: "similar", verdict: "apply" })
+      : kind === "question" ? api.answerMatchQuestion({ ...confirmation, answer: "yes" })
+      : kind === "receipt" ? api.reportManualApplication(confirmation)
+      : kind === "grant" ? api.grantMatchAutonomy({ ...confirmation, expiresAt })
+      : api.revokeLearning(kind === "revoke_feedback" ? { feedbackId: feedback.id } : { grantId: grant.id });
+    respond({ ok: true, [key]: resultRow }); await expect(run()).resolves.toEqual({ ok: true });
+    for (const data of [{ ok: true }, { [key]: resultRow }, { ok: false, [key]: resultRow }, { ok: true, [key]: null }, { ok: true, [key]: { ...resultRow, source: "ai" } }]) {
+      respond(data); await expect(run()).rejects.toThrow(/invalid response/);
+    }
+    respond({ ok: true, [key]: { ...resultRow, user_id: USER_B } }); await expect(run()).rejects.toThrow(/Account mismatch/);
+    respond({ ok: true, [key]: { ...resultRow, userId: USER_B } }); await expect(run()).rejects.toThrow(/Account mismatch/);
+    respond({ ok: true, [key]: { ...resultRow, ...(kind.startsWith("revoke_") ? { id: rowId(999) } : { taskId: USER_B }) } }); await expect(run()).rejects.toThrow(/invalid response/);
+    if (kind.startsWith("revoke_")) {
+      respond({ ok: true, [key]: { ...resultRow, revokedAt: null } }); await expect(run()).rejects.toThrow(/invalid response/);
+    } else {
+      respond({ ok: true, [key]: { ...resultRow, profileRevision: 1 } }); await expect(run()).rejects.toThrow(/invalid response/);
+      respond({ ok: true, [key]: { ...resultRow, settingsRevision: 1 } }); await expect(run()).rejects.toThrow(/invalid response/);
+    }
+    api.dispose();
+  });
+  it("rejects a keyed success that contradicts the requested preference, answer, report provenance or grant expiry", async () => {
+    const api = createPipelineClient(USER_A);
+    respond({ ok: true, feedback: { ...feedback, taskId: USER_A, verdict: "skip" } });
+    await expect(api.recordMatchFeedback({ ...confirmation, scope: "similar", verdict: "apply" })).rejects.toThrow(/invalid response/);
+    respond({ ok: true, feedback: { ...feedback, taskId: USER_A, scope: "exact" } });
+    await expect(api.recordMatchFeedback({ ...confirmation, scope: "similar", verdict: "apply" })).rejects.toThrow(/invalid response/);
+    respond({ ok: true, question: { ...question, answer: "no", suggestion: "none" } });
+    await expect(api.answerMatchQuestion({ ...confirmation, answer: "yes" })).rejects.toThrow(/invalid response/);
+    respond({ ok: true, receipt: { ...receipt, source: "worker", observedAt: confirmedAt } });
+    await expect(api.reportManualApplication(confirmation)).rejects.toThrow(/invalid response/);
+    respond({ ok: true, grant: { ...grant, expiresAt: new Date(Date.parse(grant.expiresAt) + 1000).toISOString() } });
+    await expect(api.grantMatchAutonomy({ ...confirmation, expiresAt: grant.expiresAt })).rejects.toThrow(/invalid response/); api.dispose();
+  });
+  it("never treats ok:false or an empty response as confirmed and surfaces safe stale/grant refusal", async () => {
+    const api = createPipelineClient(USER_A);
+    respond({ ok: false }); await expect(api.reportManualApplication(confirmation)).rejects.toThrow(/invalid response/);
+    respond({}); await expect(api.recordMatchFeedback({ ...confirmation, scope: "similar", verdict: "apply" })).rejects.toThrow(/invalid response/);
+    respond(null, { code: "40001", message: "stale_profile private payload" });
+    await expect(api.answerMatchQuestion({ ...confirmation, answer: "yes" })).rejects.toThrow(/changed elsewhere/);
+    respond(null, { code: "22023", message: "grant_not_eligible private payload" });
+    await expect(api.grantMatchAutonomy({ ...confirmation, expiresAt: new Date(Date.now() + 86400000).toISOString() })).rejects.toThrow(/not eligible/);
+    api.dispose();
+  });
+  it("grant requires explicit future expiry within 30 days and revoke accepts exactly one owned row identifier", async () => {
+    respond({ ok: true, feedback: { ...feedback, taskId: USER_A, revokedAt: confirmedAt } }); const api = createPipelineClient(USER_A);
+    await expect(api.grantMatchAutonomy({ ...confirmation, expiresAt: new Date(Date.now() - 1000).toISOString() })).rejects.toThrow(/expiry/);
+    await expect(api.grantMatchAutonomy({ ...confirmation, expiresAt: new Date(Date.now() + 31 * 86400000).toISOString() })).rejects.toThrow(/30 days/);
+    await expect(api.revokeLearning({ feedbackId: USER_A, grantId: USER_B })).rejects.toThrow(/exactly one/);
+    expect(state.rpc).not.toHaveBeenCalled();
+    await api.revokeLearning({ feedbackId: USER_A });
+    expect(state.rpc.mock.calls[0][1]).toEqual({ p_action: "learning.revoke", p_args: { feedbackId: USER_A } }); api.dispose();
+  });
+  it("manual open is bound to exact task, never arbitrary URL or a fill/click command", async () => {
+    const api = createPipelineClient(USER_A);
+    respond({ command: { id: USER_A, binding_id: USER_A, type: "open_manual", status: "queued", reason: null, created_at: confirmedAt } });
+    await expect(api.requestCommand(USER_A, "open_manual")).rejects.toThrow(/exact task/);
+    await api.requestCommand(USER_A, "open_manual", { taskId: USER_B });
+    expect(state.rpc.mock.calls[0][1]).toEqual({ p_action: "commands.request", p_args: { bindingId: USER_A, type: "open_manual", args: { taskId: USER_B } } }); api.dispose();
+  });
+  it("learning backend absence is distinct from an empty learning ledger without fallback", async () => {
+    respond(null, { code: "22023", message: "unsupported action" }); const api = createPipelineClient(USER_A);
+    await expect(api.listLearning()).rejects.toThrow(/Match learning is unavailable/);
+    expect(state.rpc).toHaveBeenCalledTimes(1); api.dispose();
+  });
+  it("learning requests remain permanently account-fenced through A→B→A", async () => {
+    const pending = deferred<unknown>(); state.rpc.mockImplementation(() => builder(pending.promise));
+    const api = createPipelineClient(USER_A), request = api.recordMatchFeedback({ ...confirmation, scope: "similar", verdict: "apply" });
+    const rejected = expect(request).rejects.toThrow(/Account or selected agent changed/);
+    await vi.waitFor(() => expect(state.signals).toHaveLength(1));
+    switchAccount(USER_B); switchAccount(USER_A); pending.resolve({ data: { ok: true, feedback: { ...feedback, taskId: USER_A } }, error: null });
+    await rejected; expect(state.signals[0].aborted).toBe(true); api.dispose();
+  });
+});
+
 describe("explicit factual approval validation", () => {
   const confirmedAt = "2026-11-14T00:00:00.000Z", validUntil = "2026-12-14T00:00:00.000Z", now = Date.parse("2026-11-14T12:00:00.000Z");
   const fact = (value: string | boolean | string[], extra = {}) => ({ value, source: "user" as const, confirmedAt, ...extra });

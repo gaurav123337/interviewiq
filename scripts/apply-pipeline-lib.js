@@ -14,7 +14,7 @@ export function canonicalCountry(value) { const n = normalize(value); return cou
 export function canonicalCurrency(value) { const n = normalize(value); return ({ rupees: 'INR', 'indian rupees': 'INR', 'us dollars': 'USD', dollars: '', 'british pounds': 'GBP', euros: 'EUR' })[n] ?? (/^[a-z]{3}$/.test(n) ? n.toUpperCase() : ''); }
 const skillAliases = { 'react.js': 'react', reactjs: 'react', 'node.js': 'node', nodejs: 'node', 'vue.js': 'vue', vuejs: 'vue', 'next.js': 'next', nextjs: 'next', js: 'javascript', ts: 'typescript', 'c sharp': 'c#', 'c plus plus': 'c++', golang: 'go', 'amazon web services': 'aws' };
 export function canonicalVerifiedSkill(value) { const n = normalize(value); return n.length <= 80 && /^[a-z0-9+#. /-]+$/.test(n) ? skillAliases[n] || n : ''; }
-const jdSkillVocabulary = Object.freeze(['javascript', 'typescript', 'react', 'next', 'node', 'vue', 'angular', 'python', 'java', 'c++', 'c#', 'golang', 'rust', 'ruby', 'php', 'swift', 'kotlin', 'sql', 'postgresql', 'mysql', 'mongodb', 'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'graphql', 'spring', 'django', 'flask', ...Object.keys(skillAliases)]);
+const jdSkillVocabulary = Object.freeze(['html', 'css', 'javascript', 'typescript', 'react', 'next', 'node', 'vue', 'angular', 'python', 'java', 'c++', 'c#', 'golang', 'rust', 'ruby', 'php', 'swift', 'kotlin', 'sql', 'postgresql', 'mysql', 'mongodb', 'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'graphql', 'spring', 'django', 'flask', ...Object.keys(skillAliases)]);
 export function extractVerifiedJobSkills(description) {
   if (!safeText(description, PIPELINE_LIMITS.description)) return [];
   const text = normalize(description), skills = new Set();
@@ -27,7 +27,10 @@ export function extractVerifiedJobSkills(description) {
 function time(value) {
   if (typeof value === 'number') return Number.isFinite(value) && value >= 0 ? value : NaN;
   if (value instanceof Date) return value.getTime();
-  return typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : NaN;
+  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)$/.test(value)) return NaN;
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) return NaN;
+  return Date.parse(value);
 }
 function current(confirmed, expires, now) { const c = time(confirmed), e = expires === undefined ? Infinity : time(expires); return Number.isFinite(c) && c <= now && e > now && e > c; }
 function safeText(s, limit) { return typeof s === 'string' && s.length <= limit && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(s); }
@@ -223,6 +226,110 @@ export function buildVerifiedResume(profile) {
 const roleAliases = { 'front end engineer': 'frontend engineer', 'frontend developer': 'frontend engineer', 'front end developer': 'frontend engineer', 'back end engineer': 'backend engineer', 'backend developer': 'backend engineer', 'full stack developer': 'fullstack engineer', 'full stack engineer': 'fullstack engineer', 'software developer': 'software engineer' };
 function role(v) { const n = normalize(v).replace(/-/g, ' ').replace(/^(?:intern|junior|mid|senior|staff|principal|lead)\s+/, ''); return roleAliases[n] || n; }
 function list(v) { return Array.isArray(v) && v.length <= 200 && v.every(s => safeText(s, 200)) ? [...new Set(v.map(normalize).filter(Boolean))] : []; }
+const FRONTEND_SKILLS = ['react', 'typescript', 'javascript', 'vue', 'angular', 'next', 'html', 'css'];
+const BACKEND_SKILLS = ['node', 'python', 'java', 'c#', 'go', 'rust', 'ruby', 'php', 'kotlin', 'spring', 'django', 'flask'];
+export function verifiedRoleFamily(title) {
+  const value = normalize(title).replace(/-/g, ' ');
+  if (/\b(full\s?stack)\b/.test(value)) return 'fullstack';
+  if (/\b(front\s?end|ui engineer)\b/.test(value)) return 'frontend';
+  if (/\b(back\s?end)\b/.test(value)) return 'backend';
+  if (/\b(qa|sdet|test engineer|data|machine learning|devops|sre|security)\b/.test(value)) return 'specialist';
+  return /\b(engineer|developer|architect)\b/.test(value) ? 'software' : 'other';
+}
+const requirementClauses = description => description.split(/\n|[.;](?=\s|$)|,\s*but\s+/i);
+const mandatoryRequirement = clause => /\b(require[ds]?|must|essential|mandatory|proficien(?:t|cy)|expertise|strong (?:knowledge|experience)|backend development|back.end development)\b/i.test(clause);
+const optionalRequirement = clause => /\b(preferred|optional|nice.to.have|not required|not necessary|no experience)\b/i.test(clause);
+const requirementVocabulary = [...jdSkillVocabulary].sort((a, b) => b.length - a.length).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+const requirementFillers = /\b(?:require[ds]?|must|essential|mandatory|proficien(?:t|cy)|expertise|strong|knowledge|experience|in|with|of|and|or|know|have|be|is|are|a|an|the|to|for|using|development|frontend|backend|front|back|end|application|applications|skills?|technical|programming|language|languages|not|necessary|no)\b/gi;
+function mandatoryClauseUnderstood(clause) {
+  // Recognizing one skill does not verify the rest of a mandatory sentence.
+  // Unknown technologies, qualifications and quantified experience stay manual.
+  const remainder = normalize(clause).replace(new RegExp(`(?<![a-z0-9+#])(?:${requirementVocabulary})(?![a-z0-9+#])`, 'gi'), ' ')
+    .replace(requirementFillers, ' ').replace(/[\s,.:;()/&-]/g, '');
+  return remainder.length === 0;
+}
+function verifiedRequirementsReadable(job) {
+  if (!safeText(job?.description, PIPELINE_LIMITS.description) || !job.description.trim() || hostile(job.description)) return false;
+  return requirementClauses(job.description).every(clause => {
+    if (!mandatoryRequirement(clause)) return true;
+    const normalized = clause.replace(/and\s*\/\s*or/gi, 'or');
+    // Mixed operator precedence and unrecognized mandatory requirements need
+    // human review, not an invented interpretation from a high overlap score.
+    return extractVerifiedJobSkills(clause).length > 0 && mandatoryClauseUnderstood(clause) && !(optionalRequirement(clause) && !/\b(not required|not necessary|no experience)\b/i.test(clause))
+      && !(/\b(or)\b|\//i.test(normalized) && /\band\b/i.test(normalized));
+  });
+}
+export function extractVerifiedRequirements(job) {
+  const title = typeof job?.title === 'string' ? job.title : '';
+  const description = safeText(job?.description, PIPELINE_LIMITS.description) ? job.description : '';
+  const all = [...new Set([...extractVerifiedJobSkills(title), ...extractVerifiedJobSkills(description), ...list(job?.skills).map(canonicalVerifiedSkill).filter(Boolean)])].sort();
+  const groups = new Map();
+  const add = (skills, core, evidence) => {
+    const anyOf = [...new Set(skills)].sort();
+    if (!anyOf.length) return;
+    const key = anyOf.join('/'), previous = groups.get(key);
+    groups.set(key, { anyOf, core: core || previous?.core === true, evidence: evidence.slice(0, 300) });
+  };
+  const alternatives = new Set();
+  const tokens = [...jdSkillVocabulary, 'html', 'css'].sort((a, b) => b.length - a.length).map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  for (const clause of requirementClauses(description)) {
+    const required = mandatoryRequirement(clause) && !optionalRequirement(clause);
+    const ranges = [];
+    const expression = new RegExp(`(?<![a-z0-9+#])(${tokens})(?:\\s*(?:and\\s*\\/\\s*or|\\/|or)\\s*(${tokens}))+(?![a-z0-9+#])`, 'gi');
+    for (const found of clause.matchAll(expression)) {
+      const skills = extractVerifiedJobSkills(found[0]);
+      if (skills.length < 2) continue;
+      add(skills, required, clause);
+      ranges.push([found.index, found.index + found[0].length]);
+      skills.forEach(s => alternatives.add(s));
+    }
+    if (required) {
+      const standalone = [...clause].map((ch, index) => ranges.some(([a, b]) => index >= a && index < b) ? ' ' : ch).join('');
+      for (const s of extractVerifiedJobSkills(standalone)) add([s], true, clause);
+    }
+  }
+  for (const s of extractVerifiedJobSkills(title)) add([s], true, title);
+  for (const s of all) if (!alternatives.has(s) && !groups.has(s)) add([s], false, 'Posting skill');
+  return [...groups.values()].sort((a, b) => a.anyOf.join('/').localeCompare(b.anyOf.join('/')));
+}
+export function verifiedSimilarityKey(job, requirements = extractVerifiedRequirements(job)) {
+  const seniority = normalize(job?.title).match(/\b(intern|junior|senior|staff|principal|lead)\b/)?.[1] || 'unspecified';
+  return JSON.stringify(['verified-match-v1', verifiedRoleFamily(job?.title), seniority,
+    requirements.map(g => `${g.core ? 'core:' : ''}${g.anyOf.join('/')}`).sort(), canonicalCountry(job?.country), normalize(job?.location), job?.remote === true]);
+}
+export function decideVerifiedJob(job, { profile, settings = {}, learning, settingsRevision = 0, now } = {}) {
+  const match = matchVerifiedJob(job, { profile, settings, now });
+  const requirements = extractVerifiedRequirements(job), similarityKey = verifiedSimilarityKey(job, requirements);
+  const adapter = adapterForJob(job), portal = adapter.boardIdentity || '', codes = [], n = time(now);
+  const valid = validateVerifiedProfile(profile, now);
+  const skillFact = valid.ok ? scopedFact(profile, 'skills', jobContext(job), n) : {};
+  const confirmed = new Set(list(skillFact.value).map(canonicalVerifiedSkill));
+  if (!Number.isSafeInteger(settingsRevision) || settingsRevision < 0) codes.push('settings_revision_invalid');
+  const missingCore = requirements.filter(g => g.core && !g.anyOf.some(s => confirmed.has(s))).map(g => g.anyOf.join('/'));
+  if (!match.eligible) codes.push(...match.reasons.map(reason => reason.startsWith('core') ? 'missing_core_skill' : 'match_veto'));
+  if (missingCore.length) codes.push('missing_core_skill');
+  if (!verifiedRequirementsReadable(job)) codes.push('requirements_unverified');
+  if (normalize(job?.boardMatch) === 'low') codes.push('board_match_low');
+  if (job?.boardMatch !== undefined && !['low', 'medium', 'high', 'unknown'].includes(normalize(job.boardMatch))) codes.push('board_match_invalid');
+  const active = (row, timestamp) => record(row) && row.source === 'user' && row.revokedAt === null && safeText(row.id, 200) && row.id.trim()
+    && row.profileRevision === profile?.revision && row.settingsRevision === settingsRevision
+    && Number.isSafeInteger(row.settingsRevision) && row.settingsRevision > 0 && Number.isFinite(time(row[timestamp])) && time(row[timestamp]) <= n;
+  const feedback = Array.isArray(learning?.feedback) ? learning.feedback.filter(row => active(row, 'confirmedAt')
+    && ['exact', 'similar'].includes(row.scope) && ['apply', 'skip'].includes(row.verdict)) : [];
+  if (feedback.some(f => f.verdict === 'skip' && (f.scope === 'similar' && f.similarityKey === similarityKey || f.scope === 'exact' && f.jobUrl === job?.jobUrl))) codes.push('user_skip_similar');
+  const gaps = requirements.filter(g => !g.core && !g.anyOf.some(s => confirmed.has(s))).map(g => g.anyOf.join('/'));
+  let status = codes.length ? 'manual_actionable' : gaps.length ? gaps.length <= 2 && match.score >= 60 ? 'waiting_match_answer' : 'manual_actionable' : 'eligible_review';
+  if (status === 'manual_actionable' && !codes.length) codes.push('too_many_skill_gaps');
+  const grants = Array.isArray(learning?.grants) ? learning.grants : [];
+  const grant = grants.find(g => active(g, 'grantedAt') && g.similarityKey === similarityKey && g.portal === portal
+    && Number.isFinite(time(g.expiresAt)) && time(g.expiresAt) > n && time(g.expiresAt) > time(g.grantedAt) && time(g.expiresAt) <= time(g.grantedAt) + 30 * 86400000);
+  if (status === 'eligible_review' && adapter.supported && adapter.autoSubmit && grant && buildVerifiedResume(profile).ok) status = 'eligible_auto';
+  return { ...match, eligible: status === 'eligible_review' || status === 'eligible_auto', status, codes: [...new Set(codes)], missingCore,
+    requirements, similarityKey, portal, ...(status === 'waiting_match_answer' ? { question: { kind: 'skill_gap', skills: gaps,
+      text: `Do you have experience with ${gaps.join(', ')}? Confirm it in your profile and approve the updated resume before reconsidering.` } } : {}),
+    ...(status === 'eligible_auto' ? { grantId: grant.id } : {}),
+    reason: codes.length ? `${match.eligible ? '' : match.reason + '; '}${[...new Set(codes)].join('; ')}` : gaps.length ? `Unconfirmed skills: ${gaps.join(', ')}` : status === 'eligible_auto' ? 'Current scoped autonomy grant; factual gates passed' : 'Factual gates passed; explicit scoped autonomy grant required' };
+}
 export function matchVerifiedJob(job, { profile, settings = {}, now } = {}) {
   const reasons = [], missing = [], matched = [];
   if (!record(job)) { reasons.push('malformed job snapshot'); job = {}; }
@@ -232,6 +339,7 @@ export function matchVerifiedJob(job, { profile, settings = {}, now } = {}) {
   const arraySettings = ['roles', 'excludedRoles', 'locations', 'excludedLocations', 'countries', 'excludeCompanies', 'excludedSkills'];
   if (!record(settings) || arraySettings.some(k => settings[k] !== undefined && (!Array.isArray(settings[k]) || settings[k].length > 200 || settings[k].some(v => !safeText(v, 200) || !v.trim()))) || ['requireWorkAuthorization', 'allowSponsorship'].some(k => settings[k] !== undefined && typeof settings[k] !== 'boolean')) reasons.push('malformed match settings');
   if (!valid.ok) reasons.push(...valid.reasons);
+  if (!verifiedRequirementsReadable(job)) reasons.push('requirements unverified');
   if (!record(job) || !safeText(job.title, 500) || !job.title.trim() || !safeText(job.company, 500) || !job.company.trim() || !safeText(job.description, PIPELINE_LIMITS.description) || !safeText(job.location, 500) || !Array.isArray(job.skills) || job.skills.length > 200 || job.skills.some(s => !safeText(s, 200))) reasons.push('malformed or oversized job snapshot');
   if (!adapterForJob(job).safeUrl) reasons.push('unsafe job URL');
   const get = key => valid.ok ? scopedFact(profile, key, ctx, n) : { missing: true };
@@ -261,12 +369,19 @@ export function matchVerifiedJob(job, { profile, settings = {}, now } = {}) {
     else if (!record(salary) || !canonicalCurrency(salary.currency) || canonicalCurrency(salary.currency) !== canonicalCurrency(minimum.currency) || (salary.period || 'year') !== (minimum.period || 'year')) { reasons.push('salary currency/period missing or different; no implicit conversion'); missing.push('salary'); }
     else if (!Number.isFinite(salary.min ?? salary.max) || (salary.max ?? salary.min) < minimum.value) reasons.push('salary below minimum or malformed');
   }
-  const required = [...new Set((Array.isArray(job?.skills) && job.skills.length ? job.skills : extractVerifiedJobSkills(job?.description)).map(canonicalVerifiedSkill).filter(Boolean))].sort();
+  const groups = extractVerifiedRequirements(job);
+  const required = groups.map(g => g.anyOf.join('/'));
   const confirmed = new Set(Array.isArray(skillFact.value) ? skillFact.value.map(canonicalVerifiedSkill).filter(Boolean) : []);
   if (!confirmed.size) { reasons.push(skillFact.error || 'no confirmed skills'); missing.push('skills'); }
-  for (const s of required) (confirmed.has(s) ? matched : missing).push(s);
+  for (const group of groups) (group.anyOf.some(s => confirmed.has(s)) ? matched : missing).push(group.anyOf.join('/'));
+  const missingCore = groups.filter(g => g.core && !g.anyOf.some(s => confirmed.has(s))).map(g => g.anyOf.join('/'));
+  if (missingCore.length) reasons.push(`core skill missing: ${missingCore.join(', ')}`);
+  const family = verifiedRoleFamily(job.title);
+  if (['frontend', 'fullstack'].includes(family) && !FRONTEND_SKILLS.some(s => confirmed.has(s))) reasons.push('core frontend experience unconfirmed');
+  if (['backend', 'fullstack'].includes(family) && !BACKEND_SKILLS.some(s => confirmed.has(s))) reasons.push('core backend experience unconfirmed');
   if (!required.length) { reasons.push('job skills missing; no inferred requirements'); missing.push('job.skills'); }
-  if (list(settings.excludedSkills).map(canonicalVerifiedSkill).some(s => required.includes(s))) reasons.push('excluded job skill');
+  if (list(settings.excludedSkills).map(canonicalVerifiedSkill).some(s => groups.some(g => g.anyOf.includes(s)))) reasons.push('excluded job skill');
+  if (settings.allowSponsorship === false && get('requiresSponsorship').value !== false) reasons.push('country-bound sponsorship requirement not confirmed');
   const overlap = required.length ? matched.length / required.length : 0, threshold = settings.minSkillOverlap ?? 0.5;
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1 || overlap < threshold) reasons.push('confirmed skill overlap below threshold');
   const score = Math.round(70 * overlap + (ageHours === null ? 0 : Math.max(0, 20 * (1 - ageHours / 168))) + (wantedLocations.includes(location) ? 10 : 0));

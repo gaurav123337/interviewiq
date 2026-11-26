@@ -5,19 +5,13 @@
  *   - first run per site: a login window opens; you sign in manually
  *     (Google OAuth / email / OTP / captcha — anything the site offers);
  *     the session persists in freebuff-apply-profile/ and is reused for weeks.
- *   - apply runs: visits a jobs-list URL (LinkedIn /jobs, Naukri recommended,
- *     Instahyre opportunities, or any ATS board), opens each posting, generates
- *     a JD-tailored resume + cover letter (admin-configured AI provider, same
- *     one the app uses), fills the application form with honest answers from
- *     your profile, and submits — per-site rules:
- *       Instahyre + Naukri → auto-submit; LinkedIn + unknown → REVIEW GATE
- *       (form filled, browser paused for a human click; with --unattended
- *       those sites are skipped instead of pausing, so scheduled runs never hang).
- *   - postings must pass BOTH a title gate and a JD-skill gate (the job's
- *     required skills are checked against the resume's skills — no more
- *     backend applications from a frontend profile).
- *   - any required question it cannot answer confidently blocks submission
- *     (fail-closed) and marks the job needs-review in the report.
+ *   - discovery/review runs: collect postings and retain them in the manual
+ *     review queue. This legacy driver NEVER opens an Apply flow, generates
+ *     an application kit, fills/uploads answers or resumes, or submits.
+ *     Instahyre's initial Apply may itself submit, so containment precedes
+ *     every per-job application flow, not just the final Submit button.
+ *   - application execution belongs to the verified local pipeline; no CLI,
+ *     environment setting, learned rule or tailoring approval enables it here.
  *
  * Usage:
  *   node scripts/auto-apply-jobs.js --url "https://www.instahyre.com/candidate/opportunities/?matching=true" \
@@ -60,6 +54,10 @@ import { acquireApplyContext, applyBrowserPaths, cloneApplyProfileForSignin, isR
 import { getApplyAgentRuntimeContext, applyAgentChildArgs, applyAgentChildEnv } from "./apply-agent-runtime.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+// Permanent driver boundary, not a runtime option. Only the verified pipeline
+// may execute applications (including boards whose initial Apply submits).
+const LEGACY_REVIEW_ONLY = true;
+const LEGACY_REVIEW_NOTE = "legacy-review-only — open posting manually; no kit generated, form filled, resume uploaded or application clicked";
 const AGENT_CONTEXT = getApplyAgentRuntimeContext();
 const PAIRED = AGENT_CONTEXT.mode === "paired";
 const STATE_ROOT = PAIRED ? AGENT_CONTEXT.stateRoot : AGENT_CONTEXT.dataRoot ?? path.resolve(ROOT, "..");
@@ -2457,6 +2455,8 @@ async function persistHeal(host, pick) {
 }
 
 async function clickButton(page, locator, textRe) {
+  // Defense in depth: fail before scrolling, pointer actions or the DOM fallback.
+  if (LEGACY_REVIEW_ONLY) throw new Error("legacy-review-only");
   /* scroll to it first — lazy pages keep buttons out of the viewport where
      Playwright refuses to click */
   await locator.scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {});
@@ -2483,6 +2483,9 @@ async function clickButton(page, locator, textRe) {
 
 export async function trySubmit(page, site, rulesOverride, ctx = {}) {
   if (PAIRED) await readApplyMode();
+  // No rule/heal, trust history or AI consent may bypass this driver boundary.
+  // Return before reading the page or entering LinkedIn's direct-JS step flow.
+  if (LEGACY_REVIEW_ONLY) return { auto: false, note: LEGACY_REVIEW_NOTE };
   const rules = rulesOverride ?? SITE_RULES[site] ?? SITE_RULES.generic;
   /* the document that holds the form (embedded-iframe ATS boards vs inline) */
   const target = await formFrame(page);
@@ -2944,6 +2947,16 @@ async function runSingle(args, { existingCtx = null } = {}) {
           : "you dismissed this posting (not interested)";
         recordResultBoth(report, job, "skipped", why);
         console.log(dim(`  ⏭ skipped — ${why}`));
+        continue;
+      }
+      // Approved verified-match plan: keep every unhandled discovered job
+      // manually actionable BEFORE openJob/buildKit and all Apply/JS/fill paths.
+      // An initial Instahyre Apply is already a one-way door; review is unfilled.
+      if (LEGACY_REVIEW_ONLY) {
+        recordResultBoth(report, job, "needsReview", LEGACY_REVIEW_NOTE);
+        await queueReview({ siteHost: site, jobUrl: job.url, title: job.title, company: job.company,
+          formUrl: job.url, reason: LEGACY_REVIEW_NOTE, fit: job.__fit ?? null, ageH: job.__ageH ?? null }, report.results.at(-1));
+        console.log(dim(`  ${LEGACY_REVIEW_NOTE}`));
         continue;
       }
       /* Phase 0 money-rules are checked BEFORE the AI judge so a rejected
